@@ -82,7 +82,13 @@ export function ApiKeyModal({ ...props }: Props) {
       ) : (
         <Form form={form} onSubmit={handleSaveApiKey}>
           <Stack>
-            <InputText name="name" label="Name" placeholder="Your API Key name" withAsterisk />
+            <InputText
+              name="name"
+              label="Name"
+              placeholder="Your API Key name"
+              withAsterisk
+              maxLength={64}
+            />
             <Group justify="space-between">
               <Button variant="default" disabled={mutating} onClick={handleClose}>
                 Cancel

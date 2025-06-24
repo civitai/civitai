@@ -21,6 +21,9 @@ import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { Flags } from '~/shared/utils';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { searchClient } from '~/server/meilisearch/client';
+import { isDefined } from '~/utils/type-guards';
 
 type Metadata = {
   currentPage?: number;
@@ -66,7 +69,7 @@ export default MixedAuthEndpoint(async function handler(
   const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   // Handle pagination
-  const { limit, page, cursor, ...data } = parsedParams.data;
+  const { limit, page, cursor, query, ...data } = parsedParams.data;
   let skip: number | undefined;
   const usingPaging = page && !cursor;
   if (usingPaging) {
@@ -87,14 +90,38 @@ export default MixedAuthEndpoint(async function handler(
     collectionId = favoriteModelsCollections?.id;
   }
 
+  // If query is present, do not allow page param
+  if (query && page) {
+    return res
+      .status(400)
+      .json({ error: 'Cannot use page param with query search. Use cursor-based pagination.' });
+  }
+
+  let ids: number[] = [];
+  let meiliNextCursor: string | undefined;
+  if (query) {
+    // Fetch IDs from Meilisearch
+    const meiliResult = await searchClient?.index(MODELS_SEARCH_INDEX).search(query, {
+      limit,
+      filter: [cursor ? `id < ${cursor}` : undefined].filter(isDefined),
+      attributesToRetrieve: ['id'],
+      sort: ['id:desc'],
+    });
+    // @ts-ignore
+    ids = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
+    meiliNextCursor =
+      meiliResult?.hits?.length === limit ? ids[ids.length - 1]?.toString() : undefined;
+  }
+
   try {
     const { items, nextCursor } = await getModelsWithVersions({
       input: {
         browsingLevel,
         ...data,
         take: limit,
-        skip,
-        cursor,
+        skip: !query ? skip : undefined,
+        cursor: !query ? cursor : undefined,
+        ids: query ? ids : undefined,
         collectionId,
         disablePoi: true,
         disableMinor: true,
@@ -108,8 +135,11 @@ export default MixedAuthEndpoint(async function handler(
     };
     const primaryFileOnly = data.primaryFileOnly === true;
 
-    const { baseUrl, nextPage } = getNextPage({ req, nextCursor });
-    const metadata: Metadata = { nextCursor, nextPage };
+    const { baseUrl, nextPage } = getNextPage({
+      req,
+      nextCursor: query ? meiliNextCursor : nextCursor,
+    });
+    const metadata: Metadata = { nextCursor: query ? meiliNextCursor : nextCursor, nextPage };
     if (usingPaging) {
       metadata.currentPage = page;
       metadata.pageSize = limit;

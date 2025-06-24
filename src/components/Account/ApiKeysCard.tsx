@@ -77,7 +77,14 @@ export function ApiKeysCard() {
                 {apiKeys.map((apiKey, index) => (
                   <Table.Tr key={index}>
                     <Table.Td>
-                      <Text size="sm">{apiKey.name}</Text>
+                      <Text
+                        size="sm"
+                        lineClamp={1}
+                        title={apiKey.name}
+                        style={{ maxWidth: 180, wordBreak: 'break-all' }}
+                      >
+                        {apiKey.name}
+                      </Text>
                     </Table.Td>
                     <Table.Td>{formatDate(apiKey.createdAt)}</Table.Td>
                     <Table.Td>
