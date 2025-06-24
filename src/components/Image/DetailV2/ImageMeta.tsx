@@ -1,4 +1,4 @@
-import { Divider, Text, ActionIcon, Button, Badge } from '@mantine/core';
+import { Divider, Text, Badge, UnstyledButton } from '@mantine/core';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
@@ -7,6 +7,7 @@ import { getBaseModelFromResources } from '~/shared/constants/generation.constan
 import type { BaseModelSetType } from '~/server/common/constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import clsx from 'clsx';
 
 const simpleMetaProps = {
   comfy: 'Workflow',
@@ -53,19 +54,20 @@ export function ImageMeta({ imageId }: { imageId: number }) {
       switch (key) {
         case 'comfy':
           const comfy = meta['comfy'];
+          const nodeCount = comfy?.workflow?.nodes?.length ?? 0;
+          const nodeText =
+            nodeCount === 1 ? `${nodeCount} Node` : `${nodeCount > 0 ? nodeCount : ''} Nodes`;
+
           return comfy ? (
             <CopyButton value={() => JSON.stringify(comfy.workflow)}>
               {({ copy, copied, Icon, color }) => (
-                <Button
-                  color={color}
-                  size="compact-xs"
-                  className="rounded-lg"
-                  classNames={{ label: 'flex items-center gap-1' }}
+                <UnstyledButton
+                  className={clsx('flex items-center gap-1 rounded-lg', color && 'text-teal-500')}
                   onClick={copy}
                 >
-                  {!copied ? 'Nodes' : 'Copied'}
-                  <Icon size={16} />
-                </Button>
+                  {!copied ? nodeText.trim() : 'Copied'}
+                  <Icon size={14} />
+                </UnstyledButton>
               )}
             </CopyButton>
           ) : null;
@@ -150,7 +152,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <div className="flex flex-wrap gap-2">
               {simpleMeta.map(({ label, content }) => (
-                <Badge key={label} classNames={{ root: 'flex gap-1 items-center leading-snug' }}>
+                <Badge key={label} classNames={{ label: 'flex gap-1 items-center leading-snug' }}>
                   <span>{label}:</span>
                   {content}
                 </Badge>
