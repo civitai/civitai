@@ -110,19 +110,24 @@ import { isDefined } from '~/utils/type-guards';
 import styles from './TrainingImages.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-const TrainingImagesCaptions = dynamic(() =>
-  import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
-    (x) => x.TrainingImagesCaptions
-  )
+const TrainingImagesCaptions = dynamic(
+  () =>
+    import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
+      (x) => x.TrainingImagesCaptions
+    ),
+  { ssr: false }
 );
-const TrainingImagesCaptionViewer = dynamic(() =>
-  import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
-    (x) => x.TrainingImagesCaptionViewer
-  )
+const TrainingImagesCaptionViewer = dynamic(
+  () =>
+    import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
+      (x) => x.TrainingImagesCaptionViewer
+    ),
+  { ssr: false }
 );
 
-const AutoLabelModal = dynamic(() =>
-  import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal)
+const AutoLabelModal = dynamic(
+  () => import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal),
+  { ssr: false }
 );
 
 const MAX_FILES_ALLOWED = 1000;

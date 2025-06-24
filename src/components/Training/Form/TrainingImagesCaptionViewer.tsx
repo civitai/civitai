@@ -1,14 +1,4 @@
-import {
-  Accordion,
-  ActionIcon,
-  Badge,
-  Divider,
-  Group,
-  Paper,
-  Switch,
-  Text,
-  TextInput,
-} from '@mantine/core';
+import { Accordion, Badge, Divider, Group, Paper, Switch, Text, TextInput } from '@mantine/core';
 import { IconFilter, IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { HighlightWithinTextarea } from 'react-highlight-within-textarea';

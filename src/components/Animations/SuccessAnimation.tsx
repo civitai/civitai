@@ -1,7 +1,7 @@
 import type { FlexProps } from '@mantine/core';
 import { Flex } from '@mantine/core';
-import type { LottieProps } from 'react-lottie';
-import Lottie from 'react-lottie';
+import type { LottieComponentProps } from 'lottie-react';
+import Lottie from 'lottie-react';
 import * as successAnimation from '~/utils/lotties/success-animation.json';
 
 export function SuccessAnimation({
@@ -14,13 +14,14 @@ export function SuccessAnimation({
     <Flex direction={direction} {...flexProps}>
       <Lottie
         style={{ margin: 0 }}
-        ariaRole="presentation"
+        aria-roledescription="presentation"
         {...lottieProps}
-        options={{ animationData: successAnimation, loop: false }}
+        animationData={successAnimation}
+        loop={false}
       />
       {children}
     </Flex>
   );
 }
 
-type Props = FlexProps & { lottieProps?: Omit<LottieProps, 'options'> };
+type Props = FlexProps & { lottieProps?: Omit<LottieComponentProps, 'options' | 'animationData'> };

@@ -1,15 +1,15 @@
 import type { FlexProps } from '@mantine/core';
 import { Flex } from '@mantine/core';
-import type { LottieProps } from 'react-lottie';
-import Lottie from 'react-lottie';
+import type { LottieComponentProps } from 'lottie-react';
+import Lottie from 'lottie-react';
 import * as linkAnimation from '~/utils/lotties/link-animation.json';
 
 export function LinkAnimation({ lottieProps, ...props }: Props) {
   return (
     <Flex {...props}>
-      <Lottie {...lottieProps} options={{ animationData: linkAnimation }} />
+      <Lottie {...lottieProps} animationData={linkAnimation} />
     </Flex>
   );
 }
 
-type Props = FlexProps & { lottieProps?: Omit<LottieProps, 'options'> };
+type Props = FlexProps & { lottieProps?: Omit<LottieComponentProps, 'options' | 'animationData'> };
