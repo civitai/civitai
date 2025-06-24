@@ -327,9 +327,6 @@ export async function parseGenerateImageInput({
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
     params.sampler = 'LCM';
-  } else if (batchAll) {
-    quantity = 1;
-    batchSize = params.quantity;
   }
 
   let upscaleWidth = params.upscaleHeight;
