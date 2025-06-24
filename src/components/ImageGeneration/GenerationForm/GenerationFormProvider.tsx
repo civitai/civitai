@@ -375,8 +375,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         if (!!baseModel && !!prevBaseModel) {
           if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel))
             form.setValue('cfgScale', 3.5);
-          else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
-            form.setValue('cfgScale', 7);
+          // else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
+          //   form.setValue('cfgScale', 7);
         }
 
         if (
