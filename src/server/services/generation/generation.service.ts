@@ -8,6 +8,7 @@ import {
   baseModelEngineMap,
   isVideoGenerationEngine,
 } from '~/server/orchestrator/generation/generation.config';
+import { veo3ModelVersionId } from '~/server/orchestrator/veo3/veo3.schema';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -44,14 +45,13 @@ import {
   getBaseModelFromResourcesWithDefault,
   getBaseModelSet,
   getBaseModelSetType,
+  getClosestAspectRatio,
   getResourceGenerationType,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import { isFutureDate } from '~/utils/date-helpers';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
-import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -326,10 +326,7 @@ async function getMediaGenerationData({
       let aspectRatio = '0';
       try {
         if (width && height) {
-          const config = getGenerationConfig(baseModel);
-          const ratios = config.aspectRatios.map((x) => x.width / x.height);
-          const closest = findClosest(ratios, width / height);
-          aspectRatio = `${ratios.indexOf(closest)}`;
+          aspectRatio = getClosestAspectRatio(width, height, baseModel);
         }
       } catch (e) {}
 
@@ -774,10 +771,11 @@ export async function getResourceData(
       });
     });
 
+  // TODO - check if resource id is in "EcosystemCheckpoint" table
   return generation
     ? resources.filter((resource) => {
         const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-        return !!baseModelResourceTypes[baseModel];
+        return !!baseModelResourceTypes[baseModel] || resource.id === veo3ModelVersionId;
       })
     : resources;
 }

@@ -9,12 +9,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import type { BaseModelSetType } from '~/server/common/constants';
-import {
-  constants,
-  generation,
-  generationConfig,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   GenerationData,
@@ -45,6 +40,9 @@ import type { WorkflowDefinitionType } from '~/server/services/orchestrator/type
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { promptSimilarity } from '~/utils/prompt-similarity';
+import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 
 // #region [schemas]
 
@@ -64,7 +62,7 @@ const baseSchema = textToImageParamsSchema
     remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string().optional(),
-    fluxUltraRaw: z.boolean().optional(),
+    fluxUltraRaw: z.boolean().default(false).catch(false),
   });
 const partialSchema = baseSchema.partial();
 const formSchema = baseSchema
@@ -214,6 +212,17 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
   });
 
+  if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
+    if ((params.sourceImage && params.workflow !== 'img2img') || getIsFluxKontext(checkpoint.id))
+      params.workflow = 'img2img';
+    else if (
+      !params.sourceImage &&
+      params.workflow !== 'txt2img' &&
+      !getIsFluxKontext(checkpoint.id)
+    )
+      params.workflow = 'txt2img';
+  }
+
   return {
     ...params,
     baseModel,
@@ -264,7 +273,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
     partialSchema,
-    version: 1.3,
+    version: 1.4,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     defaultValues: getValues,
@@ -278,7 +287,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       form.setValue(
         'remixSimilarity',
         !!data.params.prompt && !!prompt
-          ? calculateAdjustedCosineSimilarities(data.params.prompt, prompt)
+          ? promptSimilarity(data.params.prompt, prompt).adjustedCosine
           : undefined
       );
       form.setValue('remixPrompt', data.params.prompt);
@@ -299,7 +308,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (type === 'image' && storeData) {
       const { runType, remixOfId, resources, params } = storeData;
-      if (!params.sourceImage && !params.workflow) form.setValue('workflow', 'txt2img');
+      if (!params.sourceImage && !params.workflow)
+        form.setValue('workflow', params.process ?? 'txt2img');
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
@@ -345,6 +355,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
+      const baseModel = watchedValues.baseModel;
+      const prevBaseModel = prevBaseModelRef.current;
       // handle model change to update baseModel value
       if (name !== 'baseModel') {
         if (
@@ -359,13 +371,17 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
           form.setValue('workflow', 'txt2img');
         }
-        if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
-          form.setValue('cfgScale', 3.5);
+        const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];
+        if (!!baseModel && !!prevBaseModel) {
+          if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel))
+            form.setValue('cfgScale', 3.5);
+          // else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
+          //   form.setValue('cfgScale', 7);
         }
 
         if (
-          prevBaseModelRef.current === 'Flux1' &&
-          watchedValues.baseModel !== 'Flux1' &&
+          prevBaseModel === 'Flux1' &&
+          baseModel !== 'Flux1' &&
           watchedValues.sampler === 'undefined'
         ) {
           form.setValue('sampler', 'Euler a');
@@ -391,10 +407,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         form.setValue('fluxMode', fluxStandardAir);
       }
 
-      if (watchedValues.model?.id === generationConfig.OpenAI.checkpoint.id) {
+      if (watchedValues.model?.id && getModelVersionUsesImageGen(watchedValues.model.id)) {
         if (watchedValues.sourceImage && watchedValues.workflow !== 'img2img')
           form.setValue('workflow', 'img2img');
-        else if (!watchedValues.sourceImage && watchedValues.workflow !== 'txt2img')
+        else if (
+          !watchedValues.sourceImage &&
+          watchedValues.workflow !== 'txt2img' &&
+          !getIsFluxKontext(watchedValues.model.id)
+        )
           form.setValue('workflow', 'txt2img');
       }
     });
@@ -436,7 +456,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ...defaultValues,
         // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
-        nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
@@ -457,72 +476,3 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   );
 }
 // #endregion
-
-function cleanText(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/<(?:\/?p|img|src|=|"|:|\.|\-|_)>/g, ' ')
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ')
-    .filter((token) => token.length > 0);
-}
-
-function createVocabMap(tokens1: string[], tokens2: string[]): Map<string, number> {
-  const vocab = new Set([...tokens1, ...tokens2]);
-  const vocabMap = new Map<string, number>();
-  Array.from(vocab).forEach((token, index) => {
-    vocabMap.set(token, index + 1);
-  });
-  return vocabMap;
-}
-
-function getTokens(tokens: string[], vocabMap: Map<string, number>): number[] {
-  return tokens.map((token) => vocabMap.get(token) || -1);
-}
-
-function cosineSimilarity(vectorA: number[], vectorB: number[]): number {
-  let dotProduct = 0,
-    normA = 0,
-    normB = 0;
-  vectorA.forEach((value, index) => {
-    const vectorBIndex = vectorB[index] ?? 0;
-    dotProduct += value * vectorBIndex;
-    normA += value * value;
-    normB += vectorBIndex * vectorBIndex;
-  });
-  const normy = Math.sqrt(normA) * Math.sqrt(normB);
-  return normy > 0 ? dotProduct / normy : 0;
-}
-
-function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): number {
-  const tokens1 = cleanText(prompt1);
-  const tokens2 = cleanText(prompt2);
-  const vocabMap = createVocabMap(tokens1, tokens2);
-
-  const promptTokens1 = getTokens(tokens1, vocabMap);
-  const promptTokens2 = getTokens(tokens2, vocabMap);
-  const setTokens1 = getTokens(Array.from(new Set(tokens1)), vocabMap);
-  const setTokens2 = getTokens(Array.from(new Set(tokens2)), vocabMap);
-
-  const cosSim = cosineSimilarity(promptTokens1, promptTokens2);
-  const setCosSim = cosineSimilarity(setTokens1, setTokens2);
-
-  const adjustedCosSim = (cosSim + 1) / 2;
-  const adjustedSetCosSim = (setCosSim + 1) / 2;
-
-  return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
-}
-
-function objectSimilarity(obj1: Record<string, unknown>, obj2: Record<string, unknown>) {
-  // TODO
-}
-
-// Example usage
-// const prompt1 =
-//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography, soft light, head and shoulders portrait, cover';
-// const prompt2 =
-//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography';
-
-// const similarity = calculateAdjustedCosineSimilarities(prompt1, prompt2);

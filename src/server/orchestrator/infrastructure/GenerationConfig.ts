@@ -53,7 +53,7 @@ export function VideoGenerationConfig2<
   }
 
   function metadataFn(data: SchemaOutput) {
-    const softValidated = schema.parse(data) as SchemaOutput;
+    const softValidated = schema.parse({ ...defaultValues, ...data }) as SchemaOutput;
     return transformFn?.(softValidated) ?? softValidated;
   }
 

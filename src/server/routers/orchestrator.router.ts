@@ -237,9 +237,8 @@ export const orchestratorRouter = router({
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
-        // TODO - handle createImageGenStep
         if (args.params.engine && args.params.engine !== 'flux-pro-raw') {
-          step = await createImageGenStep(args);
+          step = await createImageGenStep({ ...args, whatIf: true });
         } else if (args.params.workflow === 'txt2img') {
           step = await createTextToImageStep({ ...args, whatIf: true });
         } else {

@@ -28,6 +28,7 @@ export async function ExifParser(file: File | string) {
   } catch (e) {
     console.error('failed to read exif data');
   }
+  console.log({ tags });
 
   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
     acc[key] = value.value;

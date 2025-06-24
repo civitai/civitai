@@ -22,7 +22,7 @@ import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
+import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
@@ -48,9 +48,11 @@ import {
   allInjectableResourceIds,
   fluxDraftAir,
   fluxModeOptions,
+  fluxModelId,
   fluxUltraAir,
   fluxUltraAirId,
   getBaseModelFromResources,
+  getBaseModelFromResourcesWithDefault,
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
@@ -62,6 +64,7 @@ import {
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
+import { hiDreamModelId } from '~/shared/orchestrator/hidream.config';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -91,22 +94,105 @@ export async function getGenerationStatus() {
 }
 
 // TODO - pass user data
-export async function getResourceDataWithInjects<T extends GenerationResource>(
+type TrueGenerationData = AsyncReturnType<typeof getResourceData>[number];
+export async function getResourceDataWithInjects<T extends TrueGenerationData>(
   versions: { id: number; epoch?: number }[],
   user?: SessionUser,
-  cb?: (resource: GenerationResource) => T
+  cb?: (resource: TrueGenerationData) => T
 ) {
   const results = await getResourceData(
     [...versions, ...allInjectableResourceIds.map((id) => ({ id }))],
     user,
     true
   );
+
   const allResources = (cb ? results.map(cb) : results) as T[];
 
+  const resources = allResources.filter((x) => !allInjectableResourceIds.includes(x.id));
+  const injectable = allResources.filter((x) => allInjectableResourceIds.includes(x.id));
+
   return {
-    resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
-    injectable: allResources.filter((x) => allInjectableResourceIds.includes(x.id)),
+    resources,
+    injectable,
   };
+}
+
+export async function getGenerationStatusLimits(user?: SessionUser) {
+  const status = await getGenerationStatus();
+  if (!status.available && !user?.isModerator)
+    throw throwBadRequestError('Generation is currently disabled');
+
+  return status.limits[user?.tier ?? 'free'];
+}
+
+export async function getGenerationResourceData(
+  versions: { id: number; strength: number; epochNumber?: number }[],
+  limit: number,
+  user?: SessionUser
+) {
+  const { resources, injectable } = await getResourceDataWithInjects(
+    versions.map(({ id, epochNumber }) => ({ id, epoch: epochNumber })),
+    user,
+    (resource) => ({
+      ...resource,
+      ...versions.find((x) => x.id === resource.id),
+      triggerWord: resource.trainedWords?.[0],
+    })
+  );
+
+  if (
+    user &&
+    !user.isModerator &&
+    resources.some(
+      (r) => r.availability === Availability.Private || !!r.epochDetails || !!r.epochNumber
+    )
+  ) {
+    // Confirm the user has a subscription:
+    const subscription = await getUserSubscription({ userId: user.id });
+    if (!subscription)
+      throw throwBadRequestError('Using Private resources require an active subscription.');
+  }
+
+  if (resources.some((x) => x.epochDetails && x.epochDetails.isExpired)) {
+    throw throwBadRequestError(
+      'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
+    );
+  }
+
+  // handle missing coverage
+  if (!resources.every((x) => x.canGenerate))
+    throw throwBadRequestError(
+      `Some of your resources are not available for generation: ${resources
+        .filter((x) => !x.canGenerate)
+        .map((x) => x.name)
+        .join(', ')}`
+    );
+
+  const baseModel = await getBaseModelFromResourcesWithDefault(
+    resources.map((r) => ({ baseModel: r.baseModel, modelType: r.model.type }))
+  );
+
+  // remove any resources that may not be supported by the generator
+  const availableResourceTypes = getBaseModelResourceTypes(baseModel)?.map((x) => x.type) ?? [];
+  const availableResources = resources.filter((x) =>
+    availableResourceTypes.includes(x.model.type as any)
+  );
+
+  const hasMinorResource = availableResources.some((x) => x.model.minor);
+  const hasPoiResource = availableResources.some((x) => x.model.poi);
+
+  const model = availableResources.find(
+    (x) => x.model.type === 'Checkpoint' || x.model.type === 'Upscaler'
+  );
+  const vae = availableResources.find((x) => x.model.type === 'VAE');
+  const additionalResources = availableResources.filter(
+    (x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE'
+  );
+
+  if (additionalResources.length > limit)
+    throw throwBadRequestError('You have exceed the number of allowed resources.');
+
+  return { model, vae, additionalResources, injectable, hasMinorResource, hasPoiResource };
 }
 
 export async function parseGenerateImageInput({
@@ -140,7 +226,6 @@ export async function parseGenerateImageInput({
     // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
     // originalResources = [{ id: version, strength: 1 }];
-    originalParams.nsfw = true; // No nsfw helpers in flux mode
     originalParams.draft = false;
     originalParams.negativePrompt = '';
     delete originalParams.clipSkip;
@@ -159,7 +244,6 @@ export async function parseGenerateImageInput({
   const isSD3 = getIsSD3(originalParams.baseModel);
   if (isSD3) {
     originalParams.sampler = 'undefined';
-    originalParams.nsfw = true; // No nsfw helpers in SD3
     originalParams.draft = false;
     if (originalResources.find((x) => x.id === 983611)) {
       originalParams.steps = 4;
@@ -168,49 +252,14 @@ export async function parseGenerateImageInput({
   }
 
   const status = await getGenerationStatus();
-  const limits = status.limits[user.tier ?? 'free'];
-  const resourceLimit = limits.resources;
-
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  const resourceData = await getResourceDataWithInjects(
-    originalResources.map(({ id, epochNumber }) => ({ id, epoch: epochNumber })),
-    user,
-    (resource) => ({
-      ...resource,
-      ...originalResources.find((x) => x.id === resource.id),
-      triggerWord: resource.trainedWords?.[0],
-    })
-  );
+  const limits = status.limits[user?.tier ?? 'free'];
 
-  if (
-    resourceData.resources.some(
-      (r) => r.availability === Availability.Private || !!r.epochDetails || !!r.epochNumber
-    ) &&
-    !user.isModerator
-  ) {
-    // Confirm the user has a subscription:
-    const subscription = await getUserSubscription({ userId: user.id });
-    if (!subscription)
-      throw throwBadRequestError('Using Private resources require an active subscription.');
-  }
+  const { model, vae, additionalResources, injectable, hasMinorResource, hasPoiResource } =
+    await getGenerationResourceData(originalResources, limits.resources, user);
 
-  if (resourceData.resources.some((x) => x.epochDetails && x.epochDetails.isExpired)) {
-    throw throwBadRequestError(
-      'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
-    );
-  }
-
-  if (
-    resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
-      .length > resourceLimit
-  )
-    throw throwBadRequestError('You have exceed the number of allowed resources.');
-
-  const model = resourceData.resources.find(
-    (x) => x.model.type === ModelType.Checkpoint || x.model.type === ModelType.Upscaler
-  );
   if (!model) throw throwBadRequestError('A checkpoint is required to make a generation request');
   const isFluxStandard = getIsFluxStandard(model.model.id);
   if (!isFluxStandard) {
@@ -221,34 +270,11 @@ export async function parseGenerateImageInput({
 
   let params = { ...originalParams };
 
-  if (params.baseModel !== getBaseModelSetType(model.baseModel))
-    throw throwBadRequestError(
-      `Invalid base model. Checkpoint with baseModel: ${model.baseModel} does not match the input baseModel: ${params.baseModel}`
-    );
-
   const injectableResources = getInjectablResources(params.baseModel);
 
   // handle missing draft resource
   if (params.draft && !injectableResources.draft)
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
-
-  // handle missing coverage
-  if (!resourceData.resources.every((x) => x.canGenerate) && params.workflow !== 'img2img-upscale')
-    throw throwBadRequestError(
-      `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.canGenerate)
-        .map((x) => x.name)
-        .join(', ')}`
-    );
-
-  const availableResourceTypes =
-    getBaseModelResourceTypes(params.baseModel)?.map((x) => x.type) ?? [];
-  // const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
-  const availableResources = [
-    model,
-    ...resourceData.resources.filter((x) => availableResourceTypes.includes(x.model.type as any)),
-  ];
-
   // #region [together]
 
   // this needs to come after updating the size from the aspect ratio that is done directly above
@@ -269,37 +295,20 @@ export async function parseGenerateImageInput({
     }
   }
 
-  const hasMinorResource = availableResources.some(
-    (resource) => resource.model.minor || resource.model.sfwOnly
-  );
-  if (hasMinorResource) params.nsfw = false;
-
   // Disable nsfw if the prompt contains poi/minor words
-  const hasPoi = includesPoi(params.prompt) || availableResources.some((x) => x.model.poi);
+  const hasPoi = includesPoi(params.prompt) || hasPoiResource;
   if (hasPoi && originalParams.disablePoi) {
     throw throwBadRequestError(
       'Your request contains or attempts to use the likeness of a real person. Generating these type of content while viewing X-XXX ratings is not allowed.'
     );
   }
-  if (hasPoi || includesMinor(params.prompt)) params.nsfw = false;
-
-  // Set nsfw to true if the prompt contains nsfw words
-  const isPromptNsfw = includesNsfw(params.prompt);
-  params.nsfw ??= isPromptNsfw !== false;
-
-  const injectable: InjectableResource[] = [];
-  if (!isFlux && !isSD3) {
-    if (params.draft && injectableResources.draft) {
-      injectable.push(injectableResources.draft);
-    }
-  }
 
   const positivePrompts = [params.prompt];
   const negativePrompts = [params.negativePrompt];
-  const resourcesToInject: typeof resourceData.injectable = [];
-  if (!whatIf) {
-    for (const item of injectable) {
-      const resource = resourceData.injectable.find((x) => x.id === item.id);
+  const resourcesToInject: typeof injectable = [];
+  if (!whatIf && params.draft && injectableResources.draft) {
+    for (const item of [injectableResources.draft]) {
+      const resource = injectable.find((x) => x.id === item.id);
       if (!resource) continue;
       resourcesToInject.push(resource);
 
@@ -323,10 +332,11 @@ export async function parseGenerateImageInput({
 
   let quantity = params.quantity;
   let batchSize = 1;
+
   if (params.draft) {
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
-    params.sampler = 'LCM';
+    if (!injectableResources.draft) params.sampler = 'LCM';
   }
 
   let upscaleWidth = params.upscaleHeight;
@@ -349,8 +359,27 @@ export async function parseGenerateImageInput({
     ? { image: sourceImage.url, width: sourceImage.width, height: sourceImage.height }
     : { width, height };
 
+  // if (params.baseModel === 'HiDream') {
+  //   const hiDreamResult = getHiDreamInput({
+  //     model,
+  //     resources: additionalResources,
+  //     ...params,
+  //     ...rest,
+  //   });
+  //   const { model: hiDreamModel, resources: hiDreamResources, ...restHiDream } = hiDreamResult;
+
+  //   return {
+  //     resources: [hiDreamModel, ...hiDreamResources],
+  //     params: removeEmpty({
+  //       quantity,
+  //       batchSize,
+  //       ...restHiDream,
+  //     }),
+  //   };
+  // }
+
   return {
-    resources: [...availableResources, ...resourcesToInject],
+    resources: [model, ...additionalResources, vae, ...resourcesToInject].filter(isDefined),
     params: removeEmpty({
       ...params,
       quantity,
@@ -377,7 +406,7 @@ function getResources(step: WorkflowStep) {
 function combineResourcesWithInputResource(
   allResources: GenerationResource[],
   resources: { id: number; strength?: number | null }[]
-) {
+): GenerationResource[] {
   return allResources
     .map((resource) => {
       const original = resources.find((x) => x.id === resource.id);
@@ -610,6 +639,9 @@ function formatVideoGenStep({
     }
   );
 
+  // it's silly, but video resources are nested in the params, where image resources are not
+  if (params && 'resources' in params) params.resources = null;
+
   const combinedResources = combineResourcesWithInputResource(resources, stepResources);
 
   let baseModel = combinedResources.length
@@ -637,13 +669,13 @@ function formatVideoGenStep({
     timeout: step.timeout,
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
-    params: {
+    params: removeEmpty({
       ...params!,
       baseModel,
       sourceImage: sourceImage,
       // workflow: videoMetadata.params?.workflow,
       quantity: 1,
-    },
+    }) as typeof params,
     images: videos,
     status: step.status,
     metadata,
@@ -665,39 +697,10 @@ function formatTextToImageStep({
   const stepResources = getResources(step);
 
   const resources = combineResourcesWithInputResource(allResources, stepResources);
-  const versionIds = resources.map((x) => x.id);
 
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
   const injectable = getInjectablResources(baseModel);
-
-  let prompt = input.prompt ?? '';
-  let negativePrompt = input.negativePrompt ?? '';
-  for (const item of Object.values(injectable).filter(isDefined)) {
-    const resource = resources.find((x) => x.id === item.id);
-    if (!resource) continue;
-    const triggerWord = resource.trainedWords?.[0];
-    if (triggerWord) {
-      if (item?.triggerType === 'negative')
-        // while (negativePrompt.startsWith(triggerWord)) {
-        negativePrompt = negativePrompt.replaceAll(`${triggerWord}, `, '');
-      // }
-      if (item?.triggerType === 'positive')
-        // while (prompt.startsWith(triggerWord)) {
-        prompt = prompt.replaceAll(`${triggerWord}, `, '');
-      // }
-    }
-  }
-
-  // infer draft from resources if not included in meta params
-  const isDraft =
-    metadata?.params?.draft ??
-    (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
-
-  const sampler =
-    Object.entries(samplersToSchedulers).find(
-      ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
-    )?.[0] ?? generation.defaultValues.sampler;
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
@@ -729,45 +732,12 @@ function formatTextToImageStep({
     .map((x) => x?.id)
     .filter(isDefined);
 
-  const upscale =
-    'upscale' in input
-      ? {
-          upscaleWidth: input.width * (input.upscale as number),
-          upscaleHeight: input.height * (input.upscale as number),
-        }
-      : {};
-
   const params = metadata?.params;
 
-  const quantity = params?.quantity ?? 1;
-  // let quantity = input.quantity ?? 1;
-  // if (isDraft) {
-  //   quantity *= 4;
-  // }
-
   const data = {
-    baseModel,
-    prompt,
-    negativePrompt,
-    quantity,
-    engine: input.engine,
-    // controlNets: input.controlNets,
-    // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
-
-    width: input.width,
-    height: input.height,
-    seed: input.seed,
-    draft: isDraft,
-    workflow: 'txt2img',
-    //support using metadata params first (one of the quirks of draft mode makes this necessary)
-    clipSkip: params?.clipSkip ?? input.clipSkip,
-    steps: params?.steps ?? input.steps,
-    cfgScale: params?.cfgScale ?? input.cfgScale,
-    sampler: params?.sampler ?? sampler,
-    ...upscale,
-
-    fluxMode: params?.fluxMode ?? undefined,
-    fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
+    ...params,
+    fluxUltraRaw:
+      input.engine === 'flux-pro-raw' ? true : input.model === fluxUltraAir ? false : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.id === fluxUltraAirId)) {
@@ -784,7 +754,7 @@ function formatTextToImageStep({
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
-    params: data,
+    params: removeEmpty(data),
     images,
     status: step.status,
     metadata: metadata,
@@ -882,14 +852,14 @@ export async function queryGeneratedImageWorkflows({
   };
 }
 
-const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
-  free: Priority.LOW,
-  founder: Priority.NORMAL,
-  bronze: Priority.NORMAL,
-  silver: Priority.NORMAL,
-  gold: Priority.HIGH,
-};
-export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
-  if (!status.membershipPriority) return Priority.NORMAL;
-  return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
-}
+// const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
+//   free: Priority.LOW,
+//   founder: Priority.NORMAL,
+//   bronze: Priority.NORMAL,
+//   silver: Priority.NORMAL,
+//   gold: Priority.HIGH,
+// };
+// export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
+//   if (!status.membershipPriority) return Priority.NORMAL;
+//   return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
+// }

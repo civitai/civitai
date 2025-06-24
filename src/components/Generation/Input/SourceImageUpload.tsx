@@ -133,10 +133,10 @@ export function SourceImageUpload({
             if (!Object.keys(meta).length && !parser.isMadeOnSite()) {
               handleWarnOnMissingAiMetadata(
                 <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
-                  {`Video outputs based on this image must be PG, PG-13, or they will be blocked and you will not be refunded.`}
+                  {`Outputs based on this image must be PG, PG-13, or they will be blocked and you will not be refunded.`}
                 </Alert>
               );
-            }
+            } else handleWarnOnMissingAiMetadata(null);
           }
         });
       }

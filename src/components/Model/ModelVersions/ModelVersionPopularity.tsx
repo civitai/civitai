@@ -3,6 +3,7 @@ import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { trpc } from '~/utils/trpc';
 
 // const featureInfo = {
@@ -71,7 +72,8 @@ export const ModelVersionPopularity = ({
     { enabled: features.auctions }
   );
 
-  if (versionId === 1733399) return <></>;
+  if (getModelVersionUsesImageGen(versionId)) return <></>;
+
   if (!features.auctions) return <></>;
   // if we want to show this for non checkpoints, simply remove this line
   if (!isCheckpoint) return <></>;

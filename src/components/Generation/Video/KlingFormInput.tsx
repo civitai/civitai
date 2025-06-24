@@ -1,12 +1,22 @@
 import { KlingMode } from '@civitai/client';
-import { Anchor, Input } from '@mantine/core';
+import { Anchor, Input, Radio } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
+import {
+  InputNumberSlider,
+  InputRadioGroup,
+  InputSegmentedControl,
+  InputSelect,
+  InputTextArea,
+} from '~/libs/form';
+import {
+  klingAspectRatios,
+  klingDuration,
+  klingModels,
+} from '~/server/orchestrator/kling/kling.schema';
 
 export function KlingFormInput() {
   const form = useFormContext();
@@ -16,6 +26,13 @@ export function KlingFormInput() {
   return (
     <>
       <InputVideoProcess name="process" />
+      <InputRadioGroup name="model" label="Version">
+        <div className="flex flex-wrap gap-3">
+          {klingModels.map((value) => (
+            <Radio key={value} value={value} label={value.toLowerCase().replace('_', '.')} />
+          ))}
+        </div>
+      </InputRadioGroup>
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" warnOnMissingAiMetadata />
       )}
