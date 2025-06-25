@@ -100,7 +100,7 @@ export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "C
 
 export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
-export type BuzzAccountType = "user" | "generation" | "club";
+export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
 export type ArticleStatus = "Draft" | "Published" | "Unpublished";
 

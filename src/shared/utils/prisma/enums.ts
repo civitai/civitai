@@ -482,6 +482,8 @@ export const BuzzAccountType = {
   user: 'user',
   generation: 'generation',
   club: 'club',
+  green: 'green',
+  fakered: 'fakered',
 } as const;
 
 export type BuzzAccountType = (typeof BuzzAccountType)[keyof typeof BuzzAccountType];

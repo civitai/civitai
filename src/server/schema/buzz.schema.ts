@@ -36,6 +36,9 @@ export const buzzAccountTypes = [
   'user',
   'club',
   'generation',
+  // NEW TYPES:
+  'green',
+  'fakered',
   // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
   'creatorprogrambank',
   'cashpending',

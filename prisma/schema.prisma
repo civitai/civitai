@@ -2323,6 +2323,8 @@ enum BuzzAccountType {
   user
   generation
   club
+  green
+  fakered
 }
 
 model BuzzClaim {
