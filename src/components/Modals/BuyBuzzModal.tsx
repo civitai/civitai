@@ -1,6 +1,6 @@
 import { CloseButton, Group, Stack, Text, Divider, Modal, Anchor } from '@mantine/core';
 
-import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';

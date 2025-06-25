@@ -1,13 +1,10 @@
-import { Alert, Button, Group, Stack, Text } from '@mantine/core';
+import { Button, Group, Stack } from '@mantine/core';
 import { IconCreditCard, IconCreditCardFilled, IconMoodSad } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
+import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { COINBASE_FIXED_FEE } from '~/server/common/constants';
-import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 
 export const BuzzCoinbaseOnrampButton = ({
   unitAmount,

@@ -27,19 +27,21 @@ import {
   IconMoodDollar,
 } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
-import { useMutatePaddle } from '~/components/Paddle/util';
-import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import {
+  BuzzCoinbaseButton,
+  BuzzCoinbaseOnrampButton,
+  BuzzNowPaymentsButton,
+} from '~/components/Buzz/BuzzPurchase/Buttons';
+import { BuzzPurchasePaymentButton } from './Buttons/BuzzPurchasePaymentButton';
+import { BuzzTierIcon } from './BuzzTierIcon';
+import { BuzzTypeSelector } from './BuzzTypeSelector';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/SubscriptionFeature';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
-import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { Price } from '~/shared/utils/prisma/models';
 import {
@@ -47,19 +49,16 @@ import {
   formatPriceForDisplay,
   numberWithCommas,
 } from '~/utils/number-helpers';
-
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
-// import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
-import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { env } from '~/env/client';
+import { useRouter } from 'next/router';
+import { QS } from '~/utils/qs';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -69,153 +68,10 @@ export type BuzzPurchaseProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   onCancel?: () => void;
-};
-
-const BuzzPurchasePaymentButton = ({
-  unitAmount,
-  buzzAmount,
-  priceId,
-  onValidate,
-  onPurchaseSuccess,
-  purchaseSuccessMessage,
-  disabled,
-}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
-  disabled: boolean;
-  unitAmount: number;
-  buzzAmount: number;
-  priceId?: string;
-  onValidate: () => boolean;
-}) => {
-  const features = useFeatureFlags();
-  const paymentProvider = usePaymentProvider();
-  const currentUser = useCurrentUser();
-  const isMobile = useIsMobile();
-
-  const successMessage = useMemo(
-    () =>
-      purchaseSuccessMessage ? (
-        purchaseSuccessMessage(buzzAmount)
-      ) : (
-        <Stack>
-          <Text>Thank you for your purchase!</Text>
-          <Text>Purchased Buzz has been credited to your account.</Text>
-        </Stack>
-      ),
-    [buzzAmount, purchaseSuccessMessage]
-  );
-
-  const { completeStripeBuzzPurchaseMutation } = useQueryBuzzPackages({
-    onPurchaseSuccess: () => {
-      onPurchaseSuccess?.();
-    },
-  });
-
-  const { processCompleteBuzzTransaction } = useMutatePaddle();
-
-  const handleStripeSubmit = async () => {
-    if (!onValidate()) {
-      return;
-    }
-
-    if (!currentUser) {
-      return;
-    }
-
-    const metadata: PaymentIntentMetadataSchema = {
-      type: 'buzzPurchase',
-      unitAmount,
-      buzzAmount,
-      userId: currentUser.id as number,
-      priceId,
-    };
-
-    // openStripeTransactionModal(
-    //   {
-    //     unitAmount,
-    //     message: (
-    //       <Stack>
-    //         <Text>
-    //           You are about to purchase{' '}
-    //           <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
-    //         </Text>
-    //         <Text>Please fill in your data and complete your purchase.</Text>
-    //       </Stack>
-    //     ),
-    //     successMessage,
-    //     onSuccess: async (stripePaymentIntentId) => {
-    //       // We do it here just in case, but the webhook should also do it
-    //       await completeStripeBuzzPurchaseMutation({
-    //         amount: buzzAmount,
-    //         details: metadata,
-    //         stripePaymentIntentId,
-    //       });
-    //     },
-    //     metadata: metadata,
-    //     // paymentMethodTypes: ['card'],
-    //   },
-    //   { fullScreen: isMobile }
-    // );
-  };
-
-  const handlePaddleSubmit = async () => {
-    if (!onValidate()) {
-      return;
-    }
-
-    if (!currentUser) {
-      return;
-    }
-
-    dialogStore.trigger({
-      component: PaddleTransactionModal,
-      props: {
-        unitAmount,
-        currency: 'USD',
-        message: (
-          <Stack>
-            <Text>
-              You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />
-            </Text>
-            <Text>Please fill in your data and complete your purchase.</Text>
-          </Stack>
-        ),
-        successMessage,
-        onSuccess: async (transactionId) => {
-          await processCompleteBuzzTransaction({ id: transactionId });
-          onPurchaseSuccess?.();
-        },
-      },
-    });
-  };
-
-  return (
-    <Button
-      disabled={disabled || features.disablePayments}
-      onClick={
-        paymentProvider === 'Paddle'
-          ? handlePaddleSubmit
-          : paymentProvider === 'Stripe'
-          ? handleStripeSubmit
-          : undefined
-      }
-      radius="xl"
-    >
-      {features.disablePayments ? (
-        <Group gap="xs" wrap="nowrap">
-          <IconCreditCard size={20} />
-          <span>Credit Card</span>
-        </Group>
-      ) : (
-        <>
-          Pay Now{' '}
-          {!!unitAmount
-            ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
-            : ''}
-        </>
-      )}
-    </Button>
-  );
+  /**
+   * The initial buzz type to purchase. Can be 'green', 'red', or undefined.
+   */
+  initialBuzzType?: 'green' | 'red';
 };
 
 export const BuzzPurchase = ({
@@ -224,16 +80,22 @@ export const BuzzPurchase = ({
   minBuzzAmount,
   onCancel,
   purchaseSuccessMessage,
+  initialBuzzType,
   ...props
 }: BuzzPurchaseProps) => {
+  const router = useRouter();
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
-  const canUpgradeMembership = false;
   const currentUser = useCurrentUser();
+  const canUpgradeMembership = features.isGreen;
+
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
+  const [selectedBuzzType, setSelectedBuzzType] = useState<'green' | 'red' | undefined>(
+    features.isGreen ? 'green' : initialBuzzType
+  );
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
 
   const { packages = [], isLoading, processing } = useQueryBuzzPackages({});
@@ -307,9 +169,38 @@ export const BuzzPurchase = ({
     }
   }, [packages, minBuzzAmount]);
 
+  useEffect(() => {
+    if (selectedBuzzType === 'green' && !features.isGreen) {
+      // Redirect:
+      const query = {
+        minBuzzAmount: minBuzzAmount,
+        'sync-account': 'blue',
+      };
+
+      window.open(
+        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(query)}`,
+        '_blank',
+        'noreferrer'
+      );
+    }
+  }, [selectedBuzzType, features.isGreen]);
+
   const minBuzzAmountPrice = minBuzzAmount
     ? Math.max(minBuzzAmount / 10, constants.buzz.minChargeAmount)
     : constants.buzz.minChargeAmount;
+
+  // If no buzz type is selected, show selection screen
+  if (!selectedBuzzType) {
+    return <BuzzTypeSelector onSelect={setSelectedBuzzType} onCancel={onCancel} />;
+  }
+
+  if (!features.isGreen && selectedBuzzType === 'green') {
+    return (
+      <Center>
+        <Loader type="bars" />
+      </Center>
+    );
+  }
 
   return (
     <Grid>
@@ -575,69 +466,77 @@ export const BuzzPurchase = ({
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
 
             <Divider
-              label={`Pay $${formatCurrencyForDisplay(unitAmount, undefined, {
-                decimals: false,
-              })} USD`}
+              label={
+                unitAmount
+                  ? `Pay $${formatCurrencyForDisplay(unitAmount, undefined, {
+                      decimals: false,
+                    })} USD`
+                  : undefined
+              }
               labelPosition="center"
               classNames={{ label: 'text-sm font-bold' }}
             />
             <div className="flex flex-col gap-3 md:flex-row">
-              {features.coinbasePayments && (
-                <>
-                  {features.coinbaseOnramp && (
-                    <>
-                      <BuzzCoinbaseOnrampButton
-                        unitAmount={unitAmount}
-                        buzzAmount={buzzAmount}
-                        onPurchaseSuccess={onPurchaseSuccess}
-                        disabled={!ctaEnabled}
-                        purchaseSuccessMessage={purchaseSuccessMessage}
-                      />
-
-                      <BuzzCoinbaseOnrampButton
-                        unitAmount={unitAmount}
-                        buzzAmount={buzzAmount}
-                        onPurchaseSuccess={onPurchaseSuccess}
-                        disabled={!ctaEnabled}
-                        purchaseSuccessMessage={purchaseSuccessMessage}
-                        type="international"
-                      />
-                    </>
-                  )}
-                  <BuzzCoinbaseButton
-                    unitAmount={unitAmount}
-                    buzzAmount={buzzAmount}
-                    onPurchaseSuccess={onPurchaseSuccess}
-                    disabled={!ctaEnabled}
-                    purchaseSuccessMessage={purchaseSuccessMessage}
-                  />
-                </>
-              )}
-              {features.nowpaymentPayments && (
-                <BuzzNowPaymentsButton
+              {selectedBuzzType === 'green' ? (
+                <BuzzPurchasePaymentButton
                   unitAmount={unitAmount}
                   buzzAmount={buzzAmount}
                   onPurchaseSuccess={onPurchaseSuccess}
+                  onValidate={onValidate}
                   disabled={!ctaEnabled}
                   purchaseSuccessMessage={purchaseSuccessMessage}
                 />
-              )}
+              ) : (
+                <>
+                  {features.coinbasePayments && (
+                    <>
+                      {features.coinbaseOnramp && (
+                        <>
+                          <BuzzCoinbaseOnrampButton
+                            unitAmount={unitAmount}
+                            buzzAmount={buzzAmount}
+                            onPurchaseSuccess={onPurchaseSuccess}
+                            disabled={!ctaEnabled}
+                            purchaseSuccessMessage={purchaseSuccessMessage}
+                          />
 
-              <BuzzPurchasePaymentButton
-                unitAmount={unitAmount}
-                buzzAmount={buzzAmount}
-                priceId={selectedPrice?.id}
-                onPurchaseSuccess={onPurchaseSuccess}
-                onValidate={onValidate}
-                disabled={!ctaEnabled}
-                purchaseSuccessMessage={purchaseSuccessMessage}
-              />
-              <Button disabled radius="xl">
-                <Group gap="xs" wrap="nowrap">
-                  <IconBuildingBank size={20} />
-                  <span>Bank Account</span>
-                </Group>
-              </Button>
+                          <BuzzCoinbaseOnrampButton
+                            unitAmount={unitAmount}
+                            buzzAmount={buzzAmount}
+                            onPurchaseSuccess={onPurchaseSuccess}
+                            disabled={!ctaEnabled}
+                            purchaseSuccessMessage={purchaseSuccessMessage}
+                            type="international"
+                          />
+                        </>
+                      )}
+                      <BuzzCoinbaseButton
+                        unitAmount={unitAmount}
+                        buzzAmount={buzzAmount}
+                        onPurchaseSuccess={onPurchaseSuccess}
+                        disabled={!ctaEnabled}
+                        purchaseSuccessMessage={purchaseSuccessMessage}
+                      />
+                    </>
+                  )}
+                  {features.nowpaymentPayments && (
+                    <BuzzNowPaymentsButton
+                      unitAmount={unitAmount}
+                      buzzAmount={buzzAmount}
+                      onPurchaseSuccess={onPurchaseSuccess}
+                      disabled={!ctaEnabled}
+                      purchaseSuccessMessage={purchaseSuccessMessage}
+                    />
+                  )}
+
+                  <Button disabled radius="xl">
+                    <Group gap="xs" wrap="nowrap">
+                      <IconBuildingBank size={20} />
+                      <span>Bank Account</span>
+                    </Group>
+                  </Button>
+                </>
+              )}
             </div>
 
             {liveFeatures.buzzGiftCards && (
@@ -653,20 +552,21 @@ export const BuzzPurchase = ({
                 </Anchor>
               </Text>
             )}
-            {(features.nowpaymentPayments || features.coinbasePayments) && (
-              <Stack align="center">
-                <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
-                  Never purchased with Crypto before?{' '}
-                  <Anchor
-                    href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Learn how
-                  </Anchor>
-                </AlertWithIcon>
-              </Stack>
-            )}
+            {(features.nowpaymentPayments || features.coinbasePayments) &&
+              selectedBuzzType === 'red' && (
+                <Stack align="center">
+                  <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
+                    Never purchased with Crypto before?{' '}
+                    <Anchor
+                      href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Learn how
+                    </Anchor>
+                  </AlertWithIcon>
+                </Stack>
+              )}
 
             {/* {env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && (
                 <BuzzPaypalButton
@@ -692,24 +592,5 @@ export const BuzzPurchase = ({
         </Grid.Col>
       )}
     </Grid>
-  );
-};
-
-const iconSizesRatio = [1, 1.3, 1.6];
-
-const BuzzTierIcon = ({ tier }: { tier: number }) => {
-  return (
-    <Group gap={-4} wrap="nowrap">
-      {Array.from({ length: 3 }).map((_, i) => (
-        <IconBolt
-          key={i}
-          className={classes.buzzIcon}
-          size={20 * iconSizesRatio[i]}
-          color="currentColor"
-          fill="currentColor"
-          opacity={i < tier ? 1 : 0.2}
-        />
-      ))}
-    </Group>
   );
 };

@@ -3,7 +3,7 @@ import { Alert, Center, Container, Divider, Group, List, Stack, Text, Title } fr
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { z } from 'zod';
-import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
