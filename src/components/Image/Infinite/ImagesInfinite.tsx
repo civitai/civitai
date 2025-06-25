@@ -88,8 +88,8 @@ export function ImagesInfiniteContent({
             <MasonryColumns
               data={images}
               imageDimensions={(data) => {
-                const width = data?.width ?? 450;
-                const height = data?.height ?? 450;
+                const width = data?.width ? data.width : 450;
+                const height = data?.height ? data.height : 450;
                 return { width, height };
               }}
               adjustHeight={({ height }) => {

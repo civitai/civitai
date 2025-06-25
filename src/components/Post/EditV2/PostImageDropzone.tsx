@@ -151,9 +151,7 @@ export function PostImageDropzone({
         />
       </div>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
-      {!files.length && (
-        <UploadNotice />
-      )}
+      {!files.length && <UploadNotice />}
     </div>
   );
 }
