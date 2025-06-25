@@ -42,6 +42,7 @@ module.exports = {
         center: true,
       },
       colors: {
+        buzz: 'var(--buzz-color)',
         white: '#fefefe',
         black: '#222222',
         dark: {

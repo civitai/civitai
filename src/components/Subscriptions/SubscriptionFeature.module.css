@@ -1,0 +1,9 @@
+.paper {
+  background-color: color-mix(in srgb, var(--buzz-color) 20%, transparent);
+  margin: 0;
+  display: flex;
+  max-height: 100%;
+  width: 100%;
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid var(--buzz-color);
+  padding: 1rem;}

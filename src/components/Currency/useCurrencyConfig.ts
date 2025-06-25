@@ -1,0 +1,21 @@
+import { useMantineTheme, rgba } from '@mantine/core';
+import { CurrencyConfig } from '~/server/common/constants';
+import type { BuzzAccountType } from '~/shared/utils/prisma/enums';
+import { Currency } from '~/shared/utils/prisma/enums';
+
+export function useCurrencyConfig(currency?: Currency, type?: string) {
+  currency = currency ?? Currency.BUZZ; // Default to USD if no currency is provided
+  const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
+  return config;
+}
+
+export function useBuzzCurrencyConfig(type?: BuzzAccountType | 'red' | undefined) {
+  const theme = useMantineTheme();
+  const config = useCurrencyConfig(Currency.BUZZ, type);
+
+  return {
+    icon: config.icon,
+    color: config.color(theme),
+    fill: config.fill ? config.fill(theme) : undefined,
+  };
+}

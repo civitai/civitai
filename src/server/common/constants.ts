@@ -1197,6 +1197,16 @@ export const CurrencyConfig: Record<
         color: (theme) => theme.colors.blue[4],
         fill: (theme) => theme.colors.blue[4],
       },
+      green: {
+        icon: IconBolt,
+        color: (theme) => theme.colors.green[6],
+        fill: (theme) => theme.colors.green[6],
+      },
+      red: {
+        icon: IconBolt,
+        color: (theme) => theme.colors.red[6],
+        fill: (theme) => theme.colors.red[6],
+      },
     },
   },
   [Currency.USD]: {
