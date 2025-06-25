@@ -349,7 +349,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
                     <Stack gap={4}>
-                      <Text size="md" color="yellow">
+                      <Text size="md" c="yellow">
                         What&apos;s this?
                       </Text>
                       <Text size="sm">
@@ -472,7 +472,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
                     <Stack gap={4}>
-                      <Text size="md" color="yellow">
+                      <Text size="md" c="yellow">
                         What&apos;s this?
                       </Text>
                       <Text size="sm">

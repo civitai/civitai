@@ -90,10 +90,10 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
         }}
       >
         <div className="flex flex-col gap-0 self-end">
-          <Text size="xl" color="white" lineClamp={2} fw={600}>
+          <Text size="xl" c="white" lineClamp={2} fw={600}>
             {props.title}
           </Text>
-          <Text size="sm" color="white">
+          <Text size="sm" c="white">
             {isFutureDate(date) ? 'Ends on ' : ''}
             {formatDate(props?.date)}
           </Text>

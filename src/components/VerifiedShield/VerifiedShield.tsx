@@ -61,7 +61,7 @@ export function VerifiedShield({ file, ...props }: Props) {
         </Button>
       </Popover.Target>
       <Popover.Dropdown>
-        <Text fw={500} size="md" color={verified ? 'green' : 'red'} pb={5}>
+        <Text fw={500} size="md" c={verified ? 'green' : 'red'} pb={5}>
           File {verified ? 'Verified' : 'Unverified'}
         </Text>
         <Text pb={5}>{defaultMessage}</Text>

@@ -169,7 +169,7 @@ export function MediaFiltersDropdown({
             onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
             multiple
           >
-            <Group gap={8} className="my-4">
+            <Group gap={8}>
               {displayedBaseModels.map((baseModel, index) => (
                 <FilterChip key={index} value={baseModel}>
                   <span>{baseModel}</span>

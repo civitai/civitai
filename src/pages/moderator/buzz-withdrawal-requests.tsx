@@ -122,7 +122,7 @@ const UpdateBuzzWithdrawalRequest = ({
             ({requestIds.length})
           </Text>{' '}
           withdrawal request to{' '}
-          <Text component="span" fw="bold" color={WithdrawalRequestBadgeColor[status]}>
+          <Text component="span" fw="bold" c={WithdrawalRequestBadgeColor[status]}>
             {getDisplayName(status)}
           </Text>
           .

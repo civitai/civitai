@@ -365,7 +365,7 @@ export const CustomSearchBox = forwardRef<
               </Text>
             </HoverCard.Target>
             <HoverCard.Dropdown>
-              <Text size="sm" color="yellow" fw={500}>
+              <Text size="sm" c="yellow" fw={500}>
                 Pro-tip: Quick search faster!
               </Text>
               <Text size="xs" lh={1.2}>

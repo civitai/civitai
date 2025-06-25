@@ -465,7 +465,7 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
           </LoginPopover>
         )}
         {remainingSpots !== undefined && (
-          <Text align="center" size="xs" color="yellow.7">
+          <Text align="center" size="xs" c="yellow.7">
             {remainingSpots} spots left
           </Text>
         )}
