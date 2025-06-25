@@ -56,7 +56,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           <UserAvatarSimple {...user} />
           <div>
             {publishedAt && (
-              <Text className={cardClasses.dropShadow} size="xs" fw={500} color="white" inline>
+              <Text className={cardClasses.dropShadow} size="xs" fw={500} inline>
                 {formatDate(publishedAt)}
               </Text>
             )}

@@ -326,7 +326,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
 
         <Divider mx="-lg" />
         {error && (
-          <Text size="sm" color="red">
+          <Text size="sm" c="red">
             {error}
           </Text>
         )}

@@ -728,7 +728,7 @@ const WithdrawCashCard = () => {
         <div className="flex items-center gap-2">
           <h3 className="text-xl font-bold">Withdraw Cash</h3>
           {userPaymentConfiguration?.tipaltiPaymentsEnabled && (
-            <Anchor href="/tipalti/setup" c="white">
+            <Anchor href="/tipalti/setup">
               <IconSettings size={18} color="white" />
             </Anchor>
           )}

@@ -119,7 +119,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
             </CivitaiTooltip>
           )}
           <Stack className={classes.content} gap={6} p="xs">
-            <Text fz={14} fw={500} color="white" lineClamp={2} lh={1.2}>
+            <Text fz={14} fw={500} lineClamp={2} lh={1.2}>
               {title}
             </Text>
             <Group justify="space-between">

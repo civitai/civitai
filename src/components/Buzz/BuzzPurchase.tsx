@@ -399,11 +399,11 @@ export const BuzzPurchase = ({
                             </Text>
                             {price ? (
                               <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
-                                <Text fz={20} fw={510} color="accent.5">
+                                <Text fz={20} fw={510} c="accent.5">
                                   {buzzAmount.toLocaleString()} Buzz
                                 </Text>
                                 <Text
-                                  color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
+                                  c={colorScheme === 'dark' ? 'gray.0' : 'dark'}
                                   fz={20}
                                   fw="bold"
                                   style={{ fontVariantNumeric: 'tabular-nums' }}
@@ -641,7 +641,7 @@ export const BuzzPurchase = ({
             </div>
 
             {liveFeatures.buzzGiftCards && (
-              <Text align="center" size="xs" color="dimmed" mt="xs">
+              <Text align="center" size="xs" c="dimmed" mt="xs">
                 Don&rsquo;t see a supported payment method?{' '}
                 <Anchor
                   href="https://buybuzz.io/"

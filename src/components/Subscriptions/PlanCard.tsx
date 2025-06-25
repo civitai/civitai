@@ -1,14 +1,5 @@
 import type { ButtonProps, ThemeIconVariant } from '@mantine/core';
-import {
-  Button,
-  Card,
-  Center,
-  Group,
-  Select,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Button, Card, Center, Group, Select, Stack, Text, Title } from '@mantine/core';
 import {
   IconBolt,
   IconCategory,
@@ -141,7 +132,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             <Stack gap={0} align="center">
               {appliesForDiscount ? (
                 <Stack gap={0} align="center">
-                  <Text td="line-through" color="gray" component="span" align="center" lh={1}>
+                  <Text td="line-through" c="gray" component="span" align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
                   <Group justify="center" gap={4} align="flex-end">
@@ -243,4 +234,3 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     </Card>
   );
 }
-

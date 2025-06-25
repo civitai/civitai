@@ -242,10 +242,10 @@ export function QueueItem({
             {showDelayedMessage && cancellable && request.steps[0]?.$type !== 'videoGen' && (
               <Alert color="yellow" p={0}>
                 <div className="flex items-center gap-2 px-2 py-1">
-                  <Text size="xs" color="yellow" lh={1}>
+                  <Text size="xs" c="yellow" lh={1}>
                     <IconAlertTriangleFilled size={20} />
                   </Text>
-                  <Text size="xs" lh={1.2} color="yellow">
+                  <Text size="xs" lh={1.2} c="yellow">
                     <Text fw={500} component="span">
                       This is taking longer than usual.
                     </Text>

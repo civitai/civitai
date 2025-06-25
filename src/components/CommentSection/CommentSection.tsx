@@ -112,7 +112,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                 {!currentUser ? (
                   <Overlay color={rgba(theme.colors.gray[9], 0.6)} opacity={1} zIndex={5}>
                     <Stack align="center" justify="center" gap={2} style={{ height: '100%' }}>
-                      <Text size="xs" color={theme.colors.gray[4]}>
+                      <Text size="xs" c="gray.4">
                         You must be logged in to add a comment
                       </Text>
                       <Link href={`/login?returnUrl=${router.asPath}`}>

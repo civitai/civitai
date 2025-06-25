@@ -113,7 +113,7 @@ export function MediaDropzone({
               </Text>
             )}
             {fileExtensions.length > 0 && (
-              <Text size="sm" color="blue" inline className="pt-6">
+              <Text size="sm" c="blue" inline className="pt-6">
                 {`Accepted file types: ${fileExtensions.join(', ')}`}
               </Text>
             )}

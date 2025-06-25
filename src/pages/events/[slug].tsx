@@ -251,14 +251,14 @@ export default function EventPageDetails({
                       </Text>
                       <div className="flex items-end">
                         <Lightbulb color={userTeam} size={48} transform="rotate(180)" animated />
-                        <Text fz={80} fw={590} color={userTeam} lh="70px">
+                        <Text fz={80} fw={590} c={userTeam} lh="70px">
                           {cosmeticData?.lights ?? 0}
                         </Text>
                         <Text fz={32} fw={590} c="dimmed">
                           / 12
                         </Text>
                       </div>
-                      <Text size="sm" fw={500} color={userTeam} tt="capitalize" mt={5}>
+                      <Text size="sm" fw={500} c={userTeam} tt="capitalize" mt={5}>
                         {userTeam} Team
                       </Text>
                       <Popover withinPortal shadow="md">
@@ -355,7 +355,7 @@ export default function EventPageDetails({
                                     size={32}
                                     animated
                                   />
-                                  <Text size="xl" fw={590} tt="capitalize" color={color}>
+                                  <Text size="xl" fw={590} tt="capitalize" c={color}>
                                     {color} Team
                                   </Text>
                                 </Group>
@@ -406,7 +406,7 @@ export default function EventPageDetails({
                         {loadingUserRank ? (
                           <Loader type="bars" />
                         ) : (
-                          <Text size={96} fw="bold" align="center" color={userTeam} inline>
+                          <Text size={96} fw="bold" align="center" c={userTeam} inline>
                             {userRank?.toLocaleString()}
                           </Text>
                         )}

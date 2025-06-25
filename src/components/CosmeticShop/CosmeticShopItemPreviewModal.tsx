@@ -91,7 +91,7 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
                   <Text size="xs" align="center">
                     Do not miss out on new items in the shop!
                     <UnstyledButton onClick={onToggle}>
-                      <Text size="xs" component="span" color="blue">
+                      <Text size="xs" component="span" c="blue">
                         Click here to Enable notifications
                       </Text>
                     </UnstyledButton>
@@ -207,7 +207,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
                   <IconAlertTriangleFilled />
                 </Text>
 
-                <Text size="xs" color="yellow" lh={1.3}>
+                <Text size="xs" c="yellow" lh={1.3}>
                   This cosmetic is an <u>equippable</u>. It can only be applied to <u>one</u> piece
                   of content at a time.
                 </Text>

@@ -47,7 +47,7 @@ export default function BlockedModelTagsModal({ modelId }: { modelId: number }) 
         <Stack>
           {modelTags.length > 0 ? (
             <>
-              <Text size="sm" color="dimmed">
+              <Text size="sm" c="dimmed">
                 Select the tags you want to add to your blocking list
               </Text>
               <Chip.Group value={selectedTags} onChange={setSelectedTags} multiple>

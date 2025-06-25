@@ -445,7 +445,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 mb="xs"
               />
               {isEarlyAccessOver && (
-                <Text size="xs" color="red">
+                <Text size="xs" c="red">
                   Early access has ended for this model version. You cannot make changes to early
                   access settings.
                 </Text>
@@ -529,7 +529,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     {earlyAccessUnlockedDays.length !==
                       EARLY_ACCESS_CONFIG.timeframeValues.length && (
                       <Group wrap="nowrap">
-                        <Text size="xs" color="yellow">
+                        <Text size="xs" c="yellow">
                           You will unlock more early access day over time by posting models to the
                           site.
                         </Text>
@@ -699,7 +699,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
 
               {version?.earlyAccessConfig && !earlyAccessConfig && (
-                <Text size="xs" color="red">
+                <Text size="xs" c="red">
                   You will not be able to add this model to early access again after removing it.
                   Also, your payment for early access will be lost. Please consider this before
                   removing early access.
