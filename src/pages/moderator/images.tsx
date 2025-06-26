@@ -160,8 +160,8 @@ export default function Images() {
     // filter out csam and appeal if not enabled
     .filter(([key]) => {
       if (typeof key !== 'string') return false;
-      if (key === 'csam') return csamReports;
-      if (key === 'appeal') return appealReports;
+      if (key === ModReviewType.CSAM) return csamReports;
+      if (key === ModReviewType.Appeals) return appealReports;
       return true;
     })
     .map(([key, value]) => ({

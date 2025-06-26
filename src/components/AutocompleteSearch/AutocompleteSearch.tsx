@@ -57,6 +57,7 @@ import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
+import { usePathname } from 'next/navigation';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -197,6 +198,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
   const inputRef = useRef<HTMLInputElement>(null);
+  const pathname = usePathname();
+  const currentSection = pathname.split('/')[1] || 'models';
+  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
 
   const { status } = useInstantSearch({
     catchError: true,
@@ -427,6 +431,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
+          key={pathname}
           classNames={{
             root: classes.targetSelectorRoot,
             input: classes.targetSelectorInput,
@@ -435,7 +440,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             className: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          defaultValue={targetData[0].value}
+          defaultValue={searchTarget}
           // Ensure we disable search targets if they are not enabled
           data={targetData.filter(
             ({ value }) =>
