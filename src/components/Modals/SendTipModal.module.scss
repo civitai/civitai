@@ -25,8 +25,8 @@
   padding: 0 var(--mantine-spacing-xs);
 
   &[data-checked] {
-    border: 2px solid var(--mantine-color-accent-5);
-    color: var(--mantine-color-accent-5);
+    border: 2px solid var(--buzz-color);
+    color: var(--buzz-color);
     background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
   }
 }

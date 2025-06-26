@@ -16,7 +16,6 @@ import styles from './SubscriptionFeature.module.css';
 export const SubscriptionFeature = ({
   title,
   subtitle,
-  buzzType = 'yellow',
 }: {
   title: string | React.ReactNode;
   subtitle: string | ((className: string) => React.ReactNode);

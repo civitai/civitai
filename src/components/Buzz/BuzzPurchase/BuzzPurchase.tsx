@@ -298,7 +298,7 @@ export const BuzzPurchase = ({
                                     {buzzAmount.toLocaleString()} Buzz
                                   </Text>
                                   <Text
-                                    color={colorScheme === 'dark' ? 'gray.0' : 'dark'}
+                                    c={colorScheme === 'dark' ? 'gray.0' : 'dark'}
                                     fz={20}
                                     fw="bold"
                                     style={{ fontVariantNumeric: 'tabular-nums' }}
@@ -347,7 +347,13 @@ export const BuzzPurchase = ({
                             placeholder={`Minimum ${Number(
                               minBuzzAmountPrice * 10
                             ).toLocaleString()}`}
-                            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+                            leftSection={
+                              <CurrencyIcon
+                                currency={Currency.BUZZ}
+                                size={18}
+                                type={selectedBuzzType}
+                              />
+                            }
                             value={customAmount ? customAmount * 10 : undefined}
                             min={1000}
                             max={constants.buzz.maxChargeAmount * 10}
@@ -430,7 +436,11 @@ export const BuzzPurchase = ({
                               <Table.Tr key={min}>
                                 <Table.Td>
                                   <Group wrap="nowrap" gap={0}>
-                                    <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                    <CurrencyIcon
+                                      size={16}
+                                      currency={Currency.BUZZ}
+                                      type={selectedBuzzType}
+                                    />
                                     <Text size="sm" c="dimmed">
                                       {numberWithCommas(min)}
                                     </Text>
@@ -438,7 +448,11 @@ export const BuzzPurchase = ({
                                 </Table.Td>
                                 <Table.Td>
                                   <Group wrap="nowrap" gap={0}>
-                                    <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                    <CurrencyIcon
+                                      size={16}
+                                      currency={Currency.BUZZ}
+                                      type={selectedBuzzType}
+                                    />
                                     <Text size="sm" c="dimmed">
                                       {numberWithCommas(min * multiplier)}
                                     </Text>
@@ -451,7 +465,11 @@ export const BuzzPurchase = ({
                                 </Table.Td>
                                 <Table.Td>
                                   <Group wrap="nowrap" gap={0}>
-                                    <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                    <CurrencyIcon
+                                      size={16}
+                                      currency={Currency.BUZZ}
+                                      type={selectedBuzzType}
+                                    />
                                     <Text size="sm" c="dimmed">
                                       {numberWithCommas(Math.floor(1000 * multiplier))}
                                     </Text>

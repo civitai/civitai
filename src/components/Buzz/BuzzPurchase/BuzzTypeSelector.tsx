@@ -5,9 +5,38 @@ import React from 'react';
 export interface BuzzTypeSelectorProps {
   onSelect: (type: 'green' | 'red') => void;
   onCancel?: () => void;
+  greenButton?: {
+    text?: string;
+    description?: React.ReactNode;
+  };
+  redButton?: {
+    text?: string;
+    description?: React.ReactNode;
+  };
 }
 
-export function BuzzTypeSelector({ onSelect, onCancel }: BuzzTypeSelectorProps) {
+export function BuzzTypeSelector({
+  onSelect,
+  onCancel,
+  greenButton = {
+    text: 'Green Buzz',
+    description: (
+      <>
+        Can be purchased using <b>credit cards</b>.<br />
+        Can <b>only</b> be used to generate <b>safe for work</b> content.
+      </>
+    ),
+  },
+  redButton = {
+    text: 'Red Buzz',
+    description: (
+      <>
+        Can <b>only</b> be purchased using <b>crypto</b>.<br />
+        Can be used to generate <b>NSFW</b> content as well as anything else on the site.
+      </>
+    ),
+  },
+}: BuzzTypeSelectorProps) {
   return (
     <Stack align="center" justify="center" gap="md">
       <Text fw={700} fz={28} align="center" className="mb-2 text-gray-900 dark:text-gray-100">
@@ -34,11 +63,10 @@ export function BuzzTypeSelector({ onSelect, onCancel }: BuzzTypeSelectorProps) 
                 className="w-full min-w-[140px] bg-gradient-to-r from-green-500 to-emerald-400 px-6 py-4 text-lg font-bold shadow transition-all duration-150 hover:from-green-600 hover:to-emerald-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                 aria-label="Buy Green Buzz"
               >
-                Green Buzz
+                {greenButton.text}
               </Button>
               <Text size="sm" className="mt-3 text-center text-green-700 dark:text-green-200">
-                Can be purchased using <b>credit cards</b>.<br />
-                Can <b>only</b> be used to generate <b>safe for work</b> content.
+                {greenButton.description}
               </Text>
             </div>
           </div>
@@ -54,11 +82,10 @@ export function BuzzTypeSelector({ onSelect, onCancel }: BuzzTypeSelectorProps) 
                 className="w-full min-w-[140px] bg-gradient-to-r from-rose-500 to-pink-400 px-6 py-4 text-lg font-bold shadow transition-all duration-150 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
                 aria-label="Buy Red Buzz"
               >
-                Red Buzz
+                {redButton.text}
               </Button>
               <Text size="sm" className="mt-3 text-center text-red-700 dark:text-red-200">
-                Can <b>only</b> be purchased using <b>crypto</b>.<br />
-                Can be used to generate <b>NSFW</b> content as well as anything else on the site.
+                {redButton.description}
               </Text>
             </div>
           </div>
