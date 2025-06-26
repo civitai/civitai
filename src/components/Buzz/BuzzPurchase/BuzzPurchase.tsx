@@ -56,6 +56,7 @@ import { env } from '~/env/client';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -193,43 +194,17 @@ export const BuzzPurchase = ({
   }
 
   if (!features.isGreen && selectedBuzzType === 'green') {
-    const handleManualRedirect = () => {
-      const query = {
-        minBuzzAmount: minBuzzAmount,
-        'sync-account': 'blue',
-      };
-
-      window.location.href = `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(
-        query
-      )}`;
-    };
-
     return (
-      <Center>
-        <Stack align="center" gap="md" maw={400}>
-          <Loader type="bars" />
-          <Text size="sm" c="dimmed" ta="center">
-            A new window should open and redirect you to the Green Buzz purchase screen.
-            <br />
-            If it doesn&apos;t open automatically, please check your browser&apos;s popup blocker
-            settings.
-          </Text>
-          <Button
-            variant="light"
-            color="green"
-            radius="xl"
-            onClick={handleManualRedirect}
-            className="mt-2"
-          >
-            Go to Green Buzz Purchase Page
-          </Button>
-          {onCancel && (
-            <Button variant="subtle" color="gray" onClick={onCancel} size="sm">
-              Go Back
-            </Button>
-          )}
-        </Stack>
-      </Center>
+      <GreenEnvironmentRedirect
+        destinationPath="/purchase/buzz"
+        queryParams={{ minBuzzAmount }}
+        title="Redirecting to Green Buzz Purchase"
+        heading="Redirecting to Green Buzz Purchase"
+        description="A new window should open and redirect you to the Green Buzz purchase screen."
+        buttonText="Go to Green Buzz Purchase Page"
+        fullPageLayout={false}
+        onGoBack={() => setSelectedBuzzType(undefined)}
+      />
     );
   }
 

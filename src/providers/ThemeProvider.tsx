@@ -220,6 +220,7 @@ const theme = createTheme({
     // Do not attempt to add a buzz class here. Sadly, Mantine doesn't listen to CSS local variable overwrites,
     // Meaning that this is as useless as using the exact color combination. This is not the case with Tailwind.
     // We have a `buzz` color in Tailwind, that uses all cool tailwind stuff. Keep that up.
+    // Read more here (There ain't much to read...): https://github.com/orgs/mantinedev/discussions/1720
     // buzz: colorsTuple('rgb(var(--buzz-color))'),
   },
   white: '#fefefe',
