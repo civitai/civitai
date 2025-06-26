@@ -128,13 +128,8 @@ export async function whatIf(args: GenerationSchema & Ctx) {
     }
   }
 
-  const fixedTotal = workflow?.cost?.fixed
-    ? Object.values(workflow.cost.fixed).reduce((acc, value) => acc + value, 0)
-    : 0;
-  const trueBaseCost = workflow?.cost?.base ? workflow.cost.base - fixedTotal : 0;
-
   return {
-    cost: { ...workflow.cost, base: trueBaseCost },
+    cost: workflow.cost,
     ready,
   };
 }
