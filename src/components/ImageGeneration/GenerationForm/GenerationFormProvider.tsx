@@ -20,6 +20,7 @@ import {
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
+  generationSamplers,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
@@ -193,7 +194,12 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   )
     vae = undefined;
 
-  if (params.sampler === 'undefined') params.sampler = defaultValues.sampler;
+  if (
+    !params.sampler ||
+    params.sampler === 'undefined' ||
+    !(generationSamplers as string[]).includes(params.sampler)
+  )
+    params.sampler = defaultValues.sampler;
 
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`

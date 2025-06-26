@@ -8,6 +8,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { isDev } from '~/env/other';
 import clsx from 'clsx';
 import { Text } from '@mantine/core';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function KontextAd({ index, className }: { index: number; className?: string }) {
   const id = uuidv4();
@@ -16,6 +17,7 @@ export function KontextAd({ index, className }: { index: number; className?: str
   const [ref, inView] = useInView();
   const { kontextReady } = useAdsContext();
   const { getMessages } = useKontextContext();
+  const features = useFeatureFlags();
 
   const messages = getMessages(index);
 
@@ -46,7 +48,7 @@ export function KontextAd({ index, className }: { index: number; className?: str
     );
   }, [kontextReady, messages?.length, inView]);
 
-  if (!currentUser?.isModerator) return null;
+  if (!features.kontextAds) return null;
 
   return (
     <TwCard ref={ref} className={clsx(className)}>
