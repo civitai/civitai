@@ -140,6 +140,7 @@ export function GenericImageCard({
       <RoutedDialogLink
         name="imageDetail"
         state={{ imageId: entityId, filters: { postId: image.postId } }}
+        passHref
       >
         {cardContent}
       </RoutedDialogLink>

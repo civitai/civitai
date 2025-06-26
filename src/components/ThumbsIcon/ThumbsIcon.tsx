@@ -12,8 +12,8 @@ export function ThumbsUpIcon({ filled, ...iconProps }: Props) {
 
   return filled ? (
     <IconThumbUpFilled
-      {...iconProps}
       color={colorScheme === 'dark' ? undefined : 'var(--mantine-color-white)'}
+      {...iconProps}
     />
   ) : (
     <IconThumbUp {...iconProps} />
@@ -25,8 +25,8 @@ export function ThumbsDownIcon({ filled, ...iconProps }: Props) {
 
   return filled ? (
     <IconThumbDownFilled
-      {...iconProps}
       color={colorScheme === 'dark' ? undefined : 'var(--mantine-color-white)'}
+      {...iconProps}
     />
   ) : (
     <IconThumbDown {...iconProps} />

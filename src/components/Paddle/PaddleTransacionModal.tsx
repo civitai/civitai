@@ -278,7 +278,7 @@ export default function PaddleTransactionModal({
           >
             <Group gap="sm" align="center">
               <Group gap={8} justify="space-between" style={{ flexGrow: 1 }}>
-                <Text fz={20} fw={510} color="yellow.6">
+                <Text fz={20} fw={510} c="yellow.6">
                   {numberWithCommas(unitAmount * 10)} Buzz
                 </Text>
                 <Text

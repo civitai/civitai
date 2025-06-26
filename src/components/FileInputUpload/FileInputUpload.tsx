@@ -39,7 +39,7 @@ export function FileInputUpload({
   };
 
   const [fileTypeError, setFileTypeError] = useState('');
- 
+
   useDidUpdate(() => {
     const shouldUpdate = !isEqual(value, state);
     if (shouldUpdate) setState(value);
@@ -132,22 +132,29 @@ export function FileInputUpload({
                   size="xl"
                   radius="xs"
                   styles={{
-                    root: { height: '100%', borderTopRightRadius: 0, borderBottomRightRadius: 0, width: '100%' },
-                    section: { alignItems: 'flex-start', paddingTop: 6, textShadow: '0 0 2px #000' },
+                    root: {
+                      height: '100%',
+                      borderTopRightRadius: 0,
+                      borderBottomRightRadius: 0,
+                      width: '100%',
+                    },
+                    section: {
+                      alignItems: 'flex-start',
+                      paddingTop: 6,
+                      textShadow: '0 0 2px #000',
+                    },
                   }}
                   className={classes.stackedProgressBar}
-                  
                 >
-                  <Progress.Section 
-                  value={progress}
-                   color={progress < 100 ? 'blue' : 'green'}
-                   striped
-                  animated>
-                    <Progress.Label>
-                    {Math.floor(progress)}%
-                    </Progress.Label>
+                  <Progress.Section
+                    value={progress}
+                    color={progress < 100 ? 'blue' : 'green'}
+                    striped
+                    animated
+                  >
+                    <Progress.Label>{Math.floor(progress)}%</Progress.Label>
                   </Progress.Section>
-                  </Progress.Root>
+                </Progress.Root>
                 <Group justify="space-between" className={classes.stackedProgressStatus}>
                   <Text className={classes.stackedProgressStatusText}>{`${formatBytes(
                     speed
@@ -159,29 +166,24 @@ export function FileInputUpload({
               </Box>
             ) : (
               <Stack gap={2}>
-                <Progress.Root
-                  style={{ width: '100%' }}
-                  size="xl"
-                >
-                  <Progress.Section value={progress}
-                   color={progress < 100 ? 'blue' : 'green'}
-                  striped
-                  animated>
-                    <Progress.Label>
-                      {Math.floor(progress)}%
-                    </Progress.Label>
+                <Progress.Root style={{ width: '100%' }} size="xl">
+                  <Progress.Section
+                    value={progress}
+                    color={progress < 100 ? 'blue' : 'green'}
+                    striped
+                    animated
+                  >
+                    <Progress.Label>{Math.floor(progress)}%</Progress.Label>
                   </Progress.Section>
-                  </Progress.Root>
+                </Progress.Root>
                 <Group justify="space-between">
                   <Text size="xs" c="dimmed">{`${formatBytes(speed)}/s`}</Text>
-                  <Text size="xs" c="dimmed">{`${formatSeconds(
-                    timeRemaining
-                  )} remaining`}</Text>
+                  <Text size="xs" c="dimmed">{`${formatSeconds(timeRemaining)} remaining`}</Text>
                 </Group>
               </Stack>
             ))}
           {status === 'error' && (
-            <Text size="xs" color="red">
+            <Text size="xs" c="red">
               Error uploading file
             </Text>
           )}
@@ -201,4 +203,3 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   stackUploadProgress?: boolean;
   extra?: React.ReactNode;
 };
- 

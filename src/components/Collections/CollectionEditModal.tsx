@@ -379,7 +379,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                           descriptionProps={{ mb: 12 }}
                         >
                           {collection.metadata?.youtubeSupportEnabled ? (
-                            <Text size="sm" color="primary">
+                            <Text size="sm" c="primary">
                               Youtube support is enabled for this collection.
                             </Text>
                           ) : (

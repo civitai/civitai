@@ -105,7 +105,7 @@ export function BountyCard({ data }: Props) {
                 variant="light"
                 radius="xl"
               >
-                <Text c="white" size="xs" tt="capitalize" fw="bold">
+                <Text size="xs" tt="capitalize" fw="bold">
                   {getDisplayName(type)}
                 </Text>
               </Badge>

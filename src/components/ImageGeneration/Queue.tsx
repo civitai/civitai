@@ -13,14 +13,23 @@ import { Fragment, useMemo } from 'react';
 export function Queue() {
   const filters = useFiltersContext((state) => state.generation);
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
-    useGetTextToImageRequests();
+  const {
+    data = [],
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetching,
+    isRefetching,
+    isError,
+    error,
+  } = useGetTextToImageRequests();
 
   const kontextMessages = useMemo(
     () =>
-      data?.flatMap((request) =>
-        request.steps.map((step) => ({ content: step.params.prompt, createdAt: request.createdAt }))
-      ),
+      data.map((request) => ({
+        content: request.steps.map((step) => step.params.prompt).join(', '),
+        createdAt: request.createdAt,
+      })),
     [data]
   );
 
@@ -79,6 +88,8 @@ export function Queue() {
       </div>
     );
 
+  const { marker } = filters;
+
   return (
     <div className="flex flex-col gap-2 px-3">
       <Text size="xs" c="dimmed" mt="xs">
@@ -88,23 +99,21 @@ export function Queue() {
       </Text>
       <KontextProvider messages={kontextMessages}>
         <div className="flex flex-col gap-2">
-          {data.map((request, index) =>
-            request.steps.map((step) => {
-              const { marker } = filters;
-
-              return (
-                <Fragment key={request.id}>
-                  {index !== 0 && (index + 4) % 5 === 0 && <KontextAd index={index} />}
-                  <QueueItem
-                    id={request.id.toString()}
-                    request={request}
-                    step={step}
-                    filter={{ marker }}
-                  />
-                </Fragment>
-              );
-            })
-          )}
+          {data.map((request, index) => {
+            return (
+              <Fragment key={request.id}>
+                {index !== 0 && (index + 4) % 5 === 0 && (
+                  <KontextAd key={index} index={index} className="max-w-sm p-3" />
+                )}
+                <QueueItem
+                  id={request.id.toString()}
+                  request={request}
+                  step={request.steps[0]}
+                  filter={{ marker }}
+                />
+              </Fragment>
+            );
+          })}
         </div>
       </KontextProvider>
       {hasNextPage ? (
