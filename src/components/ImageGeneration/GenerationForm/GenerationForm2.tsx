@@ -259,6 +259,8 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
+    if (disablePriority) params.priority = 'low';
+
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
     if (isFlux && isFluxStandard) {
