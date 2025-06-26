@@ -157,10 +157,9 @@ export default function Images() {
 
   const segments = Object.entries(ModReviewType)
     // filter out csam and appeal if not enabled
-    .filter(([key]) => {
-      if (typeof key !== 'string') return false;
-      if (key === ModReviewType.CSAM) return csamReports;
-      if (key === ModReviewType.Appeals) return appealReports;
+    .filter(([, value]) => {
+      if (value === ModReviewType.CSAM) return csamReports;
+      if (value === ModReviewType.Appeals) return appealReports;
       return true;
     })
     .map(([key, value]) => ({
