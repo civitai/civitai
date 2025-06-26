@@ -154,7 +154,7 @@ export const CreateWithdrawalRequest = () => {
             </Paper>
 
             {status?.maxAmount && (
-              <Text size="xs" color="yellow.6">
+              <Text size="xs" c="yellow.6">
                 You can request up to{' '}
                 <Text size="xs" component="span" fw="bold">
                   {numberWithCommas(status.maxAmount * constants.buzz.buzzDollarRatio)}{' '}

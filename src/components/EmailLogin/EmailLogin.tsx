@@ -136,7 +136,7 @@ export const EmailLogin = ({
             }
           />
           {captchaState.status === 'error' && (
-            <Text size="xs" color="red">
+            <Text size="xs" c="red">
               {captchaState.error}
             </Text>
           )}

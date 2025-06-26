@@ -149,13 +149,13 @@ export function SearchLayout({
                   <Stack maw={750} align="center" justify="center" className="h-full">
                     <Stack align="center" gap={0}>
                       <IconAlertTriangle size={42} color="red" />
-                      <Text weight={700} size="xl" color="red">
+                      <Text weight={700} size="xl" c="red">
                         Warning
                       </Text>
                     </Stack>
                     <Text align="center">
                       Your search may be for{' '}
-                      <Text span weight={700} color="red">
+                      <Text span weight={700} c="red">
                         illegal and abusive sexual material involving minors
                       </Text>
                       .

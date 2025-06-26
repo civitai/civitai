@@ -15,10 +15,11 @@ import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { isProd } from '~/env/other';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { blobToFile } from '~/utils/file-utils';
 import { createImageElement, imageToJpegBlob } from '~/utils/image-utils';
+import { preprocessFile } from '~/utils/media-preprocessors';
 import { getMetadata, encodeMetadata, ExifParser } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
 
@@ -29,28 +30,32 @@ export default function MetadataTester() {
   const [nsfw, setNsfw] = useState<boolean>(false);
 
   const onDrop = async (files: File[]) => {
-    console.log({ files });
-    // const [file] = files;
-    const jpegBlob = await imageToJpegBlob(files[0]);
-    const file = await blobToFile(jpegBlob);
-    // const [file] = files;
+    const type = files[0].type;
+    if (IMAGE_MIME_TYPE.includes(type as (typeof IMAGE_MIME_TYPE)[number])) {
+      // const [file] = files;
+      const jpegBlob = await imageToJpegBlob(files[0]);
+      const file = await blobToFile(jpegBlob);
+      // const [file] = files;
 
-    const parser = await ExifParser(file);
-    const parsed = parser.parse();
-    console.log({ parsed });
-    const meta = await parser.getMetadata();
-    const encoded = parser.encode(meta);
-    // const meta = await getMetadata(file);
-    setMeta(meta);
+      const parser = await ExifParser(file);
+      const parsed = parser.parse();
+      console.log({ parsed });
+      const meta = await parser.getMetadata();
+      const encoded = parser.encode(meta);
+      // const meta = await getMetadata(file);
+      setMeta(meta);
 
-    const img = await createImageElement(file);
-    console.log({ img });
+      const img = await createImageElement(file);
+      console.log({ img });
 
-    console.log({ meta });
-    // const encoded = await encodeMetadata(meta);
-    console.log({ encoded });
-    const result = auditMetaData(meta, nsfw);
-    console.log({ result });
+      console.log({ meta });
+      // const encoded = await encodeMetadata(meta);
+      console.log({ encoded });
+      const result = auditMetaData(meta, nsfw);
+      console.log({ result });
+    }
+    const metadata = await preprocessFile(files[0]);
+    console.log({ metadata });
   };
 
   const resources = (meta?.resources ?? []) as any[];
@@ -60,7 +65,12 @@ export default function MetadataTester() {
       <Stack>
         <Title>Metadata Tester</Title>
         <Switch checked={nsfw} onChange={() => setNsfw((c) => !c)} label="NSFW" />
-        <Dropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} maxFiles={1}>
+        <Dropzone
+          onDrop={onDrop}
+          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+          maxFiles={1}
+          maxSize={50 * 1024 ** 2}
+        >
           <Dropzone.Accept>
             <IconUpload
               size={50}
@@ -84,7 +94,7 @@ export default function MetadataTester() {
               Drag images here or click to select files
             </Text>
             <Text size="sm" c="dimmed" inline mt={7}>
-              Attach as many files as you like, each file should not exceed 5mb
+              Attach as many files as you like, each file should not exceed 50mb
             </Text>
           </div>
         </Dropzone>

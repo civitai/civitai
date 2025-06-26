@@ -315,7 +315,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  if (!params.aspectRatio) {
+  if (!params.aspectRatio && params.width && params.height) {
     params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
     if (getIsFlux(params.baseModel))
       params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);

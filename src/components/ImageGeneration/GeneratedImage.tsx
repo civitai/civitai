@@ -91,7 +91,7 @@ import {
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
-  request: NormalizedGeneratedImageResponse;
+  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: NormalizedGeneratedImageStep;
 };
 
@@ -102,7 +102,7 @@ export function GeneratedImage({
   isLightbox,
 }: {
   image: NormalizedGeneratedImage;
-  request: NormalizedGeneratedImageResponse;
+  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
@@ -449,7 +449,7 @@ export function GeneratedImageLightbox({
   request,
 }: {
   image: NormalizedGeneratedImage;
-  request: NormalizedGeneratedImageResponse;
+  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
 }) {
   const dialog = useDialogContext();
   const { steps } = useGetTextToImageRequestsImages();

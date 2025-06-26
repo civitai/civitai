@@ -114,7 +114,7 @@ export const getPlanDetails: (
                 </Text>
               ) : (
                 <Text>
-                  <Text span color="yellow.7">
+                  <Text span c="yellow.7">
                     Rewards give {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
                     Buzz!
                   </Text>

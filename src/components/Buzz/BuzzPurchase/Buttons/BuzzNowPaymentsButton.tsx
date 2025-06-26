@@ -54,7 +54,7 @@ export const BuzzNowPaymentsButton = ({
           : ''}
       </Button>
       {NOW_PAYMENTS_FIXED_FEE > 0 && (
-        <Text size="xs" color="dimmed" mt={8}>
+        <Text size="xs" c="dimmed" mt={8}>
           Crypto purchases include a $
           {formatCurrencyForDisplay(NOW_PAYMENTS_FIXED_FEE, undefined, { decimals: true })} fee to
           cover network expenses.

@@ -89,7 +89,7 @@ export function ClubPostContextMenu({
       children: (
         <Stack>
           <Text>Are you sure you want to delete this club post?</Text>
-          <Text size="sm" color="red">
+          <Text size="sm" c="red">
             This action is not reversible
           </Text>
         </Stack>

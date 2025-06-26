@@ -1,5 +1,13 @@
 import type { MantineTheme } from '@mantine/core';
-import { Group, Rating, Stack, Text, ThemeIcon, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import {
+  Group,
+  Rating,
+  Stack,
+  Text,
+  ThemeIcon,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconArrowsHorizontal,
   IconBadges,
@@ -226,7 +234,7 @@ export function LeaderboardMetrics({
         tooltip={
           <Stack gap={0} align="center">
             {delta && delta !== 0 ? (
-              <Text size="xs" color={delta > 0 ? 'green' : 'red'}>
+              <Text size="xs" c={delta > 0 ? 'green' : 'red'}>
                 {delta > 0 ? '+' : ''}
                 {numberWithCommas(delta)}
               </Text>

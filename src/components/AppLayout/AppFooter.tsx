@@ -81,16 +81,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Careers',
   },
   {
-    key: 'content-removal',
-    href: '/content/content-removal-request',
-    children: 'Content Removal',
-  },
-  {
-    key: 'contact-us',
-    href: '/content/complaints',
-    children: 'Complaints',
-  },
-  {
     key: '2257',
     href: '/content/2257',
     children: '18 U.S.C. §2257',

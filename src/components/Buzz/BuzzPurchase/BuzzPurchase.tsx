@@ -181,7 +181,7 @@ export const BuzzPurchase = ({
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen]);
+  }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
 
   const minBuzzAmountPrice = minBuzzAmount
     ? Math.max(minBuzzAmount / 10, constants.buzz.minChargeAmount)
@@ -193,9 +193,42 @@ export const BuzzPurchase = ({
   }
 
   if (!features.isGreen && selectedBuzzType === 'green') {
+    const handleManualRedirect = () => {
+      const query = {
+        minBuzzAmount: minBuzzAmount,
+        'sync-account': 'blue',
+      };
+
+      window.location.href = `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(
+        query
+      )}`;
+    };
+
     return (
       <Center>
-        <Loader type="bars" />
+        <Stack align="center" gap="md" maw={400}>
+          <Loader type="bars" />
+          <Text size="sm" c="dimmed" ta="center">
+            A new window should open and redirect you to the Green Buzz purchase screen.
+            <br />
+            If it doesn&apos;t open automatically, please check your browser&apos;s popup blocker
+            settings.
+          </Text>
+          <Button
+            variant="light"
+            color="green"
+            radius="xl"
+            onClick={handleManualRedirect}
+            className="mt-2"
+          >
+            Go to Green Buzz Purchase Page
+          </Button>
+          {onCancel && (
+            <Button variant="subtle" color="gray" onClick={onCancel} size="sm">
+              Go Back
+            </Button>
+          )}
+        </Stack>
       </Center>
     );
   }
