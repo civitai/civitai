@@ -95,7 +95,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
             includeControls={['formatting', 'link', 'mentions']}
             editorSize="xl"
             onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
-            inputClasses="break-all"
+            inputClasses="break-words"
             // withLinkValidation
           />
           <Group justify="space-between">

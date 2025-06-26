@@ -34,6 +34,7 @@
 
   :global .ProseMirror {
     min-height: var(--editor-min-height, 50px);
+    word-break: break-word;
 
     p.is-editor-empty:first-of-type::before {
       // color should be set inline via style prop if it depends on error

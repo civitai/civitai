@@ -175,7 +175,7 @@ export const CommentForm = ({
             content: clsx(classes.content, 'rounded-3xl'),
           }}
           data-testid="comment-form"
-          inputClasses="break-all"
+          inputClasses="break-words"
           hideToolbar
         />
         {focused && (
