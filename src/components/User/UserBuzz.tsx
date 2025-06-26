@@ -31,16 +31,16 @@ export function UserBuzz({
 
   const content = balanceLoading ? (
     <Group gap={4} wrap="nowrap">
-      <Icon size={iconSize} color={config.color(theme)} fill={config.color(theme)} />
-      <Loader color={config.color(theme)} type="dots" size="xs" />
+      <Icon size={iconSize} color={config.color} fill={config.color} />
+      <Loader color={config.color} type="dots" size="xs" />
     </Group>
   ) : (
-    <Text component="div" c={config.color(theme)} tt="uppercase" {...textProps}>
+    <Text component="div" c={config.color} tt="uppercase" {...textProps}>
       <Group gap={4} wrap="nowrap">
         <Icon size={iconSize} color="currentColor" fill="currentColor" />
         <Text size={textSize} fw={600} lh={0} style={{ fontVariantNumeric: 'tabular-nums' }} span>
           {balance === null ? (
-            <Loader size="sm" type="dots" color={config.color(theme)} />
+            <Loader size="sm" type="dots" color={config.color} />
           ) : withAbbreviation ? (
             abbreviateNumber(balance, { floor: true })
           ) : (

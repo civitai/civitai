@@ -34,7 +34,7 @@ module.exports = {
       },
       // for container queries
       containers: breakpoints,
-    width: breakpoints,
+      width: breakpoints,
       maxWidth: breakpoints,
       minWidth: breakpoints,
       container: {
@@ -42,7 +42,7 @@ module.exports = {
         center: true,
       },
       colors: {
-        buzz: 'var(--buzz-color)',
+        buzz: 'rgb(var(--buzz-color))',
         white: '#fefefe',
         black: '#222222',
         dark: {

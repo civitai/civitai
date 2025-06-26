@@ -524,8 +524,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           badge={
             isMainBenefactor(bounty, b.user) ? (
               <IconStar
-                color={CurrencyConfig[currency].color(theme)}
-                fill={CurrencyConfig[currency].color(theme)}
+                color={CurrencyConfig[currency].color}
+                fill={CurrencyConfig[currency].color}
                 size={18}
               />
             ) : null
@@ -536,8 +536,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         {b.awardedToId && (
           <Tooltip label="This supporter has already awarded an entry" color="dark" withinPortal>
             <IconTrophy
-              color={CurrencyConfig[currency].color(theme)}
-              fill={CurrencyConfig[currency].color(theme)}
+              color={CurrencyConfig[currency].color}
+              fill={CurrencyConfig[currency].color}
               size={18}
             />
           </Tooltip>

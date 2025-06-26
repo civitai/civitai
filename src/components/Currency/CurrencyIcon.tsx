@@ -10,13 +10,10 @@ type Props = IconProps & {
 };
 
 export function CurrencyIcon({ currency = Currency.BUZZ, type, ...iconProps }: Props) {
-  const theme = useMantineTheme();
   const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
   const Icon = config.icon;
 
   // TODO: Add tooltip: this action will cost <CURRENCY>
 
-  return (
-    <Icon color={config.color(theme)} fill={config.fill?.(theme) ?? 'transparent'} {...iconProps} />
-  );
+  return <Icon color={config.color} fill={config.fill ?? 'transparent'} {...iconProps} />;
 }

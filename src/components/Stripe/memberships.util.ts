@@ -65,15 +65,6 @@ export const useCanUpgrade = () => {
   );
 };
 
-export const appliesForFounderDiscount = (tier?: string) => {
-  const appliesForDiscount =
-    !!tier &&
-    tier === constants.memberships.founderDiscount.tier &&
-    new Date() < constants.memberships.founderDiscount.maxDiscountDate;
-
-  return appliesForDiscount;
-};
-
 export const useRefreshSession = (shouldReload = true) => {
   const currentUser = useCurrentUser();
   const [refreshing, setRefreshing] = useState(false);

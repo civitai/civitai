@@ -1,5 +1,5 @@
 import type { MantineColorScheme } from '@mantine/core';
-import { ColorSchemeScript, createTheme, MantineProvider, Modal } from '@mantine/core';
+import { ColorSchemeScript, createTheme, MantineProvider, Modal, colorsTuple } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
 const theme = createTheme({
@@ -217,18 +217,10 @@ const theme = createTheme({
       '#326D5C',
       '#325D51',
     ],
-    buzz: [
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-      'var(--buzz-color)',
-    ],
+    // Do not attempt to add a buzz class here. Sadly, Mantine doesn't listen to CSS local variable overwrites,
+    // Meaning that this is as useless as using the exact color combination. This is not the case with Tailwind.
+    // We have a `buzz` color in Tailwind, that uses all cool tailwind stuff. Keep that up.
+    // buzz: colorsTuple('rgb(var(--buzz-color))'),
   },
   white: '#fefefe',
   black: '#222',

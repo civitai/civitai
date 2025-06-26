@@ -1179,8 +1179,12 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 
 type CurrencyTheme = {
   icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
-  color: (theme: MantineTheme) => string;
-  fill?: (theme: MantineTheme) => string | undefined;
+  color: string;
+  fill?: string | undefined;
+  cssVariableName?: string;
+  classNames?: {
+    btn?: string;
+  };
 };
 
 export const CurrencyConfig: Record<
@@ -1189,34 +1193,40 @@ export const CurrencyConfig: Record<
 > = {
   [Currency.BUZZ]: {
     icon: IconBolt,
-    color: (theme) => theme.colors.yellow[7],
-    fill: (theme) => theme.colors.yellow[7],
+    color: '#f59f00',
+    fill: '#f59f00',
     themes: {
       generation: {
         icon: IconBolt,
-        color: (theme) => theme.colors.blue[4],
-        fill: (theme) => theme.colors.blue[4],
+        color: '#4dabf7',
+        fill: '#4dabf7',
       },
       green: {
         icon: IconBolt,
-        color: (theme) => theme.colors.green[6],
-        fill: (theme) => theme.colors.green[6],
+        color: '#40c057',
+        fill: '#40c057',
+        classNames: {
+          btn: 'bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-600 hover:to-emerald-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 shadow min-w-[140px] px-6 py-4 text-lg font-bold transition-all duration-150 border-none text-white',
+        },
       },
       red: {
         icon: IconBolt,
-        color: (theme) => theme.colors.red[6],
-        fill: (theme) => theme.colors.red[6],
+        color: '#f03e3e',
+        fill: '#f03e3e',
+        classNames: {
+          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] px-6 py-4 text-lg font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
+        },
       },
     },
   },
   [Currency.USD]: {
     icon: IconCurrencyDollar,
-    color: (theme) => theme.colors.yellow[7],
+    color: '#f59f00',
     fill: undefined,
   },
   [Currency.USDC]: {
     icon: IconCurrencyDollar,
-    color: (theme) => theme.colors.yellow[7],
+    color: '#f59f00',
     fill: undefined,
   },
 };

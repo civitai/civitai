@@ -60,6 +60,7 @@ export const PlanBenefitList = ({
                     size={themeIconSize}
                     radius="xl"
                     variant={iconVariant}
+                    autoContrast
                   >
                     {icon}
                   </ThemeIcon>

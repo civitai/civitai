@@ -1,7 +1,7 @@
 :root {
   --header-height: 60px;
   --footer-height: 45px;
-  --buzz-color: rgb(252, 156, 45);
+  --buzz-color: 252, 156, 45;
 }
 
 @layer {

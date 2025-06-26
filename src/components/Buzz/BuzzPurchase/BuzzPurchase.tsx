@@ -237,7 +237,7 @@ export const BuzzPurchase = ({
     <div
       style={{
         // @ts-ignore
-        '--buzz-color': buzzConfig.color,
+        '--buzz-color': buzzConfig.colorRgb,
       }}
     >
       <Grid>

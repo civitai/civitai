@@ -63,7 +63,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
     const colorScheme = useComputedColorScheme('dark');
     const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
     const Icon = config.icon;
-    const colorString = textColor || config.color(theme);
+    const colorString = textColor || config.color;
 
     return (
       <Tooltip
