@@ -1129,6 +1129,8 @@ export function GenerationFormContent() {
                       label: ratio.label,
                       value: `${i}`,
                     }))}
+                    withScrollArea
+                    maxDropdownHeight={300}
                   />
                 )}
 
