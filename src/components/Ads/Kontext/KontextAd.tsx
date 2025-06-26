@@ -51,11 +51,11 @@ export function KontextAd({ index, className }: { index: number; className?: str
   if (!features.kontextAds) return null;
 
   return (
-    <TwCard ref={ref} className={clsx(className)}>
+    <TwCard className={className}>
       <Text className="pb-1 text-sm" c="dimmed">
         Sponsored
       </Text>
-      <div id={id} />
+      <div ref={ref} id={id} />
     </TwCard>
   );
 }

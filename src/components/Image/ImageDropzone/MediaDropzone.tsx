@@ -120,7 +120,7 @@ export function MediaDropzone({
           </div>
         </div>
       </Dropzone>
-      {error && <Input.Error>{error.message}</Input.Error>}
+      {error && <Input.Error>{typeof error === 'string' ? error : error.message}</Input.Error>}
     </div>
   );
   // #endregion

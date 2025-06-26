@@ -1,5 +1,5 @@
 import { Anchor, Progress, Text } from '@mantine/core';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -63,7 +63,7 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [upload images]
-  const { files, canAdd, error, upload, progress } = useMediaUpload<{ postId: number }>({
+  const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
     count: images.length,
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
@@ -146,7 +146,7 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
-          loading={createPostMutation.isLoading}
+          loading={createPostMutation.isLoading || loading}
           className="rounded-lg"
         />
       </div>
