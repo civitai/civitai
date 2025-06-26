@@ -3,7 +3,10 @@
   cursor: default;
   border: 1px solid theme('colors.blue.5');
   padding-left: 5px;
-  background-color: theme('colors.gray.0');
+  background-color: light-dark(
+    theme('colors.gray.0'),
+    theme('colors.dark.4')
+  );
   
   div {
     position: absolute;
@@ -24,12 +27,6 @@
   }
 }
 
-:global([data-mantine-color-scheme="dark"]) {
-  .raterBadge {
-    background-color: theme('colors.dark.4');
-  }
-}
-
 .levelUp {
   position: fixed;
   top: 50%;
@@ -41,9 +38,5 @@
   align-items: center;
   overflow: visible;
   animation: fadeOut 500ms ease-in 2s forwards;
-
-  @media (max-width: 768px) {
-    max-width: 80%;
-    width: 100%;
-  }
+  will-change: opacity;
 }

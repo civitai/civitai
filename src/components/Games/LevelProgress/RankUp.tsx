@@ -14,8 +14,7 @@ export function RankUp({ className }: { className?: string }) {
       <LevelAnimation
         type="rank"
         lottieProps={{
-          height: 285,
-          style: { marginTop: -210 },
+          style: { marginTop: -210, height: 285 },
         }}
       />
       <Text fz={48} ta="center" fw={500} mt={-72} mb={10} lh={1}>

@@ -15,8 +15,10 @@
   z-index: 100;
 
   &:hover, &:active {
-    // background: #007fd4;
-    background-color: theme('colors.blue.6');
+    background-color: light-dark(
+      theme('colors.blue.6'),
+      theme('colors.blue.8')
+    );
   }
 }
 
@@ -24,7 +26,10 @@
   container-name: sidebar;
   container-type: inline-size;
   flex: 1;
-  border-color: theme('colors.gray.2');
+  border-color: light-dark(
+    theme('colors.gray.4'),
+    theme('colors.dark.5')
+  ) !important;
 }
 
 .left {
@@ -42,16 +47,5 @@
   }
   .content {
     border-right: 1px solid;
-  }
-}
-
-:global([data-mantine-color-scheme="dark"]) {
-  .resizer {
-    &:hover, &:active {
-      background-color: theme('colors.blue.8');
-    }
-  }
-  .content {
-    border-color: theme('colors.dark.5');
   }
 }
