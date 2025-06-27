@@ -27,6 +27,7 @@ export default function BuyBuzzModal({
     dialog.onClose();
   };
   const isMobile = isMobileDevice();
+
   return (
     <Modal
       {...dialog}

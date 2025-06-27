@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { MembershipTypeSelector } from '~/components/Purchase/MembershipTypeSelector';
 import { RedMembershipUnavailable } from '~/components/Purchase/RedMembershipUnavailable';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
-import { MembershipPlans } from '~/components/Purchase/MembershipPlans';
+import { GreenMembershipPlans } from '~/components/Purchase/GreenMembershipPlans';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -95,10 +95,9 @@ export default function Pricing() {
         '--buzz-color': buzzConfig.colorRgb,
       }}
     >
-      <MembershipPlans
+      <GreenMembershipPlans
         reason={reason}
         selectedBuzzType={selectedBuzzType}
-        onChangeBuzzType={() => setSelectedBuzzType(undefined)}
         interval={interval}
         onIntervalChange={setInterval}
         subscription={subscription}

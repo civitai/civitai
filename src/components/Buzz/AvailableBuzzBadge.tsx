@@ -1,7 +1,8 @@
 import { Badge, Text, Group, useComputedColorScheme, useMantineTheme, rgba } from '@mantine/core';
 import { UserBuzz } from '~/components/User/UserBuzz';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 
-export const AvailableBuzzBadge = () => {
+export const AvailableBuzzBadge = ({ buzzType = 'user' }: { buzzType?: BuzzAccountType }) => {
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -20,7 +21,7 @@ export const AvailableBuzzBadge = () => {
         <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
           Available Buzz
         </Text>
-        <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />
+        <UserBuzz iconSize={16} textSize="sm" accountType={buzzType} withTooltip />
       </Group>
     </Badge>
   );

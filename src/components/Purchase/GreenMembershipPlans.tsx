@@ -52,7 +52,7 @@ interface MembershipPlansProps {
   paymentProvider: string;
 }
 
-export function MembershipPlans({
+export function GreenMembershipPlans({
   reason,
   selectedBuzzType,
   onChangeBuzzType,
@@ -131,9 +131,7 @@ export function MembershipPlans({
               </div>
             </Alert>
           )}
-          <Title className={clsx(classes.title, 'text-center')}>
-            {!features.isGreen && selectedBuzzType === 'green' ? 'Green ' : ''}Memberships
-          </Title>
+          <Title className={clsx(classes.title, 'text-center')}>Green Memberships</Title>
           <Text align="center" className={classes.introText} style={{ lineHeight: 1.25 }}>
             As the leading generative AI community, we&rsquo;re adding new features every week. Help
             us keep the community thriving by becoming a Supporter and get exclusive perks.
@@ -289,6 +287,14 @@ export function MembershipPlans({
               </Group>
             </AlertWithIcon>
           )}
+
+          <Text className="text-center">
+            All memberships displayed below grant{' '}
+            <Text component="span" fw={700} className="text-buzz">
+              Green Buzz
+            </Text>{' '}
+          </Text>
+
           {isLoading ? (
             <Center p="xl">
               <Loader />
