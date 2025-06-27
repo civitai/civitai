@@ -9,6 +9,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { ResourceSelectHandler } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import clsx from 'clsx';
 
 export type ResourceSelectMultipleProps = {
   limit?: number;
@@ -110,51 +111,52 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     });
 
     return (
-      <Input.Wrapper {...inputWrapperProps} descriptionProps={{ mb: 8 }} ref={ref}>
-        <Stack gap="md" mb={inputWrapperProps.error ? 5 : undefined}>
-          {sortedGroups.map((group, index) => {
-            return (
-              <React.Fragment key={group.type}>
-                {index !== 0 && <Divider />}
-                <Input.Wrapper
-                  label={
-                    <Text c="dark.2" fw={590} inherit>
-                      {group.label}
-                    </Text>
-                  }
-                  labelProps={{ mb: 8 }}
-                >
-                  <Stack gap={8}>
-                    {group.resources.map((resource) => (
-                      <ResourceSelectCard
-                        key={resource.id}
-                        resource={resource}
-                        selectSource={selectSource}
-                        onUpdate={handleUpdate}
-                        onRemove={handleRemove}
-                      />
-                    ))}
-                  </Stack>
-                </Input.Wrapper>
-              </React.Fragment>
-            );
-          })}
-          {canAdd && !hideButton && (
-            <Button
-              variant="light"
-              leftSection={<IconPlus size={18} />}
-              onClick={handleOpenModal}
-              {...buttonProps}
-            >
-              {buttonLabel}
-            </Button>
-          )}
-          {hideButton && !_values.length && (
-            <Text c="dimmed" size="sm">
-              No resources selected
-            </Text>
-          )}
-        </Stack>
+      <Input.Wrapper
+        {...inputWrapperProps}
+        descriptionProps={{ mb: 8 }}
+        ref={ref}
+        className={clsx(inputWrapperProps.className, 'flex flex-col gap-2 py-2', {
+          ['mb-1.5']: inputWrapperProps.error,
+        })}
+      >
+        {sortedGroups.map((group, index) => {
+          return (
+            <React.Fragment key={group.type}>
+              {index !== 0 && <Divider />}
+              <div>
+                <Input.Label c="dark.2" fw={590} className="px-3">
+                  <u>{group.label}</u>
+                </Input.Label>
+                <div className="flex flex-col">
+                  {group.resources.map((resource) => (
+                    <ResourceSelectCard
+                      key={resource.id}
+                      resource={resource}
+                      selectSource={selectSource}
+                      onUpdate={handleUpdate}
+                      onRemove={handleRemove}
+                    />
+                  ))}
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+        {canAdd && !hideButton && (
+          <Button
+            variant="light"
+            leftSection={<IconPlus size={18} />}
+            onClick={handleOpenModal}
+            {...buttonProps}
+          >
+            {buttonLabel}
+          </Button>
+        )}
+        {hideButton && !_values.length && (
+          <Text c="dimmed" size="sm">
+            No resources selected
+          </Text>
+        )}
       </Input.Wrapper>
     );
   }

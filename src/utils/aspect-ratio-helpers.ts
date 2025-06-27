@@ -64,11 +64,12 @@ export function getResolutionsFromAspectRatios<T extends string>(
   }, {} as ResolutionAspectRatios<T>);
 }
 
-export function getResolutionsFromAspectRatiosMap<
-  TResolution extends number = number,
-  TAspectRatio extends string = string
->(resolutions: TResolution[], aspectRatios: TAspectRatio[], mod = 16) {
-  const map = new Map<TResolution, ResolutionAspectRatios<TAspectRatio>>();
+export function getResolutionsFromAspectRatiosMap<TAspectRatio extends string = string>(
+  resolutions: number[],
+  aspectRatios: TAspectRatio[],
+  mod = 16
+) {
+  const map = new Map<number, ResolutionAspectRatios<TAspectRatio>>();
   for (const resolution of resolutions) {
     map.set(resolution, getResolutionsFromAspectRatios(resolution, aspectRatios, mod));
   }
