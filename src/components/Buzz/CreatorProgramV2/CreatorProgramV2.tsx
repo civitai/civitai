@@ -74,6 +74,7 @@ import {
 } from '~/server/utils/creator-program.utils';
 import {
   MIN_WITHDRAWAL_AMOUNT,
+  SUPPORTED_BUZZ,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
@@ -344,7 +345,12 @@ export const CompensationPoolCard = () => {
         <div className="flex flex-col">
           <h3 className="my-0 text-center text-xl font-bold">Current Banked Buzz</h3>
           <div className="flex justify-center gap-1">
-            <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
+            <CurrencyIcon
+              className="my-auto"
+              currency={Currency.BUZZ}
+              type={SUPPORTED_BUZZ[0]}
+              size={20}
+            />
             <span className="text-2xl font-bold">
               {numberWithCommas(compensationPool?.size.current)}
             </span>

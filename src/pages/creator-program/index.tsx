@@ -56,6 +56,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { SUPPORTED_BUZZ } from '~/shared/constants/creator-program.constants';
 
 const sizing = {
   header: {
@@ -79,8 +80,9 @@ const sizing = {
 function CreatorsClubV1() {
   const applyFormUrl = `/user/buzz-dashboard`;
   const availability = getCreatorProgramAvailability();
-  const currencyType = 'green'; // Hard-coded currency type. Adjust to change in general.
-  const { classNames: greenClassNames, colorRgb: greenColorRgb } = useBuzzCurrencyConfig('green');
+  const { classNames: greenClassNames, colorRgb: greenColorRgb } = useBuzzCurrencyConfig(
+    SUPPORTED_BUZZ[0]
+  );
 
   return (
     <>
@@ -159,7 +161,7 @@ const HowItWorks: { text: string; icon: React.ReactNode }[] = [
 ];
 
 const HowItWorksSection = () => {
-  const { colorRgb: greenColorRgb } = useBuzzCurrencyConfig('green');
+  const { colorRgb: greenColorRgb } = useBuzzCurrencyConfig(SUPPORTED_BUZZ[0]);
   return (
     <Stack className={classes.section}>
       <Stack gap={0} mb="sm">
@@ -202,7 +204,7 @@ const HowItWorksSection = () => {
                     Each month Civitai allocates a Creator Compensation Pool from a portion of our
                     revenue based off of{' '}
                     <Text component="span" fw={700} className="font-bold text-buzz">
-                      Green Buzz
+                      Buzz
                     </Text>{' '}
                     purchased.
                   </Text>
