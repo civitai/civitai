@@ -182,7 +182,7 @@ export function SearchLayout({
                         </Text>
                         <br />
                         <Text size="xs" c="dimmed">
-                          (24/7, no caller ID saved)
+                          (no caller ID saved)
                         </Text>
                       </List.Item>
                       <List.Item>
