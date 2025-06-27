@@ -39,3 +39,38 @@ function findClosest(array: number[], target: number) {
     return Math.abs(b - target) < Math.abs(a - target) ? b : a;
   });
 }
+
+type ResolutionAspectRatios<T extends string> = Record<T, [width: number, height: number]>;
+/**
+ *
+ * @param resolution ie. 480, 720
+ * @param aspectRatios ie: ['16:9', '3:2', '1:1', '2:3', '9:16']
+ * @param mod
+ * @returns
+ */
+export function getResolutionsFromAspectRatios<T extends string>(
+  resolution: number,
+  aspectRatios: T[],
+  mod = 16
+): ResolutionAspectRatios<T> {
+  return aspectRatios.reduce<ResolutionAspectRatios<T>>((acc, ar) => {
+    const [w, h] = ar.split(':').map(Number);
+    if (isNaN(w) || isNaN(h)) throw new Error('invalid aspectRatios format');
+    const landscape = w >= h;
+    let upper = landscape ? Math.round((resolution * w) / h) : Math.round((resolution * h) / w);
+    const diff = upper % mod;
+    if (diff > 0) upper -= diff;
+    return { ...acc, [ar]: landscape ? [upper, resolution] : [resolution, upper] };
+  }, {} as ResolutionAspectRatios<T>);
+}
+
+export function getResolutionsFromAspectRatiosMap<
+  TResolution extends number = number,
+  TAspectRatio extends string = string
+>(resolutions: TResolution[], aspectRatios: TAspectRatio[], mod = 16) {
+  const map = new Map<TResolution, ResolutionAspectRatios<TAspectRatio>>();
+  for (const resolution of resolutions) {
+    map.set(resolution, getResolutionsFromAspectRatios(resolution, aspectRatios, mod));
+  }
+  return map;
+}

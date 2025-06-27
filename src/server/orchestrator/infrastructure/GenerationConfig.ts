@@ -16,6 +16,7 @@ export function VideoGenerationConfig2<
   transformFn,
   whatIfFn = (args) => args,
   superRefine,
+  legacyMapFn,
   ...args
 }: {
   label: string;
@@ -29,6 +30,8 @@ export function VideoGenerationConfig2<
   superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
   transformFn: (args: SchemaOutput) => RefinementOutput;
   inputFn: (args: RefinementOutput & { seed: number }) => TOutput;
+  /** map from transformed data back to the input schema */
+  legacyMapFn?: (args: RefinementOutput) => z.input<TSchema>;
 }) {
   const validationSchema = (
     superRefine ? schema.superRefine(superRefine as any) : schema
@@ -99,5 +102,6 @@ export function VideoGenerationConfig2<
     metadataFn,
     inputFn,
     transformFn,
+    legacyMapFn,
   };
 }

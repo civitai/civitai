@@ -1,6 +1,5 @@
 import type { WanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
-import { AspectRatioMap, AspectRatio } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   seedSchema,
@@ -9,11 +8,17 @@ import {
   baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  findClosestAspectRatio,
+  getResolutionsFromAspectRatiosMap,
+} from '~/utils/aspect-ratio-helpers';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
-export const wanAspectRatioMap = AspectRatioMap([...wanAspectRatios], { multiplier: 16 });
+export const wanResolution = [480, 720] as const;
+
+const resolutionMap = getResolutionsFromAspectRatiosMap([...wanResolution], [...wanAspectRatios]);
 
 export const wanBaseModelMap = {
   WanVideo1_3B_T2V: {
@@ -53,6 +58,7 @@ const schema = baseVideoGenerationSchema.extend({
   duration: numberEnum(wanDuration).optional().catch(5),
   seed: seedSchema,
   resources: z.array(resourceSchema.passthrough()).nullable().default(null),
+  resolution: numberEnum(wanResolution).catch(480).default(480),
 });
 
 export const wanGenerationConfig = VideoGenerationConfig2({
@@ -111,14 +117,17 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ sourceImage, resources, baseModel, ...args }): WanVdeoGenInput => {
-    const ar = sourceImage
-      ? AspectRatio.fromSize(sourceImage, { multiplier: 16 })
-      : wanAspectRatioMap[args.aspectRatio ?? '1:1'];
-    const { width, height } = ar.getSize2(480);
+  inputFn: ({ sourceImage, resources, baseModel, resolution, ...args }): WanVdeoGenInput => {
+    const aspectRatios = resolutionMap.get(resolution)!;
+    const aspectRatio = sourceImage
+      ? findClosestAspectRatio(sourceImage, [...wanAspectRatios])
+      : args.aspectRatio ?? '1:1';
+    const [width, height] = aspectRatios[aspectRatio];
+
     const model = baseModel
       ? wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap].model
       : undefined;
+
     return {
       ...args,
       width,
@@ -127,7 +136,11 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       steps: 20,
       loras: resources?.map(({ air, strength }) => ({ air, strength })),
       model,
-      // model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
+    };
+  },
+  legacyMapFn: (args) => {
+    return {
+      ...args,
     };
   },
 });

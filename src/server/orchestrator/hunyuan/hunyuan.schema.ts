@@ -1,6 +1,5 @@
 import type { HunyuanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
-import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   baseVideoGenerationSchema,
@@ -9,12 +8,13 @@ import {
   seedSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
+import { getResolutionsFromAspectRatios } from '~/utils/aspect-ratio-helpers';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const hunyuanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const hunyuanDuration = [3, 5] as const;
 
-const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multiplier: 16 });
+const aspectRatios = getResolutionsFromAspectRatios(480, [...hunyuanAspectRatios]);
 
 const schema = baseVideoGenerationSchema.extend({
   baseModel: z.string().default('HyV1').catch('HyV1'),
@@ -40,7 +40,7 @@ export const hunyuanGenerationConfig = VideoGenerationConfig2({
   processes: ['txt2vid'],
   transformFn: (data) => ({ ...data, process: 'txt2vid' }),
   inputFn: ({ aspectRatio, resources, ...args }): HunyuanVdeoGenInput => {
-    const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize2(480);
+    const [width, height] = aspectRatios[aspectRatio];
     return {
       ...args,
       width,
