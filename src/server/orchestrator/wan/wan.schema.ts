@@ -1,6 +1,5 @@
 import type { WanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
-import { AspectRatioMap, AspectRatio } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   seedSchema,
@@ -9,42 +8,51 @@ import {
   baseVideoGenerationSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { numberEnum } from '~/utils/zod-helpers';
+import {
+  findClosestAspectRatio,
+  getResolutionsFromAspectRatiosMap,
+} from '~/utils/aspect-ratio-helpers';
+import { numberEnum, zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
-export const wanAspectRatioMap = AspectRatioMap([...wanAspectRatios], { multiplier: 16 });
+export const wanResolution = [480, 720] as const;
+
+const resolutionMap = getResolutionsFromAspectRatiosMap([...wanResolution], [...wanAspectRatios]);
 
 export const wanBaseModelMap = {
-  WanVideo1_3B_T2V: {
-    process: 'txt2vid',
-    label: 'Wan Video 1.3B t2v',
-    model: 'urn:air:wanvideo1_3b_t2v:checkpoint:civitai:1329096@1500646',
-    default: false,
-  },
+  // WanVideo1_3B_T2V: {
+  //   process: 'txt2vid',
+  //   label: 'Wan Video 1.3B t2v',
+  //   model: 'urn:air:wanvideo1_3b_t2v:checkpoint:civitai:1329096@1500646',
+  //   default: false,
+  // },
   WanVideo14B_T2V: {
     process: 'txt2vid',
-    label: 'Wan Video 14B t2v',
+    label: '480p',
     model: 'urn:air:wanvideo14b_t2v:checkpoint:civitai:1329096@1707796',
     default: true,
+    resolution: 480,
   },
   WanVideo14B_I2V_480p: {
     process: 'img2vid',
-    label: 'Wan Video 14B i2v 480p',
+    label: '480p',
     model: 'urn:air:wanvideo14b_i2v_480p:checkpoint:civitai:1329096@1501125',
     default: false,
+    resolution: 480,
   },
   WanVideo14B_I2V_720p: {
     process: 'img2vid',
-    label: 'Wan Video 14B i2v 720p',
+    label: '720p',
     model: 'urn:air:wanvideo14b_i2v_720p:checkpoint:civitai:1329096@1501344',
     default: true,
+    resolution: 720,
   },
 };
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('wan').catch('wan'),
-  baseModel: z.string().optional(),
+  baseModel: zodEnumFromObjKeys(wanBaseModelMap),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   aspectRatio: z.enum(wanAspectRatios).optional().catch('1:1'),
@@ -112,13 +120,15 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     }
   },
   inputFn: ({ sourceImage, resources, baseModel, ...args }): WanVdeoGenInput => {
-    const ar = sourceImage
-      ? AspectRatio.fromSize(sourceImage, { multiplier: 16 })
-      : wanAspectRatioMap[args.aspectRatio ?? '1:1'];
-    const { width, height } = ar.getSize2(480);
-    const model = baseModel
-      ? wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap].model
-      : undefined;
+    const config = wanBaseModelMap[baseModel!];
+    const aspectRatios = resolutionMap.get(config.resolution)!;
+    const aspectRatio = sourceImage
+      ? findClosestAspectRatio(sourceImage, [...wanAspectRatios])
+      : args.aspectRatio ?? '1:1';
+    const [width, height] = aspectRatios[aspectRatio];
+
+    const model = config.model;
+
     return {
       ...args,
       width,
@@ -127,7 +137,11 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       steps: 20,
       loras: resources?.map(({ air, strength }) => ({ air, strength })),
       model,
-      // model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
+    };
+  },
+  legacyMapFn: (args) => {
+    return {
+      ...args,
     };
   },
 });

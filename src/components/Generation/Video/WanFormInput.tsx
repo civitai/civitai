@@ -43,17 +43,22 @@ export function WanFormInput() {
   }, [availableBaseModels, baseModel]);
 
   const resources = getBaseModelResourceTypes(baseModel) ?? [];
+  console.log({ resources });
 
   return (
     <>
       <InputVideoProcess name="process" />
-      <InputRadioGroup label="Model" name="baseModel">
-        <Group gap="lg">
-          {availableBaseModels.map(({ label, value }) => (
-            <Radio key={value} label={label} value={value} />
-          ))}
-        </Group>
-      </InputRadioGroup>
+
+      {/* {availableBaseModels.length > 1 && (
+        <InputRadioGroup label="Resolution" name="baseModel">
+          <Group gap="lg">
+            {availableBaseModels.map(({ label, value }) => (
+              <Radio key={value} label={label} value={value} />
+            ))}
+          </Group>
+        </InputRadioGroup>
+      )} */}
+
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
       )}
@@ -78,6 +83,16 @@ export function WanFormInput() {
           options={wanAspectRatios}
         />
       )}
+      {availableBaseModels.length > 1 && (
+        <div className="flex flex-col gap-0.5">
+          <Input.Label>Resolution</Input.Label>
+          <InputSegmentedControl
+            name="baseModel"
+            data={availableBaseModels.map(({ label, value }) => ({ label, value }))}
+          />
+        </div>
+      )}
+
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
