@@ -165,7 +165,7 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await bustMvCache(modelVersion.id);
+      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId);
     }
     for (const post of scheduledPosts) {
       await eventEngine.processEngagement({
