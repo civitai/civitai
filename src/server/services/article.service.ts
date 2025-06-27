@@ -618,6 +618,21 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
+    const coverImage = article.coverImage
+      ? {
+          ...article.coverImage,
+          nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
+          meta: article.coverImage.meta as ImageMetaProps,
+          metadata: article.coverImage.metadata as ImageMetadata,
+          tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
+        }
+      : undefined;
+
+    const canViewCoverImage =
+      isModerator ||
+      userId === article.userId ||
+      (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
+
     return {
       ...article,
       nsfwLevel: article.nsfwLevel as NsfwLevel,
@@ -626,15 +641,7 @@ export const getArticleById = async ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
-      coverImage: article.coverImage
-        ? {
-            ...article.coverImage,
-            nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
-            meta: article.coverImage.meta as ImageMetaProps,
-            metadata: article.coverImage.metadata as ImageMetadata,
-            tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
-          }
-        : undefined,
+      coverImage: canViewCoverImage ? coverImage : undefined,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

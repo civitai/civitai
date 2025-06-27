@@ -7,7 +7,9 @@ import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { preprocessFile } from '~/utils/media-preprocessors';
 import { auditMetaData } from '~/utils/metadata/audit';
+import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 // #region [types]
 type ProcessingFile = PreprocessFileReturnType & {
@@ -36,6 +38,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
 }: UseMediaUploadProps<TContext>) {
   // #region [state]
   const [error, setError] = useState<Error>();
+  const [loading, setLoading] = useState(false);
   const {
     files,
     uploadToS3: upload,
@@ -57,6 +60,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     data: { file: File; meta?: Record<string, unknown> }[],
     context?: TContext
   ) {
+    setLoading(true);
     try {
       const start = count + 1;
       const { maxSize } = uploadSettings;
@@ -77,39 +81,56 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       const sliced = data.slice(0, uploadSettings.maxItems - count);
 
       // process media metadata
-      const mapped = await Promise.all(
-        sliced.map(async ({ file, meta: fileMeta }) => {
-          const data = await preprocessFile(file);
-          const processing: ProcessingFile = { ...data, meta: { ...fileMeta, ...data.meta }, file };
-          const { meta } = data;
+      const mapped = (
+        await Promise.all(
+          sliced.map(async ({ file, meta: fileMeta }) => {
+            let data: PreprocessFileReturnType | null;
+            try {
+              data = await preprocessFile(file);
+            } catch {
+              data = null;
+              showErrorNotification({
+                error: {
+                  message: `Failed to read file: ${file.name}. This may indicate that the file is poorly encoded for use on the web.`,
+                },
+              });
+            }
+            if (!data) return null;
+            const processing: ProcessingFile = {
+              ...data,
+              meta: { ...fileMeta, ...data.meta },
+              file,
+            };
+            const { meta } = data;
 
-          if (meta) {
-            const audit = await auditMetaData(meta, false);
-            if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
-          }
+            if (meta) {
+              const audit = await auditMetaData(meta, false);
+              if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
+            }
 
-          if (data.type === 'image') {
-            if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
-              throw new Error(
-                'Comfy metadata is too large. Please consider updating your workflow'
-              );
-          } else if (data.type === 'video') {
-            const { metadata } = data;
-            if (metadata.duration && metadata.duration > uploadSettings.maxVideoDuration)
-              throw new Error(
-                `Video duration cannot be longer than ${uploadSettings.maxVideoDuration} seconds. Please trim your video and try again.`
-              );
-            if (
-              metadata.width > uploadSettings.maxVideoDimensions ||
-              metadata.height > uploadSettings.maxVideoDimensions
-            )
-              throw new Error(
-                `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image or video and try again.`
-              );
-          }
-          return processing;
-        })
-      );
+            if (data.type === 'image') {
+              if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
+                throw new Error(
+                  'Comfy metadata is too large. Please consider updating your workflow'
+                );
+            } else if (data.type === 'video') {
+              const { metadata } = data;
+              if (metadata.duration && metadata.duration > uploadSettings.maxVideoDuration)
+                throw new Error(
+                  `Video duration cannot be longer than ${uploadSettings.maxVideoDuration} seconds. Please trim your video and try again.`
+                );
+              if (
+                metadata.width > uploadSettings.maxVideoDimensions ||
+                metadata.height > uploadSettings.maxVideoDimensions
+              )
+                throw new Error(
+                  `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image or video and try again.`
+                );
+            }
+            return processing;
+          })
+        )
+      ).filter(isDefined);
 
       setError(undefined);
 
@@ -143,8 +164,10 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
         }
       }
     } catch (error: any) {
+      console.log({ error });
       setError(error);
     }
+    setLoading(false);
   }
   // #endregion
 
@@ -163,5 +186,5 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   }, [files]); // eslint-disable-line
   // #endregion
 
-  return { canAdd, upload: processFiles, error, files, progress, reset, removeFile };
+  return { canAdd, upload: processFiles, error, files, progress, reset, removeFile, loading };
 }

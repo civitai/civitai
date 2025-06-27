@@ -1,3 +1,4 @@
+import { CacheTTL } from '~/server/common/constants';
 import {
   addTagsHandler,
   addTagVotesHandler,
@@ -19,13 +20,14 @@ import {
   adjustTagsSchema,
   deleteTagsSchema,
   getTagByNameSchema,
+  getTagsForReviewSchema,
   getTagsInput,
   getTrendingTagsSchema,
   getVotableTagsSchema,
   moderateTagsSchema,
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
-import { getTag } from '~/server/services/tag.service';
+import { getTag, getTagsForReview } from '~/server/services/tag.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const tagRouter = router({
@@ -45,6 +47,10 @@ export const tagRouter = router({
     .input(getTrendingTagsSchema)
     .use(applyUserPreferences)
     .query(getTrendingTagsHandler),
+  getTagsForReview: moderatorProcedure
+    .input(getTagsForReviewSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.day }))
+    .query(({ input }) => getTagsForReview(input)),
   getManagableTags: moderatorProcedure.query(getManagableTagsHandler),
   getVotableTags: publicProcedure.input(getVotableTagsSchema).query(getVotableTagsHandler),
   addTagVotes: protectedProcedure.input(addTagVotesSchema).mutation(addTagVotesHandler),

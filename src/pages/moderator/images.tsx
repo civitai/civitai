@@ -9,6 +9,7 @@ import {
   Indicator,
   Loader,
   Paper,
+  Popover,
   Stack,
   Text,
   Textarea,
@@ -23,6 +24,7 @@ import {
   IconBan,
   IconCheck,
   IconExternalLink,
+  IconFilter,
   IconInfoCircle,
   IconReload,
   IconSquareCheck,
@@ -61,7 +63,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import { ModReviewType, NsfwLevel } from '~/server/common/enums';
 import { resolveAppealSchema } from '~/server/schema/report.schema';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import type { ImageModerationReviewQueueImage } from '~/types/router';
@@ -72,6 +74,7 @@ import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { ReviewTagsInput } from '~/components/Tags/ReviewTagsInput';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -109,66 +112,59 @@ const useStore = create<StoreState>()(
   }))
 );
 
-const ImageReviewType = {
-  minor: 'Minors',
-  poi: 'POI',
-  tag: 'Blocked Tags',
-  newUser: 'New Users',
-  reported: 'Reported',
-  csam: 'CSAM',
-  appeal: 'Appeals',
-  modRule: 'Rule Violations',
-} as const;
-
-type ImageReviewType = keyof typeof ImageReviewType;
-
 export default function Images() {
   // const queryUtils = trpc.useUtils();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
-  const [type, setType] = useState<ImageReviewType>('minor');
-  const [activeTag, setActiveNameTag] = useState<number | null>(null);
+  const [type, setType] = useState<ModReviewType>(ModReviewType.Minor);
+  const [tagFilters, setTagFilters] = useState({
+    filtersOpened: false,
+    include: [] as number[],
+    exclude: [] as number[],
+  });
   const { csamReports, appealReports } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
 
-  const viewingReported = type === 'reported';
+  const viewingReported = type === ModReviewType.Reported;
 
   const filters = useMemo(
     () => ({
       needsReview: !viewingReported ? type : undefined,
       reportReview: viewingReported ? true : undefined,
-      tagIds: activeTag ? [activeTag] : undefined,
+      tagIds: tagFilters.include,
+      excludedTagIds: tagFilters.exclude,
       browsingLevel,
     }),
-    [type, viewingReported, activeTag, browsingLevel]
+    [type, viewingReported, browsingLevel, tagFilters.include, tagFilters.exclude]
   );
-  const { data: nameTags } = trpc.image.getModeratorPOITags.useQuery(undefined, {
-    enabled: type === 'poi',
-  });
+  // const { data: nameTags } = trpc.image.getModeratorPOITags.useQuery(undefined, {
+  //   enabled: type === 'poi',
+  // });
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getModeratorReviewQueue.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
-  const handleTypeChange = (value: ImageReviewType) => {
+  const handleTypeChange = (value: ModReviewType) => {
     setType(value);
+    setTagFilters({ filtersOpened: false, include: [], exclude: [] });
   };
 
   useEffect(deselectAll, [type, deselectAll]);
 
   const { data: counts } = trpc.image.getModeratorReviewQueueCounts.useQuery();
 
-  const segments = Object.entries(ImageReviewType)
+  const segments = Object.entries(ModReviewType)
     // filter out csam and appeal if not enabled
-    .filter(([key]) => {
-      if (key === 'csam') return csamReports;
-      if (key === 'appeal') return appealReports;
+    .filter(([, value]) => {
+      if (value === ModReviewType.CSAM) return csamReports;
+      if (value === ModReviewType.Appeals) return appealReports;
       return true;
     })
     .map(([key, value]) => ({
-      value: key,
-      label: value,
+      value,
+      label: getDisplayName(key),
       // label: (
       //   <Indicator label={counts?.[key]} showZero={false} dot={false} offset={-4}>
       //     <span>{value}</span>
@@ -195,7 +191,51 @@ export default function Images() {
               zIndex: 30,
             }}
           >
-            <ModerationControls images={images} filters={filters} view={type} />
+            <ModerationControls
+              images={images}
+              filters={filters}
+              view={type}
+              rightSection={
+                <Popover
+                  width={300}
+                  onChange={(opened) =>
+                    setTagFilters((prev) => ({ ...prev, filtersOpened: opened }))
+                  }
+                >
+                  <Popover.Target>
+                    <Indicator
+                      disabled={!tagFilters.include.length && !tagFilters.exclude.length}
+                      inline
+                    >
+                      <LegacyActionIcon
+                        radius="xl"
+                        variant={tagFilters.filtersOpened ? 'light' : undefined}
+                      >
+                        <IconFilter size="1.25rem" />
+                      </LegacyActionIcon>
+                    </Indicator>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Stack>
+                      <ReviewTagsInput
+                        label="Include Tags"
+                        reviewType={type}
+                        defaultValue={tagFilters.include}
+                        onChange={(value) => setTagFilters((prev) => ({ ...prev, include: value }))}
+                        comboboxProps={{ withinPortal: false }}
+                      />
+                      <ReviewTagsInput
+                        label="Exclude Tags"
+                        reviewType={type}
+                        defaultValue={tagFilters.exclude}
+                        onChange={(value) => setTagFilters((prev) => ({ ...prev, exclude: value }))}
+                        comboboxProps={{ withinPortal: false }}
+                      />
+                    </Stack>
+                  </Popover.Dropdown>
+                </Popover>
+              }
+            />
           </Paper>
 
           <div className="mb-4 flex flex-col items-start">
@@ -220,7 +260,7 @@ export default function Images() {
             </RadioGroup>
           </div>
 
-          {type === 'poi' && nameTags && (
+          {/* {type === 'poi' && nameTags && (
             <Collection
               items={nameTags}
               limit={20}
@@ -249,7 +289,7 @@ export default function Images() {
               }}
               grouped
             />
-          )}
+          )} */}
 
           {isLoading ? (
             <Center py="xl">
@@ -306,7 +346,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
     <Card
       shadow="sm"
       withBorder
-      ref={mergedRef as any}
+      ref={mergedRef}
       style={(theme) => ({
         minHeight: height,
         outline: selected
@@ -582,13 +622,15 @@ function ModerationControls({
   images,
   filters,
   view,
+  rightSection,
 }: {
   images: ImageModerationReviewQueueImage[];
-  filters: any;
-  view: ImageReviewType;
+  filters: MixedObject;
+  view: ModReviewType;
+  rightSection?: React.ReactNode;
 }) {
   const queryUtils = trpc.useUtils();
-  const viewingReported = view === 'reported';
+  const viewingReported = view === ModReviewType.Reported;
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -677,7 +719,7 @@ function ModerationControls({
   };
 
   const handleReportCsam = () => {
-    if (view === 'csam') {
+    if (view === ModReviewType.CSAM) {
       const selectedImages = images.filter((x) => selected.includes(x.id));
       const userImages = selectedImages.reduce<Record<number, number[]>>(
         (acc, image) => ({ ...acc, [image.user.id]: [...(acc[image.user.id] ?? []), image.id] }),
@@ -756,100 +798,107 @@ function ModerationControls({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <Group wrap="nowrap" gap="xs">
-        <ButtonTooltip label="Select all" {...tooltipProps}>
-          <LegacyActionIcon
-            variant="outline"
-            onClick={handleSelectAll}
-            disabled={selected.length === images.length}
-          >
-            <IconSquareCheck size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-        <ButtonTooltip label="Clear selection" {...tooltipProps}>
-          <LegacyActionIcon variant="outline" disabled={!selected.length} onClick={handleClearAll}>
-            <IconSquareOff size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-        {view === 'appeal' ? (
-          <AppealActions selected={selected} filters={filters} />
-        ) : (
-          <PopConfirm
-            message={`Are you sure you want to approve ${selected.length} image(s)?`}
-            position="bottom-end"
-            onConfirm={handleApproveSelected}
-            withArrow
-            withinPortal
-          >
-            <ButtonTooltip label="Accept" {...tooltipProps}>
-              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
-                <IconCheck size="1.25rem" />
-              </LegacyActionIcon>
-            </ButtonTooltip>
-          </PopConfirm>
-        )}
-        {view === 'poi' && (
-          <PopConfirm
-            message={`Are you sure these ${selected.length} image(s) are not real people?`}
-            position="bottom-end"
-            onConfirm={handleNotPOI}
-            withArrow
-            withinPortal
-          >
-            <ButtonTooltip label="Not POI" {...tooltipProps}>
-              <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
-                <IconUserOff size="1.25rem" />
-              </LegacyActionIcon>
-            </ButtonTooltip>
-          </PopConfirm>
-        )}
-        {view === 'poi' && (
-          <PopConfirm
-            message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
-            position="bottom-end"
-            onConfirm={handleRemoveNames}
-            withArrow
-            withinPortal
-          >
-            <ButtonTooltip label="Remove Name" {...tooltipProps}>
-              <LegacyActionIcon variant="outline" disabled={!selected.length} color="yellow">
-                <IconUserMinus size="1.25rem" />
-              </LegacyActionIcon>
-            </ButtonTooltip>
-          </PopConfirm>
-        )}
-        {view !== 'appeal' && (
-          <PopConfirm
-            message={`Are you sure you want to delete ${selected.length} image(s)?`}
-            position="bottom-end"
-            onConfirm={handleDeleteSelected}
-            withArrow
-            withinPortal
-          >
-            <ButtonTooltip label="Delete" {...tooltipProps}>
-              <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
-                <IconTrash size="1.25rem" />
-              </LegacyActionIcon>
-            </ButtonTooltip>
-          </PopConfirm>
-        )}
+      <div className="flex w-full items-center justify-between gap-2">
+        <Group wrap="nowrap" gap="xs" justify="center" className="flex-1">
+          <ButtonTooltip label="Select all" {...tooltipProps}>
+            <LegacyActionIcon
+              variant="outline"
+              onClick={handleSelectAll}
+              disabled={selected.length === images.length}
+            >
+              <IconSquareCheck size="1.25rem" />
+            </LegacyActionIcon>
+          </ButtonTooltip>
+          <ButtonTooltip label="Clear selection" {...tooltipProps}>
+            <LegacyActionIcon
+              variant="outline"
+              disabled={!selected.length}
+              onClick={handleClearAll}
+            >
+              <IconSquareOff size="1.25rem" />
+            </LegacyActionIcon>
+          </ButtonTooltip>
+          {view === ModReviewType.Appeals ? (
+            <AppealActions selected={selected} filters={filters} />
+          ) : (
+            <PopConfirm
+              message={`Are you sure you want to approve ${selected.length} image(s)?`}
+              position="bottom-end"
+              onConfirm={handleApproveSelected}
+              withArrow
+              withinPortal
+            >
+              <ButtonTooltip label="Accept" {...tooltipProps}>
+                <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
+                  <IconCheck size="1.25rem" />
+                </LegacyActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
+          )}
+          {view === ModReviewType.POI && (
+            <PopConfirm
+              message={`Are you sure these ${selected.length} image(s) are not real people?`}
+              position="bottom-end"
+              onConfirm={handleNotPOI}
+              withArrow
+              withinPortal
+            >
+              <ButtonTooltip label="Not POI" {...tooltipProps}>
+                <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
+                  <IconUserOff size="1.25rem" />
+                </LegacyActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
+          )}
+          {view === ModReviewType.POI && (
+            <PopConfirm
+              message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
+              position="bottom-end"
+              onConfirm={handleRemoveNames}
+              withArrow
+              withinPortal
+            >
+              <ButtonTooltip label="Remove Name" {...tooltipProps}>
+                <LegacyActionIcon variant="outline" disabled={!selected.length} color="yellow">
+                  <IconUserMinus size="1.25rem" />
+                </LegacyActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
+          )}
+          {view !== ModReviewType.Appeals && (
+            <PopConfirm
+              message={`Are you sure you want to delete ${selected.length} image(s)?`}
+              position="bottom-end"
+              onConfirm={handleDeleteSelected}
+              withArrow
+              withinPortal
+            >
+              <ButtonTooltip label="Delete" {...tooltipProps}>
+                <LegacyActionIcon variant="outline" disabled={!selected.length} color="red">
+                  <IconTrash size="1.25rem" />
+                </LegacyActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
+          )}
 
-        <ButtonTooltip {...tooltipProps} label="Report CSAM">
-          <LegacyActionIcon
-            variant="outline"
-            disabled={!selected.length}
-            onClick={handleReportCsam}
-            color="orange"
-          >
-            <IconAlertTriangle size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-        <ButtonTooltip label="Refresh" {...tooltipProps}>
-          <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
-            <IconReload size="1.25rem" />
-          </LegacyActionIcon>
-        </ButtonTooltip>
-      </Group>
+          <ButtonTooltip {...tooltipProps} label="Report CSAM">
+            <LegacyActionIcon
+              variant="outline"
+              disabled={!selected.length}
+              onClick={handleReportCsam}
+              color="orange"
+            >
+              <IconAlertTriangle size="1.25rem" />
+            </LegacyActionIcon>
+          </ButtonTooltip>
+          <ButtonTooltip label="Refresh" {...tooltipProps}>
+            <LegacyActionIcon variant="outline" onClick={handleRefresh} color="blue">
+              <IconReload size="1.25rem" />
+            </LegacyActionIcon>
+          </ButtonTooltip>
+        </Group>
+        {rightSection}
+      </div>
       <BrowsingLevelsGrouped gap={4} size="xs" />
     </div>
   );

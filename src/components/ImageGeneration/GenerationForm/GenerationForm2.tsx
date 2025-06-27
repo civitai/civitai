@@ -259,6 +259,8 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
+    if (disablePriority) params.priority = 'low';
+
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
     if (isFlux && isFluxStandard) {
@@ -1127,6 +1129,8 @@ export function GenerationFormContent() {
                       label: ratio.label,
                       value: `${i}`,
                     }))}
+                    withScrollArea
+                    maxDropdownHeight={300}
                   />
                 )}
 

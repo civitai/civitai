@@ -1,8 +1,5 @@
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
-import {
-  ProfileSection,
-  ProfileSectionPreview,
-} from '~/components/Profile/ProfileSection';
+import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import { IconHeart } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';

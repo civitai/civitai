@@ -1305,8 +1305,8 @@ export function ModelVersionDetails({
             {version.description && (
               <Accordion.Item value="version-description">
                 <Accordion.Control>About this version</Accordion.Control>
-                <Accordion.Panel px="sm" pb="sm">
-                  <Stack gap={4}>
+                <Accordion.Panel px="sm">
+                  <Stack gap={4} className="pb-3">
                     {version.description && (
                       <Box style={{ p: { fontSize: 14, marginBottom: 10 } }}>
                         <ContentClamp

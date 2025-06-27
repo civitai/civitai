@@ -2,7 +2,7 @@ import { HoverCard, Badge } from '@mantine/core';
 import { IconStarFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 
-import styles from './LevelProgress.module.scss';
+import classes from './LevelProgress.module.scss';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export function LevelProgress({
@@ -17,7 +17,7 @@ export function LevelProgress({
   return (
     <HoverCard position="bottom" withArrow withinPortal>
       <HoverCard.Target>
-        <Badge size="lg" className={clsx(styles.raterBadge, className)}>
+        <Badge size="lg" className={clsx(classes.raterBadge, className)}>
           {icon ?? <IconStarFilled strokeWidth={2.5} size={15} />}
           Level {level}
           <div style={{ width: progress + '%' }} />

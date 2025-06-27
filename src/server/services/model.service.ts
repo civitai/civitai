@@ -1725,7 +1725,7 @@ export const publishModelById = async ({
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
     const versionIds = model.modelVersions.map((x) => x.id);
-    await bustMvCache(versionIds);
+    await bustMvCache(versionIds, model.id);
   }
 
   // Fetch affected posts to update their images in search index
@@ -2753,7 +2753,10 @@ export async function migrateResourceToCollection({
   // Bust caches
   await Promise.all([
     dataForModelsCache.bust(modelIds),
-    bustMvCache(filteredVersions.map((v) => v.id)),
+    bustMvCache(
+      filteredVersions.map((v) => v.id),
+      modelIds
+    ),
   ]);
 
   modelMetrics
@@ -3074,7 +3077,10 @@ export const privateModelFromTraining = async ({
     await preventReplicationLag('model', id);
     await userContentOverviewCache.bust(user.id);
     await dataForModelsCache.bust(id);
-    await bustMvCache(result.modelVersions.map((x) => x.id));
+    await bustMvCache(
+      result.modelVersions.map((x) => x.id),
+      result.id
+    );
 
     return result;
   } catch (error) {

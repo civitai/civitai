@@ -2,6 +2,7 @@ import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
+import type { GetTagsForReviewInput } from '~/server/schema/tag.schema';
 
 export function useCategoryTags({ entityType }: { entityType: TagTarget }) {
   let sort: TagSort | undefined;
@@ -23,4 +24,16 @@ export function useCategoryTags({ entityType }: { entityType: TagTarget }) {
   const { items, loadingPreferences } = useApplyHiddenPreferences({ type: 'tags', data: tags });
 
   return { data: items, isLoading: isLoading || loadingPreferences };
+}
+
+export function useQueryTagsForReview({
+  reviewType,
+}: Omit<GetTagsForReviewInput, 'limit' | 'page'>) {
+  const { data, isLoading, ...rest } = trpc.tag.getTagsForReview.useQuery({
+    reviewType,
+    limit: 100,
+  });
+
+  const tags = !isLoading && data ? data.items : undefined;
+  return { tags, isLoading, ...rest };
 }

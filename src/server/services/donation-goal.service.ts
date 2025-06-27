@@ -153,7 +153,7 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
       });
 
       // Ensures user gets access to the resource after purchasing.
-      await bustMvCache(goal.modelVersionId);
+      await bustMvCache(goal.modelVersionId, modelVersion.modelId);
       await dataForModelsCache.bust(modelVersion.modelId);
     }
   }

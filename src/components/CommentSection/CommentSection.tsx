@@ -136,7 +136,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                   onSuperEnter={() => form.handleSubmit(handleSubmitComment)()}
                   hideToolbar
                   // withLinkValidation
-                  inputClasses="break-all"
+                  inputClasses="break-words"
                 />
               </Box>
               {showCommentActions ? (
