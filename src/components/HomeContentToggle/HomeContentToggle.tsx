@@ -76,12 +76,6 @@ export const homeOptions: HomeOption[] = [
     grouped: true,
   },
   {
-    key: 'tools',
-    url: '/tools',
-    icon: (props: IconProps) => <IconTools {...props} />,
-    grouped: true,
-  },
-  {
     key: 'challenges',
     url: '/challenges',
     icon: (props: IconProps) => <IconTrophy {...props} />,

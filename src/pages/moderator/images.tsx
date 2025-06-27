@@ -117,7 +117,6 @@ export default function Images() {
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ModReviewType>(ModReviewType.Minor);
-  const [activeTag, setActiveNameTag] = useState<number | null>(null);
   const [tagFilters, setTagFilters] = useState({
     filtersOpened: false,
     include: [] as number[],
@@ -126,7 +125,7 @@ export default function Images() {
   const { csamReports, appealReports } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
 
-  const viewingReported = type === 'reported';
+  const viewingReported = type === ModReviewType.Reported;
 
   const filters = useMemo(
     () => ({
@@ -158,10 +157,9 @@ export default function Images() {
 
   const segments = Object.entries(ModReviewType)
     // filter out csam and appeal if not enabled
-    .filter(([key]) => {
-      if (typeof key !== 'string') return false;
-      if (key === 'csam') return csamReports;
-      if (key === 'appeal') return appealReports;
+    .filter(([, value]) => {
+      if (value === ModReviewType.CSAM) return csamReports;
+      if (value === ModReviewType.Appeals) return appealReports;
       return true;
     })
     .map(([key, value]) => ({
@@ -632,7 +630,7 @@ function ModerationControls({
   rightSection?: React.ReactNode;
 }) {
   const queryUtils = trpc.useUtils();
-  const viewingReported = view === 'reported';
+  const viewingReported = view === ModReviewType.Reported;
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
@@ -721,7 +719,7 @@ function ModerationControls({
   };
 
   const handleReportCsam = () => {
-    if (view === 'csam') {
+    if (view === ModReviewType.CSAM) {
       const selectedImages = images.filter((x) => selected.includes(x.id));
       const userImages = selectedImages.reduce<Record<number, number[]>>(
         (acc, image) => ({ ...acc, [image.user.id]: [...(acc[image.user.id] ?? []), image.id] }),
@@ -820,7 +818,7 @@ function ModerationControls({
               <IconSquareOff size="1.25rem" />
             </LegacyActionIcon>
           </ButtonTooltip>
-          {view === 'appeal' ? (
+          {view === ModReviewType.Appeals ? (
             <AppealActions selected={selected} filters={filters} />
           ) : (
             <PopConfirm
@@ -837,7 +835,7 @@ function ModerationControls({
               </ButtonTooltip>
             </PopConfirm>
           )}
-          {view === 'poi' && (
+          {view === ModReviewType.POI && (
             <PopConfirm
               message={`Are you sure these ${selected.length} image(s) are not real people?`}
               position="bottom-end"
@@ -852,7 +850,7 @@ function ModerationControls({
               </ButtonTooltip>
             </PopConfirm>
           )}
-          {view === 'poi' && (
+          {view === ModReviewType.POI && (
             <PopConfirm
               message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
               position="bottom-end"
@@ -867,7 +865,7 @@ function ModerationControls({
               </ButtonTooltip>
             </PopConfirm>
           )}
-          {view !== 'appeal' && (
+          {view !== ModReviewType.Appeals && (
             <PopConfirm
               message={`Are you sure you want to delete ${selected.length} image(s)?`}
               position="bottom-end"

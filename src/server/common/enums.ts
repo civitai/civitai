@@ -388,7 +388,6 @@ export enum ModReviewType {
   POI = 'poi',
   Reported = 'reported',
   CSAM = 'csam',
-  Blocked = 'blocked',
   BlockedTags = 'tag',
   NewUsers = 'newUser',
   Appeals = 'appeal',

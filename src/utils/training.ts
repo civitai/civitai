@@ -148,7 +148,7 @@ export const trainingModelInfo: {
     type: 'wan',
     description: 'Performant and high quality video generation (for T2V).',
     air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth', // actually t2v, uses HF
-    baseModel: 'Wan Video',
+    baseModel: 'Wan Video 14B t2v',
     isNew: false,
   },
   wan_2_1_i2v_14b_720p: {
@@ -157,7 +157,7 @@ export const trainingModelInfo: {
     type: 'wan',
     description: 'Performant and high quality video generation (for I2V).',
     air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
-    baseModel: 'Wan Video',
+    baseModel: 'Wan Video 14B i2v 720p',
     isNew: true,
     disabled: true, // TODO remove
   },
