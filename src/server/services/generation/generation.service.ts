@@ -433,9 +433,8 @@ const getModelVersionGenerationData = async ({
   );
 
   const engine =
-    baseModelEngineMap[baseModel] ?? resources.length
-      ? modelIdEngineMap.get(resources[0].model.id)
-      : undefined;
+    baseModelEngineMap[baseModel] ??
+    (resources.length ? modelIdEngineMap.get(resources[0].model.id) : undefined);
 
   let process: string | undefined;
   if (isVideoGenerationEngine(engine)) {
