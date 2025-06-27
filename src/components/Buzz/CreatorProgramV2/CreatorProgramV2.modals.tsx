@@ -254,6 +254,7 @@ export const openCreatorScoreModal = () => {
 
 export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }) => {
   const { banked, isLoading } = useBankedBuzz();
+  const currencyType = 'green'; // Update to change buzz color instantly.
 
   if (isLoading) {
     return (
@@ -308,12 +309,21 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                       'no cap'
                     ) : cap.percentOfPeakEarning ? (
                       <span className="inline-flex">
-                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+                        a{' '}
+                        <CurrencyIcon
+                          currency={Currency.BUZZ}
+                          type={currencyType}
+                          className="inline"
+                        />
                         {abbreviateNumber(cap.limit)} cap
                       </span>
                     ) : (
                       <span className="inline-flex">
-                        <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+                        <CurrencyIcon
+                          currency={Currency.BUZZ}
+                          type={currencyType}
+                          className="inline"
+                        />
                         {abbreviateNumber(cap.limit)}
                       </span>
                     )}
@@ -334,7 +344,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p>
               <span className="font-bold">Peak Earning Month:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+              <CurrencyIcon currency={Currency.BUZZ} type={currencyType} className="inline" />
               {abbreviateNumber(banked.cap.peakEarning.earned)}{' '}
               <span className="opacity-50">
                 ({formatDate(banked.cap.peakEarning.month, 'MMM YYYY')})
@@ -342,20 +352,21 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p>
               <span className="font-bold">Tier Cap:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+              <CurrencyIcon currency={Currency.BUZZ} type={currencyType} className="inline" />
               {banked.cap.definition.limit
                 ? numberWithCommas(banked.cap.definition.limit)
                 : 'No Cap'}
             </p>
             <p className="font-bold">
-              Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+              Your Cap:{' '}
+              <CurrencyIcon currency={Currency.BUZZ} type={currencyType} className="inline" />{' '}
               {numberWithCommas(banked.cap.cap)}
             </p>
 
             {banked.cap.cap <= MIN_CAP && (
               <p className="text-sm opacity-50">
                 All members have a minimum cap of{' '}
-                <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+                <CurrencyIcon currency={Currency.BUZZ} type={currencyType} className="inline" />{' '}
                 {abbreviateNumber(MIN_CAP)}
               </p>
             )}
@@ -364,9 +375,9 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
           {nextCap && (
             <p>
               You could increase your cap to{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-              {numberWithCommas(potentialEarnings)} by upgrading to a {capitalize(nextCap.tier)}{' '}
-              Membership.{' '}
+              <CurrencyIcon currency={Currency.BUZZ} type={currencyType} className="inline" />{' '}
+              {numberWithCommas(Math.floor(potentialEarnings as number))} by upgrading to a{' '}
+              {capitalize(nextCap.tier)} Membership.{' '}
               <Anchor className="text-nowrap" href="/pricing" onClick={onUpgrade}>
                 Upgrade Now
               </Anchor>

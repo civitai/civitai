@@ -248,7 +248,7 @@ const JoinCreatorProgramCard = () => {
           />
           <CreatorProgramRequirement
             isMet={!!membership}
-            title="Be a Civitai Member"
+            title="Be a Civitai Green Member"
             content={
               hasValidMembership ? (
                 <>
