@@ -53,7 +53,7 @@ export function RedMembershipUnavailable({
                 radius="xl"
                 size="lg"
                 onClick={onSelectGreen}
-                className={`w-full sm:w-auto ${greenClassNames?.btn}`}
+                className={`w-full sm:w-auto ${greenClassNames?.btn} px-6 py-4 text-lg`}
                 aria-label="Choose Green Membership"
               >
                 Choose Green Membership
@@ -67,7 +67,7 @@ export function RedMembershipUnavailable({
                   size="lg"
                   component={Link}
                   href="/purchase/buzz?initialBuzzType=red"
-                  className={`w-full sm:w-auto ${redClassNames?.btn}`}
+                  className={`w-full sm:w-auto ${redClassNames?.btn} px-6 py-4 text-lg`}
                   aria-label="Buy Red Buzz Instead"
                 >
                   Buy Red Buzz Instead

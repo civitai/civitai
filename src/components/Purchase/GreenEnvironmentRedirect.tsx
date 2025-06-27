@@ -73,7 +73,7 @@ export function GreenEnvironmentRedirect({
           radius="xl"
           size="lg"
           onClick={handleManualRedirect}
-          className={`w-full sm:w-auto ${greenClassNames?.btn}`}
+          className={`w-full sm:w-auto ${greenClassNames?.btn} px-6 py-4 text-lg`}
           aria-label={buttonText}
         >
           {buttonText}

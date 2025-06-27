@@ -1206,7 +1206,7 @@ export const CurrencyConfig: Record<
         color: '#40c057',
         fill: '#40c057',
         classNames: {
-          btn: 'bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-600 hover:to-emerald-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 shadow min-w-[140px] px-6 py-4 text-lg font-bold transition-all duration-150 border-none text-white',
+          btn: 'bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-600 hover:to-emerald-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
         },
       },
       red: {
@@ -1214,7 +1214,7 @@ export const CurrencyConfig: Record<
         color: '#f03e3e',
         fill: '#f03e3e',
         classNames: {
-          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] px-6 py-4 text-lg font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
+          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
         },
       },
     },

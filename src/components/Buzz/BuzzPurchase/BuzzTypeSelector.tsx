@@ -76,7 +76,7 @@ export function BuzzTypeSelector({
                   onClick={() => onSelect('green')}
                   leftSection={<IconBolt color="#fff" stroke={1.5} />}
                   data-testid="buzz-type-green"
-                  className={`w-full ${greenClassNames?.btn}`}
+                  className={`w-full ${greenClassNames?.btn} px-6 py-4 text-lg`}
                   aria-label={greenButton.text}
                 >
                   {greenButton.text}
@@ -97,7 +97,7 @@ export function BuzzTypeSelector({
                   onClick={() => onSelect('red')}
                   leftSection={<IconBolt color="#fff" stroke={1.5} />}
                   data-testid="buzz-type-red"
-                  className={`w-full ${redClassNames?.btn}`}
+                  className={`w-full ${redClassNames?.btn} px-6 py-4 text-lg`}
                   aria-label="Buy Red Buzz"
                 >
                   {redButton.text}
