@@ -28,7 +28,7 @@ export function SubscriptionCard() {
   }
 
   // If user has subscription but is on red environment, show redirect message
-  const showRedirectMessage = true; // !features.isGreen && subscription;
+  const showRedirectMessage = !features.isGreen && subscription;
 
   const handleRedirectToGreen = () => {
     window.open(
