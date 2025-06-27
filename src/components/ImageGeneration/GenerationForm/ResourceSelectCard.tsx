@@ -266,6 +266,13 @@ function ResourceInfoCard({
                 </Popover.Dropdown>
               </Popover>
             )}
+            {isPartiallySupported && (
+              <Tooltip label="This resource may not be fully supported for generation with the current base model">
+                <LegacyActionIcon size={18} color="yellow.7" variant="filled">
+                  <IconAlertTriangle size={16} />
+                </LegacyActionIcon>
+              </Tooltip>
+            )}
           </div>
         </Group>
         {/* LORA */}
