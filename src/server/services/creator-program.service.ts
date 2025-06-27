@@ -47,6 +47,7 @@ import {
   MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,
   PEAK_EARNING_WINDOW,
+  SUPPORTED_BUZZ,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
@@ -95,7 +96,7 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
         OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType = 'user'
+      AND toAccountType IN (${SUPPORTED_BUZZ})
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
       AND toStartOfMonth(date) < toStartOfMonth(now())
@@ -143,14 +144,22 @@ export async function getBanked(userId: number) {
   const total = await fetchThroughCache(
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
     async () => {
-      const data = await getCounterPartyBuzzTransactions({
-        accountId: monthAccount,
-        accountType: 'creatorprogrambank',
-        counterPartyAccountId: userId,
-        counterPartyAccountType: 'user',
-      });
+      const supportedBalances = await Promise.all(
+        SUPPORTED_BUZZ.map((type) =>
+          getCounterPartyBuzzTransactions({
+            accountId: monthAccount,
+            accountType: 'creatorprogrambank',
+            counterPartyAccountId: userId,
+            counterPartyAccountType: type,
+          })
+        )
+      );
 
-      return data.totalBalance;
+      const totalBalance = supportedBalances.reduce((sum, balanceInfo) => {
+        return sum + balanceInfo.totalBalance;
+      }, 0);
+
+      return totalBalance;
     },
     { ttl: CacheTTL.day }
   );
@@ -225,7 +234,7 @@ async function getPoolValue(month?: Date) {
     SELECT
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
-    WHERE toAccountType = 'user'
+    WHERE toAccountType IN (${SUPPORTED_BUZZ})
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
@@ -259,7 +268,7 @@ async function getPoolForecast(month?: Date) {
     SELECT
       SUM(amount) AS balance
     FROM buzzTransactions
-    WHERE toAccountType = 'user'
+    WHERE toAccountType IN (${SUPPORTED_BUZZ})
     AND (
       (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -344,6 +353,7 @@ export async function bankBuzz(userId: number, amount: number) {
   await createBuzzTransaction({
     amount,
     fromAccountId: userId,
+    // TODO.red-split: Need a way to specify multiple account types.
     fromAccountType: 'user',
     toAccountId: monthAccount,
     toAccountType: 'creatorprogrambank',
@@ -394,6 +404,7 @@ export async function extractBuzz(userId: number) {
     fromAccountId: monthAccount,
     fromAccountType: 'creatorprogrambank',
     toAccountId: userId,
+    // TODO.red-split: Need a way to specify multiple account types.
     toAccountType: 'user',
     type: TransactionType.Extract,
     externalTransactionId: `extraction-${monthAccount}-${userId}`,
@@ -405,6 +416,7 @@ export async function extractBuzz(userId: number) {
     await createBuzzTransaction({
       amount: fee,
       fromAccountId: userId,
+      // TODO.red-split: Need a way to specify multiple account types.
       fromAccountType: 'user',
       toAccountId: 0,
       toAccountType: 'user',
@@ -744,12 +756,12 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
       -- Banks
       toAccountType = 'creator-program-bank'
       AND toAccountId = ${monthAccount}
-      AND fromAccountType = 'user'
+      AND fromAccountType IN (${SUPPORTED_BUZZ})
     ) OR (
       -- Extracts
       fromAccountType = 'creator-program-bank'
       AND fromAccountId = ${monthAccount}
-      AND toAccountType = 'user'
+      AND toAccountType IN (${SUPPORTED_BUZZ})
     )
     GROUP BY userId
     ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};

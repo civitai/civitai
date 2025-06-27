@@ -416,7 +416,9 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+            leftSection={
+              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={18} />
+            }
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
@@ -546,7 +548,7 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
               </Table.Td>
@@ -571,7 +573,7 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={16} />
                   <span>{numberWithCommas(banked.total)}</span>
                   {isCapped && (
                     <Badge color="yellow" size="sm">
@@ -1070,7 +1072,7 @@ const ExtractBuzzCard = () => {
             >
               <div className="flex w-full items-center  justify-between gap-2">
                 <div className="flex gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} size={18} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={18} />
                   <p className="text-sm">{numberWithCommas(banked?.total ?? 0)}</p>
                 </div>
 
@@ -1081,7 +1083,12 @@ const ExtractBuzzCard = () => {
           <div className="flex items-center gap-2">
             <p>
               <span className="font-bold">Extraction Fee:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
+              <CurrencyIcon
+                currency={Currency.BUZZ}
+                type={SUPPORTED_BUZZ[0]}
+                size={14}
+                className="inline"
+              />
               {numberWithCommas(extractionFee)}
             </p>
             <LegacyActionIcon
