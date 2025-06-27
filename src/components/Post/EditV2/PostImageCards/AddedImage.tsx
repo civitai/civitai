@@ -1008,6 +1008,7 @@ function EditDetail() {
                           width: metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH,
                           postId,
                           thumbnailFrame: metadata?.thumbnailFrame,
+                          updateImage,
                         },
                       });
                     }}
@@ -1024,6 +1025,7 @@ function EditDetail() {
                     thumbnailFrame={(image.metadata as VideoMetadata)?.thumbnailFrame}
                     thumbnailUrl={image.thumbnailUrl}
                     width={image.metadata.width}
+                    updateImage={updateImage}
                   />
                 </div>
               </CustomCard>

@@ -881,7 +881,7 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const process = (meta.process ?? meta.type) as string | undefined;
+    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
     if (process) {
       techniqueId = (await getTechniqueByName(process))?.id;
     }

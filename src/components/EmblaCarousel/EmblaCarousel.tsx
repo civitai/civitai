@@ -21,6 +21,7 @@ export function Embla({
   controlSize,
   ...args
 }: EmblaCarouselProps) {
+  console.log({ args });
   return (
     <EmblaCarouselProvider {...args}>
       <EmblaCarouselWrapper

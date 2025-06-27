@@ -1,11 +1,8 @@
 import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
-  ActionIcon,
   Code,
-  ComboboxItem,
   Group,
   HoverCard,
-  Portal,
   Select,
   Stack,
   Text,
@@ -35,7 +32,6 @@ import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/mod
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
 import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
-import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
@@ -409,6 +405,13 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     setSelectedItem(null);
   }, [debouncedSearch]);
 
+  // Change index target when search target changes
+  useEffect(() => {
+    if (indexName !== searchTarget) {
+      onTargetChange(searchTarget as TKey);
+    }
+  }, [searchTarget, indexName, onTargetChange]);
+
   const processHitUrl = (hit: Hit) => {
     switch (indexName) {
       case 'articles':
@@ -453,6 +456,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           style={{ flexShrink: 1 }}
           onChange={(v: string | null) => onTargetChange(v as TKey)}
           autoComplete="off"
+          allowDeselect={false}
         />
         <ClearableAutoComplete
           ref={inputRef}
