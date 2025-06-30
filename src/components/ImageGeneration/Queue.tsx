@@ -103,7 +103,7 @@ export function Queue() {
             return (
               <Fragment key={request.id}>
                 {index !== 0 && (index + 4) % 5 === 0 && (
-                  <KontextAd key={index} index={index} className="max-w-sm p-3" />
+                  <KontextAd key={index} index={index} className="p-3" />
                 )}
                 <QueueItem
                   id={request.id.toString()}
