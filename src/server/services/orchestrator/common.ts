@@ -306,7 +306,7 @@ export async function parseGenerateImageInput({
   const positivePrompts = [params.prompt];
   const negativePrompts = [params.negativePrompt];
   const resourcesToInject: typeof injectable = [];
-  if (!whatIf && params.draft && injectableResources.draft) {
+  if (params.draft && injectableResources.draft) {
     for (const item of [injectableResources.draft]) {
       const resource = injectable.find((x) => x.id === item.id);
       if (!resource) continue;
