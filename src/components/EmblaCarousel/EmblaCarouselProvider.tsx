@@ -77,7 +77,6 @@ export function EmblaCarouselProvider({
   initialHeight,
   withKeyboardEvents = true,
 }: EmblaCarouselProviderProps) {
-  console.log({ align });
   const [setViewport, emblaApi] = useEmblaCarousel(
     removeEmpty({
       align,
