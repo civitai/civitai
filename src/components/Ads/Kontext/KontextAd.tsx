@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useKontextContext } from '~/components/Ads/Kontext/KontextProvider';
@@ -6,9 +6,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { isDev } from '~/env/other';
-import clsx from 'clsx';
-import { Loader, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { lipsum } from '~/server/common/constants';
 
 export function KontextAd({ index, className }: { index: number; className?: string }) {
   const id = uuidv4();
@@ -65,9 +65,9 @@ export function KontextAd({ index, className }: { index: number; className?: str
         Sponsored
       </Text>
       <div ref={ref} id={id}>
-        <div className="flex justify-center">
-          <Loader color="blue" type="dots" />
-        </div>
+        <p className="invisible line-clamp-4 @sm:line-clamp-3 @md:line-clamp-2 @lg:line-clamp-1">
+          {lipsum}
+        </p>
       </div>
     </TwCard>
   );
