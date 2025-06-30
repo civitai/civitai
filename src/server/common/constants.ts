@@ -4,7 +4,7 @@ import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,

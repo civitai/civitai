@@ -54,7 +54,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { activeBaseModels, constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import {
   BountyEntryMode,

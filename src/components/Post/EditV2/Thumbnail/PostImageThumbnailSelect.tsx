@@ -8,7 +8,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { MIME_TYPES } from '~/server/common/mime-types';
+import { MIME_TYPES } from '~/shared/constants/mime-types';
 import type { SetVideoThumbnailInput } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { MediaType } from '~/shared/utils/prisma/enums';

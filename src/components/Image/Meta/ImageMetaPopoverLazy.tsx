@@ -4,10 +4,10 @@ import { Button, Card, Divider, Group } from '@mantine/core';
 import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
+import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta'; //
 import { useIsClient } from '~/providers/IsClientProvider';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationPanel } from '~/store/generation.store'; //
 import { encodeMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 

@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   orchestratorMediaTransmitter,

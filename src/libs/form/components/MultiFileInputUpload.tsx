@@ -7,7 +7,7 @@ import { IconFileUpload, IconTrash, IconUpload, IconX } from '@tabler/icons-reac
 import { useState } from 'react';
 
 import { useS3Upload } from '~/hooks/useS3Upload';
-import { MIME_TYPES } from '~/server/common/mime-types';
+import { MIME_TYPES } from '~/shared/constants/mime-types';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
