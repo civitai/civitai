@@ -111,7 +111,8 @@ export function InteractiveTipBuzzButton({
   const theme = useMantineTheme();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz(undefined, 'user');
+  const { balances } = useBuzz(undefined, 'user');
+  const [{ balance = 0 } = {}] = balances ?? [{ balance: 0 }];
   const features = useFeatureFlags();
 
   const [buzzCounter, setBuzzCounter] = useState(0);

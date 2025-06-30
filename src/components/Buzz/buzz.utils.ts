@@ -118,11 +118,10 @@ export const useBuzzTransaction = (opts?: {
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
-  const { balance: userBalance, balanceLoading: userBalanceLoading } = useBuzz(undefined, 'user');
-  const { balance: generationBalance, balanceLoading: generationBalanceLoading } = useBuzz(
-    undefined,
-    'generation'
-  );
+  const { balances, balanceLoading } = useBuzz(undefined, ['user', 'generation']);
+  const generationBalance = balances.find((b) => b.accountType === 'generation')?.balance ?? 0;
+  const userBalance = balances.find((b) => b.accountType === 'user')?.balance ?? 0;
+
   const isMobile = useIsMobile();
   const onBuyBuzz = useBuyBuzz();
 
@@ -185,7 +184,7 @@ export const useBuzzTransaction = (opts?: {
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
-    if (userBalanceLoading || generationBalanceLoading) return;
+    if (balanceLoading) return;
 
     const balance = getCurrentBalance();
     const meetsRequirement = hasRequiredAmount(buzzAmount);
@@ -213,6 +212,6 @@ export const useBuzzTransaction = (opts?: {
     getTypeDistribution,
     conditionalPerformTransaction,
     tipUserMutation,
-    isLoadingBalance: userBalanceLoading || generationBalanceLoading,
+    isLoadingBalance: balanceLoading,
   };
 };

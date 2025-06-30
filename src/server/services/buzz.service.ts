@@ -79,7 +79,7 @@ export async function getUserBuzzAccount({
         }
       }
 
-      let res: (GetUserBuzzAccountResponse & { type: BuzzAccountType })[] = [];
+      let res: (GetUserBuzzAccountResponse & { accountType: BuzzAccountType })[] = [];
 
       if (accountTypes) {
         const data: GetUserBuzzAccountsResponse = await response.json();
@@ -88,14 +88,14 @@ export async function getUserBuzzAccount({
           id: accountId,
           balance,
           lifetimeBalance: null,
-          type: type as BuzzAccountType,
+          accountType: type as BuzzAccountType,
         }));
       } else {
         const data: GetUserBuzzAccountResponse = await response.json();
         res = [
           {
             ...data,
-            type: accountType ?? 'user',
+            accountType: accountType ?? 'user',
           },
         ];
       }

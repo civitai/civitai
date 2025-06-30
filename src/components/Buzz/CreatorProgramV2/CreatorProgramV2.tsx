@@ -154,13 +154,14 @@ export const CreatorProgramV2 = () => {
 };
 
 const JoinCreatorProgramCard = () => {
-  const buzzAccount = useBuzz(undefined, 'user');
+  const buzz = useBuzz(undefined, 'user');
+  const [buzzAccount] = buzz.balances;
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
-    buzz: buzzAccount.balance,
+    buzz: buzzAccount?.balance ?? 0,
   });
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
-  const isLoading = buzzAccount.balanceLoading || isLoadingRequirements || isLoadingForecast;
+  const isLoading = buzz.balanceLoading || isLoadingRequirements || isLoadingForecast;
 
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -373,12 +374,13 @@ export const CompensationPoolCard = () => {
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
-  const buzzAccount = useBuzz(undefined, 'user');
+  const buzz = useBuzz(undefined, 'user');
+  const [buzzAccount] = buzz.balances;
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
-  const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
+  const isLoading = isLoadingCompensationPool || buzz.balanceLoading || isLoadingBanked;
   const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();

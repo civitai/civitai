@@ -77,7 +77,8 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Revenue({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
-  const { balance } = useBuzz(id, 'club');
+  const { balances } = useBuzz(id, 'club');
+  const [{ balance = 0 } = {}] = balances;
   const { isOwner, permissions } = useClubContributorStatus({
     clubId: id,
   });

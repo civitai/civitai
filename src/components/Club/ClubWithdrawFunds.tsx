@@ -15,7 +15,8 @@ const schema = clubTransactionSchema.omit({ clubId: true });
 export const ClubWithdrawFunds = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { balance, balanceLoading } = useBuzz(clubId, 'club');
+  const { balances, balanceLoading } = useBuzz(clubId, 'club');
+  const [{ balance = 0 } = {}] = balances;
   const { club, loading } = useQueryClub({ id: clubId });
   const { withdrawClubFunds, withdrawingClubFunds } = useMutateClub();
   const isLoading = loading || balanceLoading;

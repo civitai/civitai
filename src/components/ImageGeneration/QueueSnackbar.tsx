@@ -39,7 +39,8 @@ export function QueueSnackbar() {
   const slots = Array(requestLimit).fill(0);
   const includeQueueLink = !router.pathname.includes('/generate');
 
-  const { balance } = useBuzz(undefined, 'generation');
+  const { balances } = useBuzz(undefined, 'generation');
+  const [{ balance = 0 } = {}] = balances;
 
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {

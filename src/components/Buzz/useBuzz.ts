@@ -24,8 +24,11 @@ export const useBuzz = (
 
   return {
     balanceLoading: isLoading,
-    balance: data?.[0]?.balance ?? 0,
-    lifetimeBalance: data?.[0]?.lifetimeBalance ?? 0,
+    balances: (data ?? []).map((item) => ({
+      balance: item.balance,
+      lifetimeBalance: item.lifetimeBalance,
+      accountType: item.accountType,
+    })),
   };
 };
 
