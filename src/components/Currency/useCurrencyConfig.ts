@@ -11,7 +11,6 @@ export function useCurrencyConfig(currency?: Currency, type?: string) {
 }
 
 export function useBuzzCurrencyConfig(type?: BuzzAccountType | 'red' | undefined) {
-  const theme = useMantineTheme();
   const config = useCurrencyConfig(Currency.BUZZ, type);
 
   return {

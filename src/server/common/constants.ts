@@ -1196,11 +1196,19 @@ export const CurrencyConfig: Record<
     icon: IconBolt,
     color: '#f59f00',
     fill: '#f59f00',
+    classNames: {
+      btn: 'bg-gradient-to-r from-orange-500 to-yellow-400 hover:from-orange-600 hover:to-yellow-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+      gradient: 'bg-gradient-to-r from-orange-500 to-yellow-400',
+    },
     themes: {
       generation: {
         icon: IconBolt,
         color: '#4dabf7',
         fill: '#4dabf7',
+        classNames: {
+          btn: 'bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+          gradient: 'bg-gradient-to-r from-blue-500 to-cyan-400',
+        },
       },
       green: {
         icon: IconBolt,
