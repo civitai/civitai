@@ -104,6 +104,9 @@ export const CreatorProgramV2 = () => {
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
   useCreatorPoolListener();
 
+  const test = useBuzz(undefined, ['user', 'generation']);
+  console.log(test);
+
   if (!currentUser || isLoading || !availability.isAvailable) {
     return null;
   }

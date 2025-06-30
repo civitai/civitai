@@ -188,21 +188,21 @@ export const processCompleteBuzzTransaction = async (
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const amount = meta.buzz_amount ?? meta.buzzAmount;
 
-  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+  const { blueBuzzAdded, totalCustomBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount: amount,
     purchasesMultiplier,
   });
 
   // Pay the user:
   await createBuzzTransaction({
-    amount: totalYellowBuzz,
+    amount: totalCustomBuzz,
     fromAccountId: 0,
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
     description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
+    }A total of ${numberWithCommas(totalCustomBuzz)} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,

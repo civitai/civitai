@@ -23,6 +23,7 @@ import type {
   GetTransactionsReportSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
+  GetUserBuzzAccountsResponse,
   GetUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsSchema,
 } from '~/server/schema/buzz.schema';
@@ -46,15 +47,24 @@ import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 
 type AccountType = 'User';
 
-export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
+export async function getUserBuzzAccount({
+  accountId,
+  accountType,
+  accountTypes,
+}: GetUserBuzzAccountSchema) {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
 
   return withRetries(
     async () => {
       // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
-      const response = await fetch(
-        `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
-      );
+      const fetchUrl = accountType
+        ? `${env.BUZZ_ENDPOINT}/account/${accountType}/${accountId}`
+        : accountTypes
+        ? `${env.BUZZ_ENDPOINT}/user/${accountId}/accounts?${accountTypes
+            .map((t) => `accountType=${t}`)
+            .join('&')}`
+        : `${env.BUZZ_ENDPOINT}/account/${accountId}`;
+      const response = await fetch(fetchUrl);
       if (!response.ok) {
         switch (response.status) {
           case 400:
@@ -69,8 +79,28 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
         }
       }
 
-      const data: GetUserBuzzAccountResponse = await response.json();
-      return data;
+      let res: (GetUserBuzzAccountResponse & { type: BuzzAccountType })[] = [];
+
+      if (accountTypes) {
+        const data: GetUserBuzzAccountsResponse = await response.json();
+
+        res = Object.entries(data).map(([type, balance]) => ({
+          id: accountId,
+          balance,
+          lifetimeBalance: null,
+          type: type as BuzzAccountType,
+        }));
+      } else {
+        const data: GetUserBuzzAccountResponse = await response.json();
+        res = [
+          {
+            ...data,
+            type: accountType ?? 'user',
+          },
+        ];
+      }
+
+      return res;
     },
     3,
     1500
@@ -211,7 +241,7 @@ export async function createBuzzTransaction({
   if (
     payload.fromAccountId !== 0 &&
     payload.fromAccountType !== 'creatorprogrambank' &&
-    (account.balance ?? 0) < amount
+    (account[0]?.balance ?? 0) < amount
   ) {
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
@@ -1129,7 +1159,7 @@ export const grantBuzzPurchase = async ({
   description?: string;
 } & MixedObject) => {
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
-  const { blueBuzzAdded, totalYellowBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+  const { blueBuzzAdded, totalCustomBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount: amount,
     purchasesMultiplier,
   });
@@ -1138,7 +1168,7 @@ export const grantBuzzPurchase = async ({
   const { transactionId } = await createBuzzTransaction({
     fromAccountId: 0,
     toAccountId: userId,
-    amount: totalYellowBuzz,
+    amount: totalCustomBuzz,
     type: TransactionType.Purchase,
     externalTransactionId,
     description:
@@ -1147,7 +1177,7 @@ export const grantBuzzPurchase = async ({
         purchasesMultiplier && purchasesMultiplier > 1
           ? 'Multiplier applied due to membership. '
           : ''
-      }A total of ${numberWithCommas(totalYellowBuzz)} Buzz was added to your account.`,
+      }A total of ${numberWithCommas(totalCustomBuzz)} Buzz was added to your account.`,
     details: {
       ...data,
     },

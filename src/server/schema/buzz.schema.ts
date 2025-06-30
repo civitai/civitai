@@ -55,6 +55,7 @@ export const getUserBuzzAccountSchema = z.object({
   // This is the user id
   accountId: z.number().min(0),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  accountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).optional(),
 });
 
 export type GetEarnPotentialSchema = z.infer<typeof getEarnPotentialSchema>;
@@ -70,6 +71,9 @@ export const getUserBuzzAccountResponse = z.object({
   balance: z.number().nullable(),
   lifetimeBalance: z.number().nullable(),
 });
+
+export type GetUserBuzzAccountsResponse = z.infer<typeof getUserBuzzAccountsResponse>;
+export const getUserBuzzAccountsResponse = z.record(z.enum(buzzAccountTypes), z.number());
 
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
 export const getUserBuzzTransactionsSchema = z.object({
@@ -177,6 +181,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  accountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).optional(),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;

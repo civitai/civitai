@@ -431,7 +431,7 @@ export const createBid = async ({
   // - Go
 
   const account = await getUserBuzzAccount({ accountId: userId });
-  if ((account.balance ?? 0) < amount) {
+  if ((account[0]?.balance ?? 0) < amount) {
     throw throwInsufficientFundsError();
   }
 

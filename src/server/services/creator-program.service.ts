@@ -96,7 +96,7 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
         OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType IN (${SUPPORTED_BUZZ})
+      AND toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
       AND toStartOfMonth(date) < toStartOfMonth(now())
@@ -234,7 +234,7 @@ async function getPoolValue(month?: Date) {
     SELECT
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${SUPPORTED_BUZZ})
+    WHERE toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
@@ -259,7 +259,7 @@ async function getPoolSize(month?: Date) {
     accountType: 'creatorprogrambank',
   });
 
-  return account.balance ?? 0;
+  return account[0]?.balance ?? 0;
 }
 
 async function getPoolForecast(month?: Date) {
@@ -268,7 +268,7 @@ async function getPoolForecast(month?: Date) {
     SELECT
       SUM(amount) AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${SUPPORTED_BUZZ})
+    WHERE toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
     AND (
       (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -488,8 +488,8 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
         });
         return {
           id,
-          pending: pending.balance ?? 0,
-          ready: settled.balance ?? 0,
+          pending: pending[0]?.balance ?? 0,
+          ready: settled[0]?.balance ?? 0,
         };
       })
     );
@@ -756,12 +756,12 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
       -- Banks
       toAccountType = 'creator-program-bank'
       AND toAccountId = ${monthAccount}
-      AND fromAccountType IN (${SUPPORTED_BUZZ})
+      AND fromAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
     ) OR (
       -- Extracts
       fromAccountType = 'creator-program-bank'
       AND fromAccountId = ${monthAccount}
-      AND toAccountType IN (${SUPPORTED_BUZZ})
+      AND toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
     )
     GROUP BY userId
     ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};

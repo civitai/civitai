@@ -434,7 +434,7 @@ export const clubOwnerRemoveMember = async ({
     accountType: 'club',
   });
 
-  if ((clubBuzzAccount?.balance ?? 0) < membership.unitAmount) {
+  if ((clubBuzzAccount[0]?.balance ?? 0) < membership.unitAmount) {
     throw throwInsufficientFundsError(
       'Club does not have enough funds to refund this user as such, they cannot be removed'
     );

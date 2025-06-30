@@ -79,7 +79,7 @@ CreateBuzzWithdrawalRequestSchema & {
     accountType: 'user',
   });
 
-  if ((userBuzzAccount?.balance ?? 0) < amount) throw throwInsufficientFundsError();
+  if ((userBuzzAccount[0]?.balance ?? 0) < amount) throw throwInsufficientFundsError();
 
   // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
 

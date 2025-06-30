@@ -157,7 +157,7 @@ export const createBounty = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      if ((account.balance ?? 0) < unitAmount) {
+      if ((account[0]?.balance ?? 0) < unitAmount) {
         throw throwInsufficientFundsError();
       }
       break;
@@ -533,7 +533,7 @@ export const addBenefactorUnitAmount = async ({
   switch (currency) {
     case Currency.BUZZ:
       const account = await getUserBuzzAccount({ accountId: userId });
-      if ((account.balance ?? 0) < unitAmount) {
+      if ((account[0]?.balance ?? 0) < unitAmount) {
         throw throwInsufficientFundsError();
       }
       break;

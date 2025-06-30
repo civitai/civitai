@@ -7,18 +7,25 @@ import type { BuzzAccountType, GetTransactionsReportSchema } from '~/server/sche
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
 
-export const useBuzz = (accountId?: number, accountType?: BuzzAccountType | null) => {
+export const useBuzz = (
+  accountId?: number,
+  accountType?: BuzzAccountType[] | BuzzAccountType | null
+) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
-    { accountId: accountId ?? (currentUser?.id as number), accountType: accountType },
+    {
+      accountId: accountId ?? (currentUser?.id as number),
+      accountType: Array.isArray(accountType) ? undefined : accountType,
+      accountTypes: Array.isArray(accountType) ? accountType : undefined,
+    },
     { enabled: !!currentUser && features.buzz }
   );
 
   return {
     balanceLoading: isLoading,
-    balance: data?.balance ?? 0,
-    lifetimeBalance: data?.lifetimeBalance ?? 0,
+    balance: data?.[0]?.balance ?? 0,
+    lifetimeBalance: data?.[0]?.lifetimeBalance ?? 0,
   };
 };
 
@@ -33,16 +40,16 @@ export const useBuzzSignalUpdate = () => {
       queryUtils.buzz.getBuzzAccount.setData(
         { accountId: currentUser.id as number, accountType: updated.accountType },
         (old) => {
-          if (!old) return old;
-          return { ...old, balance: updated.balance };
+          if (!old || !old[0]) return old;
+          return [{ ...old[0], balance: updated.balance }];
         }
       );
 
       queryUtils.buzz.getBuzzAccount.setData(
         { accountId: currentUser.id as number, accountType: null },
         (old) => {
-          if (!old || !old.balance) return old;
-          return { ...old, balance: (old.balance ?? 0) + updated.delta };
+          if (!old || !old[0] || !old[0].balance) return old;
+          return [{ ...old[0], balance: (old[0].balance ?? 0) + updated.delta }];
         }
       );
     },

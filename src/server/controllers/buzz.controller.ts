@@ -78,11 +78,15 @@ export async function getBuzzAccountHandler({
         break;
       case 'user':
       case 'generation':
+      case 'fakered':
+      case 'green':
         if (accountId !== ctx.user.id)
           throw throwBadRequestError("You cannot view this user's transactions");
         break;
       default:
     }
+
+    console.log(input);
 
     return getUserBuzzAccount({ ...input });
   } catch (error) {
@@ -212,7 +216,7 @@ export async function createBuzzTipTransactionHandler({
     }
     // Confirm user funds:
     const userAccount = await getUserBuzzAccount({ accountId: fromAccountId, accountType: 'user' });
-    if ((userAccount.balance ?? 0) < finalAmount) {
+    if ((userAccount[0]?.balance ?? 0) < finalAmount) {
       throw throwInsufficientFundsError();
     }
 
