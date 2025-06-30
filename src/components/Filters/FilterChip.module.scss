@@ -5,7 +5,7 @@
   &[data-checked] {
     &,
     &:hover {
-      color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
+      color: var(--mantine-color-white);
       border: 1px solid var(--mantine-color-primary);
     }
 
