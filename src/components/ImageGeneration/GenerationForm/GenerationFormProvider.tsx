@@ -374,7 +374,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (!name || name === 'baseModel') {
-        if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
+        if (
+          (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') &&
+          watchedValues.workflow !== 'txt2img'
+        ) {
           form.setValue('workflow', 'txt2img');
         }
         const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];

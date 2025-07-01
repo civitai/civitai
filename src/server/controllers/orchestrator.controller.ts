@@ -109,8 +109,6 @@ export async function generate({
 export async function whatIf(args: GenerationSchema & Ctx) {
   const step = await createWorkflowStep(args);
 
-  console.log(JSON.stringify(step));
-
   const workflow = await submitWorkflow({
     token: args.token,
     body: { steps: [step], experimental: args.experimental },

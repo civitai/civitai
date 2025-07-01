@@ -134,6 +134,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
 
     const values = {
       ...args,
+      sourceImage: sourceImage?.url,
       loras: resources?.map(({ air, strength }) => ({ air, strength })),
     };
 
@@ -155,7 +156,6 @@ export const wanGenerationConfig = VideoGenerationConfig2({
         provider: 'civitai',
         width,
         height,
-        sourceImage: sourceImage?.url,
         model,
       };
     }
