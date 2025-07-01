@@ -122,7 +122,6 @@ export function RootThreadProvider({
     {
       onSuccess: (data) => {
         if (!data) return;
-        console.log('onSuccess RootThreadProvider');
         const allThreads = [data, ...(data.children ?? [])];
         const maxDepth = constants.comments.getMaxDepth({ entityType: entity.entityType });
 
@@ -232,7 +231,6 @@ export function CommentsProvider({
     {
       enabled: initialCount === undefined || initialCount > 0,
       onSuccess: (data) => {
-        console.log('onSuccess CommentsProvider');
         setLimit(getLimit(data?.comments));
       },
     }
