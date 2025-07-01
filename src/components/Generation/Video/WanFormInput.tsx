@@ -1,16 +1,11 @@
-import { Anchor, Group, Input, Radio } from '@mantine/core';
+import { Anchor, Input } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import {
-  InputNumberSlider,
-  InputRadioGroup,
-  InputSegmentedControl,
-  InputTextArea,
-} from '~/libs/form';
+import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import {
   wanAspectRatios,
   wanDuration,
@@ -43,7 +38,6 @@ export function WanFormInput() {
   }, [availableBaseModels, baseModel]);
 
   const resources = getBaseModelResourceTypes(baseModel) ?? [];
-  console.log({ resources });
 
   return (
     <>

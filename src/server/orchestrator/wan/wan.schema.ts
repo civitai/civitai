@@ -1,4 +1,4 @@
-import type { WanVdeoGenInput } from '@civitai/client';
+import type { CivitaiWanVideoGenInput, FALWanVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -15,6 +15,7 @@ import {
 import { numberEnum, zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
+const wanFalAspectRatios = ['4:3', '16:9', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
 export const wanResolution = [480, 720] as const;
 
@@ -33,6 +34,7 @@ export const wanBaseModelMap = {
     model: 'urn:air:wanvideo14b_t2v:checkpoint:civitai:1329096@1707796',
     default: true,
     resolution: 480,
+    provider: 'civitai',
   },
   WanVideo14B_I2V_480p: {
     process: 'img2vid',
@@ -40,6 +42,7 @@ export const wanBaseModelMap = {
     model: 'urn:air:wanvideo14b_i2v_480p:checkpoint:civitai:1329096@1501125',
     default: false,
     resolution: 480,
+    provider: 'civitai',
   },
   WanVideo14B_I2V_720p: {
     process: 'img2vid',
@@ -47,6 +50,7 @@ export const wanBaseModelMap = {
     model: 'urn:air:wanvideo14b_i2v_720p:checkpoint:civitai:1329096@1501344',
     default: true,
     resolution: 720,
+    provider: 'fal',
   },
 };
 
@@ -74,6 +78,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     'draft',
     'resources',
     'sourceImage',
+    'baseModel',
   ],
   metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   schema,
@@ -100,7 +105,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     } else if (data.process === 'img2vid') {
       delete data.aspectRatio;
     }
-    return data;
+    return { ...data, steps: 20 };
   },
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {
@@ -119,29 +124,45 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ sourceImage, resources, baseModel, ...args }): WanVdeoGenInput => {
+  inputFn: ({
+    sourceImage,
+    resources,
+    baseModel,
+    ...args
+  }): CivitaiWanVideoGenInput | FALWanVideoGenInput => {
     const config = wanBaseModelMap[baseModel!];
-    const aspectRatios = resolutionMap.get(config.resolution)!;
-    const aspectRatio = sourceImage
-      ? findClosestAspectRatio(sourceImage, [...wanAspectRatios])
-      : args.aspectRatio ?? '1:1';
-    const [width, height] = aspectRatios[aspectRatio];
 
-    const model = config.model;
-
-    return {
+    const values = {
       ...args,
-      width,
-      height,
-      sourceImage: sourceImage?.url,
-      steps: 20,
       loras: resources?.map(({ air, strength }) => ({ air, strength })),
-      model,
     };
+
+    if (config.provider === 'fal') {
+      const imageOrAspectRatio = sourceImage ?? args.aspectRatio;
+      const aspectRatio = imageOrAspectRatio
+        ? findClosestAspectRatio(imageOrAspectRatio, [...wanFalAspectRatios])
+        : undefined;
+      return { ...values, provider: 'fal', aspectRatio, enablePromptExpansion: false };
+    } else {
+      const aspectRatios = resolutionMap.get(config.resolution)!;
+      const aspectRatio = sourceImage
+        ? findClosestAspectRatio(sourceImage, [...wanAspectRatios])
+        : args.aspectRatio ?? '1:1';
+      const [width, height] = aspectRatios[aspectRatio];
+      const model = config.model;
+      return {
+        ...values,
+        provider: 'civitai',
+        width,
+        height,
+        sourceImage: sourceImage?.url,
+        model,
+      };
+    }
   },
-  legacyMapFn: (args) => {
-    return {
-      ...args,
-    };
-  },
+  // legacyMapFn: (args) => {
+  //   return {
+  //     ...args,
+  //   };
+  // },
 });

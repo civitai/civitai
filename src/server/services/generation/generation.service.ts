@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-import { getGenerationConfig } from '~/server/common/constants';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
@@ -9,7 +8,6 @@ import {
   isVideoGenerationEngine,
   modelIdEngineMap,
 } from '~/server/orchestrator/generation/generation.config';
-import { veo3ModelVersionId } from '~/server/orchestrator/veo3/veo3.schema';
 import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -24,7 +22,6 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
-import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
@@ -379,6 +376,7 @@ async function getMediaGenerationData({
         },
       };
     case 'video':
+      // TODO - handle legacy mapping here?
       const meta = media.meta as Record<string, any>;
       meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
       if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;

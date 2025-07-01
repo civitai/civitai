@@ -1,4 +1,3 @@
-import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants, maxRandomSeed } from '~/server/common/constants';
@@ -109,6 +108,8 @@ export async function generate({
 
 export async function whatIf(args: GenerationSchema & Ctx) {
   const step = await createWorkflowStep(args);
+
+  console.log(JSON.stringify(step));
 
   const workflow = await submitWorkflow({
     token: args.token,
