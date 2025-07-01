@@ -14,10 +14,11 @@ export const flux1KontextAspectRatios = [
   '9:21',
 ] as const;
 type Flux1Model = (typeof flux1KontextModels)[number];
-export const flux1KontextModels = ['pro', 'max'] as const;
+export const flux1KontextModels = ['dev', 'pro', 'max'] as const;
 const engine = 'flux1-kontext';
 
 export const fluxKontextModelVersionToModelMap = new Map<number, Flux1Model>([
+  [1945998, 'dev'],
   [1892509, 'pro'],
   [1892523, 'max'],
 ]);
@@ -31,6 +32,7 @@ export function getIsFluxContextFromEngine(value?: string) {
 }
 
 export const flux1ModelModeOptions = [
+  { label: 'Dev', value: '1945998' },
   { label: 'Pro', value: '1892509' },
   { label: 'Max', value: '1892523' },
 ];
