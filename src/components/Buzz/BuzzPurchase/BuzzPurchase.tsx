@@ -516,14 +516,23 @@ export const BuzzPurchase = ({
               />
               <div className="flex flex-col gap-3 md:flex-row">
                 {selectedBuzzType === 'green' ? (
-                  <BuzzPurchasePaymentButton
-                    unitAmount={unitAmount}
-                    buzzAmount={buzzAmount}
-                    onPurchaseSuccess={onPurchaseSuccess}
-                    onValidate={onValidate}
-                    disabled={!ctaEnabled}
-                    purchaseSuccessMessage={purchaseSuccessMessage}
-                  />
+                  <>
+                    {features.emerchantpayPayments && (
+                      <BuzzEmerchantPayButton
+                        unitAmount={unitAmount}
+                        buzzAmount={buzzAmount}
+                        disabled={!ctaEnabled}
+                      />
+                    )}
+                    <BuzzPurchasePaymentButton
+                      unitAmount={unitAmount}
+                      buzzAmount={buzzAmount}
+                      onPurchaseSuccess={onPurchaseSuccess}
+                      onValidate={onValidate}
+                      disabled={!ctaEnabled}
+                      purchaseSuccessMessage={purchaseSuccessMessage}
+                    />
+                  </>
                 ) : (
                   <>
                     {features.emerchantpayPayments && (

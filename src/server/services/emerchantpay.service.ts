@@ -52,22 +52,15 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
     currency: 'USD',
     customer_email: '', // Will be filled by the calling service with user email
     lifetime: 60, // 60 minutes
-    billing_address: {
-      first_name: 'Customer',
-      last_name: 'User',
-      address1: '123 Main St',
-      zip_code: '12345',
-      city: 'City',
-      country: 'US',
-    },
     transaction_types: [
       {
         name: 'sale',
+        digital_asset_type: true,
       },
     ],
     metadata: {
-      internalOrderId: orderId,
       userId: input.userId,
+      internalOrderId: orderId,
       buzzAmount: input.buzzAmount,
     },
   });

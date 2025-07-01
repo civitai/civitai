@@ -117,38 +117,39 @@ class EmerchantPayCaller extends HttpCaller {
     input: EmerchantPay.WPFCreatePaymentInputSchema
   ): Promise<EmerchantPay.WPFCreatePaymentResponseSchema> {
     // Convert amount to minor currency units (cents)
-    const amountInCents = Math.round(input.amount * 100);
 
     // Build XML request
     const wpfPaymentData = {
-      wpf_payment: {
-        transaction_type: 'wpf_create',
-        transaction_id: input.transaction_id,
-        usage: input.usage,
-        description: input.description,
-        notification_url: input.notification_url,
-        return_success_url: input.return_success_url,
-        return_failure_url: input.return_failure_url,
-        return_cancel_url: input.return_cancel_url,
-        amount: amountInCents,
-        currency: input.currency,
-        customer_email: input.customer_email,
-        customer_phone: input.customer_phone,
-        lifetime: input.lifetime,
-        billing_address: input.billing_address,
-        transaction_types: {
-          transaction_type: input.transaction_types,
-        },
+      transaction_type: 'wpf_create',
+      transaction_id: input.transaction_id,
+      usage: input.usage,
+      description: input.description,
+      notification_url: input.notification_url,
+      return_success_url: input.return_success_url,
+      return_failure_url: input.return_failure_url,
+      return_cancel_url: input.return_cancel_url,
+      amount: input.amount,
+      currency: input.currency,
+      customer_email: input.customer_email,
+      customer_phone: input.customer_phone,
+      lifetime: input.lifetime,
+      billing_address: input.billing_address,
+      transaction_types: {
+        transaction_type: input.transaction_types.map((type) => ({
+          $: { name: type.name },
+        })),
       },
     };
 
     const xmlBody = this.buildXML(wpfPaymentData);
+    console.log(xmlBody);
 
     const response = await this.postRaw('/wpf', {
       body: xmlBody,
     });
 
     if (!response.ok) {
+      console.log(this);
       const errorText = await response.text();
       console.error('EmerchantPay WPF creation failed:', errorText);
       throw new Error(`Failed to create WPF payment: ${response.statusText}`);

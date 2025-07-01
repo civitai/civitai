@@ -24,20 +24,23 @@ export namespace EmerchantPay {
     customer_email: z.string().email('Invalid email address'),
     customer_phone: z.string().optional(),
     lifetime: z.number().optional(), // in minutes
-    billing_address: z.object({
-      first_name: z.string().min(1, 'First name is required'),
-      last_name: z.string().min(1, 'Last name is required'),
-      address1: z.string().min(1, 'Address is required'),
-      address2: z.string().optional(),
-      zip_code: z.string().min(1, 'ZIP code is required'),
-      city: z.string().min(1, 'City is required'),
-      neighborhood: z.string().optional(),
-      state: z.string().optional(),
-      country: z.string().length(2, 'Country must be 2 characters'),
-    }),
+    billing_address: z
+      .object({
+        first_name: z.string().min(1, 'First name is required'),
+        last_name: z.string().min(1, 'Last name is required'),
+        address1: z.string().min(1, 'Address is required'),
+        address2: z.string().optional(),
+        zip_code: z.string().min(1, 'ZIP code is required'),
+        city: z.string().min(1, 'City is required'),
+        neighborhood: z.string().optional(),
+        state: z.string().optional(),
+        country: z.string().length(2, 'Country must be 2 characters'),
+      })
+      .optional(),
     transaction_types: z.array(
       z.object({
         name: z.enum(['authorize', 'authorize3d', 'sale', 'sale3d']),
+        digital_asset_type: z.boolean().optional(),
       })
     ),
     metadata: baseMeta.optional(),

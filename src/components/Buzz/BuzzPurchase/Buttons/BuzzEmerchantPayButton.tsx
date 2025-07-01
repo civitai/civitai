@@ -2,6 +2,7 @@ import { Button, Group, Stack } from '@mantine/core';
 import { IconCreditCard } from '@tabler/icons-react';
 import { useMutateEmerchantPay, useEmerchantPayStatus } from '~/components/EmerchantPay/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { showErrorNotification } from '~/utils/notifications';
 
 interface BuzzEmerchantPayButtonProps {
   disabled: boolean;
@@ -32,8 +33,24 @@ export const BuzzEmerchantPayButton = ({
       buzzAmount,
     });
 
+    // Check if the response indicates an error
+    if (data?.status === 'error' || data?.status === 'declined') {
+      const errorMessage =
+        data.message || data.technical_message || 'Unexpected error. Please try again.';
+      showErrorNotification({
+        title: 'Error while trying to create a payment link',
+        error: new Error(errorMessage),
+      });
+      return;
+    }
+
     if (data?.redirect_url) {
       window.location.replace(data.redirect_url);
+    } else {
+      showErrorNotification({
+        title: 'Payment Setup Failed',
+        error: new Error('No redirect URL received. Please try again.'),
+      });
     }
   };
 
