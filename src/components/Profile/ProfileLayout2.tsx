@@ -14,6 +14,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { usePathname } from 'next/navigation';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -27,6 +28,54 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
 
   const stats = user?.stats;
   // const { classes } = useStyles();
+
+  const userMetaImage = user?.profilePicture
+    ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
+    : user?.image;
+  const metaSchema = user
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'ProfilePage',
+        name: `${user.username} Creator Profile`,
+        description: `Learn more about ${user.username} on Civitai.`,
+        primaryImageOfPage: {
+          '@type': 'ImageObject',
+          contentUrl: userMetaImage,
+        },
+        mainEntity: {
+          '@type': 'Person',
+          name: user.username,
+          image: userMetaImage,
+          url: `${env.NEXT_PUBLIC_BASE_URL}/${username}`,
+          interactionStatistic: stats
+            ? [
+                {
+                  '@type': 'InteractionCounter',
+                  interactionType: 'http://schema.org/FollowAction',
+                  userInteractionCount: stats.followerCountAllTime,
+                },
+                {
+                  '@type': 'InteractionCounter',
+                  interactionType: 'http://schema.org/LikeAction',
+                  userInteractionCount: stats.thumbsUpCountAllTime,
+                },
+                {
+                  '@type': 'InteractionCounter',
+                  interactionType: 'http://schema.org/DownloadAction',
+                  userInteractionCount: stats.downloadCountAllTime,
+                },
+              ]
+            : undefined,
+          aggregateRating: stats
+            ? {
+                '@type': 'AggregateRating',
+                ratingValue: stats.ratingAllTime.toFixed(2),
+                ratingCount: stats.ratingCountAllTime,
+              }
+            : undefined,
+        },
+      }
+    : undefined;
 
   return (
     <>
@@ -42,6 +91,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           images={user.profilePicture}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
+          schema={metaSchema}
         />
       ) : (
         <Meta
