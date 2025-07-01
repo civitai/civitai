@@ -1,4 +1,4 @@
-import { MEDIA_TYPE } from '~/server/common/mime-types';
+import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { preprocessImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { preprocessVideo } from '~/utils/media-preprocessors/video.preprocessor';
 

@@ -46,9 +46,14 @@ export function PostEdit() {
               <PostReorderImages />
             )}
           </div>
-          <div className="flex flex-col gap-3 @sm:w-72">
-            <PostEditSidebar post={post} />
-            <EditPostReviews post={post} />
+          <div className="@sm:w-72">
+            <div
+              className="flex h-auto w-full flex-col gap-3 @sm:sticky"
+              style={{ top: 'calc(var(--header-height))' }}
+            >
+              <PostEditSidebar post={post} />
+              <EditPostReviews post={post} />
+            </div>
             {/*<PostCollaboratorSelection post={post} />*/}
           </div>
         </div>

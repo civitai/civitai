@@ -1,11 +1,25 @@
 import type { MantineSpacing } from '@mantine/core';
 import { useMediaQuery as useMantineMediaQuery } from '@mantine/hooks';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   useContainerContext,
   useContainerProviderStore,
 } from '~/components/ContainerProvider/ContainerProvider';
 import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
+
+export function useContainerSize() {
+  const { nodeRef, containerName } = useContainerContext();
+  return useContainerProviderStore(
+    useCallback((state) => {
+      return (
+        state[containerName] ?? {
+          inlineSize: nodeRef.current?.offsetWidth ?? 0,
+          blockSize: nodeRef.current?.offsetHeight ?? 0,
+        }
+      );
+    }, [])
+  );
+}
 
 export function useContainerQuery({
   type,
@@ -15,25 +29,13 @@ export function useContainerQuery({
   width: MantineSpacing;
 }) {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
-  const { nodeRef, ...context } = useContainerContext();
+  const { inlineSize } = useContainerSize();
 
-  const value = useContainerProviderStore(
-    useCallback(
-      (state) => {
-        const { inlineSize = nodeRef.current?.offsetWidth ?? 0 } =
-          state[context.containerName] ?? {};
-
-        // otherwise, this will return true at first
-        if (inlineSize === 0) return false;
-
-        if (type === 'max-width') return size > inlineSize;
-        else return size <= inlineSize;
-      },
-      [size, type]
-    )
-  );
-
-  return value;
+  return useMemo(() => {
+    if (inlineSize === 0) return false;
+    if (type === 'max-width') return size > inlineSize;
+    else return size <= inlineSize;
+  }, [inlineSize, type, size]);
 }
 
 export function useMediaQuery({

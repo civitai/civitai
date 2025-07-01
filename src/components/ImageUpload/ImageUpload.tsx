@@ -46,7 +46,7 @@ import { ImageUploadPreview } from '~/components/ImageUpload/ImageUploadPreview'
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import useIsClient from '~/hooks/useIsClient';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatBytes } from '~/utils/number-helpers';
 import styles from './ImageUpload.module.css';

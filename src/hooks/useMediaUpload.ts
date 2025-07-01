@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import { UploadType } from '~/server/common/enums';
-import { MEDIA_TYPE } from '~/server/common/mime-types';
+import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { preprocessFile } from '~/utils/media-preprocessors';

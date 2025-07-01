@@ -175,6 +175,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             <Title size="sm">{postLabel}</Title>
             {features.appTour && (
               <HelpButton
+                data-tour="post:reset"
                 tooltip="Need help? Start the tour!"
                 onClick={() => runTour({ key: 'post-generation', step: 0, forceRun: true })}
               />

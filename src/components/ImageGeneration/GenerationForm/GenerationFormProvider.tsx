@@ -167,7 +167,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
-  let vae = data.resources.find((x) => x.model.type === 'VAE');
+  let vae = data.resources.find((x) => x.model.type === 'VAE') ?? null;
   const baseModel =
     params.baseModel ??
     getBaseModelFromResourcesWithDefault(
@@ -192,12 +192,11 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
     ) ||
     !vae.canGenerate
   )
-    vae = undefined;
+    vae = null;
 
   if (
-    !params.sampler ||
     params.sampler === 'undefined' ||
-    !(generationSamplers as string[]).includes(params.sampler)
+    (params.sampler && !(generationSamplers as string[]).includes(params.sampler))
   )
     params.sampler = defaultValues.sampler;
 

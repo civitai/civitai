@@ -380,7 +380,7 @@ export function ImageDetail2() {
                   </ImageGuard2>
                 </div>
                 <div
-                  className={` @max-md:absolute @max-md:inset-0 ${
+                  className={`@max-md:absolute @max-md:inset-0 ${
                     !active
                       ? '@max-md:translate-y-[calc(100%-60px)]'
                       : '@max-md:transition-transform'

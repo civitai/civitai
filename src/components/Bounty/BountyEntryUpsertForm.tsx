@@ -33,7 +33,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { Form, InputCheckbox, InputMultiFileUpload, InputRTE, useForm } from '~/libs/form';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import {
   bountyEntryFileSchema,

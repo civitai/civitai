@@ -203,7 +203,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             __html: `
           import('https://server.megabrain.co/sdk/js').then(({fetchAd, markAdAsViewed}) => {
             window.fetchKontextAd = fetchAd
-            window.markKontextAdAsViewed = markAdAsViewed
             dispatchEvent(new CustomEvent('kontext-ad-script-loaded'))
           })
 

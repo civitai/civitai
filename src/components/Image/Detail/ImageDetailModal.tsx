@@ -47,6 +47,7 @@ export default function ImageDetailModal({
       withCloseButton={false}
       withinPortal={false}
       withOverlay={false}
+      lockScroll={false}
       padding={0}
       fullScreen
     >

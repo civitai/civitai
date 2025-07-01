@@ -16,6 +16,7 @@
 }
 
 .tabRainbow {
+  color: var(--mantine-color-white);
   background: linear-gradient(90deg,
       rgba(255, 0, 0, 1) 0%,
       rgba(255, 154, 0, 1) 10%,

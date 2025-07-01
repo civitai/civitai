@@ -61,6 +61,7 @@ import { TransactionsPopover } from '~/components/ImageGeneration/GenerationForm
 import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -257,13 +258,7 @@ export function QueueItem({
               </Alert>
             )}
 
-            {prompt && (
-              <ContentClamp maxHeight={36} labelSize="xs">
-                <Text lh={1.3} style={{ wordBreak: 'break-all' }}>
-                  {prompt}
-                </Text>
-              </ContentClamp>
-            )}
+            {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             <div className="-my-2 flex gap-2">
               {workflowDefinition && (

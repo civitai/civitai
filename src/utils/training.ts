@@ -1,7 +1,7 @@
 import type JSZip from 'jszip';
 import type { BaseModel } from '~/server/common/constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
-import { getMimeTypeFromExt, MEDIA_TYPE } from '~/server/common/mime-types';
+import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsParams,

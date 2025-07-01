@@ -1,4 +1,4 @@
-import { CloseButton, Table, Text, useMantineTheme } from '@mantine/core';
+import { CloseButton, Skeleton, Table, Text, useMantineTheme } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { useCallback, useState } from 'react';
 import { create } from 'zustand';
@@ -139,56 +139,18 @@ function Test() {
 
   return (
     <div className="container flex h-full max-w-sm flex-col gap-3">
-      {/* <div className="container flex items-center gap-2 pb-2">
-        <span>{count}</span>
-        <Button
-          onClick={() => {
-            setCount((c) => c + 1);
-          }}
-        >
-          Counter
-        </Button>
+      <div className="flex gap-3">
+        <Text className="flex-1">
+          {`Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book.`}
+        </Text>
+        <div className="flex flex-1 flex-col">
+          {Array(6)
+            .fill(0)
+            .map((_, i) => (
+              <Skeleton key={i} className="my-1 h-4" />
+            ))}
+        </div>
       </div>
-      <ComponentWithSlots>
-        <Content />
-      </ComponentWithSlots> */}
-
-      {/* <GenerationSettingsPopover>
-          <Button>Popover</Button>
-        </GenerationSettingsPopover>
-        <Button
-          onClick={() =>
-            dialogStore.trigger({
-              component: LoginModal,
-            })
-          }
-        >
-          Log in
-        </Button>
-        <Button
-          onClick={() =>
-            dialogStore.trigger({
-              component: LoginModal,
-              props: {
-                message: 'You must be logged in to perform this action',
-              },
-            })
-          }
-        >
-          Log in with alert
-        </Button>
-        <Example />
-        <ExampleSelect />
-
-        <ExamplePopover /> */}
-      {/* <CustomAspectRatio minResolution={64} maxResolution={5000} defaultResolution={320} /> */}
-      {/* <FormWrapper engine="vidu">
-
-        </FormWrapper> */}
-      {/* <SourceImageUpload value={data} onChange={setData} limit={3} /> */}
-      {/* <IsClient>
-        <ImageCropperContent images={imageData} />
-      </IsClient> */}
     </div>
   );
 }

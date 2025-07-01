@@ -3,6 +3,7 @@
 // import { Button, Card, Divider, Group } from '@mantine/core';
 // import { IconBrush } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
+import type { ImageMetaPopoverProps } from '~/components/Image/Meta/ImageMetaPopoverLazy';
 // import React from 'react';
 // import { CopyButton } from '~/components/CopyButton/CopyButton';
 // import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
@@ -12,9 +13,13 @@ import dynamic from 'next/dynamic';
 // import { encodeMetadata } from '~/utils/metadata';
 // import { trpc } from '~/utils/trpc';
 
-export const ImageMetaPopover2 = dynamic(
+export const ImageMetaPopoverLazy = dynamic(
   () => import('~/components/Image/Meta/ImageMetaPopoverLazy')
 );
+
+export function ImageMetaPopover2(props: ImageMetaPopoverProps) {
+  return <ImageMetaPopoverLazy {...props} />;
+}
 
 // export function ImageMetaPopover2({
 //   imageId,

@@ -51,8 +51,8 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
             />
             {hasHiddenComments && !onlyHidden && (
               <RoutedDialogLink
-                name="hiddenModelComments"
-                state={{ modelId }}
+                name="hiddenComments"
+                state={{ entityId: modelId, entityType: 'model' }}
                 style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
               >
                 <Group gap={4} justify="center">

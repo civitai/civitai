@@ -15,7 +15,7 @@ import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { useInView } from '~/hooks/useInView';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';

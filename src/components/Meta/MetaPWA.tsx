@@ -6,7 +6,7 @@ export function MetaPWA() {
 
   return (
     <Head>
-      <meta name="viewport" content="maximum-scale=1, initial-scale=1, width=device-width" />
+      <meta name="viewport" content="initial-scale=1, width=device-width" />
       <link rel="manifest" href="/site.webmanifest" />
       <meta name="mobile-web-app-capable" content="yes" />
       {/* exoclick ad meta tag */}

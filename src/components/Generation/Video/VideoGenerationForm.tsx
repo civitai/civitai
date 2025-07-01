@@ -59,7 +59,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
 
   const form = usePersistForm(`generation-form-${engine}`, {
     schema: config.validationSchema as any,
-    version: 1,
+    version: 1.1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     defaultValues: config.getDefaultValues(),
