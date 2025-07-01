@@ -155,7 +155,7 @@ export const CreatorProgramV2 = () => {
 
 const JoinCreatorProgramCard = () => {
   const buzz = useBuzz(undefined, 'user');
-  const [buzzAccount] = buzz.balances;
+  const [buzzAccount = { balance: 0 }] = buzz.balances;
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
     buzz: buzzAccount?.balance ?? 0,
@@ -209,7 +209,7 @@ const JoinCreatorProgramCard = () => {
             Your{' '}
             <CurrencyBadge
               currency={Currency.BUZZ}
-              unitAmount={buzzAccount.balance}
+              unitAmount={buzzAccount.balance ?? 0}
               formatter={abbreviateNumber}
             />{' '}
             could be worth{' '}
@@ -400,8 +400,8 @@ const BankBuzzCard = () => {
   };
 
   const maxBankable = banked?.cap?.cap
-    ? Math.min(banked.cap.cap - banked.total, buzzAccount.balance)
-    : buzzAccount.balance;
+    ? Math.min(banked.cap.cap - banked.total, buzzAccount.balance ?? 0)
+    : buzzAccount.balance ?? 0;
 
   if (isLoading) {
     return (

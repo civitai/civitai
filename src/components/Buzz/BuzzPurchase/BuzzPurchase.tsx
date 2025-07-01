@@ -57,6 +57,7 @@ import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
+import { BuzzEmerchantPayButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzEmerchantPayButton';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -525,6 +526,13 @@ export const BuzzPurchase = ({
                   />
                 ) : (
                   <>
+                    {features.emerchantpayPayments && (
+                      <BuzzEmerchantPayButton
+                        unitAmount={unitAmount}
+                        buzzAmount={buzzAmount}
+                        disabled={!ctaEnabled}
+                      />
+                    )}
                     {features.coinbasePayments && (
                       <>
                         {features.coinbaseOnramp && (
