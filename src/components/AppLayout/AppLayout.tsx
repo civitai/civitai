@@ -23,6 +23,7 @@ const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
 export function AppLayout({
   children,
   renderSearchComponent,
+  header = <AppHeader renderSearchComponent={renderSearchComponent} />,
   subNav = <SubNav2 />,
   left,
   right,
@@ -37,7 +38,7 @@ export function AppLayout({
   subNav?: React.ReactNode | null;
   left?: React.ReactNode;
   right?: React.ReactNode;
-
+  header?: React.ReactNode | null;
   scrollable?: boolean;
   footer?: React.ReactNode | null;
   loading?: boolean;
@@ -60,7 +61,7 @@ export function AppLayout({
 
   return (
     <div className="flex h-full flex-1 flex-col">
-      <AppHeader renderSearchComponent={renderSearchComponent} />
+      {header}
       {loading ? (
         <PageLoader />
       ) : notFound ? (
@@ -75,7 +76,6 @@ export function AppLayout({
             announcements={announcements}
           >
             {children}
-            {!footer && <ChatPortal showFooter={false} />}
           </MainContent>
           {right && (
             <aside className="scroll-area relative border-l border-gray-3 dark:border-dark-4">
@@ -84,6 +84,7 @@ export function AppLayout({
           )}
         </div>
       )}
+      <ChatPortal showFooter={false} />
       <AdhesiveFooter />
     </div>
   );

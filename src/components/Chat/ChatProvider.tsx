@@ -62,8 +62,8 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   return (
     <div
       className={clsx(
-        'absolute left-0 z-10 mb-2 ml-2 h-dvh w-[calc(100%-1rem)] @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]',
-        showFooter ? 'bottom-[var(--footer-height)]' : 'bottom-0'
+        'absolute bottom-0 left-0 z-[500] mb-2 ml-2 h-dvh w-[calc(100%-1rem)]',
+        '@sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]'
       )}
       style={{
         maxHeight: `calc(100dvh - var(--header-height)${
