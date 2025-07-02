@@ -1,11 +1,8 @@
 import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
-  ActionIcon,
   Code,
-  ComboboxItem,
   Group,
   HoverCard,
-  Portal,
   Select,
   Stack,
   Text,
@@ -35,7 +32,6 @@ import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/mod
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
 import { ImagesSearchItem } from '~/components/AutocompleteSearch/renderItems/images';
-import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
@@ -57,6 +53,7 @@ import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
+import { usePathname } from 'next/navigation';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -197,6 +194,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
   const inputRef = useRef<HTMLInputElement>(null);
+  const pathname = usePathname();
+  const currentSection = pathname.split('/')[1] || 'models';
+  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
 
   const { status } = useInstantSearch({
     catchError: true,
@@ -405,6 +405,14 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     setSelectedItem(null);
   }, [debouncedSearch]);
 
+  // Change index target when search target changes
+  useEffect(() => {
+    if (indexNameProp !== searchTarget) {
+      onTargetChange(searchTarget as TKey);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTarget]);
+
   const processHitUrl = (hit: Hit) => {
     switch (indexName) {
       case 'articles':
@@ -427,6 +435,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
+          key={pathname}
           classNames={{
             root: classes.targetSelectorRoot,
             input: classes.targetSelectorInput,
@@ -435,7 +444,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             className: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          defaultValue={targetData[0].value}
+          defaultValue={searchTarget}
           // Ensure we disable search targets if they are not enabled
           data={targetData.filter(
             ({ value }) =>
@@ -448,6 +457,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           style={{ flexShrink: 1 }}
           onChange={(v: string | null) => onTargetChange(v as TKey)}
           autoComplete="off"
+          allowDeselect={false}
         />
         <ClearableAutoComplete
           ref={inputRef}
@@ -473,9 +483,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           ])}
           onOptionSubmit={(v) => handleItemClick(v)}
           renderOption={({ option }) => {
-            const item = getItemFromValue(option.value);
+            const { key, ...item } = getItemFromValue(option.value);
             // Render special states
-            if (item.key === 'blocked') {
+            if (key === 'blocked') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -487,7 +497,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Stack>
               );
             }
-            if (item.key === 'disabled') {
+            if (key === 'disabled') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -500,7 +510,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Stack>
               );
             }
-            if (item.key === 'blocked-words') {
+            if (key === 'blocked-words') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -512,7 +522,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Stack>
               );
             }
-            if (item.key === 'error') {
+            if (key === 'error') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -550,7 +560,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Text>
               </HoverCard.Target>
               <HoverCard.Dropdown>
-                <Text size="sm" color="yellow" fw={500}>
+                <Text size="sm" c="yellow" fw={500}>
                   Pro-tip: Quick search faster!
                 </Text>
                 <Text size="xs" lh={1.2}>

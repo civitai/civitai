@@ -183,7 +183,7 @@ export function ImageDetail2() {
       )}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />
-        <Text c="white" size="xs" align="center" fw={500}>
+        <Text size="xs" align="center" fw={500}>
           Save
         </Text>
       </Button>
@@ -197,7 +197,7 @@ export function ImageDetail2() {
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
-            <Text c="white" size="xs" align="center" fw={500}>
+            <Text size="xs" align="center" fw={500}>
               View Post
             </Text>
           </Button>
@@ -264,7 +264,7 @@ export function ImageDetail2() {
                               {/* Disable view count  */}
                               {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
-                        <Text c="white" size="xs" align="center" fw={500}>
+                        <Text size="xs" align="center" fw={500}>
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
@@ -380,7 +380,7 @@ export function ImageDetail2() {
                   </ImageGuard2>
                 </div>
                 <div
-                  className={` @max-md:absolute @max-md:inset-0 ${
+                  className={`@max-md:absolute @max-md:inset-0 ${
                     !active
                       ? '@max-md:translate-y-[calc(100%-60px)]'
                       : '@max-md:transition-transform'

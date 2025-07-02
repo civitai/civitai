@@ -3659,16 +3659,32 @@ export const getImageModerationReviewQueue = async ({
   tagReview,
   reportReview,
   browsingLevel,
+  tagIds,
+  excludedTagIds,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
-
   AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
   }
+
   if (needsReview && needsReview !== 'appeal') {
     AND.push(Prisma.sql`(i."ingestion" = 'Scanned')`);
+  }
+
+  if (tagIds?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tagIds)})
+    )`);
+  }
+
+  if (excludedTagIds?.length) {
+    AND.push(Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "ImageTagForReview" toi
+      WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(excludedTagIds)})
+    )`);
   }
   // Order by oldest first. This is to ensure that images that have been in the queue the longest
   // are reviewed first.

@@ -552,5 +552,5 @@ div[id*='google_ads_iframe'][id$='outstream_0__container__'] {
 
 
 .kontext-a {
-  @apply font-medium text-blue-600 dark:text-blue-500 hover:underline
+  @apply text-blue-600 dark:text-blue-500 hover:underline
 }

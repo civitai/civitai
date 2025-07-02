@@ -18,7 +18,7 @@ export const commentConnectorSchema = z.object({
     'bountyEntry',
     'clubPost',
   ]),
-  hidden: z.boolean().optional(),
+  hidden: z.boolean().nullish(),
   parentThreadId: z.number().optional(),
   excludedUserIds: z.array(z.number()).optional(),
 });

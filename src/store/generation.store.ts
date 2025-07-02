@@ -1,8 +1,6 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import type {
   GenerationData,
@@ -10,11 +8,8 @@ import type {
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
 import { getSourceImageFromUrl } from '~/shared/constants/generation.constants';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
-import { trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 
 export type RunType = 'run' | 'remix' | 'replay';
@@ -259,47 +254,3 @@ export const useRemixStore = create<{
   remixOf?: RemixOfProps;
   remixOfId?: number;
 }>()(persist(() => ({}), { name: 'remixOf' }));
-
-// export function useVideoGenerationWorkflows() {
-//   const currentUser = useCurrentUser();
-//   // TODO - handle member only
-//   const isMember = currentUser?.isPaidMember ?? false;
-//   const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
-//   const workflows = generationFormWorkflowConfigurations
-//     .map((config) => {
-//       const engine = data?.find((x) => x.engine === config.engine);
-//       if (
-//         !engine ||
-//         (engine.status === 'mod-only' && !currentUser?.isModerator) ||
-//         engine.status === 'disabled'
-//       )
-//         return null;
-//       return { ...config, ...engine, memberOnly: engine.memberOnly };
-//     })
-//     .filter(isDefined);
-
-//   const availableEngines = Object.keys(engineDefinitions)
-//     .filter((key) => workflows?.some((x) => x.engine === key))
-//     .map((key) => ({ key, ...engineDefinitions[key] }));
-
-//   return { data: workflows, availableEngines, isLoading };
-// }
-
-// export function useSelectedVideoWorkflow() {
-//   const { data, availableEngines } = useVideoGenerationWorkflows();
-//   const selectedEngine = useGenerationFormStore((state) => state.engine);
-//   const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-//   let workflowsByEngine = data.filter((x) => x.engine === selectedEngine);
-//   if (!workflowsByEngine.length)
-//     workflowsByEngine = data.filter((x) => x.engine === availableEngines[0].key);
-
-//   return (
-//     workflowsByEngine.find(({ subType, type }) =>
-//       type === 'video' && sourceImage ? subType.startsWith('img') : subType.startsWith('txt')
-//     ) ?? workflowsByEngine[0]
-//   );
-// }
-
-// export const generationStore2 = create<{ type: MediaType; engine?: string }>()(
-//   persist((set) => ({ type: 'image' }), { name: 'generation', version: 1 })
-// );

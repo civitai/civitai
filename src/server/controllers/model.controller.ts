@@ -1819,7 +1819,7 @@ export const publishPrivateModelHandler = async ({
 
     const { versionIds } = await publishPrivateModel(input);
     await dataForModelsCache.bust(input.modelId);
-    await bustMvCache(versionIds);
+    await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);

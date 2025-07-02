@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Button,
@@ -57,7 +56,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { activeBaseModels, constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
 import {
@@ -69,7 +68,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { BountyGetById } from '~/types/router';
 import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -562,11 +560,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                     {expiresAt && (
                       <Text fw={590}>
                         With the selected dates, your bounty will expire{' '}
-                        <Text fw="bold" color="red.5" span>
+                        <Text fw="bold" c="red.5" span>
                           <DaysFromNow date={stripTime(expiresAt)} inUtc />
                         </Text>
                         . All times are in{' '}
-                        <Text fw="bold" color="red.5" span>
+                        <Text fw="bold" c="red.5" span>
                           UTC
                         </Text>
                         .

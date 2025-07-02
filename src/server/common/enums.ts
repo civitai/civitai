@@ -382,3 +382,14 @@ export enum NewOrderSignalActions {
 export enum ExternalModerationType {
   Clavata = 'Clavata',
 }
+
+export enum ModReviewType {
+  Minor = 'minor',
+  POI = 'poi',
+  Reported = 'reported',
+  CSAM = 'csam',
+  BlockedTags = 'tag',
+  NewUsers = 'newUser',
+  Appeals = 'appeal',
+  RuleViolations = 'modRule',
+}

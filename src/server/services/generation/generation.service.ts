@@ -20,6 +20,7 @@ import type {
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
+import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
@@ -298,7 +299,7 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  const { prompt, negativePrompt } = cleanPrompt(media.meta as Record<string, any>);
+  const { prompt, negativePrompt } = cleanPrompt(media.meta as ImageMetaProps);
   const common = {
     prompt,
     negativePrompt,
@@ -379,7 +380,7 @@ async function getMediaGenerationData({
         },
       };
     case 'video':
-      const meta = media.meta as Record<string, any>;
+      const meta = media.meta as ImageMetaProps;
       meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
       if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;
 
@@ -433,9 +434,8 @@ const getModelVersionGenerationData = async ({
   );
 
   const engine =
-    baseModelEngineMap[baseModel] ?? resources.length
-      ? modelIdEngineMap.get(resources[0].model.id)
-      : undefined;
+    baseModelEngineMap[baseModel] ??
+    (resources.length ? modelIdEngineMap.get(resources[0].model.id) : undefined);
 
   let process: string | undefined;
   if (isVideoGenerationEngine(engine)) {

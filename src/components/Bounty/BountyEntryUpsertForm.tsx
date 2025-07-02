@@ -33,7 +33,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { Form, InputCheckbox, InputMultiFileUpload, InputRTE, useForm } from '~/libs/form';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE, ZIP_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import {
   bountyEntryFileSchema,
@@ -349,7 +349,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
                     <Stack gap={4}>
-                      <Text size="md" color="yellow">
+                      <Text size="md" c="yellow">
                         What&apos;s this?
                       </Text>
                       <Text size="sm">
@@ -472,7 +472,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   </HoverCard.Target>
                   <HoverCard.Dropdown>
                     <Stack gap={4}>
-                      <Text size="md" color="yellow">
+                      <Text size="md" c="yellow">
                         What&apos;s this?
                       </Text>
                       <Text size="sm">

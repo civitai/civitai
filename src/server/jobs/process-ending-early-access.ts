@@ -13,7 +13,7 @@ export const processingEngingEarlyAccess = createJob(
 
     const updated = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
       UPDATE "ModelVersion"
-      SET "earlyAccessConfig" = 
+      SET "earlyAccessConfig" =
           COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
             'timeframe', 0,
             'originalPublishedAt', "publishedAt",
@@ -22,7 +22,7 @@ export const processingEngingEarlyAccess = createJob(
         "earlyAccessEndsAt" = NULL,
         "publishedAt" = NOW(),
         "availability" = 'Public'
-      WHERE status = 'Published'  
+      WHERE status = 'Published'
         AND "earlyAccessEndsAt" <= NOW()
       RETURNING "id", "modelId"
     `;
@@ -30,7 +30,7 @@ export const processingEngingEarlyAccess = createJob(
     if (updated.length > 0) {
       const updatedIds = updated.map((v) => v.id);
       const modelIds = uniq(updated.map((v) => v.modelId));
-      await bustMvCache(updatedIds);
+      await bustMvCache(updatedIds, modelIds);
       await dataForModelsCache.bust(modelIds);
     }
     // Ensures user gets access to the resource after purchasing.

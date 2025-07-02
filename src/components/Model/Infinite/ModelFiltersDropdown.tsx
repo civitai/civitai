@@ -10,7 +10,6 @@ import {
   ScrollArea,
   Stack,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
@@ -72,7 +71,6 @@ export function DumbModelFiltersDropdown({
 }) {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator;
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const flags = useFeatureFlags();
   const mobile = useIsMobile();

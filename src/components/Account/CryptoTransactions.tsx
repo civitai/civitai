@@ -58,14 +58,14 @@ export const CryptoTransactions = () => {
         <Group>
           <Title order={3}>Debit Card Transactions</Title>
         </Group>
-        <Text size="sm" color="dimmed">
+        <Text size="sm" c="dimmed">
           Transactions made by Debit Card via Coinbase after the 13th of June 2025 will be shown
           here.
         </Text>
 
         {balance >= 2 && (
           <Stack>
-            <Text size="sm" color="dimmed">
+            <Text size="sm" c="dimmed">
               You have outstanding balance in your account of{' '}
               <CurrencyBadge currency={Currency.USD} unitAmount={balance * 100} />. Click below to
               process pending transactions using this balance and get Buzz.

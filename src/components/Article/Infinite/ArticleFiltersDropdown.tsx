@@ -17,6 +17,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { ArticleQueryInput } from '~/server/schema/article.schema';
 import { FilterButton } from '~/components/Buttons/FilterButton';
+import { IsClient } from '~/components/IsClient/IsClient';
 
 export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const theme = useMantineTheme();
@@ -99,7 +100,7 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
 
   if (mobile)
     return (
-      <>
+      <IsClient>
         {target}
         <Drawer
           opened={opened}
@@ -128,23 +129,25 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
         >
           {dropdown}
         </Drawer>
-      </>
+      </IsClient>
     );
 
   return (
-    <Popover
-      zIndex={200}
-      position="bottom-end"
-      shadow="md"
-      radius={12}
-      onClose={() => setOpened(false)}
-      middlewares={{ flip: true, shift: true }}
-    >
-      <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} p="md" w="100%">
-        {dropdown}
-      </Popover.Dropdown>
-    </Popover>
+    <IsClient>
+      <Popover
+        zIndex={200}
+        position="bottom-end"
+        shadow="md"
+        radius={12}
+        onClose={() => setOpened(false)}
+        middlewares={{ flip: true, shift: true }}
+      >
+        <Popover.Target>{target}</Popover.Target>
+        <Popover.Dropdown maw={468} p="md" w="100%">
+          {dropdown}
+        </Popover.Dropdown>
+      </Popover>
+    </IsClient>
   );
 }
 

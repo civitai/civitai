@@ -700,7 +700,7 @@ export interface ModelVersion {
   fromImportId: number | null;
   inaccurate: boolean;
   baseModel: string;
-  baseModelType: string | null;
+  baseModelType: string;
   meta: JsonValue;
   requireAuth: boolean;
   settings: JsonValue | null;

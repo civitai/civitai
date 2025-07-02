@@ -405,11 +405,11 @@ function Rater() {
   //               <Text>You failed 3 rating challenges.</Text>
   //               <Text mt="sm">
   //                 You made it to{' '}
-  //                 <Text component="span" color="blue.4">
+  //                 <Text component="span" c="blue.4">
   //                   Level {progression?.level}
   //                 </Text>{' '}
   //                 and rated{' '}
-  //                 <Text component="span" color="blue.4">
+  //                 <Text component="span" c="blue.4">
   //                   {numberWithCommas(totalRated)} images
   //                 </Text>
   //                 .
@@ -481,7 +481,7 @@ function Rater() {
   //               <HoverCard.Dropdown px="xs" py={3} color="gray">
   //                 <Stack gap={0}>
   //                   <Group gap={4}>
-  //                     <Text size="xs" color="blue.4" fw="bold" tt="uppercase">
+  //                     <Text size="xs" c="blue.4" fw="bold" tt="uppercase">
   //                       next level
   //                     </Text>
   //                     <Text size="xs" fw={500}>
@@ -489,7 +489,7 @@ function Rater() {
   //                     </Text>
   //                   </Group>
   //                   <Group gap={4}>
-  //                     <Text size="xs" color="blue.4" fw="bold" tt="uppercase">
+  //                     <Text size="xs" c="blue.4" fw="bold" tt="uppercase">
   //                       Total ratings
   //                     </Text>
   //                     <Text size="xs" fw={500}>

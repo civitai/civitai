@@ -6,12 +6,12 @@ import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
   ArticleEngagementType,
   Availability,
@@ -695,10 +695,6 @@ const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadTyp
       rand([null, 1, 2]), // clipSkip
       null, // vaeId // TODO
       randw([
-        {
-          value: null,
-          weight: 1,
-        },
         { value: 'Standard', weight: 30 },
         { value: rand(constants.baseModelTypes.filter((v) => v !== 'Standard')), weight: 2 },
       ]), // baseModelType
@@ -1924,6 +1920,32 @@ const genTags = (num: number) => {
     ];
 
     ret.push(row);
+  }
+  return ret;
+};
+
+/*
+ * TagsOnTags
+ */
+const genTagsOnTags = (num: number, tagIds: number[]) => {
+  const ret = [];
+
+  for (const tagId of [27, 28, 29, 31]) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+    let allowedTags = tagIds.filter((t) => t !== tagId);
+
+    for (let step = 1; step <= num; step++) {
+      const randTag = rand(allowedTags);
+      const row = [
+        tagId, // fromTagId
+        randTag, // toTagId
+        created, // createdAt
+        'Parent', // type
+      ];
+      allowedTags = allowedTags.filter((t) => t !== randTag);
+
+      ret.push(row);
+    }
   }
   return ret;
 };
@@ -3468,6 +3490,12 @@ const genRows = async (truncate = true) => {
 
   const tags = genTags(numRows);
   const tagIds = await insertRows('Tag', tags);
+
+  const tagsOnTags = genTagsOnTags(
+    20,
+    tags.filter((t) => t[7] === true).map((t) => t[4] as number)
+  );
+  await insertRows('TagsOnTags', tagsOnTags, false);
 
   const tagsOnArticles = genTagsOnArticles(Math.ceil(numRows * 3), tagIds, articleIds);
   await insertRows('TagsOnArticle', tagsOnArticles, false);

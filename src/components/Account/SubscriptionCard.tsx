@@ -64,7 +64,7 @@ export function SubscriptionCard() {
                       shortenPlanInterval(price.interval)}
                   </Text>
                 )}
-                <Text size="sm" color={subscription.cancelAt ? 'red' : 'dimmed'}>
+                <Text size="sm" c={subscription.cancelAt ? 'red' : 'dimmed'}>
                   {subscription.cancelAt ? 'Ends' : 'Renews'}{' '}
                   {formatDate(subscription.currentPeriodEnd)}
                 </Text>

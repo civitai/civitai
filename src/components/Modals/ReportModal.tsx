@@ -30,6 +30,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const reports = [
   {
@@ -141,7 +142,7 @@ export default function ReportModal({
   const title = useMemo(
     () =>
       reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.label ??
-      `Report ${entityType}`,
+      `Report ${getDisplayName(entityType)}`,
     [reason, entityType]
   );
   const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });

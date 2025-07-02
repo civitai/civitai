@@ -1,14 +1,14 @@
-import React, { createContext, useContext, useEffect } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import Script from 'next/script';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
-import { adUnitsLoaded } from '~/components/Ads/ads.utils';
-import { create } from 'zustand';
-import { isDev } from '~/env/other';
 import { useRouter } from 'next/router';
+import Script from 'next/script';
+import React, { createContext, useContext, useEffect } from 'react';
+import { create } from 'zustand';
+import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { isDev } from '~/env/other';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 declare global {
   interface Window {
@@ -203,7 +203,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             __html: `
           import('https://server.megabrain.co/sdk/js').then(({fetchAd, markAdAsViewed}) => {
             window.fetchKontextAd = fetchAd
-            window.markKontextAdAsViewed = markAdAsViewed
             dispatchEvent(new CustomEvent('kontext-ad-script-loaded'))
           })
 

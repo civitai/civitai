@@ -9,6 +9,7 @@ const theme = createTheme({
         content: { maxWidth: '100%', overflowX: 'hidden' },
         inner: { paddingLeft: 0, paddingRight: 0 },
       },
+      defaultProps: { removeScrollProps: { allowPinchZoom: true } },
     }),
     Drawer: {
       styles: {

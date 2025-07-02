@@ -54,7 +54,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { activeBaseModels, constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import {
   BountyEntryMode,
@@ -393,11 +393,11 @@ export function BountyCreateForm() {
                   </Group>
                   <Text fw={590}>
                     With the selected dates, your bounty will expire{' '}
-                    <Text fw="bold" color="red.5" span>
+                    <Text fw="bold" c="red.5" span>
                       <DaysFromNow date={stripTime(expiresAt)} inUtc />
                     </Text>
                     . All times are in{' '}
-                    <Text fw="bold" color="red.5" span>
+                    <Text fw="bold" c="red.5" span>
                       UTC
                     </Text>
                     .

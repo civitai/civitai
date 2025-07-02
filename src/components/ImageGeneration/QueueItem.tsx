@@ -61,6 +61,7 @@ import { TransactionsPopover } from '~/components/ImageGeneration/GenerationForm
 import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -242,10 +243,10 @@ export function QueueItem({
             {showDelayedMessage && cancellable && request.steps[0]?.$type !== 'videoGen' && (
               <Alert color="yellow" p={0}>
                 <div className="flex items-center gap-2 px-2 py-1">
-                  <Text size="xs" color="yellow" lh={1}>
+                  <Text size="xs" c="yellow" lh={1}>
                     <IconAlertTriangleFilled size={20} />
                   </Text>
-                  <Text size="xs" lh={1.2} color="yellow">
+                  <Text size="xs" lh={1.2} c="yellow">
                     <Text fw={500} component="span">
                       This is taking longer than usual.
                     </Text>
@@ -257,13 +258,7 @@ export function QueueItem({
               </Alert>
             )}
 
-            {prompt && (
-              <ContentClamp maxHeight={36} labelSize="xs">
-                <Text lh={1.3} style={{ wordBreak: 'break-all' }}>
-                  {prompt}
-                </Text>
-              </ContentClamp>
-            )}
+            {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             <div className="-my-2 flex gap-2">
               {workflowDefinition && (

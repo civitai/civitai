@@ -102,7 +102,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
           {benefits.map((benefit, index) => (
             <Group gap="xs" key={index} wrap="nowrap">
               <IconCheck size={18} />
-              <Text key={index} className={classes.listItem} color="faded">
+              <Text key={index} className={classes.listItem} c="dimmed">
                 {benefit.content}
               </Text>
             </Group>

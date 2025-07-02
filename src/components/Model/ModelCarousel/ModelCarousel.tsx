@@ -22,6 +22,7 @@ import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import classes from './ModelCarousel.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import clsx from 'clsx';
 
 export function ModelCarousel(props: Props) {
   return (
@@ -57,19 +58,22 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
 
   const totalItems = images.length + (hiddenExplained.hasHidden ? 1 : 0);
   const slidesToShow = mobile ? 1 : 2;
+  const hasMultipleSlides = totalItems > slidesToShow;
 
   return (
     <Embla
       key={modelVersionId}
-      align={totalItems > slidesToShow ? 'start' : 'center'}
+      align={hasMultipleSlides ? 'start' : 'center'}
       slidesToScroll={1}
-      withControls={totalItems > slidesToShow ? true : false}
+      withControls={hasMultipleSlides ? true : false}
       controlSize={mobile ? 32 : 56}
       loop
       initialHeight={mobile ? 300 : 600}
     >
       <Embla.Viewport>
-        <Embla.Container className="-ml-3 flex @md:-ml-6">
+        <Embla.Container
+          className={clsx('-ml-3 flex @md:-ml-6', !hasMultipleSlides && 'justify-center')}
+        >
           {images.map((image, index) => {
             const fromCommunity = image.user.id !== modelUserId;
             return (

@@ -53,10 +53,10 @@ export const dialogs = createDialogDictionary({
       query: { ...query, collectionId },
     }),
   },
-  hiddenModelComments: {
+  hiddenComments: {
     component: HiddenCommentsModal,
-    resolve: (query, { modelId }) => ({
-      query: { ...query, modelId },
+    resolve: (query, { entityType, entityId }) => ({
+      query: { ...query, entityType, entityId },
     }),
   },
   resourceReview: {

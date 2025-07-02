@@ -202,7 +202,7 @@ export function ImagesAsPostsCard({
               <Stack gap={2}>
                 <Text inline>Pin this post</Text>
                 {maxedOut && (
-                  <Text size="xs" color="yellow">
+                  <Text size="xs" c="yellow">
                     Pin limit reached
                   </Text>
                 )}
@@ -580,7 +580,7 @@ function PinnedIndicator({
         </ThemeIcon>
       </HoverCard.Target>
       <HoverCard.Dropdown px="md" py={8}>
-        <Text size="sm" fw={600} color="white">
+        <Text size="sm" fw={600}>
           Pinned Post
         </Text>
         <Text size="xs">

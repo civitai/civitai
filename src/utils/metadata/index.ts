@@ -1,17 +1,9 @@
 import ExifReader from 'exifreader';
-import { v4 as uuidv4 } from 'uuid';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
-import { isDefined } from '~/utils/type-guards';
-import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { showErrorNotification } from '~/utils/notifications';
-import { calculateSizeInMegabytes } from '~/utils/json-helpers';
-import { constants } from '~/server/common/constants';
 import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
-import { setGlobalValue } from '~/utils/metadata/base.metadata';
 import { swarmUIMetadataProcessor } from '~/utils/metadata/swarmui.metadata';
 
 const parsers = {
@@ -28,7 +20,6 @@ export async function ExifParser(file: File | string) {
   } catch (e) {
     console.error('failed to read exif data');
   }
-  console.log({ tags });
 
   const exif = Object.entries(tags).reduce((acc, [key, value]) => {
     acc[key] = value.value;

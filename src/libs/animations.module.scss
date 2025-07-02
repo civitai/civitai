@@ -35,6 +35,7 @@
 
 .rainbowBackground {
   animation: movingRainbow 10s linear infinite;
+  will-change: background-position;
 }
 
 @keyframes wiggle {

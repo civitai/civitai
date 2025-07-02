@@ -1,15 +1,6 @@
-import {
-  ActionIcon,
-  Button,
-  Modal,
-  SimpleGrid,
-  Skeleton,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { Button, Modal, SimpleGrid, Skeleton, Text, UnstyledButton } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
-import produce from 'immer';
 import { uniq } from 'lodash-es';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -17,8 +8,9 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { MIME_TYPES } from '~/server/common/mime-types';
+import { MIME_TYPES } from '~/shared/constants/mime-types';
 import type { SetVideoThumbnailInput } from '~/server/schema/image.schema';
+import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { roundDownToPowerOfTwo } from '~/utils/number-helpers';
@@ -29,6 +21,10 @@ type Props = {
   src: string;
   duration: number;
   width: number;
+  updateImage: (
+    id: number,
+    cb: (props: { metadata?: Partial<VideoMetadata> | null; thumbnailUrl?: string | null }) => void
+  ) => void;
   postId?: number;
   thumbnailFrame?: number | null;
 };
@@ -61,6 +57,7 @@ export function PostImageThumbnailSelect({
   imageId,
   postId,
   thumbnailFrame,
+  updateImage,
 }: Props) {
   const skipFrames = getSkipFrames(duration);
 
@@ -69,7 +66,23 @@ export function PostImageThumbnailSelect({
     selectedFrame: thumbnailFrame ?? null,
     customThumbnail: null,
   });
-  const { setThumbnail, loading } = useSetThumbnailMutation({ imageId, postId });
+  const { setThumbnail, loading } = useSetThumbnailMutation({
+    imageId,
+    postId,
+    onMutationSuccess: ({ frame, customThumbnail }) => {
+      updateImage(imageId, (image) => {
+        if (frame) {
+          image.metadata = { ...image.metadata, thumbnailFrame: frame };
+          image.thumbnailUrl = null;
+        } else {
+          image.metadata = { ...image.metadata, thumbnailFrame: null };
+        }
+
+        if (customThumbnail) image.thumbnailUrl = customThumbnail.url;
+        else image.thumbnailUrl = null;
+      });
+    },
+  });
 
   const handleSubmit = async () => {
     try {
@@ -185,8 +198,18 @@ export function CurrentThumbnail({
   width,
   imageId,
   postId,
+  updateImage,
 }: CurrentThumbnailProps) {
-  const { setThumbnail, loading } = useSetThumbnailMutation({ imageId, postId });
+  const { setThumbnail, loading } = useSetThumbnailMutation({
+    imageId,
+    postId,
+    onMutationSuccess: () => {
+      updateImage(imageId, (image) => {
+        image.metadata = { ...image.metadata, thumbnailFrame: null };
+        image.thumbnailUrl = null;
+      });
+    },
+  });
   const hasThumbnailUrl = !!thumbnailUrl;
 
   if (!thumbnailFrame && !hasThumbnailUrl) return <Text>Thumbnail will be auto generated.</Text>;
@@ -226,35 +249,28 @@ type CurrentThumbnailProps = {
   thumbnailFrame?: number | null;
   thumbnailUrl?: string | null;
   postId?: number;
+  updateImage: (
+    id: number,
+    cb: (props: { metadata?: Partial<VideoMetadata> | null; thumbnailUrl?: string | null }) => void
+  ) => void;
 };
 
-const useSetThumbnailMutation = ({ postId, imageId }: { imageId: number; postId?: number }) => {
-  const queryUtils = trpc.useUtils();
-
+const useSetThumbnailMutation = ({
+  postId,
+  imageId,
+  onMutationSuccess,
+}: {
+  imageId: number;
+  postId?: number;
+  onMutationSuccess?: (payload: {
+    frame: number | null;
+    customThumbnail?: ImageProps | null;
+  }) => void;
+}) => {
   const setThumbnailMutation = trpc.image.setThumbnail.useMutation({
     onSuccess: (_, payload) => {
-      if (postId) {
-        const { frame, customThumbnail } = payload;
-        queryUtils.post.getEdit.setData(
-          { id: postId },
-          produce((old) => {
-            if (!old) return;
-
-            const affectedImage = old.images.find((image) => image.id === imageId);
-            if (affectedImage) {
-              if (frame) {
-                affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: frame };
-                affectedImage.thumbnailUrl = null;
-              } else {
-                affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: null };
-              }
-
-              if (customThumbnail) affectedImage.thumbnailUrl = customThumbnail.url;
-              else affectedImage.thumbnailUrl = null;
-            }
-          })
-        );
-      }
+      const { frame, customThumbnail } = payload;
+      onMutationSuccess?.({ frame, customThumbnail: customThumbnail as ImageProps });
     },
     onError: (error) => {
       showErrorNotification({

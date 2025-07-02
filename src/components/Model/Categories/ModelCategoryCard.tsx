@@ -100,7 +100,7 @@ export function ModelCategoryCard({
   const { setMenuItems } = useModelCardContextMenu();
 
   const modelText = (
-    <Text fz={14} fw={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
+    <Text fz={14} fw={500} c="white" style={{ flex: 1, lineHeight: 1 }}>
       {name}
     </Text>
   );

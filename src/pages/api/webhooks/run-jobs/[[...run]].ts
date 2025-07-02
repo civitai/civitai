@@ -19,6 +19,7 @@ import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
+import { cleanupWaitingRampUpTransactions, processPendingTransactions } from '~/server/jobs/crypto';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
@@ -52,6 +53,7 @@ import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publ
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
+import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
@@ -74,8 +76,6 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
-import { cleanupWaitingRampUpTransactions, processPendingTransactions } from '~/server/jobs/crypto';
-
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -141,6 +141,7 @@ export const jobs: Job[] = [
   retroactiveHashBlocking,
   ...creatorProgramJobs,
   handleAuctions,
+  refreshAuctionCache,
   ...newOrderJobs,
   updateModelVersionNsfwLevelsJob,
   deliverAnnualSubscriptionBuzz,

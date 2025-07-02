@@ -183,3 +183,14 @@ export function waitForElement({
     check();
   });
 }
+
+export function findNearestAncestorWithProps<TReturn>(
+  el: HTMLElement | null,
+  cb: (elem: HTMLElement) => TReturn | undefined
+) {
+  while (el) {
+    const result = cb(el);
+    if (result) return result;
+    el = el.parentElement;
+  }
+}

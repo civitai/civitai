@@ -267,6 +267,7 @@ export const upsertModelVersion = async ({
                 },
               }
             : undefined,
+          baseModelType: data.baseModelType ?? undefined,
         },
       }),
       ...existingVersions.map(({ id }, index) =>
@@ -274,7 +275,7 @@ export const upsertModelVersion = async ({
       ),
     ]);
     await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id);
+    await bustMvCache(version.id, version.modelId);
     await dataForModelsCache.bust(version.modelId);
 
     return version;
@@ -444,11 +445,12 @@ export const upsertModelVersion = async ({
                 })),
             }
           : undefined,
+        baseModelType: data.baseModelType ?? undefined,
       },
     });
 
     await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id);
+    await bustMvCache(version.id, version.modelId);
     await dataForModelsCache.bust(version.modelId);
 
     // Run it in the background to avoid blocking the request.
@@ -483,7 +485,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
-    await bustMvCache(deleted.id);
+    await bustMvCache(deleted.id, deleted.modelId);
     await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
@@ -499,7 +501,7 @@ export const updateModelVersionById = async ({
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
   await preventReplicationLag('model', result.modelId);
   await preventReplicationLag('modelVersion', id);
-  await bustMvCache(id);
+  await bustMvCache(id, result.modelId);
 };
 
 export const publishModelVersionsWithEarlyAccess = async ({
@@ -574,7 +576,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
           },
         });
 
-        await bustMvCache(updatedVersion.id);
+        await bustMvCache(updatedVersion.id, updatedVersion.modelId);
 
         // TODO @Luis do we need to do the below here?
         // await modelsSearchIndex.queueUpdate([
@@ -718,7 +720,7 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await bustMvCache(version.id);
+  await bustMvCache(version.id, version.modelId);
 
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
@@ -815,7 +817,7 @@ export const unpublishModelVersionById = async ({
   );
 
   await updateModelLastVersionAt({ id: version.model.id });
-  await bustMvCache(version.id);
+  await bustMvCache(version.id, version.model.id);
 
   return version;
 };
@@ -1120,6 +1122,7 @@ export const earlyAccessPurchase = async ({
       name: true,
       model: {
         select: {
+          id: true,
           name: true,
           userId: true,
         },
@@ -1279,7 +1282,7 @@ export const earlyAccessPurchase = async ({
     }
 
     // Ensures user gets access to the resource after purchasing.
-    await bustMvCache(modelVersionId, userId);
+    await bustMvCache(modelVersionId, modelVersion.model.id, userId);
 
     return true;
   } catch (error) {
@@ -1391,15 +1394,22 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
   return { items, nextCursor };
 }
 
-export const bustMvCache = async (ids: number | number[], userId?: number) => {
+export const bustMvCache = async (
+  ids: number | number[],
+  modelIds?: number | number[],
+  userId?: number
+) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.bust(versionIds);
   // TODO shouldnt this be the model IDs?
-  await modelsSearchIndex.queueUpdate(
-    versionIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-  );
+  if (modelIds) {
+    const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
+    await modelsSearchIndex.queueUpdate(
+      mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {

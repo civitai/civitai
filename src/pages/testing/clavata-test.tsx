@@ -16,7 +16,7 @@ import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { ClavataTag } from '~/server/integrations/clavata';
 
 export default function MetadataTester() {

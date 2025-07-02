@@ -66,7 +66,7 @@ export function ImageMetaModal({
           <InputTextArea name="negativePrompt" label="Negative prompt" autosize />
           <div className="grid grid-cols-2 gap-3">
             <InputNumber name="cfgScale" label="Guidance scale" min={0} max={30} />
-            <InputNumber name="steps" label="Steps" />
+            <InputNumber name="steps" label="Steps" min={1} />
           </div>
           <InputSelect
             name="sampler"

@@ -30,7 +30,7 @@ export default function Onboard() {
       <Container>
         <Stack>
           <Title order={3}>Set up your Tipalti Account</Title>
-          <Text size="sm" color="faded">
+          <Text size="sm" c="dimmed">
             The iFrame below is provided by Tipalti to ensure secure setup and account accuracy.
             Please follow Tipalti&rsquo;s instructions to complete or update your account, to be
             eligible to receive payments.
