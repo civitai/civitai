@@ -33,31 +33,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 
-  // Get signature from headers (EmerchantPay typically uses a different header)
-  const sig = req.headers['x-signature'] || req.headers['signature'];
-  const webhookSecret = env.EMERCHANTPAY_WEBHOOK_SECRET;
+  console.log({
+    q: req.query,
+    b: req.body,
+    headers: req.headers,
+  });
+
   const buf = await buffer(req);
 
   try {
-    if (!sig || !webhookSecret) {
+    // Parse the form-encoded body first to get signature and unique_id
+    const formPayload = buf.toString('utf8');
+    console.log({ formPayload });
+    const notification = EmerchantPayCaller.parseWebhookNotification(formPayload);
+    console.log({ parsedNotification: notification });
+
+    // Verify signature using EmerchantPay's method: SHA Hash of <unique_id><API password>
+    const apiPassword = env.EMERCHANTPAY_PASSWORD;
+    if (!apiPassword) {
       return res.status(400).send({
-        error: 'Invalid Request. Signature or Secret not found',
-        sig,
+        error: 'Missing API password for signature verification',
       });
     }
 
-    const isValid = EmerchantPayCaller.verifyWebhookSignature(sig as string, buf, webhookSecret);
+    const isValid = EmerchantPayCaller.verifyWebhookSignature(notification, apiPassword);
 
     if (!isValid) {
+      await log({
+        message: 'Invalid webhook signature',
+        expected_computation: 'SHA-512(unique_id + api_password) for WPF notifications',
+        notification_type: notification.notification_type,
+        unique_id: notification.unique_id,
+        received_signature: notification.signature,
+      });
+
       return res.status(400).send({
         error: 'Invalid signature',
-        sig,
       });
     }
-
-    // Parse the XML body
-    const xmlPayload = buf.toString('utf8');
-    const notification = await EmerchantPayCaller.parseWebhookNotification(xmlPayload);
 
     // Process based on notification type
     if (notification.payment_transaction?.status === 'approved') {

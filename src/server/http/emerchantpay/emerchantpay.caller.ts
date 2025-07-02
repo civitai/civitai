@@ -1,4 +1,4 @@
-import { createHmac } from 'crypto';
+import { createHash } from 'crypto';
 import * as xml2js from 'xml2js';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
@@ -221,21 +221,47 @@ class EmerchantPayCaller extends HttpCaller {
 
   /**
    * Verify an EmerchantPay webhook signature
-   * @param signature The signature from the webhook
-   * @param payload The raw webhook payload
-   * @param secret The webhook secret (usually the password)
+   * For WPF notifications: SHA-512 Hash Hex of <wpf_unique_id><Your API password>
+   * @param notification The parsed notification data containing wpf_unique_id and signature
+   * @param apiPassword The API password used for verification
    * @returns boolean indicating if signature is valid
    */
   static verifyWebhookSignature(
-    signature: string,
-    payload: Buffer | string,
-    secret: string
+    notification: {
+      unique_id: string;
+      signature: string;
+      notification_type?: string;
+    },
+    apiPassword: string
   ): boolean {
     try {
-      const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
-      const computedSig = createHmac('sha1', secret).update(data.toString()).digest('hex');
+      const { unique_id, signature, notification_type } = notification;
 
-      // EmerchantPay typically uses SHA-1 for webhook signatures
+      let computedSig: string;
+
+      if (notification_type === 'wpf' && unique_id) {
+        // For WPF notifications: SHA-512 Hash Hex of <unique_id><Your API password>
+        computedSig = createHash('sha512')
+          .update(unique_id + apiPassword)
+          .digest('hex');
+        console.log('Using WPF signature verification (SHA-512):', {
+          unique_id,
+          received_signature: signature,
+          computed_signature: computedSig,
+        });
+      } else {
+        // Fallback to original method for other notification types
+        computedSig = createHash('sha1')
+          .update(unique_id + apiPassword)
+          .digest('hex');
+        console.log('Using fallback signature verification (SHA-1):', {
+          unique_id,
+          received_signature: signature,
+          computed_signature: computedSig,
+        });
+      }
+
+      // Compare signatures (case-insensitive)
       return signature.toLowerCase() === computedSig.toLowerCase();
     } catch (error) {
       console.error('Error verifying EmerchantPay webhook signature:', error);
@@ -244,41 +270,46 @@ class EmerchantPayCaller extends HttpCaller {
   }
 
   /**
-   * Parse webhook notification XML
+   * Parse webhook notification form data
    */
-  static async parseWebhookNotification(
-    xmlPayload: string
-  ): Promise<EmerchantPay.WebhookNotificationSchema> {
-    const parser = new xml2js.Parser({
-      explicitArray: false,
-      ignoreAttrs: false,
-    });
+  static parseWebhookNotification(formData: string): EmerchantPay.WebhookNotificationSchema {
+    // Parse URL-encoded form data
+    const params = new URLSearchParams(formData);
 
-    const parsed = await new Promise<Record<string, unknown>>((resolve, reject) => {
-      parser.parseString(xmlPayload, (err, result) => {
-        if (err) reject(err);
-        else resolve(result);
-      });
-    });
+    // Extract the form fields
+    const notification = {
+      unique_id: params.get('wpf_unique_id') || '',
+      signature: params.get('signature') || '',
+      notification_type: params.get('notification_type') || 'wpf',
+      wpf_unique_id: params.get('wpf_unique_id') || undefined,
+      payment_transaction: {
+        transaction_type: params.get('payment_transaction_transaction_type') || 'sale',
+        status: params.get('wpf_status') || 'unknown',
+        unique_id: params.get('payment_transaction_unique_id') || '',
+        transaction_id: params.get('wpf_transaction_id') || '',
+        amount: Number(params.get('payment_transaction_amount')) / 100, // Convert from minor currency units
+        currency: 'USD', // Assuming USD, could be made configurable
+        authorization_code: params.get('authorization_code') || undefined,
+        response_code: undefined, // Not present in form data
+        technical_message: undefined, // Not present in form data
+        message: undefined, // Not present in form data
+        timestamp: new Date().toISOString(), // Generate timestamp since not provided
+        mode: (params.get('mode') as 'test' | 'live') || 'test', // Default to test if not specified
+      },
+    };
 
-    const notification = parsed.wpf_notification || parsed.notification;
-
-    if (!notification) {
-      throw new Error('Invalid webhook notification format');
+    // Validate required fields
+    if (!notification.unique_id) {
+      throw new Error('Missing wpf_unique_id in webhook notification');
+    }
+    if (!notification.signature) {
+      throw new Error('Missing signature in webhook notification');
+    }
+    if (!notification.payment_transaction.transaction_id) {
+      throw new Error('Missing wpf_transaction_id in webhook notification');
     }
 
-    // Convert amount back from minor currency units if present
-    const typedNotification = notification as Record<string, unknown>;
-    if (
-      typedNotification.payment_transaction &&
-      typeof typedNotification.payment_transaction === 'object' &&
-      'amount' in (typedNotification.payment_transaction as object)
-    ) {
-      const transaction = typedNotification.payment_transaction as Record<string, unknown>;
-      transaction.amount = Number(transaction.amount) / 100;
-    }
-
-    return notification as EmerchantPay.WebhookNotificationSchema;
+    return notification;
   }
 }
 

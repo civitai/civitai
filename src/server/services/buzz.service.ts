@@ -1151,12 +1151,14 @@ export const grantBuzzPurchase = async ({
   userId,
   externalTransactionId,
   description,
+  accountType,
   ...data
 }: {
   amount: number;
   userId: number;
   externalTransactionId: string;
   description?: string;
+  accountType?: BuzzAccountType;
 } & MixedObject) => {
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const { blueBuzzAdded, totalCustomBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
@@ -1168,6 +1170,7 @@ export const grantBuzzPurchase = async ({
   const { transactionId } = await createBuzzTransaction({
     fromAccountId: 0,
     toAccountId: userId,
+    toAccountType: accountType ?? 'user',
     amount: totalCustomBuzz,
     type: TransactionType.Purchase,
     externalTransactionId,

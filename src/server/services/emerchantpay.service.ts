@@ -24,31 +24,27 @@ const log = async (data: MixedObject) => {
 };
 
 export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number }) => {
-  const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
+  const transactionId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
   const successUrl =
-    `${env.NEXTAUTH_URL}/payment/emerchantpay?` + new URLSearchParams([['orderId', orderId]]);
+    `${env.NEXTAUTH_URL}/payment/emerchantpay?` +
+    new URLSearchParams([['transactionId', transactionId]]);
   const failureUrl =
     `${env.NEXTAUTH_URL}/payment/emerchantpay?` +
     new URLSearchParams([
-      ['orderId', orderId],
+      ['transactionId', transactionId],
       ['error', 'failed'],
     ]);
   const cancelUrl = `${env.NEXTAUTH_URL}/purchase/buzz`;
 
-  // Convert to dollars with fixed fee
-  const dollarAmount = new Decimal(input.unitAmount + EMERCHANTPAY_FIXED_FEE)
-    .dividedBy(100)
-    .toNumber();
-
   const wpfPayment = await emerchantpayCaller.createWPFPayment({
-    transaction_id: orderId,
+    transaction_id: transactionId,
     usage: `Buzz purchase`,
     description: `Buzz purchase for ${input.buzzAmount} BUZZ`,
     notification_url: `${env.NEXTAUTH_URL}/api/webhooks/emerchantpay`,
     return_success_url: successUrl,
     return_failure_url: failureUrl,
     return_cancel_url: cancelUrl,
-    amount: dollarAmount,
+    amount: input.unitAmount,
     currency: 'USD',
     customer_email: '', // Will be filled by the calling service with user email
     lifetime: 60, // 60 minutes
@@ -60,7 +56,7 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
     ],
     metadata: {
       userId: input.userId,
-      internalOrderId: orderId,
+      internalOrderId: transactionId,
       buzzAmount: input.buzzAmount,
     },
   });
@@ -150,6 +146,7 @@ export const processBuzzOrder = async (
       buzzAmount,
       transactionId: transactionResult,
       orderId: transactionId,
+      type: 'info',
     });
 
     return {
