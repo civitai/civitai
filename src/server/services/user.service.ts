@@ -537,6 +537,7 @@ export const toggleFollowUser = async ({
 
   const details: NotifDetailsFollowedBy = {
     username: ret.user.username,
+    userId,
   };
   await createNotification({
     category: NotificationCategory.Update,
