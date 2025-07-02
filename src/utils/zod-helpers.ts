@@ -43,7 +43,10 @@ export function stringToArray<T extends string = string>(value: unknown): T[] {
 
 /** Converts a comma delimited string to an array of strings */
 export function commaDelimitedStringArray() {
-  return z.preprocess(stringToArray, z.array(z.string()));
+  return z
+    .string()
+    .array()
+    .or(z.string().transform((str) => stringToArray(str)));
 }
 
 // include=tags,category
@@ -74,17 +77,10 @@ export function commaDelimitedNumberArray() {
 
 /** Converts the string `true` to a boolean of true and everything else to false */
 export function booleanString() {
-  return z.preprocess(
-    (value) =>
-      typeof value === 'string'
-        ? value === 'true'
-        : typeof value === 'number'
-        ? value === 1
-        : typeof value === 'boolean'
-        ? value
-        : undefined,
-    z.boolean()
-  );
+  return z
+    .boolean()
+    .or(z.stringbool())
+    .or(z.number().transform((val) => val === 1));
 }
 
 export function sanitizedNullableString(options: santizeHtmlOptions) {
