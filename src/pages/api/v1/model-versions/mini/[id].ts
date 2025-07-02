@@ -205,6 +205,7 @@ export default MixedAuthEndpoint(async function handler(
     availability: modelVersion.availability,
     publishedAt: modelVersion.publishedAt,
     size: primaryFile.sizeKB, // nullable
+    fileType: primaryFile.type,
     // nullable - hashes
     hashes: {
       AutoV2: primaryFile.hash, // nullable
