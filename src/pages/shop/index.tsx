@@ -36,6 +36,7 @@ import merchProducts from '~/utils/shop/civitai-merch-products.json';
 import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
 import clsx from 'clsx';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 
 const merchSections = {
   civitai: {
@@ -70,11 +71,12 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CosmeticShopMain() {
   const { query } = useCosmeticShopQueryParams();
-  const [filters, setFilters] = useState<GetShopInput>({
+  const [filters, setFilters] = useState<GetShopInput & { modifier?: 'owned' | 'notOwned' }>({
     ...(query ?? {}),
   });
-  const [debouncedFilters] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
+  const { data: userCosmetics, isLoading: loadingOwnedCosmetics } = useQueryUserCosmetics();
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
@@ -140,7 +142,7 @@ export default function CosmeticShopMain() {
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
           <div className="flex flex-col gap-6">
-            {isLoading ? (
+            {isLoading || loadingOwnedCosmetics ? (
               <Center p="xl">
                 <Loader />
               </Center>
@@ -149,6 +151,22 @@ export default function CosmeticShopMain() {
                 const { image, items } = section;
                 const meta = section.meta as CosmeticShopSectionMeta;
                 const className = clsx(index === 0 ? 'order-1' : `order-3`);
+                let filteredItems = items;
+                if (filters.modifier && userCosmetics) {
+                  const ownedCosmetics = Object.values(userCosmetics).flat();
+                  if (filters.modifier === 'owned') {
+                    filteredItems = items.filter((item) =>
+                      ownedCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
+                    );
+                  } else if (filters.modifier === 'notOwned') {
+                    filteredItems = items.filter(
+                      (item) =>
+                        !ownedCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
+                    );
+                  }
+                }
+
+                if (!filteredItems.length) return null;
 
                 return (
                   <ShopSection
@@ -160,7 +178,7 @@ export default function CosmeticShopMain() {
                     className={className}
                   >
                     <ShopSection.Items>
-                      {items.map((item) => {
+                      {filteredItems.map((item) => {
                         const { shopItem } = item;
                         return (
                           <ShopItem

@@ -3,13 +3,14 @@ import {
   Button,
   Divider,
   Group,
+  Overlay,
   Paper,
   Stack,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { CosmeticType, Currency } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useShopLastViewed } from '~/components/CosmeticShop/cosmetic-shop.util';
@@ -26,6 +27,8 @@ import type { CosmeticShopItemGetById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
+import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
+import { IconCheck } from '@tabler/icons-react';
 
 export const ShopItem = ({
   item,
@@ -39,6 +42,7 @@ export const ShopItem = ({
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   const currentUser = useCurrentUser();
   const { lastViewed } = useShopLastViewed();
+  const { data: userCosmetics } = useQueryUserCosmetics();
   const itemMeta = item.meta as CosmeticShopItemMeta;
 
   const remaining =
@@ -50,9 +54,13 @@ export const ShopItem = ({
   const leavingSoon = item.availableTo && item.availableTo > dayjs().subtract(24, 'hours').toDate();
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
   const hasDate = isUpcoming || item.availableTo;
+  const alreadyOwned = Object.values(userCosmetics ?? {})
+    .flat()
+    .some(({ id }) => id === cosmetic.id);
+  const outOfStock = remaining === 0;
 
   const isNew =
-    remaining !== 0 &&
+    !outOfStock &&
     lastViewed &&
     sectionItemCreatedAt &&
     dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
@@ -67,7 +75,7 @@ export const ShopItem = ({
       {(available !== null || availableTo) && (
         <Badge color="grape" className={classes.availability} px={6}>
           <Group justify="space-between" wrap="nowrap" gap={4}>
-            {remaining === 0 ? (
+            {outOfStock ? (
               <Text inherit>Out of Stock</Text>
             ) : (
               <>
@@ -109,23 +117,30 @@ export const ShopItem = ({
       <Stack h="100%">
         <Stack gap="md">
           <UnstyledButton
+            className={outOfStock ? 'cursor-not-allowed' : undefined}
             onClick={() => {
-              if (!currentUser) {
-                return;
-              }
+              if (!currentUser) return;
 
               dialogStore.trigger({
                 component: CosmeticShopItemPreviewModal,
                 props: { shopItem: item },
               });
             }}
-            disabled={!isAvailable}
+            disabled={!isAvailable || outOfStock}
           >
             <div className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
                 {getDisplayName(item.cosmetic.type)}
               </Text>
+              {cosmetic.type !== CosmeticType.ContentDecoration && alreadyOwned && (
+                <Overlay center>
+                  <Text className="flex items-center gap-1" size="xl" fw="bold" c="gray.1">
+                    <IconCheck stroke={2.5} />
+                    Owned
+                  </Text>
+                </Overlay>
+              )}
             </div>
           </UnstyledButton>
           <Stack gap={4} align="flex-start">
@@ -154,7 +169,7 @@ export const ShopItem = ({
                   props: { shopItem: item },
                 });
               }}
-              disabled={!isAvailable}
+              disabled={!isAvailable || outOfStock}
             >
               Preview
             </Button>
