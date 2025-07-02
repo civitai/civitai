@@ -1,4 +1,4 @@
-import { Anchor, Input } from '@mantine/core';
+import { Anchor, Input, SegmentedControl } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
@@ -21,21 +21,34 @@ export function WanFormInput() {
   const process = form.watch('process');
   const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
+  const config = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap];
+  const canPickDuration = config?.provider !== 'fal';
 
   const availableBaseModels = useMemo(
     () =>
       Object.entries(wanBaseModelMap)
         .filter(([key, value]) => value.process === process)
-        .map(([key, value]) => ({ value: key, label: value.label, default: value.default })),
+        .map(([key, value]) => ({
+          value: key,
+          label: value.label,
+          default: value.default,
+          provider: value.provider,
+        })),
     [process]
   );
 
   useEffect(() => {
     if (!availableBaseModels.find((x) => x.value === baseModel)) {
       const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
-      if (defaultModel) form.setValue('baseModel', defaultModel.value);
+      if (defaultModel) {
+        form.setValue('baseModel', defaultModel.value);
+      }
     }
   }, [availableBaseModels, baseModel]);
+
+  useEffect(() => {
+    if (config?.provider === 'fal') form.setValue('duration', 5);
+  }, [config?.provider]);
 
   const resources = getBaseModelResourceTypes(baseModel) ?? [];
 
@@ -90,6 +103,7 @@ export function WanFormInput() {
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
+          disabled={!canPickDuration}
           name="duration"
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
