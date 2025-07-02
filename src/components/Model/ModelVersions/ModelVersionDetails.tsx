@@ -555,15 +555,13 @@ export function ModelVersionDetails({
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group justify="space-between" wrap="nowrap" gap={0}>
-      <Group>
-        <VerifiedText file={file} />
-        <Group gap={4}>
-          <Text size="xs" c="dimmed">
-            {file.type === 'Pruned Model' ? 'Pruned ' : ''}
-            {file.metadata.format}
-          </Text>
-          <FileInfo file={file} />
-        </Group>
+      <VerifiedText file={file} />
+      <Group gap={4}>
+        <Text size="xs" c="dimmed">
+          {file.type === 'Pruned Model' ? 'Pruned ' : ''}
+          {file.metadata.format}
+        </Text>
+        <FileInfo file={file} />
       </Group>
     </Group>
   );

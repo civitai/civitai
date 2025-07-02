@@ -107,6 +107,7 @@ export default MixedAuthEndpoint(async function handler(
     WHERE ${Prisma.join(where, ' AND ')}
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+
   const files = await dbRead.$queryRaw<FileRow[]>`
     SELECT mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mfh.hash
     FROM "ModelFile" mf
@@ -154,6 +155,8 @@ export default MixedAuthEndpoint(async function handler(
       id: fileName,
     });
   } else {
+    if (primaryFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
+
     air = stringifyAIR(modelVersion);
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,

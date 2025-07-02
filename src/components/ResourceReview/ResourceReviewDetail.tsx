@@ -76,7 +76,13 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     '@type': 'Review',
     name: `Review for ${data.model.name} - ${data.modelVersion.name}`,
     reviewBody: data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : '',
-    author: data.user.username,
+    author: !data.user.deletedAt
+      ? {
+          '@type': 'Person',
+          name: data.user.username,
+          url: `${env.NEXT_PUBLIC_BASE_URL}/user/${data.user.username}`,
+        }
+      : undefined,
     datePublished: data.createdAt,
     reviewRating: {
       '@type': 'Rating',
@@ -88,7 +94,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       '@type': 'SoftwareApplication',
       name: data.model.name,
       applicationCategory: 'Multimedia',
-      applicationSubCategory: 'Stable Diffusion Model',
+      applicationSubCategory: `${data.modelVersion.baseModel} AI Model`,
       operatingSystem: 'Windows, OSX, Linux',
     },
   };

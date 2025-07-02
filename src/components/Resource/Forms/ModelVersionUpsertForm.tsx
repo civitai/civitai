@@ -49,6 +49,7 @@ import type {
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import {
+  baseModelToTraningDetailsBaseModelMap,
   earlyAccessConfigInput,
   modelVersionUpsertSchema2,
   recommendedSettingsSchema,
@@ -220,6 +221,19 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const earlyAccessConfig = form.watch('earlyAccessConfig');
   const usageControl = form.watch('usageControl');
   const canSave = true;
+
+  // handle mismatched baseModels in training data
+  useEffect(() => {
+    if (!baseModel) return;
+    const value = baseModelToTraningDetailsBaseModelMap[baseModel];
+    if (value) {
+      const { trainingDetails } = form.getValues();
+      if (trainingDetails && value !== trainingDetails.baseModel) {
+        trainingDetails.baseModel = value;
+        form.setValue('trainingDetails', trainingDetails);
+      }
+    }
+  }, [baseModel]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
