@@ -1,6 +1,5 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
-import { stringDate } from '~/utils/zod-helpers';
 
 export enum TransactionType {
   Tip = 0,
@@ -192,7 +191,7 @@ export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
 export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
-  date: stringDate(),
+  date: z.coerce.date(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;

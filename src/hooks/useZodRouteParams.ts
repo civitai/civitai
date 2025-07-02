@@ -1,9 +1,9 @@
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { removeEmpty } from '~/utils/object-helpers';
 
-export function useZodRouteParams<TSchema extends z.AnyZodObject>(schema: TSchema) {
+export function useZodRouteParams<TSchema extends z.ZodObject>(schema: TSchema) {
   const { query, pathname, replace } = useRouter();
 
   return useMemo(() => {

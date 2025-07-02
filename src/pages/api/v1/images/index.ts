@@ -3,7 +3,7 @@ import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from 'dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
@@ -66,7 +66,7 @@ const imagesEndpointSchema = z.object({
     )
     .optional(),
   type: z.nativeEnum(MediaType).optional(),
-  baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
+  baseModels: commaDelimitedEnumArray([...constants.baseModels]).optional(),
   withMeta: booleanString().optional(),
   requiringMeta: booleanString().optional(),
 });

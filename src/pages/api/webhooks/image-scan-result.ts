@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';

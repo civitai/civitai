@@ -21,7 +21,7 @@ import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { useMemo } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';

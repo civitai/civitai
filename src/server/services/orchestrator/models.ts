@@ -1,6 +1,6 @@
 import { getResource, invalidateResource } from '@civitai/client';
 import { chunk } from 'lodash-es';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
 import { resourceDataCache } from '~/server/services/model-version.service';

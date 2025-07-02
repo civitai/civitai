@@ -1,6 +1,6 @@
 import { ModelType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ModelSort } from '~/server/common/enums';
 import { QS } from '~/utils/qs';
 import type { SetStateAction } from 'react';

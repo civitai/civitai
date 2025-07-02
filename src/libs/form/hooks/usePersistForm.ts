@@ -2,8 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef } from 'react';
 import type { DeepPartial, FieldValues, Path, UseFormProps, UseFormReturn } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
-import type { AnyZodObject, input, TypeOf, ZodEffects } from 'zod';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
   UseFormReturn<TFieldValues> & {
@@ -11,22 +10,22 @@ export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues>
   };
 
 export function usePersistForm<
-  TSchema extends AnyZodObject | ZodEffects<AnyZodObject> | ZodEffects<ZodEffects<AnyZodObject>>,
-  TExclude extends Array<Path<TypeOf<TSchema>>>
+  TSchema extends z.ZodObject,
+  TExclude extends Array<Path<z.infer<TSchema>>>
 >(
   storageKey: string,
-  args?: Omit<UseFormProps<TypeOf<TSchema>>, 'resolver' | 'defaultValues' | 'values'> & {
+  args?: Omit<UseFormProps<z.infer<TSchema>>, 'resolver' | 'defaultValues' | 'values'> & {
     schema?: TSchema;
-    partialSchema?: z.AnyZodObject;
+    partialSchema?: z.ZodObject;
     storage?: Storage;
     version?: number;
     exclude?: TExclude;
     defaultValues?:
-      | DeepPartial<input<TSchema>>
-      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
+      | DeepPartial<z.input<TSchema>>
+      | ((storageValues: DeepPartial<z.input<TSchema>>) => DeepPartial<z.input<TSchema>>);
     values?:
-      | DeepPartial<input<TSchema>>
-      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
+      | DeepPartial<z.input<TSchema>>
+      | ((storageValues: DeepPartial<z.input<TSchema>>) => DeepPartial<z.input<TSchema>>);
   }
 ) {
   const {
@@ -40,7 +39,7 @@ export function usePersistForm<
     ...rest
   } = args ?? {};
 
-  const _storageSchema = useRef<AnyZodObject | undefined>();
+  const _storageSchema = useRef<z.ZodObject | undefined>();
   if (!_storageSchema.current)
     _storageSchema.current = z.object({
       state: partialSchema.passthrough(),
@@ -49,7 +48,7 @@ export function usePersistForm<
     });
 
   // const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
-  const _defaultValues = useRef<DeepPartial<TypeOf<TSchema>> | undefined>();
+  const _defaultValues = useRef<DeepPartial<z.infer<TSchema>> | undefined>();
   if (!_defaultValues.current) {
     if (defaultValues)
       _defaultValues.current =
@@ -68,7 +67,7 @@ export function usePersistForm<
     }
   }
 
-  const form = useForm<TypeOf<TSchema>>({
+  const form = useForm<z.infer<TSchema>>({
     resolver: schema ? zodResolver(schema) : undefined,
     defaultValues: { ..._defaultValues.current, ...getParsedStorage() } as any,
     // values: Object.keys(values).length

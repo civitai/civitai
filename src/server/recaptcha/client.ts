@@ -3,7 +3,7 @@ import { env } from '~/env/server';
 import { isDev } from '../../env/other';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { logToAxiom } from '~/server/logging/client';
 
 // Taken from package as they don't export it :shrug:

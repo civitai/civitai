@@ -1,5 +1,5 @@
 import type { WanVdeoGenInput } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { AspectRatioMap, AspectRatio } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {

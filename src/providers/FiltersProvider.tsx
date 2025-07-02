@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { constants } from '~/server/common/constants';
@@ -241,7 +241,7 @@ type StoreState = FilterState & {
   setAuctionFilters: (filters: Partial<AuctionFilterSchema>) => void;
 };
 
-type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
+type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.ZodObject }>;
 const localStorageSchemas: LocalStorageSchema = {
   models: { key: 'model-filters', schema: modelFilterSchema },
   questions: { key: 'question-filters', schema: questionFilterSchema },
@@ -264,7 +264,7 @@ const localStorageSchemas: LocalStorageSchema = {
   auctions: { key: 'auction-filters', schema: auctionFilterSchema },
 };
 
-const getInitialValues = <TSchema extends z.AnyZodObject>({
+const getInitialValues = <TSchema extends z.ZodObject>({
   key,
   schema,
 }: {

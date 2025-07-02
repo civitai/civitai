@@ -2,7 +2,7 @@ import { Center, Container, Group, Loader, Stack, Title } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { Meta } from '~/components/Meta/Meta';

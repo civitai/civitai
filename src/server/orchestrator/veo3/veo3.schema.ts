@@ -1,5 +1,5 @@
 import type { Veo3VideoGenInput } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   negativePromptSchema,

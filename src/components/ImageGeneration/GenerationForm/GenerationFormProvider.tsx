@@ -2,8 +2,8 @@ import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
-import type { TypeOf } from 'zod';
-import { z } from 'zod';
+
+import * as z from 'zod/v4';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
@@ -47,9 +47,9 @@ import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.c
 
 // #region [schemas]
 
-type PartialFormData = Partial<TypeOf<typeof formSchema>>;
-type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
-export type GenerationFormOutput = TypeOf<typeof formSchema>;
+type PartialFormData = Partial<z.input<typeof formSchema>>;
+type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
+export type GenerationFormOutput = z.input<typeof formSchema>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
@@ -241,7 +241,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 // #endregion
 
 // #region [Provider]
-type GenerationFormProps = Omit<UsePersistFormReturn<TypeOf<typeof formSchema>>, 'reset'> & {
+type GenerationFormProps = Omit<UsePersistFormReturn<z.input<typeof formSchema>>, 'reset'> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
 };

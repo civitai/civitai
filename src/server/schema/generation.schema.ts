@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { BaseModel, Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';

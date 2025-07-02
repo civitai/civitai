@@ -1,5 +1,6 @@
 import { Priority } from '@civitai/client';
-import { z } from 'zod';
+import * as z from 'zod/v4';
+import * as z2 from 'zod/v4';
 
 import type { Sampler } from '~/server/common/constants';
 import { baseModelSets, generation } from '~/server/common/constants';

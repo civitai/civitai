@@ -6,7 +6,7 @@ import {
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import {

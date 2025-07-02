@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
 import { dbRead } from '~/server/db/client';

@@ -1,7 +1,7 @@
 import { Alert, Container, Loader, Stack, ThemeIcon, Group, Button } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';

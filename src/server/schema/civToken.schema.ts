@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export const civTokenEndpoint = '/api/auth/civ-token';
 export const impersonateEndpoint = '/api/auth/impersonate';

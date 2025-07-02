@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { BlocklistType } from '~/server/common/enums';
 
 export const getBlocklistSchema = z.object({

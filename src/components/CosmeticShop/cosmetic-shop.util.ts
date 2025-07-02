@@ -1,5 +1,5 @@
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import type { GetByIdInput } from '~/server/schema/base.schema';

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
@@ -14,7 +14,7 @@ export type GenerationDataSchema = z.infer<typeof generationDataSchema>;
 const generationDataSchema = z.discriminatedUnion('$type', [
   z.object({
     $type: z.literal('videoGen'),
-    data: z.record(z.any()).transform((data) => data as VideoGenerationSchema2),
+    data: z.record(z.string(), z.any()).transform((data) => data as VideoGenerationSchema2),
   }),
   z.object({
     $type: z.literal('videoEnhancement'),

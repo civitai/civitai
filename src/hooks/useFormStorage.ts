@@ -1,11 +1,11 @@
 import { openConfirmModal } from '@mantine/modals';
 import { useCallback, useEffect } from 'react';
 import type { EventType, FieldPath, UseFormReturn } from 'react-hook-form';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 
-export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TContext>({
+export function useFormStorage<TSchema extends z.ZodObject, TContext>({
   schema,
   timeout,
   form,

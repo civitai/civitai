@@ -1,5 +1,5 @@
 import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { CacheTTL, constants } from '~/server/common/constants';
 import { ArticleSort } from '~/server/common/enums';
@@ -40,7 +40,7 @@ export const articleWhereSchema = baseQuerySchema.extend({
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
   includeDrafts: z.boolean().optional(),
-  ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
+  ids: commaDelimitedNumberArray().optional(),
   collectionId: z.number().optional(),
   followed: z.boolean().optional(),
   clubId: z.number().optional(),

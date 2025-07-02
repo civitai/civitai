@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export type GetAuctionBySlugInput = z.infer<typeof getAuctionBySlugInput>;
 export const getAuctionBySlugInput = z.object({

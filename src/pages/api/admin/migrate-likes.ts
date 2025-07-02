@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { pgDbWrite } from '~/server/db/pgDb';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';

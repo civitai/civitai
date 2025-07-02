@@ -2,7 +2,7 @@ import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostEdit } from '~/components/Post/EditV2/PostEdit';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { Page } from '~/components/AppLayout/Page';

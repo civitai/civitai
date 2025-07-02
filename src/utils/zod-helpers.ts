@@ -1,20 +1,19 @@
-import type { AnyZodObject, ZodNumber, ZodTypeAny } from 'zod';
-import { z, ZodArray, ZodEffects, ZodObject } from 'zod';
+import * as z from 'zod/v4';
 import type { santizeHtmlOptions } from '~/utils/html-helpers';
 import { sanitizeHtml } from '~/utils/html-helpers';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 
 /** Converts a string to a number */
-export function numericString<I extends ZodNumber>(schema?: I) {
+export function numericString<I extends z.ZodNumber>(schema?: I) {
   return z.preprocess((value) => parseNumericString(value), schema ?? z.number());
 }
 
 /** Converts an array of strings to an array of numbers */
-export function numericStringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
+export function numericStringArray<I extends z.ZodArray<z.ZodNumber>>(schema?: I) {
   return z.preprocess((value) => parseNumericStringArray(value), schema ?? z.number().array());
 }
 
-export function stringArray<I extends ZodArray<any>>(schema?: I) {
+export function stringArray<I extends z.ZodArray<any>>(schema?: I) {
   return z.preprocess(
     (value) => (!Array.isArray(value) ? [value] : value),
     schema ?? z.string().array()
@@ -33,13 +32,13 @@ export function commaDelimitedStringObject() {
       return obj;
     }
     return value;
-  }, z.record(z.string()));
+  }, z.record(z.string(), z.string()));
 }
 
-export function stringToArray(value: unknown) {
+export function stringToArray<T extends string = string>(value: unknown): T[] {
   if (!Array.isArray(value) && typeof value === 'string')
-    return value.split(',').map((x) => x.trim());
-  return ((value ?? []) as unknown[]).map(String);
+    return value.split(',').map((x) => x.trim()) as T[];
+  return ((value ?? []) as unknown[]).map(String) as T[];
 }
 
 /** Converts a comma delimited string to an array of strings */
@@ -48,22 +47,29 @@ export function commaDelimitedStringArray() {
 }
 
 // include=tags,category
-export function commaDelimitedEnumArray<T extends [string, ...string[]]>(zodEnum: z.ZodEnum<T>) {
-  return z.preprocess(stringToArray, z.array(zodEnum));
+export function commaDelimitedEnumArray<T extends string>(zodEnum: T[]) {
+  return z
+    .enum(zodEnum)
+    .array()
+    .or(
+      z
+        .string()
+        .transform((str) => stringToArray<T>(str))
+        .refine((arr) => arr.every((val) => zodEnum.includes(val)))
+    );
 }
 
 /** Converts a comma delimited string to an array of numbers */
-export function commaDelimitedNumberArray(options?: { message?: string }) {
-  return z.preprocess((val) => stringToArray(val).map(parseNumericString), z.array(z.number()));
-}
-
-// TODO - replace all with z.coerce.date()
-export function stringDate() {
-  return z.preprocess((value) => {
-    if (!value) return;
-    if (typeof value === 'string') return new Date(value);
-    if (typeof value === 'number') return new Date(value);
-  }, z.date().optional());
+export function commaDelimitedNumberArray() {
+  return z
+    .number()
+    .array()
+    .or(
+      z
+        .string()
+        .transform((str) => stringToArray(str).map(Number))
+        .refine((arr) => arr.every((val) => val && !isNaN(val)))
+    );
 }
 
 /** Converts the string `true` to a boolean of true and everything else to false */
@@ -99,33 +105,9 @@ export function sanitizedNullableString(options: santizeHtmlOptions) {
   }, z.string().nullish());
 }
 
-export function zodEnumFromObjKeys<K extends string>(
-  obj: Record<K, unknown>
-): z.ZodEnum<[K, ...K[]]> {
+export function zodEnumFromObjKeys<K extends string>(obj: Record<K, unknown>) {
   const [firstKey, ...otherKeys] = Object.keys(obj) as K[];
   return z.enum([firstKey, ...otherKeys]);
-}
-
-export function stripChecksAndEffects<TSchema extends ZodTypeAny>(schema: TSchema): TSchema {
-  if (schema instanceof ZodEffects) return stripChecksAndEffects(schema._def.schema);
-  if (schema instanceof ZodArray)
-    return z.array(stripChecksAndEffects(schema.element)) as unknown as TSchema;
-  if (schema instanceof ZodObject) {
-    let dictionary = z.object({});
-    for (const [key, value] of Object.entries(schema.shape)) {
-      dictionary = dictionary.extend({ [key]: stripChecksAndEffects(value as any) });
-    }
-    return dictionary as unknown as TSchema;
-  }
-  if (schema._def.innerType) {
-    schema._def.innerType = stripChecksAndEffects(schema._def.innerType);
-  }
-  if (schema._def.checks) schema._def.checks = [];
-  return schema;
-}
-
-export function getDeepPartialWithoutChecks<TSchema extends AnyZodObject>(schema: TSchema) {
-  return stripChecksAndEffects(schema).deepPartial();
 }
 
 export function numberEnum<Num extends number, T extends Readonly<Num[]>>(

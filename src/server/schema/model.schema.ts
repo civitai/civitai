@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import CustomParseFormat from 'dayjs/plugin/customParseFormat';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';

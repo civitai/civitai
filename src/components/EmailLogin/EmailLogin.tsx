@@ -4,7 +4,7 @@ import { IconMail } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,

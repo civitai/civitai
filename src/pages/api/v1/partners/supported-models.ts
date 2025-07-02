@@ -3,7 +3,7 @@ import type { Partner } from '~/shared/utils/prisma/models';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { Tracker } from '~/server/clickhouse/client';
 import { chunk } from 'lodash-es';
 

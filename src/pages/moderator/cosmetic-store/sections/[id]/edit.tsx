@@ -1,7 +1,7 @@
 import { Container, Stack, Title, Group, Text, Center, Loader } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CosmeticShopItemUpsertForm } from '~/components/CosmeticShop/CosmeticShopItemUpsertForm';
 import { CosmeticShopSectionUpsertForm } from '~/components/CosmeticShop/CosmeticShopSectionUpsertForm';

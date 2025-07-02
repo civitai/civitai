@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { poolCounters, blessedBuzzCounter } from '~/server/games/new-order/utils';
 import { addImageToQueue, getImagesQueue } from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

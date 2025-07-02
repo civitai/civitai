@@ -1,7 +1,7 @@
 import { Badge, Button, Group, Image, Input, Radio, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

@@ -1,5 +1,5 @@
 import type { InferGetServerSidePropsType } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useMutateClubAdmin } from '~/components/Club/club.utils';

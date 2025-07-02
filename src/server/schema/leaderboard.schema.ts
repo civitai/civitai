@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export type GetLeaderboardPositionsInput = z.infer<typeof getLeaderboardPositionsSchema>;
 export const getLeaderboardPositionsSchema = z.object({

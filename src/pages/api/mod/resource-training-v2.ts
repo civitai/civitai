@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { updateRecords } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { logToAxiom } from '~/server/logging/client';

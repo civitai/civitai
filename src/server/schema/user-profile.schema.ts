@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';

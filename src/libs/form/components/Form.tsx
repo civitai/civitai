@@ -8,7 +8,7 @@ import type {
   Path,
 } from 'react-hook-form';
 import { FormProvider, useWatch, useFormContext } from 'react-hook-form';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import clsx from 'clsx';
 
 const CustomFormCtx = createContext<{
@@ -64,7 +64,7 @@ export function Form<TFieldValues extends FieldValues = FieldValues>({
   );
 }
 
-export function PersistentForm<TFieldValues extends FieldValues, TSchema extends z.AnyZodObject>({
+export function PersistentForm<TFieldValues extends FieldValues, TSchema extends z.ZodObject>({
   name,
   storage,
   exclude,
@@ -81,7 +81,7 @@ export function PersistentForm<TFieldValues extends FieldValues, TSchema extends
   );
 }
 
-type PersistProps<TFieldValues extends FieldValues, TSchema extends z.AnyZodObject> = {
+type PersistProps<TFieldValues extends FieldValues, TSchema extends z.ZodObject> = {
   name: string;
   storage?: Storage;
   exclude?: Path<TFieldValues>[];
@@ -92,7 +92,7 @@ type PersistProps<TFieldValues extends FieldValues, TSchema extends z.AnyZodObje
   shouldTouch?: boolean;
 };
 
-function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.AnyZodObject>({
+function PersistWrapper<TFieldValues extends FieldValues, TSchema extends z.ZodObject>({
   children,
   name,
   storage,

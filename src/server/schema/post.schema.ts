@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
@@ -94,11 +94,13 @@ export const addPostImageSchema = z.object({
   modelVersionId: z.number().nullish(),
   index: z.number(),
   mimeType: z.string().optional(),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.keys(value).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
+  meta: z
+    .preprocess((value) => {
+      if (typeof value !== 'object') return null;
+      if (value && !Object.keys(value).length) return null;
+      return value;
+    }, imageMetaSchema.nullish())
+    .nullish(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
   externalDetailsUrl: z.string().url().optional(),

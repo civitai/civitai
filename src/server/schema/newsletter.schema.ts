@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export type UpdateSubscriptionSchema = z.infer<typeof updateSubscriptionSchema>;
 export const updateSubscriptionSchema = z.object({

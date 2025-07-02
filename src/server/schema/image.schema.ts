@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
@@ -22,7 +22,9 @@ import { ImageSort, NsfwLevel } from './../common/enums';
 
 const stringToNumber = z.coerce.number().optional();
 
-const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
+const undefinedString = z
+  .preprocess((value) => (value ? value : undefined), z.string().optional())
+  .optional();
 
 export type ImageEntityType = (typeof imageEntities)[number];
 const imageEntities = ['Bounty', 'BountyEntry', 'User', 'Post', 'Article'] as const;
@@ -92,12 +94,12 @@ export const imageGenerationSchema = z.object({
   steps: stringToNumber,
   sampler: undefinedString,
   seed: stringToNumber,
-  hashes: z.record(z.string()).optional(),
+  hashes: z.record(z.string(), z.string()).optional(),
   clipSkip: z.coerce.number().optional(),
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
   external: externalMetaSchema.optional(),
-  effects: z.record(z.any()).optional(),
+  effects: z.record(z.string(), z.any()).optional(),
   engine: z.string().optional(),
   process: z.string().optional(),
   type: z.string().optional(),
@@ -120,16 +122,18 @@ export const civitaiResourceSchema = z.object({
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
-    comfy: z.preprocess((value) => {
-      if (typeof value !== 'string') return value;
-      try {
-        let rVal = value.replace('"workflow": undefined', '"workflow": {}');
-        rVal = rVal.replace('[NaN]', '[]');
-        return JSON.parse(rVal);
-      } catch {
-        return {};
-      }
-    }, comfyMetaSchema.optional()),
+    comfy: z
+      .preprocess((value) => {
+        if (typeof value !== 'string') return value;
+        try {
+          let rVal = value.replace('"workflow": undefined', '"workflow": {}');
+          rVal = rVal.replace('[NaN]', '[]');
+          return JSON.parse(rVal);
+        } catch {
+          return {};
+        }
+      }, comfyMetaSchema.optional())
+      .optional(),
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
     civitaiResources: civitaiResourceSchema.array().optional(),
@@ -179,11 +183,14 @@ export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
   url: z.string().uuid('One of the files did not upload properly, please try again'),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.keys(value).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
+  meta: z
+    .preprocess((value) => {
+      if (!value || typeof value !== 'object' || !Object.keys(value).length) {
+        return null;
+      }
+      return value;
+    }, imageMetaSchema.nullish())
+    .nullish(),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
@@ -191,8 +198,8 @@ export const imageSchema = z.object({
   sizeKB: z.number().optional(),
   postId: z.number().nullish(),
   modelVersionId: z.number().nullish(),
-  type: z.nativeEnum(MediaType).default(MediaType.image),
-  metadata: z.object({}).passthrough().optional(),
+  type: z.enum(MediaType).default(MediaType.image),
+  metadata: z.record(z.string(), z.any()).optional(),
   externalDetailsUrl: z.string().url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),
@@ -249,11 +256,13 @@ export const getReviewImagesSchema = z.object({
 export type UpdateImageInput = z.infer<typeof updateImageSchema>;
 export const updateImageSchema = z.object({
   id: z.number(),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.keys(value).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
+  meta: z
+    .preprocess((value) => {
+      if (typeof value !== 'object') return null;
+      if (value && !Object.keys(value).length) return null;
+      return value;
+    }, imageMetaSchema.nullish())
+    .nullish(),
   hideMeta: z.boolean().optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
@@ -380,7 +389,7 @@ export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
   entities: z.array(
     z.object({
-      entityType: z.union([z.nativeEnum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
+      entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
       entityId: z.number(),
     })
   ),

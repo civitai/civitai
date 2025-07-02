@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbRead } from '~/server/db/client';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 import { getDownloadUrl } from '~/utils/delivery-worker';

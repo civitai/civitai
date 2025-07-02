@@ -22,7 +22,7 @@ import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-re
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';

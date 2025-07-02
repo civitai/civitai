@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
@@ -87,7 +87,7 @@ export default MixedAuthEndpoint(async function handler(
         )
         OR
         (mv."availability" = 'Private')
-        OR 
+        OR
         (m."availability" = 'Private')
 
       ) AS "checkPermission",

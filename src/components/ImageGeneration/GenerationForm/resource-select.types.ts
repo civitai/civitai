@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import type { BaseModel } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';

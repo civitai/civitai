@@ -25,7 +25,7 @@ import {
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 

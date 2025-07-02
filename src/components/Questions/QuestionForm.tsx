@@ -20,7 +20,7 @@ import {
 import type { QuestionDetailProps } from '~/server/controllers/question.controller';
 import { upsertQuestionSchema } from '~/server/schema/question.schema';
 import { trpc } from '~/utils/trpc';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import { showNotification } from '@mantine/notifications';
