@@ -1807,7 +1807,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
   else browsingLevel = onlySelectableLevels(browsingLevel);
   const browsingLevels = Flags.instanceToArray(browsingLevel);
-  if (isModerator) browsingLevels.push(0);
+  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+
+  if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
   const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
     ? 'combinedNsfwLevel'
@@ -1997,11 +1999,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
     }
 
-    const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filteredHits = results.hits.filter((hit) => {
-      if (hit.id === 17383305) {
-        console.log('hit', hit);
-      }
       if (!hit.url)
         // check for good data
         return false;
