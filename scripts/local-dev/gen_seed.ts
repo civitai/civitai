@@ -2,6 +2,7 @@ import { faker } from '@faker-js/faker';
 import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
+import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
@@ -81,10 +82,10 @@ const setSerialNotif = async (table: string) => {
     await notifDbWrite.query(format(query, table));
     console.log(`\t-> ✔️ Set ID sequence`);
   } catch (error) {
-    const e = error as MixedObject;
+    const e = error as DatabaseError;
     console.log(`\t-> ❌  Error setting ID sequence`);
     console.log(`\t-> ${e.message}`);
-    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
     if (e.where) console.log(`\t-> where: ${e.where}`);
   }
 };
@@ -106,15 +107,15 @@ const insertNotifRows = async (table: string, data: any[][]) => {
 
     if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
     else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
-    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
+    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount ?? 'unk'} of ${data.length} rows`);
 
     await setSerialNotif(table);
 
     return ret.rows.map((r) => r.id);
   } catch (error) {
-    const e = error as MixedObject;
+    const e = error as DatabaseError;
     console.log(`\t-> ❌  ${e.message}`);
-    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
     if (e.where) console.log(`\t-> where: ${e.where}`);
     return [];
   }
@@ -150,9 +151,9 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 
     return ret;
   } catch (error) {
-    const e = error as MixedObject;
+    const e = error as DatabaseError;
     console.log(`\t-> ❌  ${e.message}`);
-    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
     if (e.where) console.log(`\t-> where: ${e.where}`);
     return [];
   }
@@ -1212,7 +1213,7 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
     const row = [
       `${capitalize(faker.word.adjective())}-${capitalize(
         faker.word.noun()
-      )}-${faker.number.int()}.${ext}`, // name
+      )}-${faker.number.int()}.${ext ?? 'jpg'}`, // name
       imageUrl, // url
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
