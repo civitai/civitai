@@ -33,9 +33,10 @@ const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   // No longer include count since we just have too many now...
-  return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
+  return dbRead.$queryRaw<[{ id: number; name: string; unfeatured: boolean; count: number }]>`
     SELECT "id",
            "name",
+           "unfeatured"
            0 as count
     FROM "Tag"
     WHERE "name" = ${name}
