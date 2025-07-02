@@ -12,6 +12,7 @@ export function PageModal({ children, ...props }: ModalProps) {
         body: { height: '100%', width: '100%', display: 'flex', flexDirection: 'column' },
       }}
       removeScrollProps={{ allowPinchZoom: true }}
+      zIndex={250}
     >
       <ScrollArea pb={0}>{children}</ScrollArea>
     </Modal>

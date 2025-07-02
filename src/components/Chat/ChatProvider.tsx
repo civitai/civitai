@@ -62,7 +62,7 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   return (
     <div
       className={clsx(
-        'absolute bottom-0 left-0 z-[500] mb-2 ml-2 h-dvh w-[calc(100%-1rem)]',
+        'absolute bottom-0 left-0 z-[251] mb-2 ml-2 h-dvh w-[calc(100%-1rem)]',
         '@sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]'
       )}
       style={{
