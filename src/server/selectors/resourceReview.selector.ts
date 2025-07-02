@@ -23,6 +23,7 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
     select: {
       id: true,
       name: true,
+      baseModel: true,
     },
   },
   rating: true,

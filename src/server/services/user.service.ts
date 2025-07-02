@@ -6,6 +6,7 @@ import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constan
 import {
   BanReasonCode,
   BlockedReason,
+  NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
@@ -20,6 +21,7 @@ import {
   postMetrics,
   userMetrics,
 } from '~/server/metrics';
+import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
   cosmeticCache,
@@ -58,6 +60,7 @@ import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { unpublishModelById } from '~/server/services/model.service';
+import { createNotification } from '~/server/services/notification.service';
 import {
   cancelAllPaddleSubscriptions,
   cancelSubscriptionPlan,
@@ -526,8 +529,24 @@ export const toggleFollowUser = async ({
     return false;
   }
 
-  await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
+  const ret = await dbWrite.userEngagement.create({
+    data: { type: 'Follow', targetUserId, userId },
+    select: { user: { select: { username: true } } },
+  });
   await userFollowsCache.bust(userId);
+
+  const details: NotifDetailsFollowedBy = {
+    username: ret.user.username,
+    userId,
+  };
+  await createNotification({
+    category: NotificationCategory.Update,
+    type: 'followed-by',
+    userId: targetUserId,
+    key: `followed-by:${userId}:${targetUserId}`,
+    details,
+  });
+
   return true;
 };
 

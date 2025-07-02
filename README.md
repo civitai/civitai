@@ -98,7 +98,7 @@ First, make sure that you have the following installed on your machine:
 4. Edit the `.env.development` file
     - Most default values are configured to work out of the box, except the S3 upload key and secret. To generate those, navigate to
       the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate
-      to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file (`S3_UPLOAD_KEY` and `S3_UPLOAD_SECRET`).
+      to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file (`S3_UPLOAD_KEY` and `S3_UPLOAD_SECRET`, `S3_IMAGE_UPLOAD_KEY` and `S3_IMAGE_UPLOAD_SECRET`).
     - Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
     - Add a random string of your choice to the email properties to allow user registration
         - `EMAIL_USER`

@@ -2,16 +2,17 @@ import { faker } from '@faker-js/faker';
 import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
+import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
   ArticleEngagementType,
   Availability,
@@ -81,10 +82,10 @@ const setSerialNotif = async (table: string) => {
     await notifDbWrite.query(format(query, table));
     console.log(`\t-> ✔️ Set ID sequence`);
   } catch (error) {
-    const e = error as MixedObject;
+    const e = error as DatabaseError;
     console.log(`\t-> ❌  Error setting ID sequence`);
     console.log(`\t-> ${e.message}`);
-    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
     if (e.where) console.log(`\t-> where: ${e.where}`);
   }
 };
@@ -106,15 +107,15 @@ const insertNotifRows = async (table: string, data: any[][]) => {
 
     if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
     else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
-    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
+    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount ?? 'unk'} of ${data.length} rows`);
 
     await setSerialNotif(table);
 
     return ret.rows.map((r) => r.id);
   } catch (error) {
-    const e = error as MixedObject;
+    const e = error as DatabaseError;
     console.log(`\t-> ❌  ${e.message}`);
-    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
     if (e.where) console.log(`\t-> where: ${e.where}`);
     return [];
   }
@@ -150,9 +151,9 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 
     return ret;
   } catch (error) {
-    const e = error as MixedObject;
+    const e = error as DatabaseError;
     console.log(`\t-> ❌  ${e.message}`);
-    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.detail) console.log(`\t-> Detail: ${e.detail}`);
     if (e.where) console.log(`\t-> where: ${e.where}`);
     return [];
   }
@@ -695,10 +696,6 @@ const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadTyp
       rand([null, 1, 2]), // clipSkip
       null, // vaeId // TODO
       randw([
-        {
-          value: null,
-          weight: 1,
-        },
         { value: 'Standard', weight: 30 },
         { value: rand(constants.baseModelTypes.filter((v) => v !== 'Standard')), weight: 2 },
       ]), // baseModelType
@@ -1216,7 +1213,7 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
     const row = [
       `${capitalize(faker.word.adjective())}-${capitalize(
         faker.word.noun()
-      )}-${faker.number.int()}.${ext}`, // name
+      )}-${faker.number.int()}.${ext ?? 'jpg'}`, // name
       imageUrl, // url
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
@@ -1924,6 +1921,32 @@ const genTags = (num: number) => {
     ];
 
     ret.push(row);
+  }
+  return ret;
+};
+
+/*
+ * TagsOnTags
+ */
+const genTagsOnTags = (num: number, tagIds: number[]) => {
+  const ret = [];
+
+  for (const tagId of [27, 28, 29, 31]) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+    let allowedTags = tagIds.filter((t) => t !== tagId);
+
+    for (let step = 1; step <= num; step++) {
+      const randTag = rand(allowedTags);
+      const row = [
+        tagId, // fromTagId
+        randTag, // toTagId
+        created, // createdAt
+        'Parent', // type
+      ];
+      allowedTags = allowedTags.filter((t) => t !== randTag);
+
+      ret.push(row);
+    }
   }
   return ret;
 };
@@ -3468,6 +3491,12 @@ const genRows = async (truncate = true) => {
 
   const tags = genTags(numRows);
   const tagIds = await insertRows('Tag', tags);
+
+  const tagsOnTags = genTagsOnTags(
+    20,
+    tags.filter((t) => t[7] === true).map((t) => t[4] as number)
+  );
+  await insertRows('TagsOnTags', tagsOnTags, false);
 
   const tagsOnArticles = genTagsOnArticles(Math.ceil(numRows * 3), tagIds, articleIds);
   await insertRows('TagsOnArticle', tagsOnArticles, false);

@@ -574,6 +574,8 @@ export default function ModelDetailsV2({
 
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
+  const totalRatingCount =
+    (model.rank?.thumbsUpCountAllTime ?? 0) + (model.rank?.thumbsDownCountAllTime ?? 0);
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
@@ -582,12 +584,23 @@ export default function ModelDetailsV2({
     description: model.description,
     name: model.name,
     image: imageUrl,
-    author: model.user.username,
+    author: !model.user.deletedAt
+      ? {
+          '@type': 'Person',
+          name: model.user.username,
+          url: `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`,
+        }
+      : undefined,
     datePublished: model.publishedAt,
     aggregateRating: {
       '@type': 'AggregateRating',
-      ratingValue: model.rank?.ratingAllTime,
-      reviewCount: model.rank?.ratingCountAllTime,
+      ratingValue: Math.min(
+        Math.ceil((model.rank?.thumbsUpCountAllTime ?? 0 / totalRatingCount) * 5),
+        5
+      ),
+      reviewCount: totalRatingCount,
+      bestRating: 5,
+      worstRating: 0,
     },
   };
 

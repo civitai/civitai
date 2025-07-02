@@ -130,6 +130,7 @@ function MyApp(props: CustomAppProps) {
               right={Component.right}
               subNav={Component.subNav}
               scrollable={Component.scrollable}
+              header={Component.header}
               footer={Component.footer}
               announcements={Component.announcements}
             >

@@ -267,6 +267,7 @@ export const upsertModelVersion = async ({
                 },
               }
             : undefined,
+          baseModelType: data.baseModelType ?? undefined,
         },
       }),
       ...existingVersions.map(({ id }, index) =>
@@ -444,6 +445,7 @@ export const upsertModelVersion = async ({
                 })),
             }
           : undefined,
+        baseModelType: data.baseModelType ?? undefined,
       },
     });
 

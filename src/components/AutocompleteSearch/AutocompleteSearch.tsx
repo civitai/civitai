@@ -407,10 +407,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   // Change index target when search target changes
   useEffect(() => {
-    if (indexName !== searchTarget) {
+    if (indexNameProp !== searchTarget) {
       onTargetChange(searchTarget as TKey);
     }
-  }, [searchTarget, indexName, onTargetChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTarget]);
 
   const processHitUrl = (hit: Hit) => {
     switch (indexName) {
@@ -482,9 +483,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           ])}
           onOptionSubmit={(v) => handleItemClick(v)}
           renderOption={({ option }) => {
-            const item = getItemFromValue(option.value);
+            const { key, ...item } = getItemFromValue(option.value);
             // Render special states
-            if (item.key === 'blocked') {
+            if (key === 'blocked') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -496,7 +497,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Stack>
               );
             }
-            if (item.key === 'disabled') {
+            if (key === 'disabled') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -509,7 +510,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Stack>
               );
             }
-            if (item.key === 'blocked-words') {
+            if (key === 'blocked-words') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
@@ -521,7 +522,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Stack>
               );
             }
-            if (item.key === 'error') {
+            if (key === 'error') {
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
