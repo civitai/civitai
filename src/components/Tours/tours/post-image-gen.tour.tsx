@@ -51,4 +51,10 @@ export const postGenerationTour: StepWithData[] = [
     content:
       'Once you are ready, click this button to publish your post to the site and your creations with the community!',
   },
+  {
+    target: '[data-tour="post:reset"]',
+    title: 'All Done',
+    content: "That's it! If you want to see this tour again, click this button.",
+    disableBeacon: true,
+  },
 ];

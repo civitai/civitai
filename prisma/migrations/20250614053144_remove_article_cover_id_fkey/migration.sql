@@ -1,5 +1,5 @@
 BEGIN;
-CREATE INDEX CONCURRENTLY "Image_blocked_idx" ON "Image" ("ingestion", "blockedFor") WHERE "ingestion" = 'Blocked' AND "blockedFor" != 'AiNotVerified';
+CREATE INDEX "Image_blocked_idx" ON "Image" ("ingestion", "blockedFor") WHERE "ingestion" = 'Blocked' AND "blockedFor" != 'AiNotVerified';
 COMMIT;
 
 BEGIN;

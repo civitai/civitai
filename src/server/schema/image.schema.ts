@@ -98,6 +98,10 @@ export const imageGenerationSchema = z.object({
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
   external: externalMetaSchema.optional(),
   effects: z.record(z.any()).optional(),
+  engine: z.string().optional(),
+  process: z.string().optional(),
+  type: z.string().optional(),
+  workflow: z.string().optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),
@@ -389,7 +393,8 @@ export const imageReviewQueueInputSchema = z.object({
   needsReview: z.string().nullish(),
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
-  // tagIds: z.array(z.number()).optional(),
+  tagIds: z.array(z.number()).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
   browsingLevel: z.number().default(allBrowsingLevelsFlag),
 });
 

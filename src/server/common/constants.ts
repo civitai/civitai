@@ -4,7 +4,7 @@ import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
@@ -18,6 +18,10 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+
+export const lipsum = `
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+`;
 
 export const constants = {
   modelFilterDefaults: {
@@ -116,7 +120,6 @@ export const constants = {
     'OpenAI',
     'Imagen4',
     'Wan Video',
-    'Flux.1 Kontext',
   ] as string[],
   modelFileTypes: [
     'Model',

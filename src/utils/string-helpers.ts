@@ -65,6 +65,8 @@ const nameOverrides: Record<string, string> = {
   ACH: 'ACH',
   HiDream: 'HiDream',
   'Wan Video': 'WAN Video',
+  commentV2: 'Comment',
+  CommentV2: 'Comment',
 };
 
 export function getDisplayName(

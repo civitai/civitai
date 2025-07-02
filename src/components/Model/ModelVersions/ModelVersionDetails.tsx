@@ -555,15 +555,13 @@ export function ModelVersionDetails({
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group justify="space-between" wrap="nowrap" gap={0}>
-      <Group>
-        <VerifiedText file={file} />
-        <Group gap={4}>
-          <Text size="xs" c="dimmed">
-            {file.type === 'Pruned Model' ? 'Pruned ' : ''}
-            {file.metadata.format}
-          </Text>
-          <FileInfo file={file} />
-        </Group>
+      <VerifiedText file={file} />
+      <Group gap={4}>
+        <Text size="xs" c="dimmed">
+          {file.type === 'Pruned Model' ? 'Pruned ' : ''}
+          {file.metadata.format}
+        </Text>
+        <FileInfo file={file} />
       </Group>
     </Group>
   );
@@ -1305,8 +1303,8 @@ export function ModelVersionDetails({
             {version.description && (
               <Accordion.Item value="version-description">
                 <Accordion.Control>About this version</Accordion.Control>
-                <Accordion.Panel px="sm" pb="sm">
-                  <Stack gap={4}>
+                <Accordion.Panel px="sm">
+                  <Stack gap={4} className="pb-3">
                     {version.description && (
                       <Box style={{ p: { fontSize: 14, marginBottom: 10 } }}>
                         <ContentClamp

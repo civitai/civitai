@@ -4,6 +4,7 @@ import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
+import type { BaseModel } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
@@ -83,6 +84,14 @@ export type TrainingDetailsBaseModelList = (typeof trainingDetailsBaseModels)[nu
 export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelList
   | TrainingDetailsBaseModelCustom;
+
+export const baseModelToTraningDetailsBaseModelMap: Partial<
+  Record<BaseModel, TrainingDetailsBaseModelList>
+> = {
+  'Wan Video 14B i2v 720p': 'wan_2_1_i2v_14b_720p',
+  'Wan Video 14B i2v 480p': 'wan_2_1_i2v_14b_720p',
+  'Wan Video 14B t2v': 'wan_2_1_t2v_14b',
+};
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({

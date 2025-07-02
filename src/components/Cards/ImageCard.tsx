@@ -9,7 +9,6 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {

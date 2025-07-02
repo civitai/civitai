@@ -1,14 +1,24 @@
-import { Stack, Group, Text, Loader, Center, Divider, Title, Button, Modal } from '@mantine/core';
+import {
+  Stack,
+  Group,
+  Text,
+  Loader,
+  Center,
+  Divider,
+  Title,
+  Button,
+  LoadingOverlay,
+} from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
-import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useState } from 'react';
-import { SortFilter } from '../../Filters';
-import type { ThreadSort } from '../../../server/common/enums';
-import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
+import { IconMessageCancel } from '@tabler/icons-react';
+import { SortFilter } from '~/components/Filters';
+import type { ThreadSort } from '~/server/common/enums';
+import { ReturnToRootThread } from '~/components/CommentsV2/ReturnToRootThread';
 import classes from '~/components/CommentsV2/Comment/Comment.module.css';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import HiddenCommentsModal from '~/components/CommentsV2/HiddenCommentsModal';
 
 type ArticleDetailCommentsProps = {
   articleId: number;
@@ -16,8 +26,6 @@ type ArticleDetailCommentsProps = {
 };
 
 export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommentsProps) {
-  const [opened, setOpened] = useState(false);
-
   return (
     <>
       <RootThreadProvider
@@ -30,6 +38,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           data,
           created,
           isLoading,
+          isFetching,
           remaining,
           showMore,
           hiddenCount,
@@ -46,7 +55,16 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                     Comments
                   </Title>
                   {hiddenCount > 0 && !isLoading && (
-                    <Button variant="subtle" onClick={() => setOpened(true)} size="compact-xs">
+                    <Button
+                      variant="subtle"
+                      onClick={() =>
+                        dialogStore.trigger({
+                          component: HiddenCommentsModal,
+                          props: { entityId: articleId, entityType: 'article', userId },
+                        })
+                      }
+                      size="compact-xs"
+                    >
                       <Group gap={4} justify="center">
                         <IconMessageCancel size={16} />
                         <Text inherit inline>
@@ -86,9 +104,12 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                   className={activeComment ? classes.rootCommentReplyInset : undefined}
                 >
                   <CreateComment />
-                  {data?.map((comment) => (
-                    <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
-                  ))}
+                  <Stack className="relative" gap="xl">
+                    <LoadingOverlay visible={isFetching} />
+                    {data?.map((comment) => (
+                      <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
+                    ))}
+                  </Stack>
                   {!!remaining && !showMore && (
                     <Divider
                       label={
@@ -111,81 +132,6 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           </Stack>
         )}
       </RootThreadProvider>
-      <HiddenCommentsModal
-        opened={opened}
-        onClose={() => setOpened(false)}
-        entityId={articleId}
-        userId={userId}
-      />
     </>
   );
 }
-
-type HiddenCommentsModalProps = {
-  opened: boolean;
-  onClose: () => void;
-  entityId: number;
-  userId: number;
-};
-
-const HiddenCommentsModal = ({ opened, onClose, entityId, userId }: HiddenCommentsModalProps) => {
-  return (
-    <Modal
-      title="Hidden Comments"
-      size="md"
-      radius="lg"
-      opened={opened}
-      onClose={onClose}
-      closeButtonProps={{
-        'aria-label': 'Close hidden comments',
-      }}
-      withCloseButton
-    >
-      <Divider mx="-md" />
-      <Stack mt="md" gap="xl">
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          Some comments may be hidden by the author or moderators to ensure a positive and inclusive
-          environment. Moderated for respectful and relevant discussions.
-        </AlertWithIcon>
-        {opened && (
-          <RootThreadProvider
-            entityType="article"
-            entityId={entityId}
-            limit={20}
-            badges={[{ userId, label: 'op', color: 'violet' }]}
-            hidden
-          >
-            {({ data, isLoading, remaining, showMore, toggleShowMore }) =>
-              isLoading ? (
-                <Center mt="xl">
-                  <Loader type="bars" />
-                </Center>
-              ) : !!data?.length ? (
-                <Stack gap="xl">
-                  {data?.map((comment) => (
-                    <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
-                  ))}
-                  {!!remaining && !showMore && (
-                    <Divider
-                      label={
-                        <Group gap="xs" align="center">
-                          <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
-                            Show {remaining} More
-                          </Text>
-                        </Group>
-                      }
-                      labelPosition="center"
-                      variant="dashed"
-                    />
-                  )}
-                </Stack>
-              ) : (
-                <Text>No hidden comments</Text>
-              )
-            }
-          </RootThreadProvider>
-        )}
-      </Stack>
-    </Modal>
-  );
-};

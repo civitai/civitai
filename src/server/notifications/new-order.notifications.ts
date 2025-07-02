@@ -40,8 +40,7 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     displayName: 'Knights of New Order: Knight Demotion',
     category: NotificationCategory.Other,
     prepareMessage: () => ({
-      message:
-        'Knights of New Order: Oh no! You have been demoted to Knight because your fervor is not up to the standards. You can still redeem yourself!',
+      message: `Knights of New Order: Oh no! You have been demoted to Knight because your fervor is not up to the standards. This update reflects recent activity levels and isn't permanent, you're always welcome to level up again through continued engagement.`,
       url: '/games/knights-of-new-order',
     }),
   },

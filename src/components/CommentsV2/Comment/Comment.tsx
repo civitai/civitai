@@ -77,6 +77,8 @@ export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProp
   );
 }
 
+const trimmableEnds = ['<p></p>'];
+
 export function CommentContent({
   comment,
   viewOnly,
@@ -121,7 +123,6 @@ export function CommentContent({
     }
   };
 
-  const trimmableEnds = ['<p></p>'];
   for (const end of trimmableEnds) {
     if (comment.content.endsWith(end)) {
       comment.content = comment.content.slice(0, comment.content.lastIndexOf(end));
@@ -215,7 +216,7 @@ export function CommentContent({
                   {comment.hidden ? 'Unhide comment' : 'Hide comment'}
                 </Menu.Item>
               )}
-              {currentUser?.isModerator && (
+              {currentUser?.isModerator && !comment.hidden && (
                 <Menu.Item
                   leftSection={
                     comment.pinnedAt ? (

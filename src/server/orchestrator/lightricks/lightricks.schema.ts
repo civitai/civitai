@@ -63,6 +63,7 @@ export const lightricksGenerationConfig = VideoGenerationConfig2({
   inputFn: ({ sourceImage, ...args }): LightricksVideoGenInput => {
     return {
       ...args,
+      expandPrompt: false,
       sourceImage: sourceImage?.url,
     };
   },

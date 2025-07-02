@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
-import { getMimeTypeFromExt } from '~/server/common/mime-types';
+import { getMimeTypeFromExt } from '~/shared/constants/mime-types';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getMultipartPutUrl, getS3Client } from '~/utils/s3-utils';
 

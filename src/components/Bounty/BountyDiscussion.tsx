@@ -1,4 +1,4 @@
-import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
+import { Stack, Group, Text, Loader, Center, Divider, Paper, LoadingOverlay } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -18,7 +18,16 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
       limit={20}
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
-      {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
+      {({
+        data,
+        created,
+        isLoading,
+        isFetching,
+        remaining,
+        showMore,
+        toggleShowMore,
+        activeComment,
+      }) =>
         isLoading ? (
           <Center>
             <Loader type="bars" />
@@ -38,7 +47,8 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
               <CreateComment />
               {(data?.length || created.length) > 0 && (
-                <>
+                <Stack className="relative">
+                  <LoadingOverlay visible={isFetching} />
                   {data?.map((comment) => (
                     <Comment key={comment.id} comment={comment} />
                   ))}
@@ -58,7 +68,7 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
                   {created.map((comment) => (
                     <Comment key={comment.id} comment={comment} />
                   ))}
-                </>
+                </Stack>
               )}
             </Stack>
           </Stack>

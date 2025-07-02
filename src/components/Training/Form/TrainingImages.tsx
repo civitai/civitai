@@ -80,7 +80,7 @@ import {
   MIME_TYPES,
   VIDEO_MIME_TYPE,
   ZIP_MIME_TYPE,
-} from '~/server/common/mime-types';
+} from '~/shared/constants/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';

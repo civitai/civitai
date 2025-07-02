@@ -15,7 +15,7 @@ import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import type { DataFromFile } from '~/hooks/useCFImageUpload';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

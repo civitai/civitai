@@ -10,7 +10,6 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
-import { CommentThread } from '~/server/services/commentsv2.service';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -34,6 +33,7 @@ type Props = CommentConnectorInput & {
 type ChildProps = {
   data?: CommentV2Model[];
   isLoading: boolean;
+  isFetching: boolean;
   isLocked: boolean;
   isMuted: boolean;
   isReadonly: boolean;
@@ -222,7 +222,11 @@ export function CommentsProvider({
   const [showMore, setShowMore] = useState(false);
   const toggleShowMore = () => setShowMore((b) => !b);
 
-  const { data: thread, isInitialLoading: isLoading } = trpc.commentv2.getThreadDetails.useQuery(
+  const {
+    data: thread,
+    isInitialLoading: isLoading,
+    isFetching,
+  } = trpc.commentv2.getThreadDetails.useQuery(
     { entityId, entityType, hidden },
     {
       enabled: initialCount === undefined || initialCount > 0,
@@ -276,6 +280,7 @@ export function CommentsProvider({
       value={{
         data: comments,
         isLoading,
+        isFetching,
         entityId,
         entityType,
         isLocked,
@@ -299,6 +304,7 @@ export function CommentsProvider({
       {children({
         data: comments,
         isLoading,
+        isFetching,
         isLocked,
         isMuted,
         isReadonly,

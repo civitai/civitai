@@ -811,7 +811,7 @@ model ModelVersion {
   fromImportId         Int?
   inaccurate           Boolean           @default(false)
   baseModel            String
-  baseModelType        String?
+  baseModelType        String            @default("Standard")
   meta                 Json              @default("{}")
   requireAuth          Boolean           @default(false)
   settings             Json?

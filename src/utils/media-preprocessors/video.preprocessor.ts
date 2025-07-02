@@ -26,8 +26,11 @@ export const getVideoData = async (src: string) =>
   new Promise<VideoMetadata>((resolve, reject) => {
     const video = document.createElement('video');
     video.onloadedmetadata = function () {
+      let timedOut = false;
+      setTimeout(() => (timedOut = true), 3000);
       function check() {
-        if (video.videoWidth > 0 && video.videoHeight > 0) resolve(getVideoMetadata(video));
+        if (timedOut) reject('video preprocessing timed out');
+        else if (video.videoWidth > 0 && video.videoHeight > 0) resolve(getVideoMetadata(video));
         else requestAnimationFrame(check);
       }
       check();

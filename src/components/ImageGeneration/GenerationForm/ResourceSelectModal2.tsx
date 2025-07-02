@@ -1,9 +1,9 @@
 import {
-  ActionIcon,
   Badge,
   Box,
   Button,
   Center,
+  Chip,
   CloseButton,
   Divider,
   Group,
@@ -61,10 +61,16 @@ import {
   ResourceSelectFiltersDropdown,
   ResourceSelectSort,
 } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
+import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import {
+  ResourceSelectProvider,
+  useResourceSelectContext,
+} from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
@@ -87,7 +93,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
+import { type BaseModel, constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
@@ -99,12 +105,6 @@ import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
-import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
-import {
-  ResourceSelectProvider,
-  useResourceSelectContext,
-} from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -166,6 +166,24 @@ function ResourceSelectModalContent() {
   });
   const { refine } = useClearRefinements();
   // TODO this refine isn't working perfectly
+
+  const { filters: selectFilters, setFilters: setSelectFilters } = useResourceSelectContext();
+  const popularBaseModels: BaseModel[] = [
+    'Pony',
+    'SDXL 1.0',
+    'Illustrious',
+    'Flux.1 D',
+    'OpenAI',
+    'HiDream',
+    'Imagen4',
+  ];
+  const popSelect =
+    selectFilters.baseModels.filter((bm) => popularBaseModels.includes(bm))[0] ?? null;
+  const handleChipClick = (event: React.MouseEvent<HTMLInputElement>) => {
+    if (event.currentTarget.value === popSelect) {
+      setSelectFilters((f) => ({ ...f, baseModels: [] as BaseModel[] }));
+    }
+  };
 
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
@@ -398,6 +416,30 @@ function ResourceSelectModalContent() {
         </div>
 
         <Divider />
+
+        {selectedTab === 'all' && (
+          <>
+            <Group gap="md">
+              <Text size="xs">Popular:</Text>
+              <Group className="flex-1" gap={8}>
+                <Chip.Group
+                  multiple={false}
+                  value={popSelect}
+                  onChange={(bm) =>
+                    setSelectFilters((f) => ({ ...f, baseModels: [bm] as BaseModel[] }))
+                  }
+                >
+                  {popularBaseModels.map((baseModel, index) => (
+                    <Chip key={index} size="xs" value={baseModel} onClick={handleChipClick}>
+                      <span>{baseModel}</span>
+                    </Chip>
+                  ))}
+                </Chip.Group>
+              </Group>
+            </Group>
+            <Divider />
+          </>
+        )}
       </div>
 
       {isLoadingExtra ? (
@@ -510,7 +552,7 @@ function ResourceHitList({
 
   if (!filtered.length)
     return (
-      <div className="p-3 py-5">
+      <div className="my-20 p-3 py-5">
         <Center>
           <Stack gap="md" align="center" maw={800}>
             {hiddenCount > 0 && (

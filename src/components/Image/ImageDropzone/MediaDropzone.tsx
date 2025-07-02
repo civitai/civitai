@@ -6,7 +6,7 @@ import dayjs from 'dayjs';
 import type { DragEvent } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { constants, isOrchestratorUrl } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
@@ -120,7 +120,7 @@ export function MediaDropzone({
           </div>
         </div>
       </Dropzone>
-      {error && <Input.Error>{error.message}</Input.Error>}
+      {error && <Input.Error>{typeof error === 'string' ? error : error.message}</Input.Error>}
     </div>
   );
   // #endregion
