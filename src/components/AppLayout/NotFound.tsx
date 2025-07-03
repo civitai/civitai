@@ -1,3 +1,4 @@
+import React from 'react';
 import { Button, Container, Stack, Text, Title, Skeleton } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useMemo } from 'react';
@@ -7,7 +8,15 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { trpc } from '~/utils/trpc';
 import classes from './NotFound.module.scss';
 
-export function NotFound() {
+interface NotFoundProps {
+  title?: React.ReactNode;
+  message?: React.ReactNode;
+}
+
+export function NotFound({
+  title = '404',
+  message = "The page you are looking for doesn't exist",
+}: NotFoundProps = {}) {
   const isClient = useIsClient();
   const { data: images } = trpc.image.get404Images.useQuery(undefined, {
     enabled: isClient,
@@ -28,9 +37,9 @@ export function NotFound() {
       <Container size="md">
         <Stack align="center" gap={0}>
           <Title order={1} lh={1}>
-            404
+            {title}
           </Title>
-          <Text size="lg">The page you are looking for doesn&apos;t exist</Text>
+          <Text size="lg">{message}</Text>
 
           <Stack gap={4} my="xl">
             <div className={classes.imageContainer}>
