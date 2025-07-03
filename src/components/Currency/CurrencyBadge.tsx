@@ -98,6 +98,8 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       return `linear-gradient(to right, ${gradientStops.join(', ')}) 1`;
     };
 
+    const gradient = createDistributionGradient();
+
     return (
       <Tooltip label={createDistributionLabel()} disabled={!typeDistrib}>
         <Badge
@@ -114,11 +116,10 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
             color: colorString,
             position: 'relative',
             ...(style ?? {}),
-            '--border-image': createDistributionGradient(),
-            border: loading ? 0 : undefined, // Avoid border when loading
+            '--border-image': gradient,
           }}
           classNames={{
-            root: clsx(!loading && typeDistrib && classes.badgeWithDistrib, className),
+            root: clsx(!loading && typeDistrib && gradient && classes.badgeWithDistrib, className),
             label: 'flex gap-0.5 items-center flex-nowrap',
           }}
           {...badgeProps}

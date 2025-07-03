@@ -5,7 +5,7 @@
     pointer-events: none;
     inset: 1px;
     border: 1px solid var(--mantine-color-yellow-7);
-    border-radius: 50%;
+    border-radius: --mantine-radius-sm;
     border-image: var(--border-image);
     clip-path: inset(0% round 1px);
   }
