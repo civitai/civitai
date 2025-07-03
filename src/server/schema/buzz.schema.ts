@@ -259,12 +259,13 @@ export type CreateMultiAccountBuzzTransactionInput = z.infer<
 export const createMultiAccountBuzzTransactionInput = z.object({
   fromAccountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).min(1),
   fromAccountId: z.number().min(1),
-  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
+  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
   toAccountId: z.number().min(0),
-  type: z.string(),
+  type: z.nativeEnum(TransactionType).optional(),
   amount: z.number().min(1),
   details: z.object({}).passthrough().optional(),
   externalTransactionIdPrefix: z.string(),
+  description: z.string().trim().max(100).nonempty().nullish(),
 });
 
 export type CreateMultiAccountBuzzTransactionResponse = z.infer<

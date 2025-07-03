@@ -19,7 +19,10 @@ import type {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+} from '~/server/services/buzz.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -516,15 +519,19 @@ export const purchaseCosmeticShopItem = async ({
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
 
   // Confirms user has enough buzz:
-  const transaction = await createBuzzTransaction({
-    fromAccountId: userId, // bank
-    toAccountId: 0,
+  const prefix = `purchase-cosmetic-${shopItem.id}-${userId}`;
+  const data = await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    // Can use a combination of all these accounts:
+    fromAccountTypes: ['user', 'green', 'fakered'],
+    toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
     description: `Cosmetic purchase - ${shopItem.title}`,
+    externalTransactionIdPrefix: prefix,
   });
 
-  const transactionId = transaction.transactionId;
+  const transactionId = data.transactionCount > 1 ? prefix : data.transactionIds[0].transactionId;
   if (!transactionId) {
     throw new Error('There was an error creating the transaction');
   }

@@ -563,6 +563,9 @@ export async function createMultiAccountBuzzTransaction(
 ): Promise<CreateMultiAccountBuzzTransactionResponse> {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
 
+  // Default user acc:
+  input.toAccountType = input.toAccountType ?? 'user'; // Default to bank if not provided
+  console.log(input);
   const body = JSON.stringify(input);
 
   const response = await fetch(`${env.BUZZ_ENDPOINT}/multi-transactions`, {
