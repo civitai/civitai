@@ -605,7 +605,7 @@ export const BuzzPurchase = ({
                 </Text>
               )}
               {(features.nowpaymentPayments || features.coinbasePayments) &&
-                selectedBuzzType === 'red' && (
+                selectedBuzzType === 'fakered' && (
                   <Stack align="center">
                     <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
                       Never purchased with Crypto before?{' '}

@@ -39,13 +39,14 @@ export const buzzAccountTypes = [
   // NEW TYPES:
   'green',
   'fakered',
+  'red',
   // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
   'creatorprogrambank',
   'cashpending',
   'cashsettled',
 ] as const;
 
-export const purchasableBuzzAccountTypes = ['green', 'fakered', 'user'] as const;
+export const purchasableBuzzAccountTypes = ['green', 'fakered', 'red', 'user'] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 export type PurchasableBuzzType = (typeof purchasableBuzzAccountTypes)[number];
 

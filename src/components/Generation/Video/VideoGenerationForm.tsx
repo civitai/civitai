@@ -48,7 +48,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   const [error, setError] = useState<string>();
   const [isLoadingDebounced, setIsLoadingDebounced] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    type: 'Generation',
+    accountTypes: ['generation', 'user'],
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance

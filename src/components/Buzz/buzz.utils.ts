@@ -13,8 +13,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
-import { purchasableBuzzAccountTypes, PurchasableBuzzType } from '~/server/schema/buzz.schema';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { purchasableBuzzAccountTypes } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, PurchasableBuzzType } from '~/server/schema/buzz.schema';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -89,7 +89,7 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
       };
 
       window.open(
-        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(query)}`,
+        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );
@@ -134,7 +134,9 @@ export const useBuzzTransaction = (opts?: {
   const { balances, balanceLoading } = useBuzz(undefined, accountTypes);
   const isMobile = useIsMobile();
   const onBuyBuzz = useBuyBuzz();
-  const purchasableValue = accountTypes.find((t) => purchasableBuzzAccountTypes.includes(t));
+  const purchasableValue = accountTypes.find((t) =>
+    purchasableBuzzAccountTypes.some((x) => x === t)
+  ) as PurchasableBuzzType;
 
   const { trackAction } = useTrackEvent();
 
@@ -204,7 +206,7 @@ export const useBuzzTransaction = (opts?: {
       if (!purchasableValue) {
         showErrorNotification({
           title: 'Not enough Buzz',
-          error: `You need at least ${buzzAmount} Buzz to perform this action.`,
+          error: new Error(`You need at least ${buzzAmount} Buzz to perform this action.`),
         });
 
         return;

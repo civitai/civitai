@@ -1,12 +1,5 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import {
-  Badge,
-  Loader,
-  Text,
-  Tooltip,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Badge, Loader, Text, Tooltip, useComputedColorScheme } from '@mantine/core';
 import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
@@ -16,6 +9,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import classes from './CurrencyBadge.module.scss';
 import clsx from 'clsx';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 
 type Props = BadgeProps & {
   currency: Currency;
@@ -59,21 +53,53 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
     ref
   ) => {
     const value = formatCurrencyForDisplay(unitAmount, currency);
-    const theme = useMantineTheme();
     const colorScheme = useComputedColorScheme('dark');
     const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
     const Icon = config.icon;
     const colorString = textColor || config.color;
 
+    // Create tooltip label for distribution
+    const createDistributionLabel = () => {
+      if (!typeDistrib) return undefined;
+
+      const entries = Object.entries(typeDistrib.amt).filter(([, amount]) => (amount || 0) > 0);
+      return entries
+        .map(([accountType, amount]) => {
+          const typeName =
+            accountType === 'generation'
+              ? 'Blue'
+              : accountType === 'green'
+              ? 'Green'
+              : accountType === 'user'
+              ? 'Yellow'
+              : accountType.charAt(0).toUpperCase() + accountType.slice(1);
+          return `${typeName}: ${amount || 0}`;
+        })
+        .join(' | ');
+    };
+
+    // Create gradient from distribution
+    const createDistributionGradient = () => {
+      if (!typeDistrib || loading) return undefined;
+
+      const entries = Object.entries(typeDistrib.pct).filter(([, pct]) => (pct || 0) > 0);
+      if (entries.length <= 1) return undefined;
+
+      let currentPct = 0;
+      const gradientStops = entries.map(([accountType, pct]) => {
+        const typeConfig =
+          CurrencyConfig[currency].themes?.[accountType as BuzzAccountType] ??
+          CurrencyConfig[currency];
+        const startPct = currentPct;
+        currentPct += (pct || 0) * 100;
+        return `${typeConfig.color} ${startPct}%, ${typeConfig.color} ${currentPct}%`;
+      });
+
+      return `linear-gradient(to right, ${gradientStops.join(', ')}) 1`;
+    };
+
     return (
-      <Tooltip
-        label={
-          typeDistrib
-            ? `Blue: ${typeDistrib.amt.blue} | Yellow: ${typeDistrib.amt.yellow}`
-            : undefined
-        }
-        disabled={!typeDistrib}
-      >
+      <Tooltip label={createDistributionLabel()} disabled={!typeDistrib}>
         <Badge
           ref={ref}
           variant={colorScheme === 'dark' ? 'filled' : 'light'}
@@ -88,16 +114,11 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
             color: colorString,
             position: 'relative',
             ...(style ?? {}),
-            '--border-image': typeDistrib
-              ? `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
-                  typeDistrib.pct.blue * 100
-                )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
-                  theme.colors.yellow[7]
-                } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`
-              : undefined,
+            '--border-image': createDistributionGradient(),
+            border: loading ? 0 : undefined, // Avoid border when loading
           }}
           classNames={{
-            root: clsx(typeDistrib && classes.badgeWithDistrib, className),
+            root: clsx(!loading && typeDistrib && classes.badgeWithDistrib, className),
             label: 'flex gap-0.5 items-center flex-nowrap',
           }}
           {...badgeProps}

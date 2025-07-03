@@ -126,7 +126,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
-    type: 'Generation',
+    accountTypes: ['generation', 'user'],
   });
 
   const thisStep = 3;

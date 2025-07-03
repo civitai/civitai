@@ -11,6 +11,7 @@ import { env } from '~/env/client';
 import { QS } from '~/utils/qs';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
 
 export default function Pricing() {
   const router = useRouter();
@@ -23,7 +24,7 @@ export default function Pricing() {
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
-  const [selectedBuzzType, setSelectedBuzzType] = useState<'green' | 'red' | undefined>(
+  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
     features.isGreen ? 'green' : queryBuzzType
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
@@ -46,7 +47,7 @@ export default function Pricing() {
       };
 
       window.open(
-        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?${QS.stringify(query)}`,
+        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/pricing?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );
@@ -71,7 +72,7 @@ export default function Pricing() {
   }
 
   // If red membership is selected, show unavailable message
-  if (!features.isGreen && selectedBuzzType === 'red') {
+  if (!features.isGreen && ['red', 'fakered'].some((s) => s === selectedBuzzType)) {
     return (
       <div
         style={{

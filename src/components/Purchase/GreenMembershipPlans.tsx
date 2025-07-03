@@ -37,10 +37,11 @@ import { joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/pages/pricing/index.module.scss';
 import type { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
 
 interface MembershipPlansProps {
   reason?: JoinRedirectReason;
-  selectedBuzzType?: 'green' | 'red';
+  selectedBuzzType?: PurchasableBuzzType;
   onChangeBuzzType?: () => void;
   interval: 'month' | 'year';
   onIntervalChange: (interval: 'month' | 'year') => void;

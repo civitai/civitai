@@ -239,7 +239,7 @@ export function useGenerateWithCost(cost = 0) {
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
-    type: 'Generation',
+    accountTypes: ['generation', 'user'],
   });
 
   const generate = useGenerate();

@@ -2,7 +2,6 @@ import {
   claimDailyBoostRewardHandler,
   completeStripeBuzzPurchaseHandler,
   createBuzzTipTransactionHandler,
-  createMultiAccountBuzzTransactionHandler,
   depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
@@ -12,7 +11,6 @@ import {
   getUserMultipliersHandler,
   getUserTransactionsHandler,
   previewMultiAccountTransactionHandler,
-  refundMultiAccountTransactionHandler,
   withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';

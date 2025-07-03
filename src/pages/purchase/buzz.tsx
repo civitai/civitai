@@ -41,7 +41,7 @@ export const getServerSideProps = createServerSideProps({
 const schema = z.object({
   returnUrl: z.string().optional(),
   minBuzzAmount: z.coerce.number().optional(),
-  buzzType: z.enum(['green', 'red']).optional(),
+  buzzType: z.enum(['green', 'fakered', 'red']).optional(),
 });
 
 const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
