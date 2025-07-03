@@ -44,7 +44,7 @@ export function GenerateButton({
       buzzAmount={cost}
       onPerformTransaction={onClick}
       error={error}
-      transactionType="Generation"
+      accountTypes={['generation', 'user']}
       showPurchaseModal
       showTypePct
     />

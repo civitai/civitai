@@ -58,6 +58,7 @@ import { QS } from '~/utils/qs';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { BuzzEmerchantPayButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzEmerchantPayButton';
+import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -67,10 +68,7 @@ export type BuzzPurchaseProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   onCancel?: () => void;
-  /**
-   * The initial buzz type to purchase. Can be 'green', 'red', or undefined.
-   */
-  initialBuzzType?: 'green' | 'red';
+  initialBuzzType?: PurchasableBuzzType;
 };
 
 export const BuzzPurchase = ({
@@ -92,7 +90,7 @@ export const BuzzPurchase = ({
   const [error, setError] = useState('');
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
-  const [selectedBuzzType, setSelectedBuzzType] = useState<'green' | 'red' | undefined>(
+  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
     features.isGreen ? 'green' : initialBuzzType
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);

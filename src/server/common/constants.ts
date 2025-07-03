@@ -1231,6 +1231,15 @@ export const CurrencyConfig: Record<
           gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
         },
       },
+      fakered: {
+        icon: IconBolt,
+        color: '#f03e3e',
+        fill: '#f03e3e',
+        classNames: {
+          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
+          gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
+        },
+      },
     },
   },
   [Currency.USD]: {

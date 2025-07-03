@@ -44,7 +44,10 @@ export const buzzAccountTypes = [
   'cashpending',
   'cashsettled',
 ] as const;
+
+export const purchasableBuzzAccountTypes = ['green', 'fakered', 'user'] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
+export type PurchasableBuzzType = (typeof purchasableBuzzAccountTypes)[number];
 
 function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? (value?.toLowerCase() as BuzzAccountType) : undefined;
@@ -246,4 +249,86 @@ export const getBuzzMovementsBetweenAccountsResponse = z.object({
   inwardsBalance: z.number(),
   outwardsBalance: z.number(),
   totalBalance: z.number(),
+});
+
+// Multi-account transaction schemas
+export type CreateMultiAccountBuzzTransactionInput = z.infer<
+  typeof createMultiAccountBuzzTransactionInput
+>;
+export const createMultiAccountBuzzTransactionInput = z.object({
+  fromAccountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).min(1),
+  fromAccountId: z.number().min(1),
+  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
+  toAccountId: z.number().min(0),
+  type: z.string(),
+  amount: z.number().min(1),
+  details: z.object({}).passthrough().optional(),
+  externalTransactionIdPrefix: z.string(),
+});
+
+export type CreateMultiAccountBuzzTransactionResponse = z.infer<
+  typeof createMultiAccountBuzzTransactionResponse
+>;
+export const createMultiAccountBuzzTransactionResponse = z.object({
+  transactionIds: z.array(
+    z.object({
+      transactionId: z.string(),
+      accountType: z.string(),
+      amount: z.number(),
+    })
+  ),
+  totalAmount: z.number(),
+  transactionCount: z.number(),
+});
+
+export type RefundMultiAccountTransactionInput = z.infer<typeof refundMultiAccountTransactionInput>;
+export const refundMultiAccountTransactionInput = z.object({
+  externalTransactionIdPrefix: z.string(),
+  description: z.string().optional(),
+  details: z.object({}).passthrough().optional(),
+});
+
+export type RefundMultiAccountTransactionResponse = z.infer<
+  typeof refundMultiAccountTransactionResponse
+>;
+export const refundMultiAccountTransactionResponse = z.object({
+  refundedTransactions: z.array(
+    z.object({
+      originalTransactionId: z.string(),
+      refundTransactionId: z.string(),
+      accountType: z.string(),
+      amount: z.number(),
+      originalExternalTransactionId: z.string(),
+    })
+  ),
+  totalRefunded: z.number(),
+  externalTransactionIdPrefix: z.string(),
+});
+
+export type PreviewMultiAccountTransactionInput = z.infer<
+  typeof previewMultiAccountTransactionInput
+>;
+export const previewMultiAccountTransactionInput = z.object({
+  fromAccountId: z.number().min(1),
+  fromAccountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).min(1),
+  amount: z.number().min(1),
+});
+
+export type PreviewMultiAccountTransactionResponse = z.infer<
+  typeof previewMultiAccountTransactionResponse
+>;
+export const previewMultiAccountTransactionResponse = z.object({
+  isPossible: z.boolean(),
+  totalAvailableBalance: z.number(),
+  requestedAmount: z.number(),
+  accountCharges: z.array(
+    z.object({
+      accountType: z.string(),
+      availableBalance: z.number(),
+      chargeAmount: z.number(),
+      remainingBalance: z.number(),
+    })
+  ),
+  remainingAmount: z.number(),
+  message: z.string(),
 });

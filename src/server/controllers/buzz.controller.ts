@@ -8,11 +8,14 @@ import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import type {
   ClubTransactionSchema,
   CompleteStripeBuzzPurchaseTransactionInput,
+  CreateMultiAccountBuzzTransactionInput,
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetDailyBuzzCompensationInput,
   GetTransactionsReportSchema,
   GetUserBuzzTransactionsSchema,
+  RefundMultiAccountTransactionInput,
+  PreviewMultiAccountTransactionInput,
   UserBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -20,11 +23,14 @@ import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
   createBuzzTransactionMany,
+  createMultiAccountBuzzTransaction,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
   getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
+  refundMultiAccountTransaction,
+  previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
@@ -453,6 +459,23 @@ export function getTransactionsReportHandler({
 }) {
   try {
     return getTransactionsReport({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function previewMultiAccountTransactionHandler({
+  input,
+  ctx,
+}: {
+  input: Omit<PreviewMultiAccountTransactionInput, 'fromAccountId'>;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return previewMultiAccountTransaction({
+      ...input,
+      fromAccountId: ctx.user.id,
+    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

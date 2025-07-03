@@ -2,6 +2,7 @@ import {
   claimDailyBoostRewardHandler,
   completeStripeBuzzPurchaseHandler,
   createBuzzTipTransactionHandler,
+  createMultiAccountBuzzTransactionHandler,
   depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
@@ -10,20 +11,25 @@ import {
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
+  previewMultiAccountTransactionHandler,
+  refundMultiAccountTransactionHandler,
   withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
 import {
+  claimWatchedAdRewardSchema,
+  clubTransactionSchema,
   completeStripeBuzzPurchaseTransactionInput,
+  createMultiAccountBuzzTransactionInput,
   getBuzzAccountSchema,
   getBuzzAccountTransactionsSchema,
-  getUserBuzzTransactionsSchema,
-  userBuzzTransactionInputSchema,
-  clubTransactionSchema,
-  getEarnPotentialSchema,
   getDailyBuzzCompensationInput,
-  claimWatchedAdRewardSchema,
+  getEarnPotentialSchema,
   getTransactionsReportSchema,
+  getUserBuzzTransactionsSchema,
+  previewMultiAccountTransactionInput,
+  refundMultiAccountTransactionInput,
+  userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
 import {
   claimBuzz,
@@ -89,4 +95,8 @@ export const buzzRouter = router({
   getTransactionsReport: protectedProcedure
     .input(getTransactionsReportSchema)
     .query(getTransactionsReportHandler),
+  // Multi-account transaction endpoints
+  previewMultiAccountTransaction: buzzProcedure
+    .input(previewMultiAccountTransactionInput.omit({ fromAccountId: true }))
+    .query(previewMultiAccountTransactionHandler),
 });

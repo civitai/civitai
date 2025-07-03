@@ -14,6 +14,8 @@ import type {
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
+  CreateMultiAccountBuzzTransactionInput,
+  CreateMultiAccountBuzzTransactionResponse,
   GetBuzzMovementsBetweenAccounts,
   GetBuzzMovementsBetweenAccountsResponse,
   GetBuzzTransactionResponse,
@@ -26,6 +28,10 @@ import type {
   GetUserBuzzAccountsResponse,
   GetUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsSchema,
+  PreviewMultiAccountTransactionInput,
+  PreviewMultiAccountTransactionResponse,
+  RefundMultiAccountTransactionInput,
+  RefundMultiAccountTransactionResponse,
 } from '~/server/schema/buzz.schema';
 import { getUserBuzzTransactionsResponse, TransactionType } from '~/server/schema/buzz.schema';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
@@ -550,6 +556,110 @@ export async function refundTransaction(
   const resp: { transactionId: string } = await response.json();
 
   return resp;
+}
+
+export async function createMultiAccountBuzzTransaction(
+  input: CreateMultiAccountBuzzTransactionInput & { fromAccountId: number }
+): Promise<CreateMultiAccountBuzzTransactionResponse> {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
+  const body = JSON.stringify(input);
+
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/multi-transactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+
+  if (!response.ok) {
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError('Invalid multi-account transaction');
+      case 409:
+        throw throwBadRequestError('There is a conflict with the transaction');
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+
+  const data: CreateMultiAccountBuzzTransactionResponse = await response.json();
+
+  return data;
+}
+
+export async function refundMultiAccountTransaction(
+  input: RefundMultiAccountTransactionInput
+): Promise<RefundMultiAccountTransactionResponse> {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
+  const body = JSON.stringify(input);
+
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/multi-transactions/refund`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+
+  if (!response.ok) {
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError('Invalid multi-account transaction refund');
+      case 409:
+        throw throwBadRequestError('There is a conflict with the refund');
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+
+  const data: RefundMultiAccountTransactionResponse = await response.json();
+
+  return data;
+}
+
+export async function previewMultiAccountTransaction(
+  input: PreviewMultiAccountTransactionInput
+): Promise<PreviewMultiAccountTransactionResponse> {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
+  const { fromAccountId, fromAccountTypes, amount } = input;
+
+  const queryParams = new URLSearchParams({
+    fromAccountId: fromAccountId.toString(),
+    amount: amount.toString(),
+  });
+
+  // Add multiple fromAccountTypes parameters
+  fromAccountTypes.forEach((accountType) => {
+    queryParams.append('fromAccountTypes', accountType);
+  });
+
+  const response = await fetch(
+    `${env.BUZZ_ENDPOINT}/multi-transactions/preview?${queryParams.toString()}`
+  );
+
+  if (!response.ok) {
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError('Invalid preview request');
+      case 404:
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+
+  const data: PreviewMultiAccountTransactionResponse = await response.json();
+
+  return data;
 }
 
 type AccountSummaryRecord = {

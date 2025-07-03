@@ -1,6 +1,6 @@
 import { useMantineTheme, rgba } from '@mantine/core';
 import { CurrencyConfig } from '~/server/common/constants';
-import type { BuzzAccountType } from '~/shared/utils/prisma/enums';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 

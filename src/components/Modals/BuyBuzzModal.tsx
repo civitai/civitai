@@ -6,12 +6,14 @@ import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
 
 export type BuyBuzzModalProps = {
   message?: string;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
+  initialBuzzType?: PurchasableBuzzType;
 };
 
 export default function BuyBuzzModal({
@@ -19,6 +21,7 @@ export default function BuyBuzzModal({
   purchaseSuccessMessage,
   onPurchaseSuccess,
   minBuzzAmount,
+  initialBuzzType,
 }: BuyBuzzModalProps) {
   const dialog = useDialogContext();
   const { trackAction } = useTrackEvent();
@@ -73,6 +76,7 @@ export default function BuyBuzzModal({
             minBuzzAmount={minBuzzAmount}
             purchaseSuccessMessage={purchaseSuccessMessage}
             onCancel={handleClose}
+            initialBuzzType={initialBuzzType}
           />
         </Group>
       </Stack>

@@ -531,7 +531,7 @@ export const ModelMyBidCard = ({
                 disabled={createLoading}
                 label={'Bid'}
                 buzzAmount={data.additionalPriceNeeded}
-                transactionType="Default"
+                accountTypes={['user']}
                 onPerformTransaction={() =>
                   handleBuy({
                     bidPrice: data.additionalPriceNeeded,
