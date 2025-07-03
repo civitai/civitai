@@ -11,7 +11,7 @@ import {
   SimpleGrid,
 } from '@mantine/core';
 import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { env } from '~/env/client';
@@ -91,12 +91,20 @@ export default function CosmeticShopMain() {
     }
   }, [isFetched]);
 
+  const allUserCosmetics = useMemo(() => {
+    return Object.values(userCosmetics ?? {}).flat();
+  }, [userCosmetics]);
+
   return (
     <>
       <Meta
         title="Civitai Cosmetic Shop | Created with Love & AI"
         description="Civitai Cosmetic Shop is a place where you can find the best cosmetic products to really express youself."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]
+            : undefined
+        }
       />
       <Container size="xl" p="sm">
         <Stack gap="xl">
@@ -150,18 +158,19 @@ export default function CosmeticShopMain() {
               cosmeticShopSections.map((section, index) => {
                 const { image, items } = section;
                 const meta = section.meta as CosmeticShopSectionMeta;
-                const className = clsx(index === 0 ? 'order-1' : `order-3`);
+
                 let filteredItems = items;
-                if (filters.modifier && userCosmetics) {
-                  const ownedCosmetics = Object.values(userCosmetics).flat();
+                if (filters.modifier) {
                   if (filters.modifier === 'owned') {
                     filteredItems = items.filter((item) =>
-                      ownedCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
+                      allUserCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
                     );
                   } else if (filters.modifier === 'notOwned') {
                     filteredItems = items.filter(
                       (item) =>
-                        !ownedCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
+                        !allUserCosmetics.some(
+                          (cosmetic) => cosmetic.id === item.shopItem.cosmeticId
+                        )
                     );
                   }
                 }
@@ -175,16 +184,21 @@ export default function CosmeticShopMain() {
                     description={section.description}
                     imageUrl={image?.url}
                     hideTitle={meta.hideTitle}
-                    className={className}
+                    className={clsx(index === 0 ? 'order-1' : `order-3`)}
                   >
                     <ShopSection.Items>
                       {filteredItems.map((item) => {
                         const { shopItem } = item;
+                        const alreadyOwned = allUserCosmetics.some(
+                          (cosmetic) => cosmetic.id === shopItem.cosmeticId
+                        );
+
                         return (
                           <ShopItem
                             key={shopItem.id}
                             item={shopItem}
                             sectionItemCreatedAt={item.createdAt}
+                            alreadyOwned={alreadyOwned}
                           />
                         );
                       })}

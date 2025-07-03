@@ -27,22 +27,22 @@ import type { CosmeticShopItemGetById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ShopItem.module.scss';
-import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { IconCheck } from '@tabler/icons-react';
 
 export const ShopItem = ({
   item,
   sectionItemCreatedAt,
+  alreadyOwned = false,
 }: {
   item: CosmeticShopItemGetById;
   sectionItemCreatedAt?: Date;
+  alreadyOwned?: boolean;
 }) => {
   const cosmetic = item.cosmetic;
   const isAvailable =
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   const currentUser = useCurrentUser();
   const { lastViewed } = useShopLastViewed();
-  const { data: userCosmetics } = useQueryUserCosmetics();
   const itemMeta = item.meta as CosmeticShopItemMeta;
 
   const remaining =
@@ -54,9 +54,6 @@ export const ShopItem = ({
   const leavingSoon = item.availableTo && item.availableTo > dayjs().subtract(24, 'hours').toDate();
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
   const hasDate = isUpcoming || item.availableTo;
-  const alreadyOwned = Object.values(userCosmetics ?? {})
-    .flat()
-    .some(({ id }) => id === cosmetic.id);
   const outOfStock = remaining === 0;
 
   const isNew =
