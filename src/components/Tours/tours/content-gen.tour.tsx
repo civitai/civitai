@@ -30,6 +30,7 @@ export const contentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -90,6 +91,7 @@ export const contentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -111,6 +113,7 @@ export const contentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -175,6 +178,7 @@ export const contentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -195,6 +199,7 @@ export const contentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -227,6 +232,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -251,6 +257,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -315,6 +322,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
@@ -335,6 +343,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
+        willChange: 'box-shadow',
       },
     },
   },
