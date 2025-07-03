@@ -642,6 +642,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     label="Continue"
                     buzzAmount={addToBountyAmount}
                     color="yellow.7"
+                    accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
                     onPerformTransaction={() => {
                       if (addToBountyAmount < minUnitAmount) {
                         return;

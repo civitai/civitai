@@ -565,7 +565,6 @@ export async function createMultiAccountBuzzTransaction(
 
   // Default user acc:
   input.toAccountType = input.toAccountType ?? 'user'; // Default to bank if not provided
-  console.log(input);
   const body = JSON.stringify(input);
 
   const response = await fetch(`${env.BUZZ_ENDPOINT}/multi-transactions`, {

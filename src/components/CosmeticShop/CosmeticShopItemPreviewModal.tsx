@@ -187,7 +187,6 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
                     radius="xl"
                     onPerformTransaction={handlePurchaseShopItem}
                     label="Purchase"
-                    // color="yellow.7"
                     accountTypes={['green', 'user', 'fakered']}
                   />
                 ) : (

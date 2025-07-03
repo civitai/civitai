@@ -44,6 +44,7 @@ import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvan
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/server/common/constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -80,6 +81,7 @@ const maxRuns = 5;
 const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  const features = useFeatureFlags();
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
   const thisFile = thisModelVersion.files[0];
@@ -830,7 +832,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={totalBuzzCost}
-          accountTypes={['generation', 'user']}
+          accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
           onPerformTransaction={handleSubmit}
           error={hasIssue ? 'Error computing cost' : undefined}
           showTypePct

@@ -5,6 +5,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function GenerateButton({
   cost = 0,
@@ -16,6 +17,7 @@ export function GenerateButton({
   ...buttonProps
 }: { cost?: number; loading?: boolean; error?: string; onClick?: () => void } & ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
+  const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
@@ -44,7 +46,7 @@ export function GenerateButton({
       buzzAmount={cost}
       onPerformTransaction={onClick}
       error={error}
-      accountTypes={['generation', 'user']}
+      accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
       showPurchaseModal
       showTypePct
     />

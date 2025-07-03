@@ -74,6 +74,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -113,6 +114,7 @@ const formSchema = createBountyInputSchema
 
 export function BountyCreateForm() {
   const router = useRouter();
+  const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -603,7 +605,7 @@ export function BountyCreateForm() {
               disabled={hasPoiInNsfw}
               label="Save"
               buzzAmount={unitAmount}
-              color="yellow.7"
+              accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
             />
           ) : (
             <Button loading={creatingBounty} type="submit" disabled={hasPoiInNsfw}>

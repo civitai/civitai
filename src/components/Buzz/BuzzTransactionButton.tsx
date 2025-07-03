@@ -44,12 +44,13 @@ export function BuzzTransactionButton({
   loading,
   showPurchaseModal = true,
   error,
-  accountTypes = ['user'],
+  accountTypes,
   showTypePct = false,
   priceReplacement,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
+  accountTypes ??= [features.isGreen ? 'green' : 'fakered', 'user']; // Default to user account type if not provided
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const [baseType] = accountTypes;

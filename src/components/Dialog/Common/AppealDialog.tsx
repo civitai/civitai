@@ -114,7 +114,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
               <BuzzTransactionButton
                 buzzAmount={100}
                 label="Submit"
-                accountTypes={['user']}
+                accountTypes={['user', 'green', 'fakered']}
                 loading={createAppealMutation.isLoading}
                 onPerformTransaction={handleSubmit}
                 showPurchaseModal
