@@ -22,6 +22,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -608,7 +609,7 @@ export const purchaseCosmeticShopItem = async ({
         data: {
           shopItemId,
           userId,
-          transaction,
+          transactionId,
           error: e,
         },
       });
@@ -616,12 +617,9 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: userId,
-      amount: shopItem.unitAmount,
-      type: TransactionType.Refund,
-      description: 'Reason: An error happening while grating the cosmetic',
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: prefix,
+      description: `Failed to purchase cosmetic - ${shopItem.title}`,
     });
 
     throw new Error('Failed to purchase cosmetic');

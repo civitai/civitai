@@ -97,6 +97,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { Page } from '~/components/AppLayout/Page';
 import classes from './[[...slug]].module.scss';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -374,6 +375,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const [addToBountyModalOpen, setAddToBountyModalOpen] = useState<boolean>(false);
   const [addToBountyAmount, setAddToBountyAmount] = useState<number>(minUnitAmount);
   const isOwner = bounty?.user && bounty?.user?.id === currentUser?.id;
+  const features = useFeatureFlags();
 
   const { trackAction } = useTrackEvent();
 
@@ -641,8 +643,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     type="submit"
                     label="Continue"
                     buzzAmount={addToBountyAmount}
-                    color="yellow.7"
-                    accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
+                    // color="yellow.7"
+                    accountTypes={[features.isGreen ? 'green' : 'fakered', 'user']}
                     onPerformTransaction={() => {
                       if (addToBountyAmount < minUnitAmount) {
                         return;
