@@ -100,7 +100,7 @@ export function ResourceSelectMultipleStandalone(props: ResourceSelectMultiplePr
             )}
           </div>
         </Accordion.Control>
-        <Accordion.Panel>
+        <Accordion.Panel classNames={{ content: 'p-0' }}>
           <ResourceSelectMultiple
             {...props}
             // modalOpened={opened}

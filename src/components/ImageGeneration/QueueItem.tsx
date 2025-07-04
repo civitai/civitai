@@ -145,7 +145,7 @@ export function QueueItem({
     .toDate();
 
   const handleCopy = () => {
-    copy(images.map((x) => x.jobId).join('\n'));
+    copy([...new Set(images.map((x) => x.jobId))].join('\n'));
   };
 
   const handleGenerate = () => {
