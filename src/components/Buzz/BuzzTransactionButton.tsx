@@ -16,6 +16,8 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
 import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { getBuzzTypeDistribution } from '~/utils/buzz';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 
 type Props = ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>> & {
@@ -53,25 +55,29 @@ export function BuzzTransactionButton({
   accountTypes ??= [features.isGreen ? 'green' : 'fakered', 'user']; // Default to user account type if not provided
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const { balances } = useBuzz(undefined, accountTypes);
   const [baseType] = accountTypes;
-  const {
-    conditionalPerformTransaction,
-    hasRequiredAmount,
-    getTypeDistribution,
-    isLoadingBalance,
-  } = useBuzzTransaction({
-    message,
-    purchaseSuccessMessage,
-    performTransactionOnPurchase,
+  const { conditionalPerformTransaction, hasRequiredAmount, isLoadingBalance } = useBuzzTransaction(
+    {
+      message,
+      purchaseSuccessMessage,
+      performTransactionOnPurchase,
+      accountTypes,
+    }
+  );
+
+  const buzzTypeDistribution = getBuzzTypeDistribution({
+    balances,
+    buzzAmount,
     accountTypes,
   });
 
-  const buzzTypeDistribution = getTypeDistribution(buzzAmount);
   const mainBuzzColor = Object.entries(buzzTypeDistribution.amt).reduce(
     (max, [key, amount]) =>
       amount > (buzzTypeDistribution.amt[max as BuzzAccountType] || 0) ? key : max,
     Object.keys(buzzTypeDistribution.amt)[0] || baseType
   ) as BuzzAccountType;
+
   const colorConfig = useBuzzCurrencyConfig(mainBuzzColor);
 
   if (!features.buzz) return null;
@@ -133,7 +139,7 @@ export function BuzzTransactionButton({
           color={colorScheme === 'dark' ? 'dark.8' : 'gray.2'}
           variant="filled"
           className="!h-[24px] !py-0"
-          typeDistrib={showTypePct ? buzzTypeDistribution : undefined}
+          typeDistribution={showTypePct ? buzzTypeDistribution : undefined}
         >
           {!hasRequiredAmount(buzzAmount) && (
             <Tooltip

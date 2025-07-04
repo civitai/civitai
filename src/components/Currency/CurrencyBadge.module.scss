@@ -6,7 +6,7 @@
     inset: 1px;
     border: 1px solid var(--mantine-color-yellow-7);
     border-radius: --mantine-radius-sm;
-    border-image: var(--border-image);
+    border-image: var(--border-image) 1;
     clip-path: inset(0% round 1px);
   }
 }

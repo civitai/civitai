@@ -156,7 +156,12 @@ export default function SendTipModal({
                 <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
                   Available Buzz
                 </Text>
-                <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />
+                <UserBuzz
+                  iconSize={16}
+                  textSize="sm"
+                  accountTypes={['user', 'green', 'fakered']}
+                  withTooltip
+                />
               </Group>
             </Badge>
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />

@@ -104,11 +104,6 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   };
 };
 
-export type BuzzTypeDistribution = {
-  pct: Partial<Record<BuzzAccountType, number>>;
-  amt: Partial<Record<BuzzAccountType, number>>;
-};
-
 export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
@@ -166,31 +161,6 @@ export const useBuzzTransaction = (opts?: {
 
   const hasRequiredAmount = (buzzAmount: number) => getCurrentBalance() >= buzzAmount;
 
-  const getTypeDistribution = (buzzAmount: number): BuzzTypeDistribution => {
-    const data: BuzzTypeDistribution = {
-      // Will fill with relevant account types:
-      amt: {},
-      pct: {},
-    };
-
-    let current = buzzAmount;
-
-    accountTypes.forEach((accountType: BuzzAccountType) => {
-      data.amt[accountType] = 0;
-      data.pct[accountType] = 0;
-
-      const accountBalance = balances.find((b) => b.accountType === accountType)?.balance ?? 0;
-      if (current <= 0 || accountBalance <= 0) return;
-
-      const taken = Math.min(accountBalance, current);
-      data.amt[accountType] = taken;
-      data.pct[accountType] = taken / buzzAmount;
-      current -= taken;
-    });
-
-    return data;
-  };
-
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
@@ -229,7 +199,6 @@ export const useBuzzTransaction = (opts?: {
 
   return {
     hasRequiredAmount,
-    getTypeDistribution,
     conditionalPerformTransaction,
     tipUserMutation,
     isLoadingBalance: balanceLoading,

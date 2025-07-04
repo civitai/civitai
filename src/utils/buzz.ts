@@ -1,6 +1,8 @@
+import { CurrencyConfig } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import type { BuzzAccountType, BuzzTransactionDetails } from '~/server/schema/buzz.schema';
 import { GetUserBuzzTransactionsResponse } from '~/server/schema/buzz.schema';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 export const parseBuzzTransactionDetails = (
   details?: BuzzTransactionDetails
@@ -95,4 +97,100 @@ export const getBuzzTransactionSupportedAccountTypes = ({
   }
 
   return accountTypes;
+};
+
+export type BuzzTypeDistribution = {
+  pct: Partial<Record<BuzzAccountType, number>>;
+  amt: Partial<Record<BuzzAccountType, number>>;
+};
+
+export type BuzzBalance = {
+  balance?: number | null;
+  lifetimeBalance?: number | null;
+  accountType: BuzzAccountType;
+};
+
+export const getBuzzTypeDistribution = ({
+  balances,
+  accountTypes,
+  buzzAmount = 0,
+}: {
+  balances: BuzzBalance[];
+  accountTypes: BuzzAccountType[];
+  buzzAmount: number;
+}): BuzzTypeDistribution => {
+  const data: BuzzTypeDistribution = {
+    // Will fill with relevant account types:
+    amt: {},
+    pct: {},
+  };
+
+  let current = buzzAmount;
+
+  accountTypes.forEach((accountType: BuzzAccountType) => {
+    data.amt[accountType] = 0;
+    data.pct[accountType] = 0;
+
+    const accountBalance = balances.find((b) => b.accountType === accountType)?.balance ?? 0;
+    if (current <= 0 || accountBalance <= 0) return;
+
+    const taken = Math.min(accountBalance, current);
+    data.amt[accountType] = taken;
+    data.pct[accountType] = taken / buzzAmount;
+    current -= taken;
+  });
+
+  return data;
+};
+
+// Create gradient from distribution
+export const createBuzzDistributionGradient = ({
+  typeDistribution,
+  direction = 'right',
+}: {
+  typeDistribution?: BuzzTypeDistribution;
+  direction?: 'right' | 'left' | 'top' | 'bottom';
+}) => {
+  if (!typeDistribution) return undefined;
+
+  const entries = Object.entries(typeDistribution.pct).filter(([, pct]) => (pct || 0) > 0);
+  if (entries.length <= 1) return undefined;
+
+  let currentPct = 0;
+  const gradientStops = entries.map(([accountType, pct]) => {
+    const typeConfig =
+      CurrencyConfig[Currency.BUZZ].themes?.[accountType as BuzzAccountType] ??
+      CurrencyConfig[Currency.BUZZ];
+    const startPct = currentPct;
+    currentPct += (pct || 0) * 100;
+    return `${typeConfig.color} ${startPct}%, ${typeConfig.color} ${currentPct}%`;
+  });
+
+  return `linear-gradient(to ${direction}, ${gradientStops.join(', ')})`;
+};
+
+// Create tooltip label for distribution
+export const createBuzzDistributionLabel = ({
+  typeDistribution,
+}: {
+  typeDistribution?: BuzzTypeDistribution;
+}) => {
+  if (!typeDistribution) return undefined;
+
+  const entries = Object.entries(typeDistribution.amt).filter(([, amount]) => (amount || 0) > 0);
+  return entries
+    .map(([accountType, amount]) => {
+      const typeName =
+        accountType === 'generation'
+          ? 'Blue'
+          : accountType === 'green'
+          ? 'Green'
+          : accountType === 'user'
+          ? 'Yellow'
+          : accountType === 'fakered'
+          ? 'Red'
+          : accountType.charAt(0).toUpperCase() + accountType.slice(1);
+      return `${typeName}: ${(amount || 0).toLocaleString()}`;
+    })
+    .join(' | ');
 };
