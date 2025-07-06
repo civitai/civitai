@@ -69,7 +69,7 @@ export default MixedAuthEndpoint(async function handler(
   const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   // Handle pagination
-  const { limit, page, cursor, query, ...data } = parsedParams.data;
+  const { limit, page, cursor, query, ids, ...data } = parsedParams.data;
   let skip: number | undefined;
   const usingPaging = page && !cursor;
   if (usingPaging) {
@@ -97,7 +97,7 @@ export default MixedAuthEndpoint(async function handler(
       .json({ error: 'Cannot use page param with query search. Use cursor-based pagination.' });
   }
 
-  let ids: number[] = [];
+  let queryIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
     // Fetch IDs from Meilisearch
@@ -108,7 +108,7 @@ export default MixedAuthEndpoint(async function handler(
       sort: ['id:desc'],
     });
     // @ts-ignore
-    ids = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
+    queryIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
     meiliNextCursor =
       meiliResult?.hits?.length === limit ? ids[ids.length - 1]?.toString() : undefined;
   }
@@ -121,7 +121,7 @@ export default MixedAuthEndpoint(async function handler(
         take: limit,
         skip: !query ? skip : undefined,
         cursor: !query ? cursor : undefined,
-        ids: query ? ids : undefined,
+        ids: query ? (ids ? queryIds.filter((value) => ids.includes(value)) : queryIds) : ids,
         collectionId,
         disablePoi: true,
         disableMinor: true,
