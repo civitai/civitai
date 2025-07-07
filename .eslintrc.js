@@ -41,7 +41,7 @@ module.exports = {
     '@typescript-eslint/no-namespace': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/consistent-type-imports': ['error'],
-    '@typescript-eslint/restrict-template-expressions': 'error',
+    '@typescript-eslint/restrict-template-expressions': ['error', { allowBoolean: true }],
     'tailwindcss/no-custom-classname': [
       'warn',
       {

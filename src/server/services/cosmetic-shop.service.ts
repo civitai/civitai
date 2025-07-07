@@ -393,12 +393,7 @@ export const getShopSectionsWithItems = async ({
             archivedAt: null,
             OR: isModerator
               ? undefined
-              : [
-                  {
-                    availableTo: { gte: new Date() },
-                  },
-                  { availableTo: null },
-                ],
+              : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
           },
         },
         orderBy: { index: 'asc' },

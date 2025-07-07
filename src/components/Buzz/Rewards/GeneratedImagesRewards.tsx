@@ -9,7 +9,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import type { ChartOptions } from 'chart.js';
+import type { ChartOptions, scales } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -24,6 +24,7 @@ import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import classes from '~/components/Buzz/buzz.module.scss';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { maxDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -48,10 +49,11 @@ export const GeneratedImagesReward = () => {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
+  const mobile = useIsMobile({ breakpoint: 'sm' });
 
   const options = useMemo<ChartOptions<'line'>>(
     () => ({
-      aspectRatio: 3,
+      aspectRatio: mobile ? 1.4 : 3,
       responsive: true,
       scales: {
         y: {
@@ -67,6 +69,7 @@ export const GeneratedImagesReward = () => {
           },
         },
         x: {
+          type: 'time',
           ticks: {
             color: labelColor,
           },
@@ -74,6 +77,7 @@ export const GeneratedImagesReward = () => {
       },
       plugins: {
         legend: {
+          display: !mobile,
           labels: {
             boxWidth: 10,
             boxHeight: 10,
@@ -87,7 +91,7 @@ export const GeneratedImagesReward = () => {
         },
       },
     }),
-    [labelColor]
+    [labelColor, mobile]
   );
 
   const labels = useMemo(() => {

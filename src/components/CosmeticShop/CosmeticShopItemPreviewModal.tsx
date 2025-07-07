@@ -46,8 +46,8 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
   const router = useRouter();
 
   const handleApplyDecoration = async () => {
-    if (cosmetic.type === CosmeticType.ContentDecoration) {
-      router.push(`/user/${currentUser?.username}`);
+    if (cosmetic.type === CosmeticType.ContentDecoration && currentUser?.username) {
+      router.push(`/user/${currentUser.username}`);
     } else {
       // Apply now...
       await equip({

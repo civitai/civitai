@@ -5,7 +5,7 @@ import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/genera
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';

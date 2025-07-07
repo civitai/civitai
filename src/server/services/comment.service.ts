@@ -1,11 +1,10 @@
 import { Prisma } from '@prisma/client';
-import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from 'next-auth';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { userMetrics } from '~/server/metrics';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -23,6 +22,7 @@ import {
 } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: {

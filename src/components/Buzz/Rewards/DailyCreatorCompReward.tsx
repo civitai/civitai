@@ -40,7 +40,6 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 ChartJS.register(
   CategoryScale,

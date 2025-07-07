@@ -227,7 +227,9 @@
     height: calc(100% + 4px);
     filter: blur(8px);
     z-index: -1;
-    animation: glowing 20s linear infinite;
+    & :global {
+      animation: glowing 20s linear infinite;
+    }
   }
 }
 
