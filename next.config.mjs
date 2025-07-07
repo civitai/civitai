@@ -102,7 +102,7 @@ export default defineNextConfig(
       largePageDataBytes: 512 * 100000,
       optimizePackageImports: [
         '@civitai/client',
-        './srs/libs/form',
+        './src/libs/form',
         'lodash-es',
         '@tabler-icons-react',
         '@headlessui/react',
