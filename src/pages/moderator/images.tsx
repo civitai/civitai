@@ -255,7 +255,12 @@ export default function Images() {
             </Text>
             <RadioGroup value={type} onChange={handleTypeChange} className="mt-2 flex gap-2">
               {segments.map(({ label, value }) => (
-                <RadioInput key={value} value={value} label={label} indicator={counts?.[value]} />
+                <RadioInput
+                  key={value}
+                  value={value}
+                  label={label}
+                  indicator={counts?.[value] ?? 0}
+                />
               ))}
             </RadioGroup>
           </div>
@@ -446,7 +451,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 Reported by
               </Text>
               <Group gap={4}>
-                <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
+                <Link
+                  href={image.report?.user.username ? `/user/${image.report?.user.username}` : '#'}
+                  legacyBehavior
+                  passHref
+                >
                   <Anchor size="xs" target="_blank" lineClamp={1} inline>
                     {image.report?.user.username}
                   </Anchor>
@@ -547,7 +556,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 <Text size="xs" c="dimmed" inline>
                   Appealed by
                 </Text>
-                <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
+                <Link
+                  href={image.appeal?.user.username ? `/user/${image.appeal?.user.username}` : '#'}
+                  legacyBehavior
+                  passHref
+                >
                   <Anchor size="xs" target="_blank" lineClamp={1} inline>
                     {image.appeal?.user.username}
                   </Anchor>
@@ -1053,13 +1066,7 @@ function RadioInput({
   indicator?: number;
 }) {
   return (
-    <Indicator
-      label={indicator ?? 0 > 999 ? '999+' : indicator}
-      size={16}
-      zIndex={10}
-      color="red"
-      disabled={!indicator}
-    >
+    <Indicator label={indicator ?? 0} size={16} zIndex={10} color="red" disabled={!indicator}>
       <Radio
         value={value}
         disabled={disabled}

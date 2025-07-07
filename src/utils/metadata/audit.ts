@@ -44,7 +44,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
   // Add minor check
   if (nsfw) {
     const { found, age } = includesMinorAge(prompt);
-    if (found) return { blockedFor: [`${age} year old`], success: false };
+    if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
   }
 
   const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
@@ -59,7 +59,7 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
   prompt = normalizeText(prompt); // Parse HTML Entities
   negativePrompt = normalizeText(negativePrompt);
   const { found, age } = includesMinorAge(prompt);
-  if (found) return { blockedFor: [`${age} year old`], success: false };
+  if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
 
   if (includesPoi(prompt)) {
     return { blockedFor: ['Prompt cannot include celebrity names'], success: false };

@@ -144,8 +144,7 @@ export function HomeTabs() {
               ['bg-gray-4 dark:bg-dark-4']:
                 activePath === key || (activePath === 'changelog' && key === 'updates'),
               [classes.groupedOptions]: value.grouped,
-              [classes.tabRainbow]: key === 'shop',
-              [animationClasses.rainbowBackground]: key === 'shop',
+              [classes.tabHighlight]: key === 'shop',
             })}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >

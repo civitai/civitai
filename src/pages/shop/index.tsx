@@ -11,7 +11,7 @@ import {
   SimpleGrid,
 } from '@mantine/core';
 import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { env } from '~/env/client';
@@ -36,6 +36,7 @@ import merchProducts from '~/utils/shop/civitai-merch-products.json';
 import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
 import clsx from 'clsx';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 
 const merchSections = {
   civitai: {
@@ -70,11 +71,12 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CosmeticShopMain() {
   const { query } = useCosmeticShopQueryParams();
-  const [filters, setFilters] = useState<GetShopInput>({
+  const [filters, setFilters] = useState<GetShopInput & { modifier?: 'owned' | 'notOwned' }>({
     ...(query ?? {}),
   });
-  const [debouncedFilters] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
+  const { data: userCosmetics, isLoading: loadingOwnedCosmetics } = useQueryUserCosmetics();
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
@@ -89,12 +91,20 @@ export default function CosmeticShopMain() {
     }
   }, [isFetched]);
 
+  const allUserCosmetics = useMemo(() => {
+    return Object.values(userCosmetics ?? {}).flat();
+  }, [userCosmetics]);
+
   return (
     <>
       <Meta
         title="Civitai Cosmetic Shop | Created with Love & AI"
         description="Civitai Cosmetic Shop is a place where you can find the best cosmetic products to really express youself."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]
+            : undefined
+        }
       />
       <Container size="xl" p="sm">
         <Stack gap="xl">
@@ -140,7 +150,7 @@ export default function CosmeticShopMain() {
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
           <div className="flex flex-col gap-6">
-            {isLoading ? (
+            {isLoading || loadingOwnedCosmetics ? (
               <Center p="xl">
                 <Loader />
               </Center>
@@ -148,7 +158,24 @@ export default function CosmeticShopMain() {
               cosmeticShopSections.map((section, index) => {
                 const { image, items } = section;
                 const meta = section.meta as CosmeticShopSectionMeta;
-                const className = clsx(index === 0 ? 'order-1' : `order-3`);
+
+                let filteredItems = items;
+                if (filters.modifier) {
+                  if (filters.modifier === 'owned') {
+                    filteredItems = items.filter((item) =>
+                      allUserCosmetics.some((cosmetic) => cosmetic.id === item.shopItem.cosmeticId)
+                    );
+                  } else if (filters.modifier === 'notOwned') {
+                    filteredItems = items.filter(
+                      (item) =>
+                        !allUserCosmetics.some(
+                          (cosmetic) => cosmetic.id === item.shopItem.cosmeticId
+                        )
+                    );
+                  }
+                }
+
+                if (!filteredItems.length) return null;
 
                 return (
                   <ShopSection
@@ -157,16 +184,21 @@ export default function CosmeticShopMain() {
                     description={section.description}
                     imageUrl={image?.url}
                     hideTitle={meta.hideTitle}
-                    className={className}
+                    className={clsx(index === 0 ? 'order-1' : `order-3`)}
                   >
                     <ShopSection.Items>
-                      {items.map((item) => {
+                      {filteredItems.map((item) => {
                         const { shopItem } = item;
+                        const alreadyOwned = allUserCosmetics.some(
+                          (cosmetic) => cosmetic.id === shopItem.cosmeticId
+                        );
+
                         return (
                           <ShopItem
                             key={shopItem.id}
                             item={shopItem}
                             sectionItemCreatedAt={item.createdAt}
+                            alreadyOwned={alreadyOwned}
                           />
                         );
                       })}

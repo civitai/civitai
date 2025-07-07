@@ -2,7 +2,9 @@
 import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import CircularDependencyPlugin from 'circular-dependency-plugin';
-import packageJson from './package.json' assert { type: 'json' };
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const packageJson = require('./package.json');
 
 const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
@@ -100,7 +102,7 @@ export default defineNextConfig(
       largePageDataBytes: 512 * 100000,
       optimizePackageImports: [
         '@civitai/client',
-        './srs/libs/form',
+        './src/libs/form',
         'lodash-es',
         '@tabler-icons-react',
         '@headlessui/react',
