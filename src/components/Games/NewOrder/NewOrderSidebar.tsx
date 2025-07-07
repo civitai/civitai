@@ -126,7 +126,7 @@ export function NewOrderSidebar() {
           </Group>
         </button>
         <button
-          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+          className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           onClick={() => openRatingGuideModal()}
         >
           <div className="flex flex-nowrap items-center gap-4">

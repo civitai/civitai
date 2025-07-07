@@ -153,7 +153,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
           </LegacyActionIcon>
 
           <div className="absolute left-0 top-0 flex w-full justify-between gap-4 p-2">
-            <div className="relative flex flex-col gap-1">
+            <div className="relative flex flex-col items-center gap-1">
               <Badge
                 variant="filled"
                 color="gray"
@@ -171,7 +171,7 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
                 {browsingLevelLabels[rating]}
               </Badge>
               {!isPending && !isCorrect && (
-                <Badge className="mx-2 border border-blue-5" variant="filled" color="gray">
+                <Badge className="border border-blue-5" variant="filled" color="gray">
                   {browsingLevelLabels[image.nsfwLevel as NsfwLevel]}
                 </Badge>
               )}
