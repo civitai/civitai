@@ -1727,12 +1727,16 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
-      `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
+      `((NOT availability = ${Availability.Private})${
+        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
+      })`
     );
 
     filters.push(
       // Avoids blocked resources to the public
-      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS) OR "userId" = ${currentUserId})`
+      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${
+        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
+      })`
     );
   }
 
@@ -1741,7 +1745,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true OR "userId" = ${currentUserId})`);
+    filters.push(`(NOT poi = true${currentUserId ? ` OR "userId" = ${currentUserId}` : ''})`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -1817,11 +1821,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
-  const nsfwUserFilters = [
-    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
-    makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
-  ];
-  // if (pending) {}
+  const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
+  if (currentUserId)
+    nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+
   nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
@@ -4088,6 +4091,7 @@ async function removeNameReference(images: number[]) {
       UPDATE "Image" i
         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
           "needsReview" = null,
+          poi = false,
           ingestion = 'Scanned'::"ImageIngestionStatus"
       FROM updates t
       WHERE t.id = i.id;
