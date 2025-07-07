@@ -76,16 +76,19 @@ export const flux1KontextConfig = ImageGenConfig({
     }
 
     let imageUrl = params.sourceImage?.url;
-    if (whatIf && !imageUrl)
+    let aspectRatio = params.aspectRatio;
+    if (whatIf && !imageUrl) {
       imageUrl =
         'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/4a0f3c58d8c6a370bc926efe3279cbad.jpeg';
+      aspectRatio = '1:1';
+    }
 
     return schema.parse({
       engine: params.engine,
       model,
       prompt: params.prompt,
       images: [imageUrl],
-      aspectRatio: params.aspectRatio,
+      aspectRatio,
       quantity: params.quantity,
       guidanceScale: params.cfgScale,
       seed: params.seed,
