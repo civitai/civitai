@@ -118,7 +118,12 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     }
 
     if (config.provider === 'fal') {
+      const imageOrAspectRatio = data.sourceImage ?? data.aspectRatio;
+      const aspectRatio = imageOrAspectRatio
+        ? findClosestAspectRatio(imageOrAspectRatio, [...wanFalAspectRatios])
+        : undefined;
       data.duration = 5;
+      data.aspectRatio = aspectRatio as any;
     }
 
     return { ...data, steps: 20 };
