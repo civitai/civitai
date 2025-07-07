@@ -72,7 +72,6 @@ export function UserBuzz({
           size={iconSize}
           color={gradient ? undefined : config.color}
           fill={gradient ? undefined : config.color}
-          className={clsx(classes.buzzIcon, gradient && classes.withGradient)}
           gradient={gradient}
         />
         <Text
