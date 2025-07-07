@@ -110,7 +110,7 @@ export default MixedAuthEndpoint(async function handler(
     // @ts-ignore
     searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
     meiliNextCursor =
-      meiliResult?.hits?.length === limit ? searchIds[ids.length - 1]?.toString() : undefined;
+      meiliResult?.hits?.length === limit ? searchIds[searchIds.length - 1]?.toString() : undefined;
   }
 
   try {
