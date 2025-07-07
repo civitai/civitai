@@ -40,6 +40,7 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
+export type GetModelByIdSchema = z.infer<typeof getModelByIdSchema>;
 export const getModelByIdSchema = z.object({
   id: z.number(),
   excludeTrainingData: z.boolean().optional(),

@@ -45,6 +45,7 @@ import type {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
+  GetModelByIdSchema,
 } from '~/server/schema/model.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
@@ -147,7 +148,7 @@ export const getModelHandler = async ({
   input: { excludeTrainingData, ...input },
   ctx,
 }: {
-  input: GetByIdInput;
+  input: GetModelByIdSchema;
   ctx: Context;
 }) => {
   try {
