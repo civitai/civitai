@@ -40,6 +40,11 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
+export const getModelByIdSchema = z.object({
+  id: z.number(),
+  excludeTrainingData: z.boolean().optional(),
+});
+
 export const getAllModelsSchema = baseQuerySchema
   .merge(licensingSchema)
   .merge(userPreferencesSchema)

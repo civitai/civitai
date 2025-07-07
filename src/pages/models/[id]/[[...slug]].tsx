@@ -246,7 +246,7 @@ export const getServerSideProps = createServerSideProps({
         // });
         // await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
-      await ssg.model.getById.prefetch({ id });
+      await ssg.model.getById.prefetch({ id, excludeTrainingData: true });
       await ssg.model.getCollectionShowcase.prefetch({ id });
       if (session) {
         await ssg.user.getEngagedModelVersions.prefetch({ id });
@@ -281,7 +281,7 @@ export default function ModelDetailsV2({
   const { blockedUsers } = useHiddenPreferencesData();
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
-    { id },
+    { id, excludeTrainingData: true },
     {
       onSuccess(result) {
         const latestVersion = result.modelVersions[0];

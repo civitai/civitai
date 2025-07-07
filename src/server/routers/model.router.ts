@@ -49,6 +49,7 @@ import {
   getAllModelsSchema,
   getAssociatedResourcesSchema,
   getDownloadSchema,
+  getModelByIdSchema,
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   getSimpleModelsInfiniteSchema,
@@ -124,7 +125,7 @@ const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
 });
 
 export const modelRouter = router({
-  getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
+  getById: publicProcedure.input(getModelByIdSchema).query(getModelHandler),
   getOwner: publicProcedure.input(getByIdSchema).query(getModelOwnerHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))

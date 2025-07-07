@@ -143,7 +143,13 @@ import {
   7. getUnavailableResources needs to go. We can't have another source of truth for generation coverage
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
-export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
+export const getModelHandler = async ({
+  input: { excludeTrainingData, ...input },
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
   try {
     const model = await getModel({
       ...input,
@@ -266,6 +272,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
                 else return 0;
               })
           : [];
+
+        if (excludeTrainingData) {
+          for (const file of files) {
+            if (file.metadata && typeof file.metadata === 'object') {
+              delete (file.metadata as Record<string, any>).trainingResults;
+              delete (file.metadata as Record<string, any>).selectedEpochUrl;
+            }
+          }
+        }
 
         const hashes = version.files
           .filter((file) =>
