@@ -32,7 +32,7 @@ export function getIsFluxContextFromEngine(value?: string) {
 }
 
 export const flux1ModelModeOptions = [
-  { label: 'Dev', value: '1945998' },
+  // { label: 'Dev', value: '1945998' },
   { label: 'Pro', value: '1892509' },
   { label: 'Max', value: '1892523' },
 ];

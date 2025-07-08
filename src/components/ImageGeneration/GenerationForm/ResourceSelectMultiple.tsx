@@ -153,7 +153,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
           </Button>
         )}
         {hideButton && !_values.length && (
-          <Text c="dimmed" size="sm">
+          <Text c="dimmed" size="sm" className="px-3">
             No resources selected
           </Text>
         )}
