@@ -38,6 +38,7 @@ export function WanFormInput() {
   );
 
   useEffect(() => {
+    console.log({ availableBaseModels, baseModel });
     if (!availableBaseModels.find((x) => x.value === baseModel)) {
       const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
       if (defaultModel) {

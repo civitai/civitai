@@ -653,11 +653,13 @@ function formatVideoGenStep({
 
   const combinedResources = combineResourcesWithInputResource(resources, stepResources);
 
-  let baseModel = combinedResources.length
-    ? getBaseModelFromResources(
-        combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-      )
-    : undefined;
+  let baseModel =
+    metadata.params?.baseModel ??
+    (combinedResources.length
+      ? getBaseModelFromResources(
+          combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+        )
+      : undefined);
 
   // TODO - come up with a better way to handle jsonb data type mismatches
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
