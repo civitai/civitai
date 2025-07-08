@@ -1,5 +1,4 @@
 import * as z from 'zod/v4';
-import type * as z4 from 'zod/v4/core';
 import { isValidDate } from '~/utils/date-helpers';
 import type { santizeHtmlOptions } from '~/utils/html-helpers';
 import { sanitizeHtml } from '~/utils/html-helpers';
@@ -51,7 +50,7 @@ export function stringToDate<I extends z.ZodDate>(schema?: I) {
   return z.preprocess((val: string | number | Date, ctx) => {
     const date = new Date(val);
     if (!isValidDate(val)) {
-      ctx.addIssue(`'${val}' cannot be converted to a date`);
+      ctx.addIssue(`'${val.toString()}' cannot be converted to a date`);
     }
     return date;
   }, schema ?? z.date());

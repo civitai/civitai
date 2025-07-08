@@ -27,7 +27,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   if (!parsedParams.success)
     return res
       .status(400)
-      .json({ error: `Invalid id: ${parsedParams.error.flatten().fieldErrors.id}` });
+      .json({ error: `Invalid id: ${parsedParams.error.issues[0].input as string}` });
 
   try {
     const { items } = await getModelsWithVersions({

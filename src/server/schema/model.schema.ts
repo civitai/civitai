@@ -70,26 +70,26 @@ export const getAllModelsSchema = z.object({
     .transform((data) => postgresSlugify(data))
     .optional(),
   types: z
-    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+    .union([z.enum(ModelType), z.enum(ModelType).array()])
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
   // TODO [bw]: do we need uploadType in here?
   status: z
-    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
+    .union([z.enum(ModelStatus), z.enum(ModelStatus).array()])
     .optional()
     .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
     .optional(),
-  checkpointType: z.nativeEnum(CheckpointType).optional(),
+  checkpointType: z.enum(CheckpointType).optional(),
   baseModels: z
     .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
-    .optional()
     .transform((rel) => {
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
-    }),
-  sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
-  period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
+    })
+    .optional(),
+  sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
+  period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
   rating: z
     .preprocess((val) => Number(val), z.number())
@@ -99,21 +99,19 @@ export const getAllModelsSchema = z.object({
   hidden: z.coerce.boolean().optional().default(false),
   needsReview: z.coerce.boolean().optional(),
   earlyAccess: z.coerce.boolean().optional(),
-  ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
-  modelVersionIds: commaDelimitedNumberArray({
-    message: 'modelVersionIds should be a number array',
-  }).optional(),
+  ids: commaDelimitedNumberArray().optional(),
+  modelVersionIds: commaDelimitedNumberArray().optional(),
   supportsGeneration: z.coerce.boolean().optional(),
   fromPlatform: z.coerce.boolean().optional(),
   followed: z.coerce.boolean().optional(),
   archived: z.coerce.boolean().optional(),
   collectionId: z.number().optional(),
-  collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
+  collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
   clubId: z.number().optional(),
   pending: z.boolean().optional(),
   collectionTagId: z.number().optional(),
-  availability: z.nativeEnum(Availability).optional(),
+  availability: z.enum(Availability).optional(),
   disablePoi: z.boolean().optional(),
   disableMinor: z.boolean().optional(),
   isFeatured: z.boolean().optional(),
