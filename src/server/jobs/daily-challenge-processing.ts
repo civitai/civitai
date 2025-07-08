@@ -139,7 +139,7 @@ export async function createUpcomingChallenge() {
       AND m.status = 'Published'
       ${
         cooldownResources.length
-          ? `AND m.id NOT IN (${Prisma.join(cooldownResources)})`
+          ? Prisma.sql`AND m.id NOT IN (${Prisma.join(cooldownResources)})`
           : Prisma.empty
       }
       AND m.mode IS NULL
