@@ -21,6 +21,9 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       onChange,
       value,
       currency = constants.defaultCurrency,
+      min,
+      max,
+      step,
       ...props
     },
     ref
@@ -45,9 +48,12 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       if (value === undefined || typeof value !== 'number') handleClearInput();
     }, [value]); //eslint-disable-line
 
+    const isCurrency = format === 'currency';
     const handleChange = (value: number | string) => {
       // If value is empty string, treat as null for form state
-      onChange?.(typeof value === 'number' ? value : undefined);
+      onChange?.(
+        typeof value === 'number' ? (isCurrency ? Math.ceil(value * 100) : value) : undefined
+      );
     };
 
     const showCloseButton = clearable && (typeof value === 'number' || !!value);
@@ -66,7 +72,6 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
       />
     );
 
-    const isCurrency = format === 'currency';
     // If value is empty string, treat as null for rendering
     const normalizedValue = value === '' ? null : value;
     const parsedValue =
@@ -88,6 +93,9 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
         fixedDecimalScale={isCurrency}
         onChange={handleChange}
         value={parsedValue}
+        min={min ? (isCurrency ? min / 100 : min) : undefined}
+        max={max ? (isCurrency ? max / 100 : max) : undefined}
+        step={step ? (isCurrency ? step / 100 : step) : undefined}
         {...props}
       />
     );
