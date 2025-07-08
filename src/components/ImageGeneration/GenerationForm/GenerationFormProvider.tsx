@@ -48,8 +48,8 @@ import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.c
 // #region [schemas]
 
 type PartialFormData = Partial<z.input<typeof formSchema>>;
-type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
-export type GenerationFormOutput = z.input<typeof formSchema>;
+// type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
+export type GenerationFormOutput = z.infer<typeof formSchema>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
@@ -241,7 +241,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 // #endregion
 
 // #region [Provider]
-type GenerationFormProps = Omit<UsePersistFormReturn<z.input<typeof formSchema>>, 'reset'> & {
+type GenerationFormProps = Omit<UsePersistFormReturn<typeof formSchema>, 'reset'> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
 };
@@ -324,11 +324,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           const formData = form.getValues();
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources: GenerationResource[] = [
+          const formResources = [
             formData.model,
             ...(formData.resources ?? []),
             formData.vae,
-          ].filter(isDefined);
+          ].filter(isDefined) as GenerationResource[];
 
           const data = formatGenerationData({
             params: { ...params, workflow },
@@ -446,15 +446,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   function setValues(data: PartialFormData) {
     // don't overwrite quantity
     const { quantity, ...params } = data;
-    const limited = sanitizeTextToImageParams(params, status.limits);
     const formData = form.getValues();
-    form.reset({ ...formData, ...limited }, { keepDefaultValues: true });
+    const parsed = partialSchema.parse({ ...formData, ...params });
+    const limited = sanitizeTextToImageParams(parsed, status.limits);
+    form.reset(limited, { keepDefaultValues: true });
     // for (const [key, value] of Object.entries(limited)) {
     //   form.setValue(key as keyof PartialFormData, value);
     // }
   }
 
-  function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
+  function getDefaultValues(overrides: PartialFormData): PartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
     return sanitizeTextToImageParams(
       {

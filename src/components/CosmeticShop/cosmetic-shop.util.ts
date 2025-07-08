@@ -13,10 +13,8 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { UpsertCosmeticInput } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { stringArray } from '~/utils/zod-helpers';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 export const useQueryCosmeticShopItemsPaged = (

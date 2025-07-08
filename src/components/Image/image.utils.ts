@@ -43,22 +43,22 @@ export const imagesQueryParamSchema = z
     modelId: numericString(),
     modelVersionId: numericString(),
     notPublished: booleanString(),
-    period: z.nativeEnum(MetricTimeframe),
+    period: z.enum(MetricTimeframe),
     periodMode: periodModeSchema,
     postId: numericString(),
     prioritizedUserIds: numericStringArray(),
     reactions: z.preprocess(
       (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.nativeEnum(ReviewReactions))
+      z.array(z.enum(ReviewReactions))
     ),
     scheduled: booleanString(),
     section: z.enum(imageSections),
-    sort: z.nativeEnum(ImageSort),
+    sort: z.enum(ImageSort),
     tags: numericStringArray(),
     techniques: numericStringArray(),
     tools: numericStringArray(),
     types: z
-      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
+      .union([z.array(z.enum(MediaType)), z.enum(MediaType)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
     useIndex: booleanString().nullish(),

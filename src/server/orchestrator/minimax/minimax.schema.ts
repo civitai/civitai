@@ -9,7 +9,7 @@ import {
 } from '~/server/orchestrator/infrastructure/base.schema';
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('minimax').catch('minimax'),
+  engine: z.literal('minimax').default('minimax').catch('minimax'),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),

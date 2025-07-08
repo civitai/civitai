@@ -1,23 +1,70 @@
 import * as z from 'zod/v4';
+import type * as z4 from 'zod/v4/core';
+import { isValidDate } from '~/utils/date-helpers';
 import type { santizeHtmlOptions } from '~/utils/html-helpers';
 import { sanitizeHtml } from '~/utils/html-helpers';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 
+export function coerceStringArray<I extends z.ZodArray<z.ZodString>>(schema?: I) {
+  return z.preprocess(
+    (val: string | string[]) => (Array.isArray(val) ? val : [val]),
+    schema ?? z.string().array()
+  );
+}
+
+export function coerceNumberArray<I extends z.ZodArray<z.ZodNumber>>(schema?: I) {
+  return z.preprocess(
+    (val: number | number[]) => (Array.isArray(val) ? val : [val]),
+    schema ?? z.number().array()
+  );
+}
+
+// TODO - determine why I can't call .min on the output
+export function stringToNumber<I extends z.ZodNumber>(schema?: I) {
+  return z.preprocess((val: string | number, ctx) => {
+    if (typeof val === 'string') {
+      const parsed = Number(val);
+      if (isNaN(parsed)) ctx.addIssue(`'${val}' cannot be converted to a number`);
+      return parsed;
+    }
+    return val;
+  }, schema ?? z.number());
+}
+
+export function stringToNumberArray<I extends z.ZodArray<z.ZodNumber>>(schema?: I) {
+  // return stringToNumber().array()
+  return z.preprocess(
+    (arr: string | number | string[] | number[], ctx) =>
+      (Array.isArray(arr) ? arr : [arr]).map((val) => {
+        if (typeof val === 'string') {
+          const parsed = Number(val);
+          if (isNaN(parsed)) ctx.addIssue(`'${val}' cannot be converted to a number`);
+          return parsed;
+        }
+        return val;
+      }),
+    schema ?? z.number().array()
+  );
+}
+
+export function stringToDate<I extends z.ZodDate>(schema?: I) {
+  return z.preprocess((val: string | number | Date, ctx) => {
+    const date = new Date(val);
+    if (!isValidDate(val)) {
+      ctx.addIssue(`'${val}' cannot be converted to a date`);
+    }
+    return date;
+  }, schema ?? z.date());
+}
+
 /** Converts a string to a number */
 export function numericString<I extends z.ZodNumber>(schema?: I) {
-  return z.preprocess((value) => parseNumericString(value), schema ?? z.number());
+  return stringToNumber(schema);
 }
 
 /** Converts an array of strings to an array of numbers */
 export function numericStringArray<I extends z.ZodArray<z.ZodNumber>>(schema?: I) {
-  return z.preprocess((value) => parseNumericStringArray(value), schema ?? z.number().array());
-}
-
-export function stringArray<I extends z.ZodArray<any>>(schema?: I) {
-  return z.preprocess(
-    (value) => (!Array.isArray(value) ? [value] : value),
-    schema ?? z.string().array()
-  );
+  return stringToNumberArray(schema);
 }
 
 /** Converts a comma delimited object (ex key:value,key 2:another value) */
@@ -42,37 +89,27 @@ export function stringToArray<T extends string = string>(value: unknown): T[] {
 }
 
 /** Converts a comma delimited string to an array of strings */
-export function commaDelimitedStringArray() {
-  return z
-    .string()
-    .array()
-    .or(z.string().transform((str) => stringToArray(str)));
+export function commaDelimitedStringArray<I extends z.ZodArray<z.ZodString>>(schema?: I) {
+  return z.preprocess(
+    (val: string | string[]) => (Array.isArray(val) ? val : stringToArray(val)),
+    schema ?? z.string().array()
+  );
 }
 
 // include=tags,category
 export function commaDelimitedEnumArray<T extends string>(zodEnum: T[]) {
-  return z
-    .enum(zodEnum)
-    .array()
-    .or(
-      z
-        .string()
-        .transform((str) => stringToArray<T>(str))
-        .refine((arr) => arr.every((val) => zodEnum.includes(val)))
-    );
+  return z.preprocess(
+    (val: string | string[]) => (Array.isArray(val) ? val : stringToArray(val)),
+    z.enum(zodEnum).array()
+  );
 }
 
 /** Converts a comma delimited string to an array of numbers */
-export function commaDelimitedNumberArray() {
-  return z
-    .number()
-    .array()
-    .or(
-      z
-        .string()
-        .transform((str) => stringToArray(str).map(Number))
-        .refine((arr) => arr.every((val) => val && !isNaN(val)))
-    );
+export function commaDelimitedNumberArray<I extends z.ZodArray<z.ZodNumber>>(schema?: I) {
+  return z.preprocess(
+    (val: string | number[]) => (Array.isArray(val) ? val : stringToArray(val)).map(Number),
+    schema ?? z.number().array()
+  );
 }
 
 /** Converts the string `true` to a boolean of true and everything else to false */
@@ -84,21 +121,22 @@ export function booleanString() {
 }
 
 export function sanitizedNullableString(options: santizeHtmlOptions) {
-  return z.preprocess((val, ctx) => {
-    if (!val) return;
-
-    try {
-      const str = String(val);
-      const result = sanitizeHtml(str, options);
-      if (result.length === 0) return null;
-      return result;
-    } catch (e) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: (e as any).message,
-      });
-    }
-  }, z.string().nullish());
+  return z
+    .string()
+    .transform((val, ctx) => {
+      try {
+        if (!val) return;
+        const result = sanitizeHtml(val, options);
+        if (result.length === 0) return null;
+        return result;
+      } catch (e) {
+        ctx.addIssue({
+          code: 'custom',
+          message: (e as any).message,
+        });
+      }
+    })
+    .nullish();
 }
 
 export function zodEnumFromObjKeys<K extends string>(obj: Record<K, unknown>) {
@@ -116,3 +154,10 @@ export type SchemaInputOutput<T extends z.ZodType<any, any, any>> = {
   Input: z.input<T>;
   Output: z.output<T>;
 };
+
+export function defaultCatch<ZodType extends z.ZodType<any, any>>(
+  schema: ZodType,
+  value: z.infer<ZodType>
+) {
+  return schema.default(value).catch(value) as unknown as z.ZodDefault<ZodType>;
+}

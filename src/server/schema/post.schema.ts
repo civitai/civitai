@@ -142,7 +142,7 @@ export const getPostTagsSchema = z.object({
   nsfwLevel: z.number().default(sfwBrowsingLevelsFlag),
 });
 
-export type PostEditQuerySchema = z.input<typeof postEditQuerySchema>;
+export type PostEditQuerySchema = z.infer<typeof postEditQuerySchema>;
 export const postEditQuerySchema = z.object({
   postId: z.coerce.number().optional(),
   modelId: z.coerce.number().optional(),

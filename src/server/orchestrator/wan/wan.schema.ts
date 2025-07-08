@@ -43,7 +43,7 @@ export const wanBaseModelMap = {
 };
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('wan').catch('wan'),
+  engine: z.literal('wan').default('wan').catch('wan'),
   baseModel: z.string().optional(),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,

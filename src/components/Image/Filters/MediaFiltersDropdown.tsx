@@ -1,6 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
 import {
-  ActionIcon,
   Button,
   Chip,
   Divider,
@@ -18,7 +17,6 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
-import { useCreatorProgramMutate } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -30,7 +28,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { BaseModel } from '~/server/common/constants';
 import { activeBaseModels } from '~/server/common/constants'; // Add this import
-import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
@@ -411,8 +409,8 @@ export function MediaFiltersDropdown({
 }
 
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
-  query?: Partial<GetInfiniteImagesInput>;
-  onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
+  query?: Partial<GetInfiniteImagesOutput>;
+  onChange?: (params: Partial<GetInfiniteImagesOutput>) => void;
   isFeed?: boolean;
   filterType?: 'images' | 'videos' | 'modelImages';
   hideBaseModels?: boolean;

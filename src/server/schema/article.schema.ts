@@ -36,9 +36,9 @@ export const articleWhereSchema = baseQuerySchema.extend({
   hidden: z.boolean().optional(),
   username: z.string().optional(),
   userIds: z.array(z.number()).optional(),
-  period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
+  period: z.enum(MetricTimeframe).default(constants.articleFilterDefaults.period),
   periodMode: periodModeSchema,
-  sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
+  sort: z.enum(ArticleSort).default(constants.articleFilterDefaults.sort),
   includeDrafts: z.boolean().optional(),
   ids: commaDelimitedNumberArray().optional(),
   collectionId: z.number().optional(),
@@ -66,5 +66,5 @@ export const upsertArticleInput = z.object({
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
-  status: z.nativeEnum(ArticleStatus).optional(),
+  status: z.enum(ArticleStatus).optional(),
 });

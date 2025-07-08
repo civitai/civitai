@@ -52,7 +52,9 @@ export const CreateWithdrawalRequest = () => {
   });
 
   const amount = form.watch('amount');
-  const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(amount);
+  const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(
+    amount ?? constants.buzz.minBuzzWithdrawal
+  );
 
   const handleSuccess = () => {
     showSuccessNotification({

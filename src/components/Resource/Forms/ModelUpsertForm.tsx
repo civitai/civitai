@@ -651,7 +651,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
                     dialogStore.trigger({
                       component: PrivateModelAutomaticSetup,
-                      props: { ...form.getValues(), modelVersionId },
+                      props: { ...schema.parse(form.getValues()), modelVersionId },
                     });
 
                     return;

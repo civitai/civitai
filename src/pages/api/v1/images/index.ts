@@ -56,7 +56,7 @@ const imagesEndpointSchema = z.object({
       return nsfwLevelMapDeprecated[value] as number;
     }),
   browsingLevel: z.coerce.number().optional(),
-  tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
+  tags: commaDelimitedNumberArray().optional(),
   cursor: z
     .union([z.bigint(), z.number(), z.string(), z.date()])
     .transform((val) =>

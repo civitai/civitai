@@ -3,15 +3,16 @@ import type { BaseModel, Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { booleanString, stringArray } from '~/utils/zod-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
 import { generationSamplers } from '~/shared/constants/generation.constants';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
-//   type: z.nativeEnum(ModelType),
+//   type: z.enum(ModelType),
 //   name: z.string(),
 // });
 
@@ -20,8 +21,8 @@ export const getGenerationResourcesSchema = z.object({
   limit: z.number().default(10),
   page: z.number().default(1),
   query: z.string().optional(),
-  types: z.nativeEnum(ModelType).array().optional(),
-  notTypes: z.nativeEnum(ModelType).array().optional(),
+  types: z.enum(ModelType).array().optional(),
+  notTypes: z.enum(ModelType).array().optional(),
   ids: z.number().array().optional(),
   baseModel: z
     .string()
@@ -35,7 +36,7 @@ export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsS
 export const getGenerationRequestsSchema = z.object({
   take: z.number().default(10),
   cursor: z.number().optional(),
-  status: z.nativeEnum(GenerationRequestStatus).array().optional(),
+  status: z.enum(GenerationRequestStatus).array().optional(),
   requestId: z.number().array().optional(),
   detailed: z.boolean().optional(),
 });
@@ -57,7 +58,7 @@ const generationResourceSchemaBase = z.object({
     .optional(), // TODO there are more here
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
-  availability: z.nativeEnum(Availability).optional(),
+  availability: z.enum(Availability).optional(),
   epochDetails: z
     .object({
       jobId: z.string(),
@@ -72,7 +73,7 @@ export const generationResourceSchema = generationResourceSchemaBase.extend({
   model: z.object({
     id: z.number(),
     name: z.string(),
-    type: z.nativeEnum(ModelType),
+    type: z.enum(ModelType),
     nsfw: z.boolean().optional(),
     poi: z.boolean().optional(),
     minor: z.boolean().optional(),
@@ -177,7 +178,7 @@ const generationLimitsSchema = z.object({
   resources: z.number(),
 });
 export type GenerationLimits = z.infer<typeof generationLimitsSchema>;
-export const defaultsByTier: Record<string, GenerationLimits> = {
+export const defaultsByTier: Record<UserTier, GenerationLimits> = {
   free: {
     quantity: 4,
     queue: 4,
@@ -201,7 +202,7 @@ export const generationStatusSchema = z.object({
   // minorFallback: z.boolean().default(true),
   // sfwEmbed: z.boolean().default(true),
   limits: z
-    .record(userTierSchema, generationLimitsSchema.partial())
+    .record(userTierSchema, generationLimitsSchema.partial().optional())
     .default(defaultsByTier)
     .transform((limits) => {
       // Merge each tier with its defaults
@@ -252,7 +253,7 @@ export const createGenerationRequestSchema = z.object({
   resources: z
     .object({
       id: z.number(),
-      modelType: z.nativeEnum(ModelType),
+      modelType: z.enum(ModelType),
       strength: z.number().default(1),
       triggerWord: z.string().optional(),
     })

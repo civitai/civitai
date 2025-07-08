@@ -10,21 +10,21 @@ import { constants } from '~/server/common/constants';
 
 const filterSchema = z.object({
   types: z
-    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
-    .optional()
+    .union([z.enum(ModelType), z.enum(ModelType).array()])
     .transform((rel) => {
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
-    }),
+    })
+    .optional(),
   baseModels: z
     .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
-    .optional()
     .transform((rel) => {
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
-    }),
-  sort: z.nativeEnum(ModelSort).optional(),
-  period: z.nativeEnum(MetricTimeframe).optional(),
+    })
+    .optional(),
+  sort: z.enum(ModelSort).optional(),
+  period: z.enum(MetricTimeframe).optional(),
   query: z.string().optional(),
   username: z.string().optional(),
   tag: z.string().optional(),

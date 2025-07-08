@@ -22,14 +22,12 @@ const generationDataSchema = z.discriminatedUnion('$type', [
   }),
   z.object({
     $type: z.literal('image'),
-    data: z
-      .object({
-        workflow: z.string(),
-        process: z.enum(['txt2img', 'img2img']),
-        prompt: z.string().catch(''),
-        seed: z.number().optional(),
-      })
-      .passthrough(),
+    data: z.looseObject({
+      workflow: z.string(),
+      process: z.enum(['txt2img', 'img2img']),
+      prompt: z.string().default('').catch(''),
+      seed: z.number().optional(),
+    }),
   }),
 ]);
 

@@ -1,13 +1,12 @@
 import { Priority } from '@civitai/client';
 import * as z from 'zod/v4';
-import * as z2 from 'zod/v4';
 
 import type { Sampler } from '~/server/common/constants';
 import { baseModelSets, generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { generationSamplers } from '~/shared/constants/generation.constants';
-import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
+import { defaultCatch, zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -24,7 +23,7 @@ export const textToImageParamsSchema = z.object({
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish(),
   clipSkip: z.coerce.number().max(3).optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
-  quantity: z.coerce
+  quantity: z
     .number()
     .max(20)
     .default(1)
@@ -46,8 +45,8 @@ export const textToImageParamsSchema = z.object({
   fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
-  priority: z.nativeEnum(Priority).default('low'),
-  sourceImage: sourceImageSchema.nullable().default(null).catch(null),
+  priority: z.enum(Priority).default('low'),
+  sourceImage: defaultCatch(sourceImageSchema.nullable(), null),
   disablePoi: z.boolean().default(false),
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),

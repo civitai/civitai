@@ -22,7 +22,7 @@ import { NsfwLevel } from './../common/enums';
 
 // TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
-  type: z.nativeEnum(CollectionType).optional(),
+  type: z.enum(CollectionType).optional(),
   articleId: z.number().optional(),
   postId: z.number().optional(),
   modelId: z.number().optional(),
@@ -39,7 +39,7 @@ export const saveCollectionItemInputSchema = collectionItemSchema
         collectionId: z.number(),
         tagId: z.number().nullish(),
         userId: z.number().nullish(),
-        read: z.nativeEnum(CollectionReadConfiguration).optional(),
+        read: z.enum(CollectionReadConfiguration).optional(),
       })
     ),
     removeFromCollectionIds: z.coerce.number().array().optional(),
@@ -93,9 +93,9 @@ export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollecti
 export const getAllUserCollectionsInputSchema = z
   .object({
     contributingOnly: z.boolean().default(true),
-    permission: z.nativeEnum(CollectionContributorPermission),
-    permissions: z.array(z.nativeEnum(CollectionContributorPermission)),
-    type: z.nativeEnum(CollectionType).optional(),
+    permission: z.enum(CollectionContributorPermission),
+    permissions: z.array(z.enum(CollectionContributorPermission)),
+    type: z.enum(CollectionType).optional(),
   })
   .partial();
 
@@ -171,10 +171,10 @@ export const upsertCollectionInput = z
     image: imageSchema.nullish(),
     imageId: z.number().optional(),
     nsfw: z.boolean().optional(),
-    read: z.nativeEnum(CollectionReadConfiguration).optional(),
-    write: z.nativeEnum(CollectionWriteConfiguration).optional(),
-    type: z.nativeEnum(CollectionType).default(CollectionType.Model),
-    mode: z.nativeEnum(CollectionMode).nullish(),
+    read: z.enum(CollectionReadConfiguration).optional(),
+    write: z.enum(CollectionWriteConfiguration).optional(),
+    type: z.enum(CollectionType).default(CollectionType.Model),
+    mode: z.enum(CollectionMode).nullish(),
     metadata: collectionMetadataSchema.optional(),
     tags: z.array(tagSchema).nullish(),
   })
@@ -209,9 +209,9 @@ export const getAllCollectionItemsSchema = baseQuerySchema.extend({
   page: z.number().optional(),
   cursor: z.number().optional(),
   collectionId: z.number(),
-  statuses: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
+  statuses: z.array(z.enum(CollectionItemStatus)).optional(),
   forReview: z.boolean().optional(),
-  reviewSort: z.nativeEnum(CollectionReviewSort).optional(),
+  reviewSort: z.enum(CollectionReviewSort).optional(),
   collectionTagId: z.number().optional(),
 });
 
@@ -219,7 +219,7 @@ export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionIt
 export const updateCollectionItemsStatusInput = z.object({
   collectionId: z.number(),
   collectionItemIds: z.array(z.number()),
-  status: z.nativeEnum(CollectionItemStatus),
+  status: z.enum(CollectionItemStatus),
 });
 
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
@@ -232,11 +232,11 @@ export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsIn
 export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
   .extend({
     userId: z.number(),
-    types: z.array(z.nativeEnum(CollectionType)),
-    privacy: z.array(z.nativeEnum(CollectionReadConfiguration)),
-    sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
-    ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }),
-    modes: z.array(z.nativeEnum(CollectionMode)),
+    types: z.array(z.enum(CollectionType)),
+    privacy: z.array(z.enum(CollectionReadConfiguration)),
+    sort: z.enum(CollectionSort).default(constants.collectionFilterDefaults.sort),
+    ids: commaDelimitedNumberArray(),
+    modes: z.array(z.enum(CollectionMode)),
   })
   .merge(userPreferencesSchema)
   .partial();
@@ -261,7 +261,7 @@ export const setItemScoreInput = z.object({
 export type SetCollectionItemNsfwLevelInput = z.infer<typeof setCollectionItemNsfwLevelInput>;
 export const setCollectionItemNsfwLevelInput = z.object({
   collectionItemId: z.number(),
-  nsfwLevel: z.nativeEnum(NsfwLevel),
+  nsfwLevel: z.enum(NsfwLevel),
 });
 
 export type EnableCollectionYoutubeSupportInput = z.infer<

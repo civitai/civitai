@@ -15,14 +15,14 @@ export const klingDuration = ['5', '10'] as const;
 export const klingModels = [KlingModel.V1_6, KlingModel.V2] as const;
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('kling').catch('kling'),
-  model: z.nativeEnum(KlingModel).default(KlingModel.V1_6).catch(KlingModel.V1_6),
+  engine: z.literal('kling').default('kling').catch('kling'),
+  model: z.enum(KlingModel).default(KlingModel.V1_6).catch(KlingModel.V1_6),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   negativePrompt: negativePromptSchema,
   aspectRatio: z.enum(klingAspectRatios).optional().catch('1:1'),
   enablePromptEnhancer: z.boolean().default(true),
-  mode: z.nativeEnum(KlingMode).catch(KlingMode.STANDARD),
+  mode: z.enum(KlingMode).default(KlingMode.STANDARD).catch(KlingMode.STANDARD),
   duration: z.enum(klingDuration).default('5').catch('5'),
   cfgScale: z.number().min(0.1).max(1).default(0.5).catch(0.5),
   seed: seedSchema,

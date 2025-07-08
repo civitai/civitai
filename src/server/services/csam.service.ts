@@ -291,7 +291,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
 
   return captureEvents
     .map((data) => {
-      const res = z.string().ip().safeParse(data.ip);
+      const res = z.ipv4().or(z.ipv6()).safeParse(data.ip);
       return res.success ? data : null;
     })
     .filter(isDefined);

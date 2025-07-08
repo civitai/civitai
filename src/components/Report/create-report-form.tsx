@@ -6,7 +6,7 @@ import { Form, useForm } from '~/libs/form';
 
 type ReportFormContext<TSchema extends z.ZodObject> = {
   schema: TSchema;
-  form: UseFormReturn<z.infer<TSchema>>;
+  form: UseFormReturn<z.input<TSchema>, any, z.output<TSchema>>;
 };
 
 type ReportFormProps<TSchema extends z.ZodObject> = {

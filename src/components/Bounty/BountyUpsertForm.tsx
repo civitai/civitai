@@ -82,6 +82,7 @@ import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './BountyUpsertForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { stringToDate } from '~/utils/zod-helpers';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -102,9 +103,11 @@ const formSchema = upsertBountyInputSchema
     startsAt: z.coerce
       .date()
       .min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
-    expiresAt: z.coerce
-      .date()
-      .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+    expiresAt: stringToDate(
+      z
+        .date()
+        .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future')
+    ),
   })
   .refine((data) => data.poi !== true, {
     message: 'The creation of bounties intended to depict an actual person is prohibited',

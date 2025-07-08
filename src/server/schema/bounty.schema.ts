@@ -16,6 +16,7 @@ import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
 import utc from 'dayjs/plugin/utc';
 import { stripTime } from '~/utils/date-helpers';
+import { stringToDate } from '~/utils/zod-helpers';
 dayjs.extend(utc);
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
@@ -54,12 +55,14 @@ export const createBountyInputSchema = z.object({
     .min(constants.bounties.minCreateAmount)
     .max(constants.bounties.maxCreateAmount),
   currency: z.nativeEnum(Currency),
-  expiresAt: z.coerce
-    .date()
-    .min(
-      dayjs.utc(stripTime(new Date())).add(1, 'day').toDate(),
-      'Expiration date must come after the start date'
-    ),
+  expiresAt: stringToDate(
+    z
+      .date()
+      .min(
+        dayjs.utc(stripTime(new Date())).add(1, 'day').toDate(),
+        'Expiration date must come after the start date'
+      )
+  ),
   startsAt: z.coerce
     .date()
     .min(dayjs.utc(stripTime(new Date())).toDate(), 'Start date must be in the future'),
@@ -98,9 +101,11 @@ export const updateBountyInputSchema = createBountyInputSchema
   .extend({
     id: z.number(),
     startsAt: z.coerce.date(),
-    expiresAt: z.coerce
-      .date()
-      .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+    expiresAt: stringToDate(
+      z
+        .date()
+        .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future')
+    ),
     lockedProperties: z.string().array().optional(),
   });
 

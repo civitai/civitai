@@ -9,9 +9,9 @@ import { EntityType, ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const payloadSchema = z.object({
   id: z.number(),
-  definition: z.object({}).passthrough(),
+  definition: z.record(z.string(), z.any()),
   userId: z.number(),
-  action: z.nativeEnum(ModerationRuleAction),
+  action: z.enum(ModerationRuleAction),
   entityType: z.enum(['Model', 'Image']),
   enabled: z.boolean().optional().default(true),
   order: z.number().optional(),

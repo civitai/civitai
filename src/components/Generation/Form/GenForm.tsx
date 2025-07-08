@@ -1,29 +1,13 @@
-import type {
-  FieldValues,
-  SubmitErrorHandler,
-  UseFormReturn,
-  SubmitHandler,
-} from 'react-hook-form';
+import type { FieldValues, UseFormReturn } from 'react-hook-form';
 import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
+import type { FormProps } from '~/libs/form';
 import { Form } from '~/libs/form';
 import { showWarningNotification } from '~/utils/notifications';
 
-type FormProps<TFieldValues extends FieldValues> = {
-  id?: string;
-  className?: string;
-  style?: React.CSSProperties;
-  form: UseFormReturn<TFieldValues>;
-  children?: React.ReactNode;
-  onSubmit?: SubmitHandler<TFieldValues>;
-  onError?: SubmitErrorHandler<TFieldValues>;
-  loading?: boolean;
-};
-
-export function GenForm<TFieldValues extends FieldValues = FieldValues>({
-  children,
-  onSubmit,
-  ...props
-}: FormProps<TFieldValues>) {
+export function GenForm<
+  TInput extends FieldValues = FieldValues,
+  TOutput extends FieldValues = FieldValues
+>({ children, onSubmit, ...props }: FormProps<TInput, TOutput>) {
   const generationContextStore = useGenerationContextStore();
 
   return (

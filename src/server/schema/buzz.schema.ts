@@ -160,14 +160,18 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .omit({
     type: true,
   })
-  .superRefine((data) => {
+  .check((ctx) => {
     if (
-      data.entityType &&
-      ['Image', 'Model', 'Article'].includes(data.entityType) &&
-      data.amount > constants.buzz.maxEntityTip
-    )
-      return false;
-    return true;
+      ctx.value.entityType &&
+      ['Image', 'Model', 'Article'].includes(ctx.value.entityType) &&
+      ctx.value.amount > constants.buzz.maxEntityTip
+    ) {
+      ctx.issues.push({
+        code: 'custom',
+        message: `Your generosity abounds. Unfortunately you're attempting to tip more buzz than allowed in a single transaction`,
+        input: ctx.value,
+      });
+    }
   });
 
 export const getBuzzAccountSchema = z.object({

@@ -271,7 +271,7 @@ export type IngestImageInput = z.infer<typeof ingestImageSchema>;
 export const ingestImageSchema = z.object({
   id: z.number(),
   url: z.string(),
-  type: z.nativeEnum(MediaType).optional(),
+  type: z.enum(MediaType).optional(),
   height: z.coerce.number().nullish(),
   width: z.coerce.number().nullish(),
   prompt: z.string().nullish(),
@@ -309,18 +309,18 @@ export const getInfiniteImagesSchema = baseQuerySchema
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
     notPublished: z.coerce.boolean().optional(),
-    period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
     periodMode: periodModeSchema,
     postId: z.number().optional(),
     prioritizedUserIds: z.array(z.number()).optional(),
-    reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
+    reactions: z.array(z.enum(ReviewReactions)).optional(),
     // section: z.enum(imageSections),
     scheduled: z.coerce.boolean().optional(),
-    sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+    sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
     tags: z.array(z.number()).optional(),
     techniques: z.number().array().optional(),
     tools: z.number().array().optional(),
-    types: z.array(z.nativeEnum(MediaType)).optional(),
+    types: z.array(z.enum(MediaType)).optional(),
     useIndex: z.boolean().nullish(),
     userId: z.number().optional(),
     username: zc.usernameValidationSchema.optional(),
@@ -340,7 +340,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
-    generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
+    generation: z.enum(ImageGenerationProcess).array().optional(),
     ids: z.array(z.number()).optional(),
     imageId: z.number().optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
@@ -408,23 +408,21 @@ export const imageReviewQueueInputSchema = z.object({
 });
 
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
-export const scanJobsSchema = z
-  .object({
-    scans: z.record(z.string(), z.number()).default({}),
-    retryCount: z.number().optional(),
-  })
-  .passthrough();
+export const scanJobsSchema = z.looseObject({
+  scans: z.record(z.string(), z.number()).default({}),
+  retryCount: z.number().optional(),
+});
 // .catchall(z.string());
 
 export type UpdateImageNsfwLevelOutput = z.output<typeof updateImageNsfwLevelSchema>;
 export const updateImageNsfwLevelSchema = z.object({
   id: z.number(),
-  nsfwLevel: z.nativeEnum(NsfwLevel),
-  status: z.nativeEnum(ReportStatus).optional(),
+  nsfwLevel: z.enum(NsfwLevel),
+  status: z.enum(ReportStatus).optional(),
 });
 
 export const getImageRatingRequestsSchema = paginationSchema.extend({
-  status: z.nativeEnum(ReportStatus).array().optional(),
+  status: z.enum(ReportStatus).array().optional(),
 });
 
 export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;

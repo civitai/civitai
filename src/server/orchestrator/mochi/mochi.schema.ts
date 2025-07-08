@@ -8,7 +8,7 @@ import {
 } from '~/server/orchestrator/infrastructure/base.schema';
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('mochi').catch('mochi'),
+  engine: z.literal('mochi').default('mochi').catch('mochi'),
   seed: seedSchema,
   prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),

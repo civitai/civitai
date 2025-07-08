@@ -11,7 +11,7 @@ export const getUserApiKeysInputSchema = z.object({
 export type GetUserAPIKeysInput = z.infer<typeof getUserApiKeysInputSchema>;
 
 export const addApiKeyInputSchema = z.object({
-  scope: z.array(z.nativeEnum(KeyScope)),
+  scope: z.array(z.enum(KeyScope)),
   name: z.string(),
 });
 export type AddAPIKeyInput = z.input<typeof addApiKeyInputSchema>;
