@@ -25,7 +25,12 @@ import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
 import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -42,6 +47,7 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { withRetries } from '~/utils/errorHandling';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -427,6 +433,7 @@ export async function createEntityAppeal({
   userId,
 }: CreateEntityAppealInput & { userId: number }) {
   let buzzTransactionId: string | null = null;
+
   // check if user has more than 3 pending or rejected appeal in the last 30 days
   const appealsCount = await getAppealCount({
     userId,
@@ -435,17 +442,26 @@ export async function createEntityAppeal({
   });
 
   if (appealsCount >= 3) {
-    const transaction = await withRetries(() =>
-      createBuzzTransaction({
+    const prefix = `appeal-${userId}-${new Date().getTime()}`;
+    const data = await withRetries(() =>
+      createMultiAccountBuzzTransaction({
         amount: 100,
         fromAccountId: userId,
         toAccountId: 0,
         type: TransactionType.Appeal,
-        fromAccountType: BuzzAccountType.user,
+        fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+          isNsfw: false, // May use any buzz
+        }),
         description: `Appeal fee for ${entityType} ${entityId}`,
+        externalTransactionIdPrefix: prefix,
       })
     );
-    buzzTransactionId = transaction.transactionId;
+
+    if (data.transactionCount === 0) {
+      throw new Error('There was an error creating the appeal transaction.');
+    }
+
+    buzzTransactionId = prefix;
   }
 
   try {
@@ -470,7 +486,12 @@ export async function createEntityAppeal({
 
     return appeal;
   } catch (error) {
-    await refundTransaction(buzzTransactionId as string, 'Refund appeal fee');
+    if (buzzTransactionId) {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: buzzTransactionId ?? '',
+        description: 'Refund appeal fee',
+      });
+    }
     throw error;
   }
 }
