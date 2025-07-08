@@ -72,7 +72,7 @@
     "@emotion/react": "^11.10.4",
     "@essentials/one-key-map": "^1.2.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
-    "@headlessui/react": "2.2",
+    "@headlessui/react": "^2.2.4",
     "@hookform/resolvers": "^3.3.4",
     "@mantine/core": "^7.17.7",
     "@mantine/dates": "^7.17.7",
@@ -283,8 +283,5 @@
   },
   "ct3aMetadata": {
     "initVersion": "6.2.1"
-  },
-  "overrides": {
-    "@react-aria/interactions": "3.16.0"
   }
 }
