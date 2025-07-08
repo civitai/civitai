@@ -200,6 +200,10 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 
       try {
         const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
+        if ('resources' in result && !!result.resources)
+          result.resources = (result.resources! as Record<string, any>[]).map(
+            ({ image, ...resource }) => resource
+          ) as any;
         setQuery(result);
       } catch (e: any) {
         console.log({ e });
