@@ -582,7 +582,11 @@ function formatVideoGenStep({
   if (sourceImage) {
     width = sourceImage?.width;
     height = sourceImage?.height;
-    aspectRatio = width && height ? width / height : 16 / 9;
+    if (!('aspectRatio' in params)) aspectRatio = width && height ? width / height : 16 / 9;
+    else {
+      const [rw, rh] = (params.aspectRatio as string).split(':').map(Number);
+      aspectRatio = rw / rh;
+    }
   } else {
     switch (params.engine) {
       case 'minimax':
@@ -600,6 +604,11 @@ function formatVideoGenStep({
         break;
       }
     }
+  }
+
+  if (typeof aspectRatio === 'string') {
+    const [rw, rh] = (aspectRatio as string).split(':').map(Number);
+    aspectRatio = rw / rh;
   }
 
   const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
