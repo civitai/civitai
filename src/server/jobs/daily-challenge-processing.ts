@@ -129,15 +129,21 @@ export async function createUpcomingChallenge() {
 
     // Get resources from that user
     const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT ci."modelId" as id
+      SELECT DISTINCT(ci."modelId") as id
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
+      JOIN "GenerationCoverage" gc ON gc."modelId" = m.id
       WHERE "collectionId" = ${challengeTypeConfig.collectionId}
       AND ci."status" = 'ACCEPTED'
       AND m."userId" = ${randomUser.userId}
       AND m.status = 'Published'
-      AND m.id NOT IN (${Prisma.join(cooldownResources)})
+      ${
+        cooldownResources.length
+          ? `AND m.id NOT IN (${Prisma.join(cooldownResources)})`
+          : Prisma.empty
+      }
       AND m.mode IS NULL
+      AND gc.covered IS TRUE
     `;
     if (!resourceIds.length) continue;
 
@@ -609,23 +615,25 @@ async function pickWinners() {
   const winnerUserIds = winningEntries.map((entry) => entry.userId);
 
   // Update Article with winners, process/outcome, and metadata
-  const updateContent = await markdownToHtml(`## Challenge Complete!
-${process}
+  const updateContent = await markdownToHtml(`
+    ## Challenge Complete!
+    ${process}
 
-## Winners
-${winningEntries
-  .map(
-    (entry) => `### ${asOrdinal(entry.position)}. [${entry.username}](/user/${entry.username})
-${entry.reason}
+    ## Winners
+    ${winningEntries
+      .map(
+        (entry) => `### ${asOrdinal(entry.position)}. [${entry.username}](/user/${entry.username})
+    ${entry.reason}
 
-**[View Entry](/images/${entry.imageId})**
-`
-  )
-  .join('\n')}
+    **[View Entry](/images/${entry.imageId})**
+    `
+      )
+      .join('\n')}
 
-${outcome}
+    ${outcome}
 
----`);
+    ---
+  `);
 
   await dbWrite.$executeRaw`
     UPDATE "Article"
