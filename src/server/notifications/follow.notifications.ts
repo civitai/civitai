@@ -3,7 +3,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 
 export type NotifDetailsFollowedBy = {
   username: string | null;
-  // userId: number;
+  userId: number;
 };
 
 export const followNotifications = createNotificationProcessor({

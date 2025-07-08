@@ -726,7 +726,8 @@ async function updateImageScanJobs({
       ${ingestion ? `"ingestion" = '${ingestion}',` : ''}
       ${nsfwLevel ? `"nsfwLevel" = ${nsfwLevel},` : ''}
       ${blockedFor ? `"blockedFor" = '${blockedFor}',` : ''}
-      ${aiRating ? `"aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}',` : ''}
+      ${aiRating ? `"aiNsfwLevel" = ${aiRating},` : ''}
+      ${aiModel ? `"aiModel" = '${aiModel}',` : ''}
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
       WHERE id = ${id}
       RETURNING "scanJobs";

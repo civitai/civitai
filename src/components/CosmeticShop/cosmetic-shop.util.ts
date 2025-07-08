@@ -256,20 +256,11 @@ export const useQueryShop = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery(
-    {
-      ...filters,
-    },
-    {
-      ...options,
-      enabled: options?.enabled ?? true,
-    }
+    { ...filters },
+    { ...options, enabled: options?.enabled ?? true }
   );
 
-  if (data) {
-    return { cosmeticShopSections: data, ...rest };
-  }
-
-  return { cosmeticShopSections: [], ...rest };
+  return { cosmeticShopSections: data, ...rest };
 };
 
 export const useShopLastViewed = () => {

@@ -2,7 +2,7 @@ import type { FlexProps } from '@mantine/core';
 import { Flex } from '@mantine/core';
 import type { LottieComponentProps } from 'lottie-react';
 import Lottie from 'lottie-react';
-import * as linkAnimation from '~/utils/lotties/link-animation.json';
+import linkAnimation from '~/utils/lotties/link-animation.json';
 
 export function LinkAnimation({ lottieProps, ...props }: Props) {
   return (

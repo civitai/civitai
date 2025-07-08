@@ -37,6 +37,7 @@ export default function TagPage({
         title={`${tag?.name} Stable Diffusion & Flux AI Models | Civitai`}
         description={`Browse ${tag?.name} Stable Diffusion & Flux models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tag/${tagname}`, rel: 'canonical' }]}
+        deIndex={tag?.unfeatured ?? false}
       />
       {tag && (
         <Box className={styles.banner} mb="md">

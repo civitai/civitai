@@ -100,7 +100,11 @@ export default function UserBuzzDashboard() {
     <>
       <Meta
         title="Civitai | My Buzz Dashboard"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/buzz-dashboard`, rel: 'canonical' }]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/buzz-dashboard`, rel: 'canonical' }]
+            : undefined
+        }
         deIndex
       />
       <Container size="lg">

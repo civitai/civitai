@@ -39,5 +39,11 @@ export default Page(
       </ImageDetailProvider>
     );
   },
-  { getLayout: (page) => <main className="size-full">{page}</main> }
+  {
+    header: null,
+    footer: null,
+    subNav: null,
+    scrollable: false,
+    announcements: false,
+  }
 );

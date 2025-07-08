@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import type { Context } from '~/server/createContext';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -59,7 +60,6 @@ import {
   updatePostCollectionTagId,
   updatePostImage,
 } from './../services/post.service';
-import { getDbWithoutLag } from '~/server/db/db-helpers';
 
 export const getPostsInfiniteHandler = async ({
   input,

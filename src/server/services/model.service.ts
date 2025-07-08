@@ -17,7 +17,7 @@ import {
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';

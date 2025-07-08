@@ -12,7 +12,7 @@ module.exports = {
     'next/core-web-vitals',
     // 'plugin:@next/next/recommended',
     'plugin:@typescript-eslint/recommended',
-    "plugin:tailwindcss/recommended",
+    'plugin:tailwindcss/recommended',
     // 'plugin:import/recommended',
     // 'plugin:import/typescript',
     'prettier',
@@ -23,24 +23,31 @@ module.exports = {
     // turn on errors for missing imports
     // 'import/no-unresolved': 'error',
     // prettier overrides
-    'prettier/prettier': ['error', {
-      printWidth: 100,
-      endOfLine: 'auto',
-      singleQuote: true,
-      trailingComma: 'es5',
-    }],
+    'prettier/prettier': [
+      'error',
+      {
+        printWidth: 100,
+        endOfLine: 'auto',
+        singleQuote: true,
+        trailingComma: 'es5',
+      },
+    ],
     'no-use-before-define': 'off',
     '@typescript-eslint/no-use-before-define': 'off',
     // allows ignoring ts checks
     '@typescript-eslint/ban-ts-comment': 'off',
     // allows destructuring to ignore fields
-    '@typescript-eslint/no-unused-vars': ['warn', { 'ignoreRestSiblings': true }],
+    '@typescript-eslint/no-unused-vars': ['warn', { ignoreRestSiblings: true }],
     '@typescript-eslint/no-namespace': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/consistent-type-imports': ['error'],
-    'tailwindcss/no-custom-classname': ['warn', {
-      whitelist: ['mantine-focus-auto']
-    }]
+    '@typescript-eslint/restrict-template-expressions': ['error', { allowBoolean: true }],
+    'tailwindcss/no-custom-classname': [
+      'warn',
+      {
+        whitelist: ['mantine-focus-auto'],
+      },
+    ],
   },
   // settings: {
   //   'import/parsers': {
@@ -53,4 +60,4 @@ module.exports = {
   //     }
   //   }
   // }
-}
+};

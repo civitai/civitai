@@ -155,7 +155,8 @@ export default MixedAuthEndpoint(async function handler(
       id: fileName,
     });
   } else {
-    if (primaryFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
+    // this does not work for things like Flux
+    // if (primaryFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
     air = stringifyAIR(modelVersion);
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
@@ -204,6 +205,7 @@ export default MixedAuthEndpoint(async function handler(
     availability: modelVersion.availability,
     publishedAt: modelVersion.publishedAt,
     size: primaryFile.sizeKB, // nullable
+    fileType: primaryFile.type,
     // nullable - hashes
     hashes: {
       AutoV2: primaryFile.hash, // nullable

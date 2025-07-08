@@ -2,8 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
 import { env } from '~/env/server';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { dbWrite } from '~/server/db/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -122,30 +121,6 @@ export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
     const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
     return fn(sqlString);
   };
-}
-
-type LaggingType =
-  | 'model'
-  | 'modelVersion'
-  | 'commentModel'
-  | 'resourceReview'
-  | 'post'
-  | 'postImages'
-  | 'article';
-
-// TODO move these functions so we dont import redis when getting pgdb
-export async function getDbWithoutLag(type: LaggingType, id?: number) {
-  if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;
-  const value = await redis.get(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`);
-  if (value) return dbWrite;
-  return dbRead;
-}
-
-export async function preventReplicationLag(type: LaggingType, id?: number) {
-  if (env.REPLICATION_LAG_DELAY <= 0 || !id) return;
-  await redis.set(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`, 'true', {
-    EX: env.REPLICATION_LAG_DELAY,
-  });
 }
 
 function lsnGTE(lsn1: string, lsn2: string): boolean {

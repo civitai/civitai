@@ -152,7 +152,7 @@ export function MixedAuthEndpoint(
         },
       }).catch();
       if (isNotUpToDate) {
-        res.setHeader('Expires', dayjs().add(1, 'minute').toISOString());
+        res.setHeader('X-Expires', dayjs().add(1, 'minute').toISOString());
       }
     }
 

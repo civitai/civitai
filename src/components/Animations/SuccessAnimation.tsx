@@ -2,7 +2,7 @@ import type { FlexProps } from '@mantine/core';
 import { Flex } from '@mantine/core';
 import type { LottieComponentProps } from 'lottie-react';
 import Lottie from 'lottie-react';
-import * as successAnimation from '~/utils/lotties/success-animation.json';
+import successAnimation from '~/utils/lotties/success-animation.json';
 
 export function SuccessAnimation({
   direction = 'column',

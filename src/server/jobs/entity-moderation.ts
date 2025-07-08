@@ -399,7 +399,7 @@ const runClavata = async ({
           userId: Number(_metadata.userId),
         };
 
-        if (item.result === 'FALSE') {
+        if (item.result === 'FALSE' || (item.matches?.length === 1 && item.matches[0] === 'NSFW')) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }

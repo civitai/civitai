@@ -64,11 +64,11 @@ export function KontextAd({ index, className }: { index: number; className?: str
       <Text className="pb-1 text-sm" c="dimmed">
         Sponsored
       </Text>
-      <div ref={ref} id={id}>
-        <p className="invisible line-clamp-4 @sm:line-clamp-3 @md:line-clamp-2 @lg:line-clamp-1">
-          {lipsum}
-        </p>
-      </div>
+      <div
+        ref={ref}
+        id={id}
+        className="flex min-h-24 flex-col justify-center @sm:min-h-20 @md:min-h-12 @lg:min-h-6"
+      ></div>
     </TwCard>
   );
 }

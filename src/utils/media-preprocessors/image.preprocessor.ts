@@ -10,6 +10,12 @@ export const preprocessImage = async (file: File) => {
   const img = await createImageElement(file);
   const meta = await getMetadata(file);
 
+  if (file.type === 'image/webp' && (await isAnimatedWebP(file))) {
+    throw new Error(
+      'Animated WebP files are not supported. Please upload animated images as videos.'
+    );
+  }
+
   return {
     objectUrl,
     metadata: {
@@ -26,3 +32,12 @@ export const auditImageMeta = async (meta: ImageMetaProps | undefined, nsfw: boo
   const auditResult = await auditMetaData(meta, nsfw);
   return { blockedFor: !auditResult?.success ? auditResult?.blockedFor : undefined };
 };
+
+async function isAnimatedWebP(file: File) {
+  const buffer = await file.slice(0, 4096).arrayBuffer(); // Read first few KB
+  const bytes = new Uint8Array(buffer);
+
+  // Look for 'ANIM' chunk in WebP file
+  const str = new TextDecoder().decode(bytes);
+  return str.includes('ANIM');
+}

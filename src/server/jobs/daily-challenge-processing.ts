@@ -3,6 +3,8 @@ import dayjs from 'dayjs';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { eventEngine } from '~/server/events';
 import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   endChallenge,
@@ -22,6 +24,7 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { randomizeCollectionItems } from '~/server/services/collection.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
@@ -33,10 +36,6 @@ import { markdownToHtml } from '~/utils/markdown-helpers';
 import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { createJob } from './job';
-import { eventEngine } from '~/server/events';
-import { randomizeCollectionItems } from '~/server/services/collection.service';
-import { preventReplicationLag } from '~/server/db/db-helpers';
-import { handleLogError } from '~/server/utils/errorHandling';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
