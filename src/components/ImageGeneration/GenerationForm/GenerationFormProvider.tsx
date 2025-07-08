@@ -24,6 +24,7 @@ import {
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
+  getClosestAspectRatio,
   getIsFluxUltra,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
@@ -200,6 +201,12 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   )
     params.sampler = defaultValues.sampler;
 
+  if (params.aspectRatio) {
+    const [w, h] = params.aspectRatio.split(':').map(Number);
+    const aspectRatio = getClosestAspectRatio(w, h, params.baseModel);
+    params.aspectRatio = aspectRatio;
+  }
+
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources.filter((resource) => {
@@ -331,7 +338,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           ].filter(isDefined);
 
           const data = formatGenerationData({
-            params: { ...params, workflow },
+            params: { ...params, workflow, aspectRatio: formData.aspectRatio },
             remixOfId: runType === 'remix' ? remixOfId : undefined,
             resources:
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
@@ -382,6 +389,12 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             form.setValue('cfgScale', 3.5);
           // else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
           //   form.setValue('cfgScale', 7);
+        }
+
+        if (watchedValues.aspectRatio) {
+          const [w, h] = watchedValues.aspectRatio.split(':').map(Number);
+          const aspectRatio = getClosestAspectRatio(w, h, baseModel);
+          if (watchedValues.aspectRatio !== aspectRatio) form.setValue('aspectRatio', aspectRatio);
         }
 
         if (
