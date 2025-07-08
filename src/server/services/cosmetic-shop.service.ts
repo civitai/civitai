@@ -519,7 +519,7 @@ export const purchaseCosmeticShopItem = async ({
   const data = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
     // Can use a combination of all these accounts:
-    fromAccountTypes: ['user', 'green', 'fakered'],
+    fromAccountTypes: ['green', 'user', 'fakered'],
     toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
@@ -580,6 +580,7 @@ export const purchaseCosmeticShopItem = async ({
 
           await Promise.all(
             paidToUsers.map((paidToUserId) =>
+              // TODO.RedSplit: In the future, we might (?) want to use a different type of transaction here.
               createBuzzTransaction({
                 fromAccountId: 0,
                 toAccountId: paidToUserId,
