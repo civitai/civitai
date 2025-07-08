@@ -33,6 +33,7 @@ import {
   MediaType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
   return dbRead.cosmeticShopItem.findUniqueOrThrow({
@@ -519,7 +520,9 @@ export const purchaseCosmeticShopItem = async ({
   const data = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
     // Can use a combination of all these accounts:
-    fromAccountTypes: ['green', 'user', 'fakered'],
+    fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+      isNsfw: false,
+    }),
     toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,

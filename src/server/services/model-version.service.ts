@@ -62,14 +62,11 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import type {
-  ModelType,
-  ModelVersionEngagementType,
-  BuzzAccountType,
-} from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1208,11 +1205,9 @@ export const earlyAccessPurchase = async ({
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
-      fromAccountTypes: [
-        !modelVersion.model.nsfw ? 'green' : null,
-        'user',
-        modelVersion.model.nsfw ? 'fakered' : null,
-      ].filter(isDefined) as BuzzAccountType[],
+      fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+        isNsfw: modelVersion.model.nsfw,
+      }),
     });
 
     if (data?.transactionCount === 0)

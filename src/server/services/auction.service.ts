@@ -431,7 +431,6 @@ export const createBid = async ({
 
     accountTypes = getBuzzTransactionSupportedAccountTypes({
       isNsfw: mv.model.nsfw,
-      nsfwLevel: mv.model.nsfwLevel,
     });
   }
 

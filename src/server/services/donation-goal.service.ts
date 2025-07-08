@@ -29,6 +29,16 @@ export const donationGoalById = async ({
       userId: true,
       createdAt: true,
       modelVersionId: true,
+      modelVersion: {
+        select: {
+          model: {
+            select: {
+              id: true,
+              nsfw: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -71,7 +81,10 @@ export const donateToGoal = async ({
   const externalTransactionIdPrefix = `donation-${donationGoalId}-${Date.now()}`;
 
   try {
-    const accountTypes = getBuzzTransactionSupportedAccountTypes({});
+    const accountTypes = getBuzzTransactionSupportedAccountTypes({
+      isNsfw: goal.modelVersion?.model?.nsfw ?? false,
+    });
+
     const transaction = await createMultiAccountBuzzTransaction({
       amount,
       fromAccountId: userId,

@@ -87,13 +87,16 @@ export const getBuzzTransactionSupportedAccountTypes = ({
   nsfwLevel?: NsfwLevel;
   isNsfw?: boolean;
 }): BuzzAccountType[] => {
-  const accountTypes: BuzzAccountType[] = ['user'];
+  const accountTypes: BuzzAccountType[] = [];
+  if ((typeof isNsfw !== 'undefined' && !isNsfw) || (nsfwLevel ?? 0) <= NsfwLevel.R) {
+    accountTypes.push('green');
+  }
+
+  accountTypes.push('user');
 
   if ((nsfwLevel ?? 0) > NsfwLevel.R || isNsfw) {
     accountTypes.push('fakered');
     // accountTypes.push('red');
-  } else {
-    accountTypes.push('green');
   }
 
   return accountTypes;
