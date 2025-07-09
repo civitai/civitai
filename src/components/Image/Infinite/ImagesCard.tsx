@@ -11,7 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useEffect } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -253,18 +253,20 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         </Group>
                       }
                     >
-                      <div className="flex flex-col items-end">
-                        <Text size="sm" inline>
-                          This image has been blocked because it is has received a NSFW rating and
-                          we could not verify that it was generated using AI. To restore the image,
-                          please{' '}
-                          <Anchor color="yellow.8" href={`/posts/${image.postId}/edit`}>
-                            update your post
-                          </Anchor>{' '}
-                          with metadata detailing the generation process &ndash; minimally the
-                          prompt used.
-                        </Text>
-                      </div>
+                      {image.postId && (
+                        <div className="flex flex-col items-end">
+                          <Text size="sm" inline>
+                            This image has been blocked because it is has received a NSFW rating and
+                            we could not verify that it was generated using AI. To restore the
+                            image, please{' '}
+                            <Anchor c="yellow.8" href={`/posts/${image.postId}/edit`}>
+                              update your post
+                            </Anchor>{' '}
+                            with metadata detailing the generation process &ndash; minimally the
+                            prompt used.
+                          </Text>
+                        </div>
+                      )}
                     </Alert>
                   ) : (
                     <Alert

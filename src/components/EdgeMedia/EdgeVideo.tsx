@@ -25,6 +25,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -119,7 +120,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       if (!container) return;
 
       if (!document.fullscreenElement) {
-        container.requestFullscreen().catch((err) => {
+        container.requestFullscreen().catch((err: Error) => {
           console.error(`Error attempting to enable fullscreen mode: ${err.message}`);
         });
       } else {
@@ -181,17 +182,19 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     const node = useScrollAreaRef();
 
+    // ensure that video only plays when it is in the current view/dialog
+    const dialogCount = useDialogStore((state) => state.dialogs.length);
+    const stackRef = useRef<number | null>(null);
+    if (stackRef.current === null) stackRef.current = dialogCount;
+    const isCurrentStack = stackRef.current === dialogCount;
+
+    const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem || !options?.anim || props.autoPlay) return;
       const observer = new IntersectionObserver(
-        ([{ intersectionRatio, target }]) => {
-          const elem = target as HTMLVideoElement;
-          if (intersectionRatio >= threshold && elem.paused) {
-            elem.play().catch(() => elem.play());
-          } else if (intersectionRatio < threshold && !elem.paused) {
-            elem.pause();
-          }
+        ([{ intersectionRatio }]) => {
+          setCanPlay(intersectionRatio >= threshold);
         },
         { root: node?.current, threshold: [threshold, 1 - threshold] }
       );
@@ -200,6 +203,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         observer.unobserve(videoElem);
       };
     }, [threshold, options?.anim, loaded]);
+
+    useEffect(() => {
+      const videoElem = ref.current;
+      if (!videoElem) return;
+      if (isCurrentStack && (canPlay || props.autoPlay)) videoElem.play();
+      else videoElem.pause();
+    }, [canPlay, loaded, isCurrentStack]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
