@@ -201,12 +201,6 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   )
     params.sampler = defaultValues.sampler;
 
-  if (params.aspectRatio) {
-    const [w, h] = params.aspectRatio.split(':').map(Number);
-    const aspectRatio = getClosestAspectRatio(w, h, params.baseModel);
-    params.aspectRatio = aspectRatio;
-  }
-
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources.filter((resource) => {
@@ -322,13 +316,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const { runType, remixOfId, resources, params } = storeData;
       if (!params.sourceImage && !params.workflow)
         form.setValue('workflow', params.process ?? 'txt2img');
+
+      const formData = form.getValues();
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
           break;
         case 'remix':
         case 'run':
-          const formData = form.getValues();
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
           const formResources: GenerationResource[] = [
@@ -338,7 +333,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           ].filter(isDefined);
 
           const data = formatGenerationData({
-            params: { ...params, workflow, aspectRatio: formData.aspectRatio },
+            params: {
+              aspectRatio: formData.aspectRatio,
+              ...params,
+              workflow,
+            },
             remixOfId: runType === 'remix' ? remixOfId : undefined,
             resources:
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
@@ -365,6 +364,17 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }
   }, [status, currentUser, storeData]); // eslint-disable-line
 
+  const baseModel = form.watch('baseModel');
+  useEffect(() => {
+    if (!baseModel) return;
+    const formData = form.getValues();
+    if (formData.aspectRatio) {
+      const [w, h] = formData.aspectRatio.split(':').map(Number);
+      const aspectRatio = getClosestAspectRatio(w, h, baseModel);
+      if (formData.aspectRatio !== aspectRatio) form.setValue('aspectRatio', aspectRatio);
+    }
+  }, [baseModel]);
+
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       const baseModel = watchedValues.baseModel;
@@ -380,7 +390,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (!name || name === 'baseModel') {
-        if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
+        if (
+          (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') &&
+          watchedValues.workflow !== 'txt2img'
+        ) {
           form.setValue('workflow', 'txt2img');
         }
         const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];
@@ -389,12 +402,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             form.setValue('cfgScale', 3.5);
           // else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
           //   form.setValue('cfgScale', 7);
-        }
-
-        if (watchedValues.aspectRatio) {
-          const [w, h] = watchedValues.aspectRatio.split(':').map(Number);
-          const aspectRatio = getClosestAspectRatio(w, h, baseModel);
-          if (watchedValues.aspectRatio !== aspectRatio) form.setValue('aspectRatio', aspectRatio);
         }
 
         if (
@@ -469,7 +476,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
-    return sanitizeTextToImageParams(
+    const sanitized = sanitizeTextToImageParams(
       {
         ...defaultValues,
         // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
@@ -480,6 +487,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       },
       status.limits
     );
+
+    return sanitized;
   }
 
   function reset() {
