@@ -2,7 +2,7 @@ import { Badge, Text, Group, useComputedColorScheme, useMantineTheme, rgba } fro
 import { UserBuzz } from '~/components/User/UserBuzz';
 import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 
-export const AvailableBuzzBadge = ({ buzzType = 'user' }: { buzzType?: BuzzAccountType }) => {
+export const AvailableBuzzBadge = ({ buzzTypes = ['user'] }: { buzzTypes?: BuzzAccountType[] }) => {
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -21,7 +21,7 @@ export const AvailableBuzzBadge = ({ buzzType = 'user' }: { buzzType?: BuzzAccou
         <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
           Available Buzz
         </Text>
-        <UserBuzz iconSize={16} textSize="sm" accountType={buzzType} withTooltip />
+        <UserBuzz iconSize={16} textSize="sm" accountTypes={buzzTypes} withTooltip />
       </Group>
     </Badge>
   );

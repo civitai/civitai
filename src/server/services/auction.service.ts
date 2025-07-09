@@ -37,6 +37,13 @@ import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
 
+export const getAuctionTransactionPrefix = (auctionId: number, userId: number) =>
+  `auction-${auctionId}-${userId}-${new Date().getTime()}`;
+
+export const isAuctionTransactionPrefix = (prefix: string) => {
+  return prefix.startsWith('auction-') && prefix.split('-').length >= 4;
+};
+
 export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   id: true,
   type: true,
@@ -441,7 +448,7 @@ export const createBid = async ({
     throw throwInsufficientFundsError();
   }
 
-  const transactionPrefix = `auction-${auctionId}-${userId}-${new Date().getTime()}`;
+  const transactionPrefix = getAuctionTransactionPrefix(auctionId, userId);
 
   const createdTransactions = await createMultiAccountBuzzTransaction({
     type: TransactionType.Bid,
@@ -621,7 +628,19 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
   for (const transactionId of bid.transactionIds) {
-    await withRetries(() => refundTransaction(transactionId, 'Deleted bid.'));
+    await withRetries(async () => {
+      if (isAuctionTransactionPrefix(transactionId)) {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: transactionId,
+          description: 'Deleted bid.',
+        });
+
+        return;
+      }
+
+      await refundTransaction(transactionId, 'Deleted bid.');
+      return;
+    });
   }
 
   await dbWrite.bid.update({
@@ -686,9 +705,18 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
     for (const bid of deleted) {
       for (const transactionId of bid.transactionIds) {
         try {
-          await withRetries(() =>
-            refundTransaction(transactionId, 'Deleted bid - model not available.')
-          );
+          await withRetries(async () => {
+            if (isAuctionTransactionPrefix(transactionId)) {
+              await refundMultiAccountTransaction({
+                externalTransactionIdPrefix: transactionId,
+                description: 'Deleted bid - model not available.',
+              });
+            }
+
+            await refundTransaction(transactionId, 'Deleted bid - model not available.');
+
+            return;
+          });
         } catch (e) {
           const error = e as Error;
           logToAxiom({
@@ -800,9 +828,18 @@ export const deleteBidsForModelVersion = async ({ modelVersionId }: { modelVersi
     for (const bid of deleted) {
       for (const transactionId of bid.transactionIds) {
         try {
-          await withRetries(() =>
-            refundTransaction(transactionId, 'Deleted bid - model not available.')
-          );
+          await withRetries(async () => {
+            if (isAuctionTransactionPrefix(transactionId)) {
+              await refundMultiAccountTransaction({
+                externalTransactionIdPrefix: transactionId,
+                description: 'Deleted bid - model not available.',
+              });
+            } else {
+              await refundTransaction(transactionId, 'Deleted bid - model not available.');
+            }
+
+            return;
+          });
         } catch (e) {
           const error = e as Error;
           logToAxiom({

@@ -426,6 +426,9 @@ export async function getAppealDetails({ id }: GetByIdInput) {
   return { ...appeal, entityDetails };
 }
 
+const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
+const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
+
 export async function createEntityAppeal({
   entityId,
   entityType,
@@ -442,7 +445,7 @@ export async function createEntityAppeal({
   });
 
   if (appealsCount >= 3) {
-    const prefix = `appeal-${userId}-${new Date().getTime()}`;
+    const prefix = getAppealPrefix(userId);
     const data = await withRetries(() =>
       createMultiAccountBuzzTransaction({
         amount: 100,
@@ -555,12 +558,21 @@ export async function resolveEntityAppeal({
     }
 
     if (approved && appeal.buzzTransactionId) {
-      await withRetries(() =>
-        refundTransaction(
-          appeal.buzzTransactionId as string,
-          `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-        )
-      );
+      await withRetries(async () => {
+        if (isAppealPrefix(appeal.buzzTransactionId as string)) {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: appeal.buzzTransactionId as string,
+            description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
+          });
+        } else {
+          await refundTransaction(
+            appeal.buzzTransactionId as string,
+            `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+          );
+        }
+
+        return;
+      });
     }
 
     // Notify the user that their appeal has been resolved
