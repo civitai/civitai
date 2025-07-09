@@ -43,9 +43,10 @@ export const deliverCivitaiMembershipBuzz = createJob(
           AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
         )
       )
-      AND "createdAt" <= NOW() - INTERVAL '1 month'
+      AND "createdAt" < NOW()::date -- Don't grant on the first day (already granted when membership started)
       AND status = 'active'
       AND "currentPeriodEnd" > NOW()
+      AND "currentPeriodEnd"::date > NOW()::date -- Don't grant buzz on the expiration day
       AND pr.provider = 'Civitai'
       AND pr.metadata->>'monthlyBuzz' IS NOT NULL
     `;
@@ -108,9 +109,10 @@ export const deliverCivitaiMembershipBuzz = createJob(
             AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
           )
         )
-        AND "createdAt" <= NOW() - INTERVAL '1 month'
+        AND "createdAt" < NOW()::date -- Don't grant on the first day (already granted when membership started)
         AND status = 'active'
         AND "currentPeriodEnd" > NOW()
+        AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
         AND pr.provider = 'Civitai'
         AND pr.metadata->>'monthlyBuzz' IS NOT NULL
       )
