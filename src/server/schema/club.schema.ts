@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 import { ClubSort } from '~/server/common/enums';
 import { infiniteQuerySchema, paginationSchema, resourceInput } from '~/server/schema/base.schema';

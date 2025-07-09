@@ -2,7 +2,7 @@ import type { Icon } from '@tabler/icons-react';
 import { IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -320,7 +320,7 @@ export const useMutateCollection = () => {
         await queryUtils.image.getInfinite.invalidate();
       }
 
-      await queryUtils.collection.getById.invalidate({ id: req.collectionId });
+      await queryUtils.collection.getById.invalidate({ id: req.collectionId as number });
     },
     onError(error) {
       showErrorNotification({

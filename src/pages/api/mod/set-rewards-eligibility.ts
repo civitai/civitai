@@ -1,7 +1,7 @@
 import { RewardsEligibility } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { v4 as uuid } from 'uuid';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { userMultipliersCache } from '~/server/redis/caches';

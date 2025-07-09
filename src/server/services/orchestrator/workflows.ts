@@ -9,7 +9,7 @@ import {
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '@civitai/client';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { isProd } from '~/env/other';
 import type {
   PatchWorkflowParams,

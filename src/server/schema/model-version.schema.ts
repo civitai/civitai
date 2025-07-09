@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,

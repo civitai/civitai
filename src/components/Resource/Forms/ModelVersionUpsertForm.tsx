@@ -18,7 +18,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';

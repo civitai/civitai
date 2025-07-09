@@ -64,8 +64,13 @@ export function isBetweenToday(value: Date) {
 export const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export const aDayAhead = dayjs().add(1, 'day').toDate();
 
-export function stripTime(value: Date) {
-  return value.toISOString().substring(0, 10);
+export function stripTime(value: Date | string | number) {
+  const date = value instanceof Date ? value : new Date(value);
+  return date.toISOString().substring(0, 10);
+}
+
+export function isValidDate(d: unknown) {
+  return d instanceof Date && !isNaN(d as unknown as number);
 }
 
 export function toUtc(value: dayjs.ConfigType) {

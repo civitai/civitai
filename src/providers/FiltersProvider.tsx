@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { constants } from '~/server/common/constants';
@@ -38,13 +38,13 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.Month),
   periodMode: periodModeSchema,
-  sort: z.nativeEnum(ModelSort).default(ModelSort.HighestRated),
-  types: z.nativeEnum(ModelType).array().optional(),
-  checkpointType: z.nativeEnum(CheckpointType).optional(),
+  sort: z.enum(ModelSort).default(ModelSort.HighestRated),
+  types: z.enum(ModelType).array().optional(),
+  checkpointType: z.enum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
-  status: z.nativeEnum(ModelStatus).array().optional(),
+  status: z.enum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
@@ -53,7 +53,7 @@ const modelFilterSchema = z.object({
   hidden: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
   pending: z.boolean().optional(),
-  availability: z.nativeEnum(Availability).optional(),
+  availability: z.enum(Availability).optional(),
   isFeatured: z.boolean().optional(),
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
@@ -63,18 +63,18 @@ const modelFilterSchema = z.object({
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
 const questionFilterSchema = z.object({
-  sort: z.nativeEnum(QuestionSort).default(QuestionSort.MostLiked),
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
-  status: z.nativeEnum(QuestionStatus).optional(),
+  sort: z.enum(QuestionSort).default(QuestionSort.MostLiked),
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  status: z.enum(QuestionStatus).optional(),
 });
 
 type ImageFilterSchema = z.infer<typeof imageFilterSchema>;
 const imageFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema.optional(),
-  sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
-  generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
+  sort: z.enum(ImageSort).default(ImageSort.MostReactions),
+  generation: z.enum(ImageGenerationProcess).array().optional(),
+  types: z.array(z.enum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   hideAutoResources: z.boolean().optional(),
@@ -97,90 +97,84 @@ const imageFilterSchema = z.object({
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
 const modelImageFilterSchema = imageFilterSchema.extend({
-  sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
-  types: z.array(z.nativeEnum(MediaType)).default([]),
+  sort: z.enum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
+  types: z.array(z.enum(MediaType)).default([]),
 });
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;
 const postFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema,
-  sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
+  sort: z.enum(PostSort).default(PostSort.MostReactions),
   followed: z.boolean().optional(),
 });
 
 type ArticleFilterSchema = z.infer<typeof articleFilterSchema>;
 const articleFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.Month),
   periodMode: periodModeSchema,
-  sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostBookmarks),
+  sort: z.enum(ArticleSort).default(ArticleSort.MostBookmarks),
   followed: z.boolean().optional(),
 });
 
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;
 const collectionFilterSchema = z.object({
-  sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
+  sort: z.enum(CollectionSort).default(constants.collectionFilterDefaults.sort),
 });
 
 type BountyFilterSchema = z.infer<typeof bountyFilterSchema>;
-const bountyFilterSchema = z
-  .object({
-    period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
-    periodMode: periodModeSchema.optional(),
-    sort: z.nativeEnum(BountySort).default(BountySort.EndingSoon),
-    status: z.nativeEnum(BountyStatus).default(BountyStatus.Open),
-  })
-  .merge(
-    getInfiniteBountySchema.omit({
-      query: true,
-      period: true,
-      sort: true,
-      limit: true,
-      cursor: true,
-      status: true,
-      // TODO.bounty: remove mode from omit once we allow split bounties
-      mode: true,
-    })
-  );
+const bountyFilterSchema = z.object({
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
+  periodMode: periodModeSchema.optional(),
+  sort: z.enum(BountySort).default(BountySort.EndingSoon),
+  status: z.enum(BountyStatus).default(BountyStatus.Open),
+  ...getInfiniteBountySchema.omit({
+    query: true,
+    period: true,
+    sort: true,
+    limit: true,
+    cursor: true,
+    status: true,
+    // TODO.bounty: remove mode from omit once we allow split bounties
+    mode: true,
+  }).shape,
+});
 
 type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
-const clubFilterSchema = z
-  .object({
-    sort: z.nativeEnum(ClubSort).default(ClubSort.Newest),
-  })
-  .merge(
-    getInfiniteClubSchema.omit({
-      sort: true,
-      limit: true,
-      cursor: true,
-      nsfw: true,
-    })
-  );
+const clubFilterSchema = z.object({
+  sort: z.enum(ClubSort).default(ClubSort.Newest),
+  ...getInfiniteClubSchema.omit({
+    sort: true,
+    limit: true,
+    cursor: true,
+    nsfw: true,
+  }).shape,
+});
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
 const videoFilterSchema = imageFilterSchema;
 
 type ThreadFilterSchema = z.infer<typeof threadFilterSchema>;
 const threadFilterSchema = z.object({
-  sort: z.nativeEnum(ThreadSort).default(ThreadSort.Newest),
+  sort: z.enum(ThreadSort).default(ThreadSort.Newest),
 });
 
 export type GenerationFilterSchema = z.infer<typeof generationFilterSchema>;
 const generationFilterSchema = z.object({
-  sort: z.nativeEnum(GenerationSort).default(GenerationSort.Newest),
-  marker: z.nativeEnum(GenerationReactType).optional(),
+  sort: z.enum(GenerationSort).default(GenerationSort.Newest),
+  marker: z.enum(GenerationReactType).optional(),
   tags: z.string().array().optional(),
 });
 
 type ToolFilterSchema = z.infer<typeof toolFilterSchema>;
 const toolFilterSchema = z.object({
-  sort: z.nativeEnum(ToolSort).default(ToolSort.Newest),
-  type: z.nativeEnum(ToolType).optional(),
+  sort: z.enum(ToolSort).default(ToolSort.Newest),
+  type: z.enum(ToolType).optional(),
 });
 type BuzzWithdrawalRequestFilterSchema = z.infer<typeof buzzWithdrawalRequestFilterSchema>;
 const buzzWithdrawalRequestFilterSchema = z.object({
-  sort: z.nativeEnum(BuzzWithdrawalRequestSort).default(BuzzWithdrawalRequestSort.Newest),
+  sort: z.enum(BuzzWithdrawalRequestSort).default(BuzzWithdrawalRequestSort.Newest),
 });
 
 export type ChangelogFilterSchema = z.infer<typeof changelogFilterSchema>;
@@ -241,7 +235,7 @@ type StoreState = FilterState & {
   setAuctionFilters: (filters: Partial<AuctionFilterSchema>) => void;
 };
 
-type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
+type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.ZodObject }>;
 const localStorageSchemas: LocalStorageSchema = {
   models: { key: 'model-filters', schema: modelFilterSchema },
   questions: { key: 'question-filters', schema: questionFilterSchema },
@@ -264,7 +258,7 @@ const localStorageSchemas: LocalStorageSchema = {
   auctions: { key: 'auction-filters', schema: auctionFilterSchema },
 };
 
-const getInitialValues = <TSchema extends z.AnyZodObject>({
+const getInitialValues = <TSchema extends z.ZodObject>({
   key,
   schema,
 }: {

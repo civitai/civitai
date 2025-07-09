@@ -1,5 +1,5 @@
 import { CosmeticType, CosmeticEntity } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { paginationSchema } from '~/server/schema/base.schema';
 
 export type GetPaginatedCosmeticsInput = z.infer<typeof getPaginatedCosmeticsSchema>;

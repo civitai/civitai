@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbWrite } from '~/server/db/client';
 import { imageSchema } from '~/server/schema/image.schema';
 import { middleware, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';

@@ -1,5 +1,5 @@
 import type { InfiniteData } from '@tanstack/react-query';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { generatedImageStepMetadataSchema } from '~/server/schema/orchestrator/textToImage.schema';
 
 // #region [interfaces]
@@ -34,7 +34,7 @@ export const updateWorkflowStepSchema = z.discriminatedUnion('$type', [
   }),
   baseUpdateWorkflowSchema.extend({
     $type: z.literal('imageTraining'),
-    metadata: z.record(z.any()),
+    metadata: z.record(z.string(), z.any()),
   }),
 ]);
 // #endregion

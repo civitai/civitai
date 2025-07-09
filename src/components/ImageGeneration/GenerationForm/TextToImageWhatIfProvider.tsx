@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   fluxStandardAir,
   fluxUltraAir,
@@ -50,8 +50,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
       if (size) {
-        params.width = size.width;
-        params.height = size.height;
+        (params as Record<string, any>).width = size.width;
+        (params as Record<string, any>).height = size.height;
       }
     }
 
@@ -82,12 +82,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
       }) ?? [];
 
+    const parsed = textToImageParamsSchema.parse({
+      ...params,
+      ...whatIfQueryOverrides,
+    });
+
     return {
       resources: [{ id: modelVersionId }, ...additionalResources],
-      params: removeEmpty({
-        ...params,
-        ...whatIfQueryOverrides,
-      } satisfies TextToImageInput),
+      params: removeEmpty(parsed),
     };
   }, [watched]);
 

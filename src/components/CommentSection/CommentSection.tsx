@@ -15,7 +15,7 @@ import {
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

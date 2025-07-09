@@ -1,22 +1,22 @@
 import { Stack } from '@mantine/core';
 import type { Dispatch, SetStateAction } from 'react';
 import type { UseFormReturn } from 'react-hook-form';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { Form, useForm } from '~/libs/form';
 
-type ReportFormContext<TSchema extends z.AnyZodObject> = {
+type ReportFormContext<TSchema extends z.ZodObject> = {
   schema: TSchema;
-  form: UseFormReturn<z.infer<TSchema>>;
+  form: UseFormReturn<z.input<TSchema>, any, z.output<TSchema>>;
 };
 
-type ReportFormProps<TSchema extends z.AnyZodObject> = {
+type ReportFormProps<TSchema extends z.ZodObject> = {
   context: ReportFormContext<TSchema>;
   props: {
     setUploading: Dispatch<SetStateAction<boolean>>;
   };
 };
 
-export const createReportForm = <TSchema extends z.AnyZodObject>({
+export const createReportForm = <TSchema extends z.ZodObject>({
   schema,
   Element,
 }: {

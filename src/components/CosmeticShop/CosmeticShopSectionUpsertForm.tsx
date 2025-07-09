@@ -10,7 +10,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { CosmeticShopSectionGetById } from '~/types/router';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.utils';
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';

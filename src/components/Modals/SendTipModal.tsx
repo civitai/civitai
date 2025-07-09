@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

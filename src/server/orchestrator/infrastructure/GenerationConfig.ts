@@ -1,11 +1,10 @@
 import type { VideoGenInput } from '@civitai/client';
-import type { RefinementCtx } from 'zod';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { maxRandomSeed } from '~/server/common/constants';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid';
 export function VideoGenerationConfig2<
-  TSchema extends z.AnyZodObject = z.AnyZodObject,
+  TSchema extends z.ZodObject = z.ZodObject,
   TOutput extends VideoGenInput = VideoGenInput,
   TDefaults extends z.input<TSchema> = z.input<TSchema>,
   SchemaOutput = z.infer<TSchema>,
@@ -26,7 +25,7 @@ export function VideoGenerationConfig2<
   schema: TSchema;
   defaultValues?: TDefaults;
   whatIfFn?: (arg: SchemaOutput) => SchemaOutput;
-  superRefine?: (arg: RefinementOutput, ctx: RefinementCtx) => void;
+  superRefine?: (arg: RefinementOutput, ctx: z.RefinementCtx) => void;
   transformFn: (args: SchemaOutput) => RefinementOutput;
   inputFn: (args: RefinementOutput & { seed: number }) => TOutput;
 }) {

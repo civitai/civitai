@@ -1,32 +1,36 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef } from 'react';
-import type { DeepPartial, FieldValues, Path, UseFormProps, UseFormReturn } from 'react-hook-form';
+import type { FieldValues, Path, UseFormProps, UseFormReturn } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
-import type { AnyZodObject, input, TypeOf, ZodEffects } from 'zod';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
-export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
-  UseFormReturn<TFieldValues> & {
+export type UsePersistFormReturn<TSchema extends z.ZodType<FieldValues, FieldValues>> =
+  UseFormReturn<z.core.input<TSchema>, any, z.core.output<TSchema>> & {
     // clear: () => void;
   };
 
 export function usePersistForm<
-  TSchema extends AnyZodObject | ZodEffects<AnyZodObject> | ZodEffects<ZodEffects<AnyZodObject>>,
-  TExclude extends Array<Path<TypeOf<TSchema>>>
+  TOutput extends FieldValues,
+  TInput extends FieldValues,
+  TSchema extends z.ZodType<TOutput, TInput>,
+  TExclude extends Array<Path<z.infer<TSchema>>>
 >(
   storageKey: string,
-  args?: Omit<UseFormProps<TypeOf<TSchema>>, 'resolver' | 'defaultValues' | 'values'> & {
-    schema?: TSchema;
-    partialSchema?: z.AnyZodObject;
+  args: Omit<
+    UseFormProps<z.input<TSchema>, any, z.output<TSchema>>,
+    'resolver' | 'defaultValues' | 'values'
+  > & {
+    schema: TSchema;
+    partialSchema?: z.ZodObject;
     storage?: Storage;
     version?: number;
     exclude?: TExclude;
     defaultValues?:
-      | DeepPartial<input<TSchema>>
-      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
+      | Partial<z.input<TSchema>>
+      | ((storageValues: Partial<z.input<TSchema>>) => Partial<z.input<TSchema>>);
     values?:
-      | DeepPartial<input<TSchema>>
-      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
+      | Partial<z.input<TSchema>>
+      | ((storageValues: Partial<z.input<TSchema>>) => Partial<z.input<TSchema>>);
   }
 ) {
   const {
@@ -38,18 +42,18 @@ export function usePersistForm<
     defaultValues = {},
     values = {},
     ...rest
-  } = args ?? {};
+  } = args;
 
-  const _storageSchema = useRef<AnyZodObject | undefined>();
+  const _storageSchema = useRef<z.ZodObject | undefined>();
   if (!_storageSchema.current)
     _storageSchema.current = z.object({
-      state: partialSchema.passthrough(),
-      // state: schema ? getDeepPartialWithoutChecks(schema) : z.object({}).passthrough(),
+      state: z.looseObject({ ...partialSchema.shape }),
+      // state: schema ? getPartialWithoutChecks(schema) : z.object({}).passthrough(),
       version: z.number().default(version),
     });
 
   // const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
-  const _defaultValues = useRef<DeepPartial<TypeOf<TSchema>> | undefined>();
+  const _defaultValues = useRef<Partial<TOutput> | undefined>();
   if (!_defaultValues.current) {
     if (defaultValues)
       _defaultValues.current =
@@ -68,14 +72,10 @@ export function usePersistForm<
     }
   }
 
-  const form = useForm<TypeOf<TSchema>>({
-    resolver: schema ? zodResolver(schema) : undefined,
+  const form = useForm<z.input<TSchema>, any, z.output<TSchema>>({
+    resolver: zodResolver(schema),
     defaultValues: { ..._defaultValues.current, ...getParsedStorage() } as any,
-    // values: Object.keys(values).length
-    //   ? typeof values === 'function'
-    //     ? values(getParsedStorage())
-    //     : values
-    //   : undefined,
+
     ...rest,
   });
 
@@ -84,7 +84,7 @@ export function usePersistForm<
   }
 
   function parseStorage(value: string) {
-    const defaults = { state: {}, version };
+    const defaults = { state: {} as Partial<TOutput>, version };
     if (!_storageSchema.current) return defaults;
 
     const prompt = localStorage.getItem('generation:prompt') ?? '';
@@ -103,7 +103,7 @@ export function usePersistForm<
 
     return {
       state: {
-        ...response.state,
+        ...(response.state as any),
         prompt,
         negativePrompt,
         // sourceImage: sourceImage ? JSON.parse(sourceImage) : undefined,
@@ -118,7 +118,7 @@ export function usePersistForm<
     return parseStorage(str ?? '{}').state;
   }
 
-  function updateStorage(watchedValues: DeepPartial<TypeOf<TSchema>>) {
+  function updateStorage(watchedValues: Partial<z.input<TSchema>>) {
     const values = exclude.length
       ? Object.entries(watchedValues)
           .filter(([key]) => !exclude.includes(key as never))

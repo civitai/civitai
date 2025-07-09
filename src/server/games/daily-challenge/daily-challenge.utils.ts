@@ -1,5 +1,5 @@
 import { mergeWith } from 'lodash-es';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';

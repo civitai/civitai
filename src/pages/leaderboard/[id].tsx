@@ -22,7 +22,7 @@ import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -36,14 +36,14 @@ import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { numericString, stringDate } from '~/utils/zod-helpers';
+import { numericString } from '~/utils/zod-helpers';
 import classes from './[id].module.css';
 
 const excludeLegendsRegex = /Donors|Knights/i;
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
-  date: stringDate(),
+  date: z.coerce.date(),
   position: numericString().optional(),
   board: z.enum(['season', 'legend']).default('season'),
 });
