@@ -44,6 +44,7 @@ export function ResourceReviewComments({ reviewId, userId }: { reviewId: number;
                         size="xs"
                         style={{ cursor: 'pointer' }}
                         onClick={toggleShowMore}
+                        inherit
                       >
                         Show {remaining} More
                       </Text>

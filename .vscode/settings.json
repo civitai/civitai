@@ -2,7 +2,7 @@
   "editor.formatOnSave": true,
   "editor.tabSize": 2,
   "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "explicit"
+    "source.fixAll.eslint": "never"
   },
   "files.eol": "\n",
   "[sql]": {
@@ -10,7 +10,7 @@
   },
   "typescript.tsdk": "node_modules\\typescript\\lib",
   "[typescriptreact]": {
-    "editor.defaultFormatter": "dbaeumer.vscode-eslint"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "typescript.preferences.autoImportFileExcludePatterns": [
     "@prisma/client"
