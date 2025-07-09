@@ -612,8 +612,9 @@ async function runModQueue() {
 
   const aggedRows: EntityIdMap = queueRows.reduce((prev, curr) => {
     const table = curr.entityType;
-    if (!prev[table]) prev[table] = [];
-    prev[table].push(curr.entityId);
+    const arr = prev[table] ?? [];
+    arr.push(curr.entityId);
+    prev[table] = arr;
     return prev;
   }, {} as EntityIdMap);
 
