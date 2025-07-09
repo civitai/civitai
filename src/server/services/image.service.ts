@@ -2359,7 +2359,7 @@ export const getImage = async ({
         !withoutPost
           ? Prisma.sql`
             p."availability" "availability",
-            p."publishedAt" "publishedAt",
+            GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
           `
           : Prisma.sql`'Public' "availability",`
       }

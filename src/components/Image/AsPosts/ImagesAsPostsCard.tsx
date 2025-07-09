@@ -281,8 +281,8 @@ export function ImagesAsPostsCard({
                     user={data.user}
                     subText={
                       <Group gap="xs" wrap="nowrap">
-                        {data.publishedAt ? (
-                          <DaysFromNow date={data.publishedAt} />
+                        {data.publishedAt || data.sortAt ? (
+                          <DaysFromNow date={data.publishedAt || data.sortAt} />
                         ) : (
                           <Text>Not published</Text>
                         )}
