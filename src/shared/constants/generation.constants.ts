@@ -211,7 +211,8 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   if (!baseModel) return defaultType;
   return (Object.entries(baseModelSets).find(
     ([key, baseModelSet]) =>
-      key === baseModel || (baseModelSet.baseModels as string[]).includes(baseModel)
+      key.toLowerCase() === baseModel.toLocaleLowerCase() ||
+      (baseModelSet.baseModels as string[]).includes(baseModel)
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
@@ -536,10 +537,20 @@ export const baseModelResourceTypes = {
   ],
   WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
   WanVideo14B_I2V_480p: [
-    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_480p.baseModels },
+    {
+      type: ModelType.LORA,
+      baseModels: [
+        ...baseModelSets.WanVideo14B_I2V_480p.baseModels,
+        ...baseModelSets.WanVideo14B_I2V_720p.baseModels,
+      ],
+    },
   ],
   WanVideo14B_I2V_720p: [
-    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels },
+    {
+      type: ModelType.LORA,
+      baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels,
+      partialSupport: baseModelSets.WanVideo14B_I2V_480p.baseModels,
+    },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
