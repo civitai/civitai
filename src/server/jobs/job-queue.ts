@@ -12,6 +12,7 @@ import {
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { createJob } from './job';
+import { logToAxiom } from '~/server/logging/client';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -53,65 +54,73 @@ async function deleteJobQueueItems(
   type: JobQueueType
 ) {
   if (!entityIds) return;
-  await dbWrite.jobQueue.deleteMany({ where: { type, entityType, entityId: { in: entityIds } } });
+  await Limiter().process(entityIds, (entityIds) =>
+    dbWrite.jobQueue.deleteMany({ where: { type, entityType, entityId: { in: entityIds } } })
+  );
 }
 
 const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async (e) => {
   // const [lastRun, setLastRun] = await getJobDate('update-nsfw-levels');
   // const now = new Date();
-  const jobQueue = await dbRead.jobQueue.findMany({
-    where: { type: JobQueueType.UpdateNsfwLevel, entityType: { not: EntityType.Collection } },
-  });
+  try {
+    const jobQueue = await dbRead.jobQueue.findMany({
+      where: { type: JobQueueType.UpdateNsfwLevel, entityType: { not: EntityType.Collection } },
+    });
 
-  const jobQueueIds = reduceJobQueueToIds(jobQueue);
-  const relatedEntities = await getNsfwLevelRelatedEntities(jobQueueIds);
+    const jobQueueIds = reduceJobQueueToIds(jobQueue);
+    const relatedEntities = await getNsfwLevelRelatedEntities(jobQueueIds);
 
-  await imagesSearchIndex.queueUpdate(
-    jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-  );
-  await imagesMetricsSearchIndex.queueUpdate(
-    jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-  );
+    await imagesSearchIndex.queueUpdate(
+      jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+    await imagesMetricsSearchIndex.queueUpdate(
+      jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
 
-  const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);
-  const articleIds = uniq([...jobQueueIds.articleIds, ...relatedEntities.articleIds]);
-  const bountyIds = uniq([...jobQueueIds.bountyIds, ...relatedEntities.bountyIds]);
-  const bountyEntryIds = uniq([...jobQueueIds.bountyEntryIds, ...relatedEntities.bountyEntryIds]);
-  const modelVersionIds = uniq([
-    ...jobQueueIds.modelVersionIds,
-    ...relatedEntities.modelVersionIds,
-  ]);
-  const modelIds = uniq([...jobQueueIds.modelIds, ...relatedEntities.modelIds]);
-  // const collectionIds = uniq([...jobQueueIds.collectionIds, ...relatedEntities.collectionIds]);
+    const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);
+    const articleIds = uniq([...jobQueueIds.articleIds, ...relatedEntities.articleIds]);
+    const bountyIds = uniq([...jobQueueIds.bountyIds, ...relatedEntities.bountyIds]);
+    const bountyEntryIds = uniq([...jobQueueIds.bountyEntryIds, ...relatedEntities.bountyEntryIds]);
+    const modelVersionIds = uniq([
+      ...jobQueueIds.modelVersionIds,
+      ...relatedEntities.modelVersionIds,
+    ]);
+    const modelIds = uniq([...jobQueueIds.modelIds, ...relatedEntities.modelIds]);
+    // const collectionIds = uniq([...jobQueueIds.collectionIds, ...relatedEntities.collectionIds]);
 
-  // await enqueueJobs(
-  //   collectionIds.map((entityId) => ({
-  //     entityId,
-  //     entityType: EntityType.Collection,
-  //     type: JobQueueType.UpdateNsfwLevel,
-  //   }))
-  // );
+    // await enqueueJobs(
+    //   collectionIds.map((entityId) => ({
+    //     entityId,
+    //     entityType: EntityType.Collection,
+    //     type: JobQueueType.UpdateNsfwLevel,
+    //   }))
+    // );
 
-  await updateNsfwLevels({
-    postIds,
-    articleIds,
-    bountyIds,
-    bountyEntryIds,
-    modelVersionIds,
-    modelIds,
-    collectionIds: [],
-  });
+    await updateNsfwLevels({
+      postIds,
+      articleIds,
+      bountyIds,
+      bountyEntryIds,
+      modelVersionIds,
+      modelIds,
+      collectionIds: [],
+    });
 
-  const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
-    [jobQueueIds.imageIds, EntityType.Image, JobQueueType.UpdateNsfwLevel],
-    [jobQueueIds.postIds, EntityType.Post, JobQueueType.UpdateNsfwLevel],
-    [jobQueueIds.articleIds, EntityType.Article, JobQueueType.UpdateNsfwLevel],
-    [jobQueueIds.modelIds, EntityType.Model, JobQueueType.UpdateNsfwLevel],
-    [jobQueueIds.modelVersionIds, EntityType.ModelVersion, JobQueueType.UpdateNsfwLevel],
-    [jobQueueIds.bountyIds, EntityType.Bounty, JobQueueType.UpdateNsfwLevel],
-    [jobQueueIds.bountyEntryIds, EntityType.BountyEntry, JobQueueType.UpdateNsfwLevel],
-  ];
-  await Promise.all(tuple.map((args) => deleteJobQueueItems(...args)));
+    const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
+      [jobQueueIds.imageIds, EntityType.Image, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.postIds, EntityType.Post, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.articleIds, EntityType.Article, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.modelIds, EntityType.Model, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.modelVersionIds, EntityType.ModelVersion, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.bountyIds, EntityType.Bounty, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.bountyEntryIds, EntityType.BountyEntry, JobQueueType.UpdateNsfwLevel],
+    ];
+    await Promise.all(tuple.map((args) => deleteJobQueueItems(...args)));
+  } catch (e: any) {
+    console.log(e);
+    logToAxiom({ type: 'error', name: 'update-nsfw-levels', message: e.message });
+    throw e;
+  }
 
   // await dbWrite.jobQueue.deleteMany({
   //   where: {

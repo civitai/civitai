@@ -232,6 +232,7 @@ export const BuzzPurchase = ({
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
+  const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
@@ -453,11 +454,13 @@ export const BuzzPurchase = ({
                             minBuzzAmountPrice * 10
                           ).toLocaleString()}`}
                           leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
-                          value={customAmount ? customAmount * 10 : undefined}
+                          value={customBuzzAmount}
+                          clampBehavior="blur"
                           min={1000}
                           max={constants.buzz.maxChargeAmount * 10}
                           onChange={(value) => {
                             setError('');
+                            setCustomBuzzAmount(value ? Number(value ?? 0) : undefined);
                             setCustomAmount(Math.ceil(Number(value ?? 0) / 10));
                           }}
                           step={100}
@@ -475,19 +478,22 @@ export const BuzzPurchase = ({
                           value={customAmount}
                           min={100}
                           step={100}
+                          clampBehavior="blur"
                           max={constants.buzz.maxChargeAmount}
                           allowDecimal
                           fixedDecimalScale
                           decimalScale={2}
                           rightSection={null}
                           rightSectionWidth="auto"
-                          format="currency"
                           currency="USD"
                           onChange={(value) => {
+                            console.log({ value });
                             setError('');
                             setCustomAmount(Number(value ?? 0));
+                            setCustomBuzzAmount(Math.ceil(Number(value ?? 0) * 10));
                           }}
                           w="80%"
+                          format="currency"
                           mt={-24}
                         />
                       </Group>

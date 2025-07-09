@@ -24,6 +24,7 @@ import {
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
+  getClosestAspectRatio,
   getIsFluxUltra,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
@@ -315,13 +316,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const { runType, remixOfId, resources, params } = storeData;
       if (!params.sourceImage && !params.workflow)
         form.setValue('workflow', params.process ?? 'txt2img');
+
+      const formData = form.getValues();
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
           break;
         case 'remix':
         case 'run':
-          const formData = form.getValues();
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
           const formResources: GenerationResource[] = [
@@ -331,7 +333,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           ].filter(isDefined);
 
           const data = formatGenerationData({
-            params: { ...params, workflow },
+            params: {
+              aspectRatio: formData.aspectRatio,
+              ...params,
+              workflow,
+            },
             remixOfId: runType === 'remix' ? remixOfId : undefined,
             resources:
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
@@ -357,6 +363,17 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       generationStore.clearData();
     }
   }, [status, currentUser, storeData]); // eslint-disable-line
+
+  const baseModel = form.watch('baseModel');
+  useEffect(() => {
+    if (!baseModel) return;
+    const formData = form.getValues();
+    if (formData.aspectRatio) {
+      const [w, h] = formData.aspectRatio.split(':').map(Number);
+      const aspectRatio = getClosestAspectRatio(w, h, baseModel);
+      if (formData.aspectRatio !== aspectRatio) form.setValue('aspectRatio', aspectRatio);
+    }
+  }, [baseModel]);
 
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
@@ -459,7 +476,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
-    return sanitizeTextToImageParams(
+    const sanitized = sanitizeTextToImageParams(
       {
         ...defaultValues,
         // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
@@ -470,6 +487,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       },
       status.limits
     );
+
+    return sanitized;
   }
 
   function reset() {
