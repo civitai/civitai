@@ -1,13 +1,22 @@
+import dayjs from 'dayjs';
+import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,
   DeleteRedeemableCodeInput,
 } from '~/server/schema/redeemableCode.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import {
+  createBuzzTransaction,
+  getMultipliersForUser,
+  grantBuzzPurchase,
+} from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
-import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
+import { invalidateSession } from '~/server/utils/session-helpers';
+import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 
 export async function createRedeemableCodes({
@@ -15,11 +24,30 @@ export async function createRedeemableCodes({
   type,
   expiresAt,
   quantity = 1,
+  priceId,
 }: CreateRedeemableCodeInput) {
+  if (priceId) {
+    // Confirm it exists:
+    const price = await dbWrite.price.findUnique({
+      where: { id: priceId, active: true },
+      select: {
+        id: true,
+        product: {
+          select: { id: true, name: true, metadata: true },
+        },
+      },
+    });
+
+    if (!price) {
+      throw new Error('Price ID does not exist');
+    }
+  }
+
   const codes = Array.from({ length: quantity }, () => {
     const code = `CS-${generateToken(4)}-${generateToken(4)}`.toUpperCase();
-    return { code, unitValue, expiresAt, type };
+    return { code, unitValue, expiresAt, type, priceId };
   });
+
   await dbWrite.redeemableCode.createMany({ data: codes });
   return codes.map((code) => code.code);
 }
@@ -36,6 +64,35 @@ export async function consumeRedeemableCode({
   code,
   userId,
 }: ConsumeRedeemableCodeInput & { userId: number }) {
+  const codeRecord = await dbWrite.redeemableCode.findUnique({
+    where: { code, redeemedAt: null },
+    select: {
+      code: true,
+      type: true,
+      price: {
+        select: {
+          product: {
+            select: {
+              provider: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!codeRecord) {
+    throw new Error('Code does not exist or has been redeemed');
+  }
+
+  if (codeRecord.type === RedeemableCodeType.Membership && !codeRecord.price) {
+    throw new Error('Membership codes must have a price ID');
+  }
+
+  if (codeRecord.price?.product?.provider !== PaymentProvider.Civitai) {
+    throw new Error('Cannot redeem codes for non-Civitai products');
+  }
+
   const consumedCode = await dbWrite.redeemableCode
     .update({
       where: {
@@ -44,7 +101,23 @@ export async function consumeRedeemableCode({
         OR: [{ expiresAt: { gt: new Date() } }, { expiresAt: null }],
       },
       data: { redeemedAt: new Date(), userId },
-      select: { code: true, unitValue: true, type: true, userId: true },
+      select: {
+        code: true,
+        unitValue: true,
+        type: true,
+        userId: true,
+        priceId: true,
+        price: {
+          select: {
+            id: true,
+            currency: true,
+            interval: true,
+            product: {
+              select: { id: true, name: true, metadata: true, provider: true },
+            },
+          },
+        },
+      },
     })
     .catch(throwDbCustomError('Code does not exist, has been redeemed, or has expired'));
 
@@ -66,8 +139,169 @@ export async function consumeRedeemableCode({
       where: { code },
       data: { transactionId },
     });
-  } else if (consumedCode.type === RedeemableCodeType.Membership) {
-    // Do membership stuff
+  } else if (consumedCode.type === RedeemableCodeType.Membership && consumedCode.price) {
+    // Do membership stuff:
+    // First, fetch user membership and see their status:
+    const userMembership = await dbWrite.customerSubscription.findFirst({
+      where: { userId },
+      select: {
+        status: true,
+        id: true,
+        productId: true,
+        priceId: true,
+        currentPeriodEnd: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            metadata: true,
+            provider: true,
+          },
+        },
+      },
+    });
+
+    let activeUserMembership = userMembership;
+
+    if (userMembership) {
+      // Check states:
+      if (userMembership.status !== 'active') {
+        // We can safely delete this inactive membership:
+        await dbWrite.customerSubscription.delete({
+          where: { id: userMembership.id },
+        });
+        activeUserMembership = null;
+      } else if (userMembership.currentPeriodEnd <= new Date()) {
+        // Handle expired but still "active" memberships
+        await dbWrite.customerSubscription.delete({
+          where: { id: userMembership.id },
+        });
+        activeUserMembership = null;
+      }
+
+      if (!activeUserMembership) {
+        // Log:
+        await logToAxiom({
+          message: `Redeemed code for user ${userId} but found no active membership, deleting old membership`,
+          level: 'info',
+          userId,
+          code: consumedCode.code,
+        });
+      }
+
+      // Check provider compatibility for any remaining active membership
+      if (
+        activeUserMembership &&
+        activeUserMembership.product.provider !== consumedCode.price.product.provider
+      ) {
+        throw new Error(
+          'Cannot redeem a code for a different provider than your current membership'
+        );
+      }
+
+      if (activeUserMembership) {
+        const membershipProductMetadata = activeUserMembership.product
+          .metadata as SubscriptionProductMetadata;
+        const consumedProductMetadata = consumedCode.price.product
+          .metadata as SubscriptionProductMetadata;
+
+        if (consumedProductMetadata.tier === 'free' || !consumedProductMetadata.tier) {
+          throw new Error('Cannot redeem a code for a free or undefined tier');
+        }
+
+        const membershipTierOrder = constants.memberships.tierOrder.indexOf(
+          membershipProductMetadata.tier
+        );
+        const consumedTierOrder = constants.memberships.tierOrder.indexOf(
+          consumedProductMetadata.tier
+        );
+
+        if (membershipTierOrder > consumedTierOrder) {
+          throw new Error('Cannot redeem a code for a lower tier than your current membership');
+        }
+
+        // At this point, we can safely extend or improve the membership:
+        if (consumedTierOrder > membershipTierOrder) {
+          const now = dayjs();
+          // We'll update the membership with this new product that it's better:
+          await dbWrite.customerSubscription.update({
+            where: { id: activeUserMembership.id },
+            data: {
+              productId: consumedCode.price.product.id,
+              priceId: consumedCode.price.id,
+              status: 'active',
+              currentPeriodStart: now.toDate(),
+              currentPeriodEnd: now
+                .add(
+                  consumedCode.unitValue,
+                  consumedCode.price.interval as 'day' | 'month' | 'year'
+                )
+                .toDate(),
+            },
+          });
+        } else if (consumedTierOrder === membershipTierOrder) {
+          // If it's the same tier, we just extend the current period:
+          await dbWrite.customerSubscription.update({
+            where: { id: activeUserMembership.id },
+            data: {
+              status: 'active',
+              currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
+                .add(
+                  consumedCode.unitValue,
+                  consumedCode.price.interval as 'day' | 'month' | 'year'
+                )
+                .toDate(),
+            },
+          });
+        }
+      }
+    } else {
+      // Create a new membership:
+      const now = dayjs();
+      await dbWrite.customerSubscription.create({
+        data: {
+          id: `redeemable-code-${consumedCode.code}`,
+          userId: userId,
+          productId: consumedCode.price.product.id,
+          priceId: consumedCode.price.id,
+          status: 'active',
+          currentPeriodStart: now.toDate(),
+          currentPeriodEnd: now
+            .add(consumedCode.unitValue, consumedCode.price.interval as 'day' | 'month' | 'year')
+            .toDate(),
+          cancelAtPeriodEnd: true, // We assume they want to cancel at the end of the period
+          cancelAt: null, // No cancellation date yet
+          metadata: {},
+          createdAt: now.toDate(),
+        },
+      });
+    }
+
+    const consumedProductMetadata = consumedCode.price.product
+      .metadata as SubscriptionProductMetadata;
+
+    const date = dayjs().format('YYYY-MM');
+
+    await withRetries(async () => {
+      // Grant buzz right away:
+      await grantBuzzPurchase({
+        userId: userId,
+        amount: consumedProductMetadata.monthlyBuzz ?? 5000, // Default to 5000 if not specified
+        description: `Membership Bonus`,
+        transactionType: TransactionType.Purchase,
+        externalTransactionId: `civitai-membership:${date}:${userId}:${
+          consumedCode.price!.product.id
+        }`,
+        details: {
+          type: 'membership-purchase',
+          date: date,
+          productId: consumedCode.price!.product.id,
+        },
+      });
+
+      await invalidateSession(userId);
+      await getMultipliersForUser(userId, true);
+    });
   }
 
   return consumedCode;
