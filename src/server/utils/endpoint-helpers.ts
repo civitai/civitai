@@ -9,7 +9,6 @@ import type { Session, SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
-import { logToAxiom } from '~/server/logging/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import type { Partner } from '~/shared/utils/prisma/models';
@@ -141,16 +140,16 @@ export function MixedAuthEndpoint(
       const isNotUpToDate = await checkNotUpToDate(
         isArray(req.query.etag) ? req.query.etag[0] : req.query.etag
       );
-      logToAxiom({
-        name: 'etag-stuff',
-        type: 'info',
-        data: {
-          url: req.url,
-          etag: req.query.etag,
-          isNotUpToDate,
-          expiresHeader: dayjs().add(1, 'minute').toISOString(),
-        },
-      }).catch();
+      // logToAxiom({
+      //   name: 'etag-stuff',
+      //   type: 'info',
+      //   data: {
+      //     url: req.url,
+      //     etag: req.query.etag,
+      //     isNotUpToDate,
+      //     expiresHeader: dayjs().add(1, 'minute').toISOString(),
+      //   },
+      // }).catch();
       if (isNotUpToDate) {
         res.setHeader('X-Expires', dayjs().add(1, 'minute').toISOString());
       }
