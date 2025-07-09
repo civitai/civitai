@@ -39,7 +39,7 @@
     "analyze": "cross-env ANALYZE=true next build",
     "analyze:server": "cross-env BUNDLE_ANALYZE=server next build",
     "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build",
-    "tsc:trace": "tsc  --generateTrace trace --incremental false",
+    "tsc:trace": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc  --generateTrace ./trace --incremental false",
     "tsc:analyze": "npx analyze-trace trace",
     "test": "cross-env NODE_ENV=development npx playwright test",
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
