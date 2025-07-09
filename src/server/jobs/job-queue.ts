@@ -118,7 +118,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
     await Promise.all(tuple.map((args) => deleteJobQueueItems(...args)));
   } catch (e: any) {
     console.log(e);
-    logToAxiom({ type: 'update-nsfw-levels', message: e.message });
+    logToAxiom({ type: 'error', name: 'update-nsfw-levels', message: e.message });
     throw e;
   }
 
