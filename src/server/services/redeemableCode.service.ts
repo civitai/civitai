@@ -255,7 +255,9 @@ export async function consumeRedeemableCode({
           });
         }
       }
-    } else {
+    }
+
+    if (!activeUserMembership) {
       // Create a new membership:
       const now = dayjs();
       await dbWrite.customerSubscription.create({
@@ -286,7 +288,7 @@ export async function consumeRedeemableCode({
       // Grant buzz right away:
       await grantBuzzPurchase({
         userId: userId,
-        amount: consumedProductMetadata.monthlyBuzz ?? 5000, // Default to 5000 if not specified
+        amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
         description: `Membership Bonus`,
         transactionType: TransactionType.Purchase,
         externalTransactionId: `civitai-membership:${date}:${userId}:${
