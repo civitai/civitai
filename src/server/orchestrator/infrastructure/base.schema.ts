@@ -1,5 +1,5 @@
 import { Priority } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 
 export const promptSchema = z
   .string()

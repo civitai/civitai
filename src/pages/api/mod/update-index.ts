@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
@@ -28,7 +28,7 @@ import { commaDelimitedEnumArray, commaDelimitedNumberArray } from '~/utils/zod-
 export const schema = z.object({
   updateIds: commaDelimitedNumberArray().optional(),
   deleteIds: commaDelimitedNumberArray().optional(),
-  processQueues: commaDelimitedEnumArray(z.enum(['update', 'delete'])).optional(),
+  processQueues: commaDelimitedEnumArray(['update', 'delete']).optional(),
   index: z.enum([
     MODELS_SEARCH_INDEX,
     USERS_SEARCH_INDEX,

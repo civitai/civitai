@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useMutateCollection } from '~/components/Collections/collection.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

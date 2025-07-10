@@ -1,5 +1,5 @@
 import { Button, Card, Group, Stack, Title } from '@mantine/core';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';

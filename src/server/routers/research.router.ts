@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

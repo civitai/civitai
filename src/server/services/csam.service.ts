@@ -19,7 +19,7 @@ import archiver from 'archiver';
 import stream from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { PaginationInput } from '~/server/schema/base.schema';
@@ -291,7 +291,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
 
   return captureEvents
     .map((data) => {
-      const res = z.string().ip().safeParse(data.ip);
+      const res = z.ipv4().or(z.ipv6()).safeParse(data.ip);
       return res.success ? data : null;
     })
     .filter(isDefined);

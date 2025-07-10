@@ -1,5 +1,5 @@
 import type { CurrencyCode } from '@paddle/paddle-js';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 
 const buzzPurchaseMetadataSchema = z

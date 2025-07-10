@@ -1,5 +1,5 @@
 import type { Veo3VideoGenInput } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   negativePromptSchema,
@@ -15,7 +15,7 @@ export const veo3AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const veo3Duration = [8] as const;
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('veo3').catch('veo3'),
+  engine: z.literal('veo3').default('veo3').catch('veo3'),
   // sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   negativePrompt: negativePromptSchema,

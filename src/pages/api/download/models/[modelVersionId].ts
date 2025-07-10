@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { colorDomains, constants, getRequestDomainColor } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';

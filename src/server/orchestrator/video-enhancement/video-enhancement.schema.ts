@@ -1,4 +1,4 @@
-import z from 'zod';
+import * as z from 'zod/v4';
 
 export type VideoEnhancementSchema = z.infer<typeof videoEnhancementSchema>;
 export const videoEnhancementSchema = z.object({
@@ -6,5 +6,5 @@ export const videoEnhancementSchema = z.object({
   width: z.number(),
   height: z.number(),
   multiplier: z.number().optional(),
-  params: z.record(z.any()),
+  params: z.record(z.string(), z.any()),
 });

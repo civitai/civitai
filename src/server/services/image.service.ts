@@ -7,7 +7,7 @@ import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
-import { isDev, isProd } from '~/env/other';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -23,7 +23,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, getExplainSql, preventReplicationLag } from '~/server/db/db-helpers';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
@@ -1727,12 +1727,16 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
-      `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
+      `((NOT availability = ${Availability.Private})${
+        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
+      })`
     );
 
     filters.push(
       // Avoids blocked resources to the public
-      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS) OR "userId" = ${currentUserId})`
+      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${
+        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
+      })`
     );
   }
 
@@ -1741,7 +1745,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true OR "userId" = ${currentUserId})`);
+    filters.push(`(NOT poi = true${currentUserId ? ` OR "userId" = ${currentUserId}` : ''})`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -1807,7 +1811,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
   else browsingLevel = onlySelectableLevels(browsingLevel);
   const browsingLevels = Flags.instanceToArray(browsingLevel);
-  if (isModerator) browsingLevels.push(0);
+  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+
+  if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
   const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
     ? 'combinedNsfwLevel'
@@ -1815,11 +1821,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
-  const nsfwUserFilters = [
-    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
-    makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
-  ];
-  // if (pending) {}
+  const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
+  if (currentUserId)
+    nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+
   nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
@@ -1997,11 +2002,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
     }
 
-    const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filteredHits = results.hits.filter((hit) => {
-      if (hit.id === 17383305) {
-        console.log('hit', hit);
-      }
       if (!hit.url)
         // check for good data
         return false;
@@ -2358,7 +2359,7 @@ export const getImage = async ({
         !withoutPost
           ? Prisma.sql`
             p."availability" "availability",
-            p."publishedAt" "publishedAt",
+            GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
           `
           : Prisma.sql`'Public' "availability",`
       }
@@ -4090,6 +4091,7 @@ async function removeNameReference(images: number[]) {
       UPDATE "Image" i
         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
           "needsReview" = null,
+          poi = false,
           ingestion = 'Scanned'::"ImageIngestionStatus"
       FROM updates t
       WHERE t.id = i.id;

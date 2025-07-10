@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import recommendersCaller from '~/server/http/recommenders/recommenders.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';

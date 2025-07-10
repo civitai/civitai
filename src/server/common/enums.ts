@@ -108,6 +108,7 @@ export enum ArticleSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  RecentlyUpdated = 'Recently Updated',
 }
 
 export enum CheckpointType {

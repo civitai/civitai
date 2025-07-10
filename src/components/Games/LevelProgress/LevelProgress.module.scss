@@ -37,6 +37,8 @@
   flex-direction: column;
   align-items: center;
   overflow: visible;
-  animation: fadeOut 500ms ease-in 2s forwards;
-  will-change: opacity;
+  & :global {
+    animation: fadeOut 500ms ease-in 2s forwards;
+    will-change: opacity;
+  }
 }

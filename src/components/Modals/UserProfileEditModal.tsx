@@ -13,7 +13,6 @@ import {
   Popover,
   Stack,
   Text,
-  useMantineTheme,
   Modal,
 } from '@mantine/core';
 import React, { useEffect, useMemo, useRef } from 'react';
@@ -44,7 +43,7 @@ import {
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
 import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -96,7 +95,6 @@ export default function UserProfileEditModal() {
 
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const theme = useMantineTheme();
   const featureFlags = useFeatureFlags();
 
   // Keep track of old data to compare and make only the necessary requests
@@ -395,7 +393,7 @@ export default function UserProfileEditModal() {
   ].filter(isDefined);
 
   return (
-    <Modal {...dialog} withCloseButton={false} closeOnEscape={false} size="xl">
+    <Modal {...dialog} withCloseButton={false} closeOnEscape={false} withinPortal={false} size="xl">
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           <Group justify="space-between">

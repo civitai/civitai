@@ -1,5 +1,5 @@
 import { CsamReportType } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 export type CsamCapabilityType = keyof typeof csamCapabilitiesDictionary;

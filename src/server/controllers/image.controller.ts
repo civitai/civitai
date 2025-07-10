@@ -400,6 +400,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
+        sortAt: image.sortAt,
         createdAt,
         user,
         images,

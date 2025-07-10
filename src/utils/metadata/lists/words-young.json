@@ -59,6 +59,8 @@
     "under grown",
     "un grown",
     "very young",
+    "aged down",
+    "aged_down",
     "\\w*kg[0-9]+\\w*",
     "\\w*infant\\w*",
     "\\w*kindergartener\\w*",

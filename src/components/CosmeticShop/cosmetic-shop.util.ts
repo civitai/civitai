@@ -1,5 +1,5 @@
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -13,10 +13,8 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { UpsertCosmeticInput } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { stringArray } from '~/utils/zod-helpers';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 export const useQueryCosmeticShopItemsPaged = (
@@ -258,20 +256,11 @@ export const useQueryShop = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery(
-    {
-      ...filters,
-    },
-    {
-      ...options,
-      enabled: options?.enabled ?? true,
-    }
+    { ...filters },
+    { ...options, enabled: options?.enabled ?? true }
   );
 
-  if (data) {
-    return { cosmeticShopSections: data, ...rest };
-  }
-
-  return { cosmeticShopSections: [], ...rest };
+  return { cosmeticShopSections: data, ...rest };
 };
 
 export const useShopLastViewed = () => {

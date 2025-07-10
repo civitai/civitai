@@ -1,7 +1,7 @@
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import dayjs from 'dayjs';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';
 
 const minDate = new Date();

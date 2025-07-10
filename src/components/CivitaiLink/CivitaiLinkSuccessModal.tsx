@@ -1,6 +1,6 @@
 import { Stack, Title, Button, ThemeIcon, Modal } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';

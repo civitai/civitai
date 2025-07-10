@@ -4,7 +4,7 @@ import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useFormStorage } from '~/hooks/useFormStorage';

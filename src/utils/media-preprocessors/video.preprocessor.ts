@@ -29,7 +29,10 @@ export const getVideoData = async (src: string) =>
       let timedOut = false;
       setTimeout(() => (timedOut = true), 3000);
       function check() {
-        if (timedOut) reject('video preprocessing timed out');
+        if (timedOut)
+          reject(
+            'Failed to read file. This may indicate that the file is poorly encoded for use on the web.'
+          );
         else if (video.videoWidth > 0 && video.videoHeight > 0) resolve(getVideoMetadata(video));
         else requestAnimationFrame(check);
       }

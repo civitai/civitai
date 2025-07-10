@@ -1,6 +1,6 @@
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 

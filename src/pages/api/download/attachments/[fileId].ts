@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';

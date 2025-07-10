@@ -43,7 +43,7 @@
     // "**/*.tsx",
     // "**/*.cjs",
     // "**/*.mjs",
-    // "scripts",
+     "scripts/local-dev/*.ts",
     "src",
     "tests",
     ".next/types/**/*.ts"

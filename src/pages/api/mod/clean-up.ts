@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbRead } from '~/server/db/client';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { Prisma } from '@prisma/client';
 import { getS3Client } from '~/utils/s3-utils';

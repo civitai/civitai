@@ -1,5 +1,5 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export const reactableEntities: readonly [string, ...string[]] = [
   'question',

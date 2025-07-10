@@ -1,5 +1,5 @@
 // @ts-check
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { clientEnv, clientSchema } from './schema';
 
 const _clientEnv = clientSchema.safeParse(clientEnv);

@@ -53,10 +53,11 @@ export function getPhases({ month, flip }: { month?: Date; flip?: boolean } = {}
 }
 
 export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {
-  if (!WITHDRAWAL_FEES[method]) {
+  const withDrawalFees = WITHDRAWAL_FEES[method];
+  if (!withDrawalFees) {
     return 0;
   }
-  const { type, amount: fee } = WITHDRAWAL_FEES[method];
+  const { type, amount: fee } = withDrawalFees;
   return type === 'percent' ? amount * fee : fee;
 }
 

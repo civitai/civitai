@@ -87,12 +87,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             let data: PreprocessFileReturnType | null;
             try {
               data = await preprocessFile(file);
-            } catch {
+            } catch (e: any) {
               data = null;
               showErrorNotification({
-                error: {
-                  message: `Failed to read file: ${file.name}. This may indicate that the file is poorly encoded for use on the web.`,
-                },
+                title: `Error: ${file.name}`,
+                error: e instanceof Error ? e : { message: e },
+                autoClose: 6000,
               });
             }
             if (!data) return null;

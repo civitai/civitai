@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { VaultSort } from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';

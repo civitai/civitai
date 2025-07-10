@@ -1,7 +1,8 @@
 import { mergeWith } from 'lodash-es';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag } from '~/server/db/db-helpers';
+
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 const challengeConfigSchema = z.object({

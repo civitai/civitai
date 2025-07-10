@@ -30,7 +30,7 @@ import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortBu
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,

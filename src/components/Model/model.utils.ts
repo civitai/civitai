@@ -1,7 +1,7 @@
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

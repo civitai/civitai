@@ -1,17 +1,19 @@
 import { useRouter } from 'next/router';
+import type { ParsedUrlQueryInput } from 'querystring';
 import { useMemo } from 'react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { removeEmpty } from '~/utils/object-helpers';
 
-export function useZodRouteParams<TSchema extends z.AnyZodObject>(schema: TSchema) {
+export function useZodRouteParams<TSchema extends z.ZodObject>(schema: TSchema) {
   const { query, pathname, replace } = useRouter();
 
   return useMemo(() => {
     const result = schema.safeParse(query);
     const data = result.success ? result.data : {};
 
-    const replaceParams = (params: Partial<z.infer<TSchema>>) => {
-      replace({ pathname, query: removeEmpty({ ...query, ...params }) }, undefined, {
+    const replaceParams = (params: Partial<z.input<TSchema>>) => {
+      const data = removeEmpty(schema.parse({ ...query, ...params }));
+      replace({ pathname, query: data as ParsedUrlQueryInput }, undefined, {
         shallow: true,
         scroll: false,
       });

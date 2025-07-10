@@ -1,6 +1,6 @@
 import { env } from 'process';
 import sanitize from 'sanitize-html';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -47,7 +47,7 @@ export default WebhookEndpoint(async function handler(req, res) {
           collectionId?: number;
         }[]
       >`
-          SELECT 
+          SELECT
             i.id as "imageId",
             i.url as "imageUrl",
             p.title,

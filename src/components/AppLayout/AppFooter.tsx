@@ -3,7 +3,6 @@ import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { ChatPortal } from '~/components/Chat/ChatProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
@@ -106,7 +105,6 @@ export function AppFooter() {
       className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
       style={!showFooter ? { transform: 'translateY(var(--footer-height))' } : undefined}
     >
-      <ChatPortal showFooter={showFooter} />
       <div className="absolute bottom-[var(--footer-height)] right-2 group-[.no-scroll]:right-4">
         <div className="relative mb-2  flex gap-2 group-[.no-scroll]:mb-3">
           <Button

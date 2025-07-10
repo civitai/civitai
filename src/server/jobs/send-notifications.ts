@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEmpty } from 'lodash-es';
 import { isPromise } from 'util/types';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { notifDbWrite } from '~/server/db/notifDb';

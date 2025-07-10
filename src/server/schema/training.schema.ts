@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { autoCaptionSchema } from '~/store/training.store';
 

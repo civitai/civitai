@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
 import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   articlesSearchIndex,
@@ -190,7 +191,8 @@ function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
         // console.log('processing chunk', chunk.length, fn.name);
         await fn(chunk);
       }
-    } catch (e) {
+    } catch (e: any) {
+      logToAxiom({ type: 'error', name: 'update-nsfw-levels-batcher', message: e.message });
       console.log('processing chunk', chunk.length, fn.name);
     }
   });

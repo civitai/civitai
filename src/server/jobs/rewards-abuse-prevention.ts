@@ -1,6 +1,6 @@
 import { chunk } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';

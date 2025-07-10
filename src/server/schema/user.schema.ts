@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { ColorDomain, colorDomains, constants } from '~/server/common/constants';
+import * as z from 'zod/v4';
+import { constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -57,7 +57,7 @@ export const getAllUsersInput = getAllQuerySchema
   .extend({
     email: z.string(),
     ids: commaDelimitedNumberArray(),
-    include: commaDelimitedEnumArray(z.enum(['status', 'avatar'])).default([]),
+    include: commaDelimitedEnumArray(['status', 'avatar']).default([]),
     excludedUserIds: z.array(z.number()).optional(),
     contestBanned: z.boolean().optional(),
   })
@@ -196,6 +196,7 @@ export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
 export type TourSettingsSchema = z.infer<typeof tourSettingsSchema>;
 const tourSettingsSchema = z.record(
+  z.string(),
   z.object({
     completed: z.boolean().optional(),
     currentStep: z.number().optional(),
@@ -213,13 +214,13 @@ export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
-  features: z.record(z.boolean()).optional(),
+  features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.string().email().optional(),
-  creatorsProgramCodeOfConductAccepted: z.union([z.boolean().optional(), z.date().optional()]),
+  creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),

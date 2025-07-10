@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -726,7 +726,8 @@ async function updateImageScanJobs({
       ${ingestion ? `"ingestion" = '${ingestion}',` : ''}
       ${nsfwLevel ? `"nsfwLevel" = ${nsfwLevel},` : ''}
       ${blockedFor ? `"blockedFor" = '${blockedFor}',` : ''}
-      ${aiRating ? `"aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}',` : ''}
+      ${aiRating ? `"aiNsfwLevel" = ${aiRating},` : ''}
+      ${aiModel ? `"aiModel" = '${aiModel}',` : ''}
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
       WHERE id = ${id}
       RETURNING "scanJobs";

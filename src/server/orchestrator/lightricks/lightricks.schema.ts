@@ -1,5 +1,5 @@
 import type { LightricksVideoGenInput } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   negativePromptSchema,
@@ -15,7 +15,7 @@ export const lightricksAspectRatios = ['16:9', '9:16'] as const;
 export const lightricksDuration = [5] as const;
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('lightricks').catch('lightricks'),
+  engine: z.literal('lightricks').default('lightricks').catch('lightricks'),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   negativePrompt: negativePromptSchema,

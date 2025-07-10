@@ -1,11 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
+import { isDev } from '~/env/other';
 import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
@@ -36,7 +36,7 @@ export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; unfeatured: boolean; count: number }]>`
     SELECT "id",
            "name",
-           "unfeatured"
+           "unfeatured",
            0 as count
     FROM "Tag"
     WHERE "name" = ${name}
@@ -155,7 +155,8 @@ export const getTags = async ({
 
   const tagsOrderBy: string[] = [];
   if (query) tagsOrderBy.push(`LENGTH(t."name")`);
-  if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`);
+  if (isDev) tagsOrderBy.push(`t."name"`); // can't be bothered to update TagRank in gen_seed
+  else if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`);
   else if (sort === TagSort.MostModels) tagsOrderBy.push(`r."modelCountAllTimeRank"`);
   else if (sort === TagSort.MostPosts) tagsOrderBy.push(`r."postCountAllTimeRank"`);
   else if (sort === TagSort.MostArticles) tagsOrderBy.push(`r."articleCountAllTimeRank"`);

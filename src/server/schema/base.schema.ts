@@ -1,7 +1,6 @@
 import { Availability } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { parseNumericString } from '~/utils/query-string-helpers';
 
 export const getByIdSchema = z.object({ id: z.number() });
 export type GetByIdInput = z.infer<typeof getByIdSchema>;
@@ -13,7 +12,7 @@ export const getByIdStringSchema = z.object({ id: z.string() });
 export type GetByIdStringInput = z.infer<typeof getByIdStringSchema>;
 
 const limit = z.coerce.number().min(1).max(200).default(20);
-const page = z.preprocess(parseNumericString, z.number().min(0).default(1));
+const page = z.coerce.number().min(0).default(1);
 
 export type PaginationInput = z.infer<typeof paginationSchema>;
 export const paginationSchema = z.object({

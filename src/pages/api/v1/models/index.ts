@@ -2,7 +2,7 @@ import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { CollectionType, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -69,7 +69,7 @@ export default MixedAuthEndpoint(async function handler(
   const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   // Handle pagination
-  const { limit, page, cursor, query, ...data } = parsedParams.data;
+  const { limit, page, cursor, query, ids: queryIds, ...data } = parsedParams.data;
   let skip: number | undefined;
   const usingPaging = page && !cursor;
   if (usingPaging) {
@@ -97,7 +97,7 @@ export default MixedAuthEndpoint(async function handler(
       .json({ error: 'Cannot use page param with query search. Use cursor-based pagination.' });
   }
 
-  let ids: number[] = [];
+  let searchIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
     // Fetch IDs from Meilisearch
@@ -108,9 +108,9 @@ export default MixedAuthEndpoint(async function handler(
       sort: ['id:desc'],
     });
     // @ts-ignore
-    ids = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
+    searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
     meiliNextCursor =
-      meiliResult?.hits?.length === limit ? ids[ids.length - 1]?.toString() : undefined;
+      meiliResult?.hits?.length === limit ? searchIds[searchIds.length - 1]?.toString() : undefined;
   }
 
   try {
@@ -121,7 +121,7 @@ export default MixedAuthEndpoint(async function handler(
         take: limit,
         skip: !query ? skip : undefined,
         cursor: !query ? cursor : undefined,
-        ids: query ? ids : undefined,
+        ids: query ? searchIds : queryIds,
         collectionId,
         disablePoi: true,
         disableMinor: true,

@@ -1,11 +1,11 @@
 import { openConfirmModal } from '@mantine/modals';
 import { useCallback, useEffect } from 'react';
 import type { EventType, FieldPath, UseFormReturn } from 'react-hook-form';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 
-export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TContext>({
+export function useFormStorage<TSchema extends z.ZodObject, TContext>({
   schema,
   timeout,
   form,
@@ -14,15 +14,15 @@ export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TConte
 }: {
   schema: TSchema;
   timeout: number;
-  form: UseFormReturn<z.infer<TSchema>, TContext>;
+  form: UseFormReturn<z.input<TSchema>, TContext, z.output<TSchema>>;
   key: string;
   watch: (
-    value: DeepPartial<z.infer<TSchema>>,
+    value: DeepPartial<z.input<TSchema>>,
     info: {
-      name?: FieldPath<z.infer<TSchema>>;
+      name?: FieldPath<z.input<TSchema>>;
       type?: EventType;
     }
-  ) => DeepPartial<z.infer<TSchema>> | void;
+  ) => DeepPartial<z.input<TSchema>> | void;
 }) {
   const debouncer = useDebouncer(timeout);
 
@@ -54,7 +54,7 @@ export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TConte
           const result = schema.safeParse({ ...form.getValues(), ...initialValue });
           if (!result.success)
             showErrorNotification({ error: new Error('could not restore unsaved changes') });
-          else form.reset(result.data);
+          else form.reset(result.data as z.input<TSchema>);
         },
       });
     }

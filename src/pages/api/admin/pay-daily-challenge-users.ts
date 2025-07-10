@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { getChallengeDetails } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { withRetries } from '~/utils/errorHandling';

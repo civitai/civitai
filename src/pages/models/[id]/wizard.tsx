@@ -1,7 +1,7 @@
-import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
-import { getDbWithoutLag } from '~/server/db/db-helpers';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({

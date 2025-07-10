@@ -5,7 +5,7 @@ import type {
 } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
