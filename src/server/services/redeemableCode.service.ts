@@ -18,6 +18,7 @@ import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
+import { deliverMonthlyCosmetics } from './subscriptions.service';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -291,9 +292,8 @@ export async function consumeRedeemableCode({
         amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
         description: `Membership Bonus`,
         transactionType: TransactionType.Purchase,
-        externalTransactionId: `civitai-membership:${date}:${userId}:${
-          consumedCode.price!.product.id
-        }`,
+        externalTransactionId: `civitai-membership:${date}:${userId}:${consumedCode.price!.product.id
+          }`,
         details: {
           type: 'membership-purchase',
           date: date,
@@ -303,8 +303,13 @@ export async function consumeRedeemableCode({
 
       await invalidateSession(userId);
       await getMultipliersForUser(userId, true);
+      await deliverMonthlyCosmetics({
+        userIds: [userId],
+      })
     });
   }
+
+
 
   return consumedCode;
 }
