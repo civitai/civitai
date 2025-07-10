@@ -1,9 +1,6 @@
 {
   "editor.formatOnSave": true,
   "editor.tabSize": 2,
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "never"
-  },
   "files.eol": "\n",
   "[sql]": {
     "editor.formatOnSave": false
@@ -12,9 +9,7 @@
   "[typescriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
-  "typescript.preferences.autoImportFileExcludePatterns": [
-    "@prisma/client"
-  ],
+  "typescript.preferences.autoImportFileExcludePatterns": ["@prisma/client"],
   "makefile.configureOnOpen": false,
   "chat.agent.enabled": true,
   "mcp": {

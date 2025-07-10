@@ -1,6 +1,7 @@
 import type { Veo3VideoGenInput } from '@civitai/client';
 import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import type { ResourceInput } from '~/server/orchestrator/infrastructure/base.schema';
 import {
   negativePromptSchema,
   seedSchema,
@@ -13,6 +14,41 @@ import { numberEnum } from '~/utils/zod-helpers';
 
 export const veo3AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const veo3Duration = [8] as const;
+// export const veo3ModelOptions: { label: string; value: ResourceInput }[] = [
+//   {
+//     label: 'Fast Mode',
+//     value: { id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1995399' },
+//   },
+//   {
+//     label: 'Standard',
+//     value: { id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1885367' },
+//   },
+// ];
+
+export const veo3ModelOptions = [
+  {
+    label: 'Fast Mode',
+    value: '1995399',
+  },
+  {
+    label: 'Standard',
+    value: '1885367',
+  },
+];
+
+export const veo3Models = [
+  { id: 1995399, air: 'urn:air:other:checkpoint:civitai:1665714@1995399' },
+  { id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1885367' },
+];
+
+export function getVeo3Checkpoint(resources: ResourceInput[] | null) {
+  const model = resources?.find((x) => veo3Models.some((m) => m.id === x.id));
+  return model ?? veo3Models[0];
+}
+
+export function removeVeo3CheckpointFromResources(resources: ResourceInput[] | null) {
+  return resources?.filter((x) => !veo3Models.some((m) => m.id === x.id)) ?? [];
+}
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('veo3').default('veo3').catch('veo3'),
@@ -30,13 +66,13 @@ const schema = baseVideoGenerationSchema.extend({
 export const veo3ModelVersionId = 1885367;
 export const veo3GenerationConfig = VideoGenerationConfig2({
   label: 'Google VEO 3',
-  whatIfProps: ['sourceImage', 'duration', 'aspectRatio', 'generateAudio'],
+  whatIfProps: ['sourceImage', 'duration', 'aspectRatio', 'generateAudio', 'resources'],
   metadataDisplayProps: ['process', 'aspectRatio', 'duration', 'seed'],
   schema,
   defaultValues: {
     aspectRatio: '16:9',
     generateAudio: false,
-    resources: [{ id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1885367' }],
+    resources: [veo3Models[0]],
   },
   processes: ['txt2vid'],
   transformFn: (data) => ({ ...data, process: 'txt2vid' }),
@@ -62,9 +98,10 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
   //   }
   // },
   inputFn: ({ ...args }): Veo3VideoGenInput => {
+    const fastMode = !!args.resources?.find((x) => x.id === veo3Models[0].id);
     return {
       ...args,
-      // sourceImage: sourceImage?.url,
+      fastMode,
     };
   },
 });
