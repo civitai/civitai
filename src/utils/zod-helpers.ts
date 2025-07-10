@@ -49,7 +49,7 @@ export function stringToNumberArray<I extends z.ZodArray<z.ZodNumber>>(schema?: 
 export function stringToDate<I extends z.ZodDate>(schema?: I) {
   return z.preprocess((val: string | number | Date, ctx) => {
     const date = new Date(val);
-    if (!isValidDate(val)) {
+    if (!isValidDate(date)) {
       ctx.addIssue(`'${val.toString()}' cannot be converted to a date`);
     }
     return date;
