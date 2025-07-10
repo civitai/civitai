@@ -839,9 +839,9 @@ export const getAllImages = async (
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
       logToAxiom(
-        { type: 'info', name: 'debug-image-infinite', message: 'early return', input },
+        { type: 'cant-use-search', name: 'debug-image-infinite', message: 'early return', input },
         'temp-search'
-      );
+      ).catch(() => null);
       return { items: [], nextCursor: undefined };
     }
   }
@@ -1000,7 +1000,7 @@ export const getAllImages = async (
     // Check if user has access to collection
     if (!permissions.read) {
       logToAxiom(
-        { type: 'info', name: 'debug-image-infinite', message: 'no read access', input },
+        { type: 'cant-use-search', name: 'debug-image-infinite', message: 'no read access', input },
         'temp search'
       ).catch(() => null);
       return { nextCursor: undefined, items: [] };
@@ -1393,7 +1393,7 @@ export const getAllImages = async (
 
   logToAxiom(
     {
-      type: 'info',
+      type: 'cant-use-search',
       name: 'debug-image-infinite',
       message: 'returning images',
       input,
