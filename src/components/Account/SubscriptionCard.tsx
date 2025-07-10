@@ -9,6 +9,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 export function SubscriptionCard() {
   const { subscription, subscriptionLoading } = useActiveSubscription();
@@ -18,6 +19,8 @@ export function SubscriptionCard() {
   const { image } = subscription
     ? getPlanDetails(subscription?.product, features)
     : { image: null };
+
+  const isCivitaiProvider = subscription.product.provider !== PaymentProvider.Civitai;
 
   return (
     <Card withBorder>
@@ -65,12 +68,12 @@ export function SubscriptionCard() {
                   </Text>
                 )}
                 <Text size="sm" c={subscription.cancelAt ? 'red' : 'dimmed'}>
-                  {subscription.cancelAt ? 'Ends' : 'Renews'}{' '}
+                  {subscription.cancelAt || isCivitaiProvider ? 'Ends' : 'Renews'}{' '}
                   {formatDate(subscription.currentPeriodEnd)}
                 </Text>
               </Stack>
             </Group>
-            {!subscription.cancelAt && (
+            {!subscription.cancelAt && isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
                 buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}

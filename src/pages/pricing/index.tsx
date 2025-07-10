@@ -43,6 +43,7 @@ import { joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from './index.module.scss';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 export default function Pricing() {
   const router = useRouter();
@@ -80,6 +81,7 @@ export default function Pricing() {
     tier: 'free',
   }) as SubscriptionProductMetadata;
   const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
+  const isCivitaiProvider = subscription && subscriptionPaymentProvider === PaymentProvider.Civitai;
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
@@ -230,7 +232,7 @@ export default function Pricing() {
               </Stack>
             </AlertWithIcon>
           )}
-          {activeSubscriptionIsNotDefaultProvider && (
+          {activeSubscriptionIsNotDefaultProvider && !isCivitaiProvider && (
             <AlertWithIcon
               color="red"
               iconColor="red"
