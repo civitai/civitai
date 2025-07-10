@@ -11,15 +11,15 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
-import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { useMemo } from 'react';
 import * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -34,15 +34,19 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { Collection } from '~/components/Collection/Collection';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -56,6 +60,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -63,11 +68,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -244,6 +246,15 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               <Text c="dimmed" size="sm">
                 {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
               </Text>
+              {article.publishedAt &&
+                article.updatedAt &&
+                dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
+                  <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
+                    <Text size="sm" c="dimmed" className="cursor-default">
+                      (Updated: {dayjs().to(dayjs(article.updatedAt))})
+                    </Text>
+                  </Tooltip>
+                )}
               {category && (
                 <>
                   <Divider orientation="vertical" />
