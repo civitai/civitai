@@ -43,7 +43,7 @@ const excludeLegendsRegex = /Donors|Knights/i;
 
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
-  date: z.coerce.date(),
+  date: z.coerce.date().optional(),
   position: numericString().optional(),
   board: z.enum(['season', 'legend']).default('season'),
 });
