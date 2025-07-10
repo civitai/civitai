@@ -19,7 +19,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
-import { logToAxiom } from '~/server/logging/client';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -361,10 +360,6 @@ export const getInfiniteImagesSchema = baseQuerySchema
     minorOnly: z.boolean().optional(),
   })
   .transform((value) => {
-    logToAxiom(
-      { type: 'info', name: 'debug-image-infinite', message: 'running transform', value },
-      'temp-search'
-    ).catch();
     if (value.withTags) {
       if (!value.include) value.include = [];
       if (!value.include.includes('tags')) value.include.push('tags');
