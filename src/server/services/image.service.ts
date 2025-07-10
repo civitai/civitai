@@ -838,15 +838,6 @@ export const getAllImages = async (
       // cacheTime = 0;
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
-      logToAxiom(
-        {
-          type: 'info',
-          name: 'debug-image-infinite',
-          message: 'early return',
-          input,
-        },
-        'temp-search'
-      ).catch(() => null);
       return { items: [], nextCursor: undefined };
     }
   }
@@ -867,7 +858,7 @@ export const getAllImages = async (
   }
 
   // [x]
-  if (include.includes('meta')) {
+  if (include.includes('meta') && !postId) {
     AND.push(
       Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`
     );
@@ -1004,15 +995,6 @@ export const getAllImages = async (
 
     // Check if user has access to collection
     if (!permissions.read) {
-      logToAxiom(
-        {
-          type: 'info',
-          name: 'debug-image-infinite',
-          message: 'no read access',
-          input,
-        },
-        'temp-search'
-      ).catch(() => null);
       return { nextCursor: undefined, items: [] };
     }
 
@@ -1401,17 +1383,20 @@ export const getAllImages = async (
 
   const imageMetrics = await getImageMetricsObject(filtered);
 
-  logToAxiom(
-    {
-      type: 'info',
-      name: 'debug-image-infinite',
-      message: 'returning images',
-      input,
-      rawImages,
-      filtered,
-    },
-    'temp-search'
-  ).catch(() => null);
+  if (isModerator) {
+    // Temp log for debugging
+    logToAxiom(
+      {
+        type: 'info',
+        name: 'debug-image-infinite',
+        message: 'returning images',
+        input,
+        rawImages,
+        filtered,
+      },
+      'temp-search'
+    ).catch(() => null);
+  }
 
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
