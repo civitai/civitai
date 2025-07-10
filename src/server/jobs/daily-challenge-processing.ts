@@ -625,25 +625,24 @@ async function pickWinners() {
   const winnerUserIds = winningEntries.map((entry) => entry.userId);
 
   // Update Article with winners, process/outcome, and metadata
-  const updateContent = await markdownToHtml(`
-    ## Challenge Complete!
-    ${process}
+  const updateContent = await markdownToHtml(`## Challenge Complete!
+${process}
 
-    ## Winners
-    ${winningEntries
-      .map(
-        (entry) => `### ${asOrdinal(entry.position)}. [${entry.username}](/user/${entry.username})
-    ${entry.reason}
 
-    **[View Entry](/images/${entry.imageId})**
-    `
-      )
-      .join('\n')}
+## Winners
+${winningEntries
+  .map(
+    (entry) => `### ${asOrdinal(entry.position)}. [${entry.username}](/user/${entry.username})
+${entry.reason}
 
-    ${outcome}
+**[View Entry](/images/${entry.imageId})**
+`
+  )
+  .join('\n')}
 
-    ---
-  `);
+${outcome}
+
+---`);
 
   await dbWrite.$executeRaw`
     UPDATE "Article"

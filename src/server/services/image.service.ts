@@ -838,6 +838,10 @@ export const getAllImages = async (
       // cacheTime = 0;
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
+      logToAxiom(
+        { type: 'info', name: 'debug-image-infinite', message: 'early return', input },
+        'temp-search'
+      );
       return { items: [], nextCursor: undefined };
     }
   }
@@ -994,7 +998,13 @@ export const getAllImages = async (
     });
 
     // Check if user has access to collection
-    if (!permissions.read) return { nextCursor: undefined, items: [] };
+    if (!permissions.read) {
+      logToAxiom(
+        { type: 'info', name: 'debug-image-infinite', message: 'no read access', input },
+        'temp search'
+      ).catch(() => null);
+      return { nextCursor: undefined, items: [] };
+    }
 
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
@@ -1007,14 +1017,14 @@ export const getAllImages = async (
         ${Prisma.raw(
           useRandomCursor
             ? `
-        ctcursor AS (
-          SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
-            WHERE ci."collectionId" = ${collectionId}
-              ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
-              AND ci."imageId" = ${cursor}
-            LIMIT 1
-        ),
-        `
+              ctcursor AS (
+                SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
+                  WHERE ci."collectionId" = ${collectionId}
+                    ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
+                    AND ci."imageId" = ${Number(cursor)}
+                  LIMIT 1
+              ),
+            `
             : ''
         )}
         ct AS (
@@ -1380,6 +1390,18 @@ export const getAllImages = async (
   });
 
   const imageMetrics = await getImageMetricsObject(filtered);
+
+  logToAxiom(
+    {
+      type: 'info',
+      name: 'debug-image-infinite',
+      message: 'returning images',
+      input,
+      rawImages,
+      filtered,
+    },
+    'temp search'
+  ).catch(() => null);
 
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
