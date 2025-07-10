@@ -52,9 +52,11 @@ export const deliverCivitaiMembershipBuzz = createJob(
       AND pr.metadata->>'monthlyBuzz' IS NOT NULL
     `;
 
-    console.log(data);
 
-    if (!data.length) return;
+    if (!data.length) {
+      console.log('No Civitai membership holders found for buzz delivery today');
+      return;
+    };
 
     const buzzTransactions = data
       .map((d) => {
