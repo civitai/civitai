@@ -20,7 +20,7 @@ export function SubscriptionCard() {
     ? getPlanDetails(subscription?.product, features)
     : { image: null };
 
-  const isCivitaiProvider = subscription.product.provider !== PaymentProvider.Civitai;
+  const isCivitaiProvider = subscription?.product?.provider !== PaymentProvider.Civitai;
 
   return (
     <Card withBorder>
