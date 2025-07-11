@@ -36,6 +36,7 @@ export const klingGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '1:1' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
+    data.mode = 'professional';
     delete data.priority;
     if (!data.sourceImage) {
       data.process = 'txt2vid';

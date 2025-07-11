@@ -62,7 +62,7 @@ export function KlingFormInput() {
           }))}
         />
       </div>
-      <div className="flex flex-col gap-0.5">
+      {/* <div className="flex flex-col gap-0.5">
         <div className="flex items-center gap-1">
           <Input.Label>Mode</Input.Label>
           <InfoPopover size="xs" iconProps={{ size: 14 }}>
@@ -77,7 +77,7 @@ export function KlingFormInput() {
             { label: 'Professional', value: KlingMode.PROFESSIONAL },
           ]}
         />
-      </div>
+      </div> */}
       <InputNumberSlider
         name="cfgScale"
         label={
