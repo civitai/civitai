@@ -255,20 +255,22 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
 ) {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
+  const resourceBaseModels = resources.map((x) => getBaseModelSetType(x.baseModel));
   // image base models
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Illustrious'))
+  if (resourceBaseModels.some((baseModel) => baseModel === 'Pony')) return 'Pony';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'SDXL')) return 'SDXL';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1')) return 'Flux1';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
     return 'Illustrious';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'OpenAI')) return 'OpenAI';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Imagen4')) return 'Imagen4';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1Kontext'))
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3')) return 'SD3';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3_5M')) return 'SD3_5M';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'OpenAI')) return 'OpenAI';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Imagen4')) return 'Imagen4';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
     return 'Flux1Kontext';
-  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD1')) return 'SD1';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of videoBaseModelSetTypes) {
     if (resources.some((x) => getBaseModelSetType(x.baseModel) === baseModelSet))
