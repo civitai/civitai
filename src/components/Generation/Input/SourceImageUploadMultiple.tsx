@@ -163,7 +163,7 @@ export function SourceImageUploadMultiple({
           {children(previewItems)}
         </Input.Wrapper>
         {}
-        {value?.some((x) => missingAiMetadata[x.url]) && (
+        {previewImages.some((x) => missingAiMetadata[x.url]) && (
           <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
             {`Outputs based on this image must be PG, PG-13, or they will be blocked and you will not be refunded.`}
           </Alert>
