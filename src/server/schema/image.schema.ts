@@ -34,12 +34,12 @@ const imageEntitiesSchema = z.enum(imageEntities);
 export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
 export const comfyMetaSchema = z
   .object({
-    prompt: z.object({}).passthrough(),
+    prompt: z.object({}).loose(),
     workflow: z
       .object({
-        nodes: z.object({}).passthrough().array().optional(),
+        nodes: z.object({}).loose().array().optional(),
       })
-      .passthrough(),
+      .loose(),
   })
   .partial();
 
@@ -57,7 +57,7 @@ export const externalMetaSchema = z.object({
       /**
        * Your service's home URL
        */
-      homepage: z.string().url().optional(),
+      homepage: z.url().optional(),
     })
     .optional(),
   /**
@@ -69,11 +69,11 @@ export const externalMetaSchema = z.object({
   /**
    * Link back to the URL used to create the media
    */
-  createUrl: z.string().url().optional(),
+  createUrl: z.url().optional(),
   /**
    * URL to link back to the source of the media
    */
-  referenceUrl: z.string().url().optional(),
+  referenceUrl: z.url().optional(),
 });
 export type ExternalMetaSchema = z.infer<typeof externalMetaSchema>;
 
@@ -119,7 +119,7 @@ export const civitaiResourceSchema = z.object({
   modelVersionId: z.number(),
 });
 
-export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
+export const imageMetaSchema = imageGenerationSchema.partial().loose();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
     comfy: z
@@ -140,7 +140,7 @@ export const imageMetaOutput = imageGenerationSchema
     process: z.string().optional(),
     type: z.string().optional(),
   })
-  .passthrough();
+  .loose();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({
@@ -200,7 +200,7 @@ export const imageSchema = z.object({
   modelVersionId: z.number().nullish(),
   type: z.enum(MediaType).default(MediaType.image),
   metadata: z.record(z.string(), z.any()).optional(),
-  externalDetailsUrl: z.string().url().optional(),
+  externalDetailsUrl: z.url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),
   index: z.number().optional(),
@@ -325,7 +325,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     userId: z.number().optional(),
     username: zc.usernameValidationSchema.optional(),
     // view: z.enum(['categories', 'feed']),
-    withMeta: z.boolean().optional(),
+    withMeta: z.boolean().default(false),
     requiringMeta: z.boolean().optional(),
 
     // - additional
@@ -362,7 +362,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
   .transform((value) => {
     if (value.withTags) {
       if (!value.include) value.include = [];
-      value.include.push('tags');
+      if (!value.include.includes('tags')) value.include.push('tags');
     }
     if (value.withMeta) {
       if (!value.include) value.include = [];

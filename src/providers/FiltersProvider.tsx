@@ -75,7 +75,7 @@ const imageFilterSchema = z.object({
   sort: z.enum(ImageSort).default(ImageSort.MostReactions),
   generation: z.enum(ImageGenerationProcess).array().optional(),
   types: z.array(z.enum(MediaType)).default([MediaType.image]),
-  withMeta: z.boolean().optional(),
+  withMeta: z.boolean().default(false),
   fromPlatform: z.boolean().optional(),
   hideAutoResources: z.boolean().optional(),
   hideManualResources: z.boolean().optional(),

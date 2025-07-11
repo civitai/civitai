@@ -1134,6 +1134,7 @@ export const getCollectionItemsByCollectionId = async ({
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
           pending: forReview,
+          withMeta: false,
         })
       : { items: [] };
 
