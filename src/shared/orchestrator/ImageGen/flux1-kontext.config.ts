@@ -82,7 +82,7 @@ export const flux1KontextConfig = ImageGenConfig({
       engine: params.engine,
       model,
       prompt: params.prompt,
-      images: [imageUrl],
+      images: imageUrl ? [imageUrl] : undefined,
       aspectRatio: params.aspectRatio,
       quantity: params.quantity,
       guidanceScale: params.cfgScale,
