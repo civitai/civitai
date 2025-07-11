@@ -1383,21 +1383,6 @@ export const getAllImages = async (
 
   const imageMetrics = await getImageMetricsObject(filtered);
 
-  if (isModerator) {
-    // Temp log for debugging
-    logToAxiom(
-      {
-        type: 'info',
-        name: 'debug-image-infinite',
-        message: 'returning images',
-        input,
-        rawImages,
-        filtered,
-      },
-      'temp-search'
-    ).catch(() => null);
-  }
-
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
       // meta: ImageMetaProps | null; // TODO - don't fetch meta

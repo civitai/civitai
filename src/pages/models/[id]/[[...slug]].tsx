@@ -341,10 +341,10 @@ export default function ModelDetailsV2({
       sort: ImageSort.MostReactions,
       limit: CAROUSEL_LIMIT,
       pending: true,
+      include: [],
+      withMeta: false,
     },
-    {
-      enabled: !!latestVersion,
-    }
+    { enabled: !!latestVersion }
   );
 
   const deleteMutation = trpc.model.delete.useMutation({
@@ -589,13 +589,16 @@ export default function ModelDetailsV2({
     description: model.description,
     name: model.name,
     image: imageUrl,
-    author: !model.user.deletedAt
-      ? {
-          '@type': 'Person',
-          name: model.user.username,
-          url: `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`,
-        }
-      : undefined,
+    author:
+      !model.user.deletedAt && model.user.username
+        ? {
+            '@type': 'Person',
+            name: model.user.username,
+            url: env.NEXT_PUBLIC_BASE_URL
+              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`
+              : undefined,
+          }
+        : undefined,
     datePublished: model.publishedAt,
     aggregateRating: {
       '@type': 'AggregateRating',
@@ -632,7 +635,7 @@ export default function ModelDetailsV2({
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${model.meta?.customMessage}.`;
+      : `Removal reason: ${model.meta?.customMessage ?? 'Flagged by system'}.`;
   const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
 
   return (
@@ -643,16 +646,20 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`}
         description={truncate(removeTags(model.description ?? ''), { length: 150 })}
         images={versionImages}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
-            rel: 'canonical',
-          },
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}`,
-            rel: 'alternate',
-          },
-        ]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [
+                {
+                  href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
+                  rel: 'canonical',
+                },
+                {
+                  href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}`,
+                  rel: 'alternate',
+                },
+              ]
+            : undefined
+        }
         schema={metaSchema}
         deIndex={
           model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
