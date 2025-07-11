@@ -1,4 +1,4 @@
-import { ActionIcon, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
 import {
   IconMaximize,
   IconMinimize,
@@ -158,18 +158,18 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     const showCustomControls = loaded && controls && !html5Controls;
     const enableAudioControl = ref.current && hasAudio(ref.current);
+    const inSafari =
+      typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
 
     if (!initialMuted && loaded && ref.current) ref.current.volume = volume;
 
     useEffect(() => {
       // Hard set the width to 100% for Safari because it doesn't render in full size otherwise ¯\_(ツ)_/¯ -Manuel
-      const inSafari =
-        typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
       if (inSafari && ref.current) {
         ref.current.classList.add('w-full');
       }
       if (fadeIn && ref.current?.readyState === 4) ref.current.style.opacity = '1';
-    }, [fadeIn]);
+    }, [fadeIn, inSafari]);
 
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
@@ -257,7 +257,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
-          preload="none"
+          preload={inSafari ? 'auto' : 'none'}
           onError={onError}
           {...props}
         >
