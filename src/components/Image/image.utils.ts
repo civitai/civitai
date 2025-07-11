@@ -111,7 +111,7 @@ export const useQueryImages = (
 
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     {
-      ...removeEmpty(filters),
+      ...filters,
       excludedTagIds,
       disablePoi: browsingSettingsAddons.settings.disablePoi,
       disableMinor: browsingSettingsAddons.settings.disableMinor,
