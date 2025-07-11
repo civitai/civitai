@@ -167,8 +167,9 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
 
 /**
  * Delivers monthly cosmetics to users with active Civitai subscriptions.
- * TODO: This should be updated to do any provider not only Civitai.
- * @param param0 
+ * TODO: This should be updated to do any provider not only Civitai.Not needed right now, but in the future
+ * @param { userIds = [], tx }: { userIds?: number[]; tx?: Prisma.TransactionClient }
+ * @returns {Promise<void>}
  */
 export const deliverMonthlyCosmetics = async ({
   userIds = [],
