@@ -19,6 +19,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
+import { Prisma } from '@prisma/client';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -166,6 +167,10 @@ export async function consumeRedeemableCode({
 
       let activeUserMembership = userMembership;
 
+      const consumedProductMetadata = consumedCode.price.product
+        .metadata as SubscriptionProductMetadata;
+      const consumedProductTier = consumedProductMetadata.tier ?? 'free';
+
       if (userMembership) {
         // Check states:
         if (userMembership.status !== 'active') {
@@ -202,10 +207,6 @@ export async function consumeRedeemableCode({
           );
         }
 
-        const consumedProductMetadata = consumedCode.price.product
-          .metadata as SubscriptionProductMetadata;
-
-        const consumerProductTier = consumedProductMetadata.tier ?? 'free';
 
         if (activeUserMembership) {
           const membershipProductMetadata = activeUserMembership.product
@@ -234,8 +235,8 @@ export async function consumeRedeemableCode({
                   ...subscriptionMetadata,
                   prepaids: {
                     ...subscriptionMetadata.prepaids,
-                    [consumerProductTier]:
-                      (subscriptionMetadata.prepaids?.[consumerProductTier] ?? 0) + consumedCode.unitValue
+                    [consumedProductTier]:
+                      (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) + consumedCode.unitValue
                   }
                 },
                 status: 'active',
@@ -250,9 +251,9 @@ export async function consumeRedeemableCode({
           }
           else if (consumedTierOrder > membershipTierOrder) {
             const now = dayjs();
-            const proratedDays = now.diff(
-              dayjs(activeUserMembership.currentPeriodEnd)) -
-              (subscriptionMetadata.prepaids?.[membershipProductMetadata.tier ?? 'free'] ?? 0) * 30;
+            console.log({ x: dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') })
+            const proratedDays = dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
+              (Number(subscriptionMetadata.prepaids?.[membershipProductMetadata.tier ?? 'free'] ?? 0)) * 30;
 
 
             await tx.customerSubscription.update({
@@ -272,12 +273,13 @@ export async function consumeRedeemableCode({
                   ...subscriptionMetadata,
                   prepaids: {
                     ...subscriptionMetadata.prepaids,
-                    [consumerProductTier]:
-                      (subscriptionMetadata.prepaids?.[consumerProductTier] ?? 0) + consumedCode.unitValue
+                    [consumedProductTier]:
+                      (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) + consumedCode.unitValue
                   },
                   proratedDays: {
                     ...subscriptionMetadata.proratedDays,
-                    [membershipProductMetadata.tier ?? 'free']: + Math.min(0, proratedDays)
+                    [membershipProductMetadata.tier ?? 'free']: (subscriptionMetadata?.proratedDays?.[membershipProductMetadata.tier ?? 'free'] ?? 0)
+                      + Math.max(0, proratedDays),
                   }
                 }
               },
@@ -292,70 +294,71 @@ export async function consumeRedeemableCode({
                   ...subscriptionMetadata,
                   prepaids: {
                     ...subscriptionMetadata.prepaids,
-                    [consumerProductTier]:
-                      (subscriptionMetadata.prepaids?.[consumerProductTier] ?? 0) + consumedCode.unitValue
+                    [consumedProductTier]:
+                      (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) + consumedCode.unitValue
                   }
                 },
               }
             });
           }
         }
+      }
 
-        if (!activeUserMembership) {
-          // Create a new membership:
-          const now = dayjs();
-          const metadata: SubscriptionMetadata = {
-            prepaids: {
-              [consumerProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
-            }
+      if (!activeUserMembership) {
+        // Create a new membership:
+        const now = dayjs();
+        const metadata = {
+          prepaids: {
+            [consumedProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
           }
-          await tx.customerSubscription.create({
-            data: {
-              id: `redeemable-code-${consumedCode.code}`,
-              userId: userId,
-              productId: consumedCode.price.product.id,
-              priceId: consumedCode.price.id,
-              status: 'active',
-              currentPeriodStart: now.toDate(),
-              currentPeriodEnd: now
-                .add(consumedCode.unitValue, consumedCode.price.interval as 'day' | 'month' | 'year')
-                .toDate(),
-              cancelAtPeriodEnd: true, // We assume they want to cancel at the end of the period
-              cancelAt: null, // No cancellation date yet
-              metadata: JSON.stringify(metadata),
-              createdAt: now.toDate(),
-            },
-          });
         }
-
-        const date = dayjs().format('YYYY-MM');
-
-        await withRetries(async () => {
-          // Grant buzz right away:
-          await grantBuzzPurchase({
+        await tx.customerSubscription.create({
+          data: {
+            id: `redeemable-code-${consumedCode.code}`,
             userId: userId,
-            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
-            description: `Membership Bonus`,
-            transactionType: TransactionType.Purchase,
-            externalTransactionId: `civitai-membership:${date}:${userId}:${consumedCode.price!.product.id
-              }`,
-            details: {
-              type: 'membership-purchase',
-              date: date,
-              productId: consumedCode.price!.product.id,
-            },
-          });
-
-          await deliverMonthlyCosmetics({
-            userIds: [userId],
-          })
+            productId: consumedCode.price.product.id,
+            priceId: consumedCode.price.id,
+            status: 'active',
+            currentPeriodStart: now.toDate(),
+            currentPeriodEnd: now
+              .add(consumedCode.unitValue, consumedCode.price.interval as 'day' | 'month' | 'year')
+              .toDate(),
+            cancelAtPeriodEnd: true, // We assume they want to cancel at the end of the period
+            cancelAt: null, // No cancellation date yet
+            metadata: metadata ?? {},
+            createdAt: now.toDate(),
+          },
         });
       }
 
-      await invalidateSession(userId);
-      await getMultipliersForUser(userId, true);
-      return consumedCode;
+      const date = dayjs().format('YYYY-MM');
+
+      await withRetries(async () => {
+        // Grant buzz right away:
+        await grantBuzzPurchase({
+          userId: userId,
+          amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
+          description: `Membership Bonus`,
+          transactionType: TransactionType.Purchase,
+          externalTransactionId: `civitai-membership:${date}:${userId}:${consumedCode.price!.product.id
+            }`,
+          details: {
+            type: 'membership-purchase',
+            date: date,
+            productId: consumedCode.price!.product.id,
+          },
+        });
+
+        await deliverMonthlyCosmetics({
+          userIds: [userId],
+        })
+      });
     }
+
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
+    return consumedCode;
+
   }, {
     // In prod it should hopefully be fast enough but better save than sorry
     timeout: 10000, // 10 seconds timeout for the transaction

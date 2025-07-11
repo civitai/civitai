@@ -6,6 +6,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
 import type { SubscriptionMetadata, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { constants } from '~/server/common/constants';
 
 export const deliverPrepaidMembershipBuzz = createJob(
   'deliver-civitai-membership-buzz',
@@ -19,6 +20,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
 
     const data = await dbWrite.$queryRaw<
       {
+        id: string;
         userId: number;
         buzzAmount: number | string;
         productId: string;
@@ -27,7 +29,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
         tier: string;
       }[]
     >`
-      SELECT 
+      SELECT
+        cs.id as "id",
         "userId",
         pr.metadata->>'monthlyBuzz' as "buzzAmount",
         pr.id as "productId",
@@ -91,6 +94,32 @@ export const deliverPrepaidMembershipBuzz = createJob(
     const batches = chunk(buzzTransactions, 100);
     for (const batch of batches) {
       await createBuzzTransactionMany(batch);
+    }
+
+    // Decrement prepaid counts for each user who received buzz
+    if (data.length > 0) {
+      console.log(`Decrementing prepaid counts for ${data.length} users`);
+
+      await dbWrite.$executeRaw`
+        UPDATE "CustomerSubscription" 
+        SET 
+          "metadata" = jsonb_set(
+            "metadata",
+            ARRAY['prepaids', (updates.data ->> 'tier')],
+            (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
+          ),
+          "updatedAt" = NOW()
+        FROM (
+          SELECT 
+            (value ->> 'id')::string AS "id",
+            value AS data
+          FROM json_array_elements(${JSON.stringify(data.map(d => ({
+        id: d.id,
+        tier: d.tier,
+      })))}::json)
+        ) AS updates
+        WHERE "CustomerSubscription"."id" = updates."id"
+      `;
     }
 
     // Grant cosmetics for Civitai membership holders
@@ -264,7 +293,7 @@ export const processPrepaidMembershipTransitions = createJob(
 
         console.log(
           `User ${membership.userId}: Transitioned from ${currentTier} to ${nextTier} tier. ` +
-          `New period ends: ${newPeriodEnd.format('YYYY-MM-DD')}. Remaining ${nextTier}: ${nextMonths - 1} months`
+          `New period ends: ${newPeriodEnd.format('YYYY-MM-DD')}. Prepaid ${nextTier} months will be decremented by buzz delivery job.`
         );
 
       } catch (error) {
