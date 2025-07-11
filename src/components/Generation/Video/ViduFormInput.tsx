@@ -78,16 +78,18 @@ export function ViduFormInput() {
         classNames={{ label: '@max-xs:text-xs' }}
       />
       {process === 'ref2vid' && (
-        <InputSourceImageUploadMultiple name="images" max={7} warnOnMissingAiMetadata>
-          {(previewItems) => (
-            <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
-              {previewItems.map((item, i) => (
-                <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
-              ))}
-              <SourceImageUploadMultiple.Dropzone />
-            </div>
-          )}
-        </InputSourceImageUploadMultiple>
+        <div className="-mx-2">
+          <InputSourceImageUploadMultiple name="images" max={7} warnOnMissingAiMetadata>
+            {(previewItems) => (
+              <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
+                {previewItems.map((item, i) => (
+                  <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                ))}
+                <SourceImageUploadMultiple.Dropzone />
+              </div>
+            )}
+          </InputSourceImageUploadMultiple>
+        </div>
       )}
       {process === 'img2vid' && (
         <div className="flex flex-col gap-2">

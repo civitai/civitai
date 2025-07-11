@@ -36,6 +36,7 @@ type SourceImageUploadProps = {
   children: (previewItems: ImagePreview[]) => React.ReactNode;
   max?: number;
   warnOnMissingAiMetadata?: boolean;
+  aspect?: 'square' | 'video';
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
 
 type ImageComplete = {
@@ -58,6 +59,7 @@ type SourceImageUploadContext = {
   max: number;
   missingAiMetadata: Record<string, boolean>;
   removeItem: (index: number) => void;
+  aspect?: 'square' | 'video';
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -72,6 +74,7 @@ export function SourceImageUploadMultiple({
   children,
   max = 1,
   warnOnMissingAiMetadata = false,
+  aspect = 'square',
   ...props
 }: SourceImageUploadProps) {
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
@@ -158,9 +161,10 @@ export function SourceImageUploadMultiple({
         max,
         missingAiMetadata,
         removeItem,
+        aspect,
       }}
     >
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8">
         <Input.Wrapper {...props} error={props.error ?? error}>
           {children(previewItems)}
         </Input.Wrapper>
@@ -185,7 +189,7 @@ export function SourceImageUploadMultiple({
 SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { previewItems, setError, setUploads, max } = useContext();
+  const { previewItems, setError, setUploads, max, aspect } = useContext();
   const canAddFiles = previewItems.length < max;
 
   async function handleUpload(src: string | Blob | File) {
@@ -242,7 +246,8 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
       onDrop={handleDrop}
       onDropCapture={handleDropCapture}
       className={clsx(
-        'flex aspect-square items-center justify-center',
+        'flex  items-center justify-center',
+        aspect === 'square' ? 'aspect-square' : 'aspect-video',
         {
           ['bg-gray-0 dark:bg-dark-6 border-gray-2 dark:border-dark-5 cursor-not-allowed [&_*]:text-gray-5 [&_*]:dark:text-dark-3']:
             !canAddFiles,
@@ -269,7 +274,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
           <IconUpload size={iconSize} stroke={1.5} />
         </Dropzone.Idle>
 
-        <Text>Images</Text>
+        <Text>{max === 1 ? 'Image' : 'Images'}</Text>
       </div>
     </Dropzone>
   );
@@ -280,7 +285,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   index,
   ...previewItem
 }: ImagePreview & { className?: string; index: number }) {
-  const { missingAiMetadata, removeItem } = useContext();
+  const { missingAiMetadata, removeItem, aspect } = useContext();
 
   function handleClick() {
     removeItem(index);
@@ -299,7 +304,12 @@ SourceImageUploadMultiple.Image = function ImagePreview({
       )}
     >
       <Card.Section p={0} m={0} withBorder>
-        <div className="relative flex aspect-square items-center justify-center">
+        <div
+          className={clsx(
+            'relative flex items-center justify-center',
+            aspect === 'square' ? 'aspect-square' : 'aspect-video'
+          )}
+        >
           {previewItem.status === 'uploading' && <Loader size="sm" />}
           {previewItem.status === 'complete' && (
             <>
