@@ -17,7 +17,6 @@ import {
 } from '~/server/search-index';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { number } from 'zod';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
@@ -197,7 +196,7 @@ export const grantCosmetics = async ({
       ${userId} "userId",
       c.id as "cosmeticId",
       'claimed'
-    FROM "Cosmetic" c 
+    FROM "Cosmetic" c
     WHERE c.id IN (${Prisma.join(cosmeticIds)})
     ON CONFLICT DO NOTHING;
   `;

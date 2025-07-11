@@ -7,7 +7,7 @@ import { Accordion, Badge, Chip, Group, Input, Text } from '@mantine/core';
 import { entityModerationCategories } from '~/libs/moderation';
 import { InputTextArea } from '~/libs/form';
 import type { TagVotableEntityType } from '~/libs/tags';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export const ImageNsfwForm = createReportForm({
   schema: reportNsfwDetailsSchema.extend({

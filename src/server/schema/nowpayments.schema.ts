@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 
 export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;

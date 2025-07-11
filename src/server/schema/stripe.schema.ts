@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { booleanString } from '~/utils/zod-helpers';

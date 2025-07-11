@@ -2,8 +2,8 @@ import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
-import type { TypeOf } from 'zod';
-import { z } from 'zod';
+
+import * as z from 'zod/v4';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
@@ -48,9 +48,9 @@ import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.c
 
 // #region [schemas]
 
-type PartialFormData = Partial<TypeOf<typeof formSchema>>;
-type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
-export type GenerationFormOutput = TypeOf<typeof formSchema>;
+type PartialFormData = Partial<z.input<typeof formSchema>>;
+// type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
+export type GenerationFormOutput = z.infer<typeof formSchema>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
@@ -242,7 +242,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 // #endregion
 
 // #region [Provider]
-type GenerationFormProps = Omit<UsePersistFormReturn<TypeOf<typeof formSchema>>, 'reset'> & {
+type GenerationFormProps = Omit<UsePersistFormReturn<typeof formSchema>, 'reset'> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
 };
@@ -326,11 +326,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         case 'run':
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources: GenerationResource[] = [
+          const formResources = [
             formData.model,
             ...(formData.resources ?? []),
             formData.vae,
-          ].filter(isDefined);
+          ].filter(isDefined) as GenerationResource[];
 
           const data = formatGenerationData({
             params: {
@@ -466,15 +466,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   function setValues(data: PartialFormData) {
     // don't overwrite quantity
     const { quantity, ...params } = data;
-    const limited = sanitizeTextToImageParams(params, status.limits);
     const formData = form.getValues();
-    form.reset({ ...formData, ...limited }, { keepDefaultValues: true });
+    const parsed = partialSchema.parse({ ...formData, ...params });
+    const limited = sanitizeTextToImageParams(parsed, status.limits);
+    form.reset(limited, { keepDefaultValues: true });
     // for (const [key, value] of Object.entries(limited)) {
     //   form.setValue(key as keyof PartialFormData, value);
     // }
   }
 
-  function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
+  function getDefaultValues(overrides: PartialFormData): PartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
     const sanitized = sanitizeTextToImageParams(
       {

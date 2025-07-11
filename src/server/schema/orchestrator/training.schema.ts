@@ -1,12 +1,12 @@
 import type { SessionUser } from 'next-auth';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';
 
 const imageTrainingBaseSchema = z.object({
   model: z.string(),
-  priority: z.nativeEnum(OrchPriorityTypes), // technically can be a number
-  engine: z.nativeEnum(OrchEngineTypes),
+  priority: z.enum(OrchPriorityTypes), // technically can be a number
+  engine: z.enum(OrchEngineTypes),
   trainingDataImagesCount: z.number(),
 });
 
@@ -27,8 +27,8 @@ const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
   loraName: z.string(),
   samplePrompts: z.array(z.string()),
   params: z.union([
-    trainingDetailsParams.extend({ engine: z.nativeEnum(OrchEngineTypes) }),
-    whatIfTrainingDetailsParams.extend({ engine: z.nativeEnum(OrchEngineTypes) }),
+    trainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
+    whatIfTrainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
   ]),
   modelFileId: z.number(),
 });

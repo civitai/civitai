@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.887",
+  "version": "5.0.897",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -39,7 +39,7 @@
     "analyze": "cross-env ANALYZE=true next build",
     "analyze:server": "cross-env BUNDLE_ANALYZE=server next build",
     "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build",
-    "tsc:trace": "tsc  --generateTrace trace --incremental false",
+    "tsc:trace": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc  --generateTrace ./trace --incremental false",
     "tsc:analyze": "npx analyze-trace trace",
     "test": "cross-env NODE_ENV=development npx playwright test",
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
@@ -61,7 +61,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.44",
+    "@civitai/client": "^0.1.9-beta.45",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^0.2.2",
@@ -73,7 +73,7 @@
     "@essentials/one-key-map": "^1.2.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
     "@headlessui/react": "2.2",
-    "@hookform/resolvers": "^3.3.4",
+    "@hookform/resolvers": "^5.1.1",
     "@mantine/core": "^7.17.7",
     "@mantine/dates": "^7.17.7",
     "@mantine/dropzone": "^7.17.7",
@@ -181,7 +181,7 @@
     "react-dom": "^18.3.1",
     "react-easy-crop": "^5.4.1",
     "react-highlight-within-textarea": "^3.2.1",
-    "react-hook-form": "^7.53.1",
+    "react-hook-form": "^7.59.0",
     "react-instantsearch": "7.12.0",
     "react-instantsearch-router-nextjs": "7.12.0",
     "react-intersection-observer": "^9.4.0",
@@ -218,7 +218,7 @@
     "uuid": "^9.0.0",
     "viem": "^2.30.6",
     "xml2js": "^0.6.2",
-    "zod": "^3.25.56",
+    "zod": "^3.25.67",
     "zustand": "^4.3.7"
   },
   "devDependencies": {

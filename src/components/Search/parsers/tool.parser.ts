@@ -1,5 +1,5 @@
 import type { UiState } from 'instantsearch.js';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
 import { searchParamsSchema } from '~/components/Search/parsers/base';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';

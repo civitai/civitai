@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export type ToggleHiddenSchemaOutput = z.output<typeof toggleHiddenSchema>;
 export const toggleHiddenSchema = z.discriminatedUnion('kind', [

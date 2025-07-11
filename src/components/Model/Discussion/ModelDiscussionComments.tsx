@@ -35,6 +35,7 @@ export function ModelDiscussionComments({
                       size="xs"
                       style={{ cursor: 'pointer' }}
                       onClick={toggleShowMore}
+                      inherit
                     >
                       Show {remaining} More
                     </Text>

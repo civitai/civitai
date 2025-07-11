@@ -10,7 +10,7 @@ import { MantineReactTable } from 'mantine-react-table';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { Collection } from '~/components/Collection/Collection';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';

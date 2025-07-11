@@ -84,7 +84,7 @@ function HiddenCommentsContent({
               <Divider
                 label={
                   <Group gap="xs" align="center">
-                    <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                    <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={toggleShowMore} inherit>
                       Show {remaining} More
                     </Text>
                   </Group>

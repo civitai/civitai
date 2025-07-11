@@ -647,7 +647,7 @@ export async function updatePendingImageRatings({
 
   // Get players that rated this image:
   const votes = await clickhouse.$query<{ userId: number; createdAt: Date; rating: number }>`
-    SELECT 
+    SELECT
       DISTINCT "userId",
       ir."createdAt",
       ir.rating
@@ -690,7 +690,7 @@ export async function updatePendingImageRatings({
         JOIN votes v ON p."userId" = v."userId" AND v."createdAt" >= p."startAt"
         WHERE "cleansedAt" IS NULL
     )
-    UPDATE "NewOrderSmite" 
+    UPDATE "NewOrderSmite"
     SET "remaining" = "remaining" - 1
     WHERE id IN (
       SELECT id FROM smites
@@ -869,7 +869,7 @@ async function getRatedImages({
     `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}`,
     async () => {
       const results = await clickhouse!.$query<{ imageId: number }>`
-        SELECT 
+        SELECT
           DISTINCT "imageId"
         FROM knights_new_order_image_rating
         WHERE ${AND.join(' AND ')}
@@ -1024,9 +1024,9 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   }>`
     SELECT "userId", "imageId", any("rating") as "rating"
     FROM (
-      SELECT 
-        "userId", 
-        "imageId", 
+      SELECT
+        "userId",
+        "imageId",
         "rating",
         row_number() OVER (PARTITION BY "imageId" ORDER BY "createdAt" DESC) as rn
       FROM knights_new_order_image_rating
@@ -1058,8 +1058,9 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
     if (!player) continue;
 
     const rankType = player.rankType ?? NewOrderRankType.Knight;
-    if (!raters[imageId][rankType]) raters[imageId][rankType] = [];
-    raters[imageId][rankType].push({ player, rating });
+    const arr = raters[imageId][rankType] ?? [];
+    arr.push({ player, rating });
+    raters[imageId][rankType] = arr;
   }
 
   return raters;

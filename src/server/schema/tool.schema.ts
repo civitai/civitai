@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ToolSort } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { ToolType } from '~/shared/utils/prisma/enums';

@@ -2,7 +2,7 @@ import { ActionIcon, Button, Card, Divider, Group, Rating, Stack, Text } from '@
 import { IconChevronDown, IconPhotoPlus, IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import {

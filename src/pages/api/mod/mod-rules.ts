@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbWrite } from '~/server/db/client';
 import { bustImageModRulesCache } from '~/server/services/image.service';
 import { bustModelModRulesCache } from '~/server/services/model.service';
@@ -9,9 +9,9 @@ import { EntityType, ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const payloadSchema = z.object({
   id: z.number(),
-  definition: z.object({}).passthrough(),
+  definition: z.record(z.string(), z.any()),
   userId: z.number(),
-  action: z.nativeEnum(ModerationRuleAction),
+  action: z.enum(ModerationRuleAction),
   entityType: z.enum(['Model', 'Image']),
   enabled: z.boolean().optional().default(true),
   order: z.number().optional(),

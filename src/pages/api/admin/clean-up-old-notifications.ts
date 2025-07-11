@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { notifDbWrite } from '~/server/db/notifDb';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';

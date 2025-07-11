@@ -1,12 +1,4 @@
 import { Prisma } from '@prisma/client';
-import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import {
-  ArticleEngagementType,
-  ArticleStatus,
-  Availability,
-  MetricTimeframe,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
@@ -14,16 +6,19 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { userContentOverviewCache } from '~/server/redis/caches';
 import type { GetInfiniteArticlesSchema, UpsertArticleInput } from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -40,13 +35,18 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
+import {
+  ArticleEngagementType,
+  ArticleStatus,
+  Availability,
+  MetricTimeframe,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { userContentOverviewCache } from '~/server/redis/caches';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import type { ImageMetadata } from '~/server/schema/media.schema';
 
 type ArticleRaw = {
   id: number;
@@ -305,11 +305,13 @@ export const getArticles = async ({
       orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     // else if (sort === ArticleSort.MostTipped)
     //   orderBy = `rank."tippedAmountCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
+    else if (sort === ArticleSort.RecentlyUpdated)
+      orderBy = `a."updatedAt" DESC NULLS LAST, ${orderBy}`;
 
     // eslint-disable-next-line prefer-const
     let [cursorProp, cursorDirection] = orderBy?.split(' ');
 
-    if (cursorProp === 'a."publishedAt"') {
+    if (cursorProp === 'a."publishedAt"' || cursorProp === 'a."updatedAt"') {
       // treats a date as a number of seconds since epoch
       cursorProp = `extract(epoch from ${cursorProp})`;
     }

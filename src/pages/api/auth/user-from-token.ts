@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { readToken } from '~/server/integrations/integration-token';

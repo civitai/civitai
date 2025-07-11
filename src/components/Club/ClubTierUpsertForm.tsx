@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import React from 'react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';

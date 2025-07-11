@@ -1,7 +1,7 @@
 import type { Scheduler, TextToImageStepTemplate } from '@civitai/client';
 import { TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';

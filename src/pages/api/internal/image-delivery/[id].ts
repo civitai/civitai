@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { dbRead } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

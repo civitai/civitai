@@ -2,7 +2,7 @@ import { Stack, Button, Modal, Group } from '@mantine/core';
 import { LinkType } from '~/shared/utils/prisma/enums';
 import { useSession } from 'next-auth/react';
 import { useEffect } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useForm, Form, InputText } from '~/libs/form';
 import { showErrorNotification } from '~/utils/notifications';
 import { zc } from '~/utils/schema-helpers';

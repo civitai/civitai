@@ -43,7 +43,12 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
               ))}
               {!!remaining && !showMore && (
                 <div className="flex justify-center">
-                  <Text c="blue.4" className="cursor-pointer text-sm" onClick={toggleShowMore}>
+                  <Text
+                    c="blue.4"
+                    className="cursor-pointer text-sm"
+                    onClick={toggleShowMore}
+                    inherit
+                  >
                     Show {remaining} More
                   </Text>
                 </div>

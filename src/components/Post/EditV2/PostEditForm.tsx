@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { Form, InputRTE, InputTextArea, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';

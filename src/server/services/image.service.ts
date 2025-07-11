@@ -858,7 +858,7 @@ export const getAllImages = async (
   }
 
   // [x]
-  if (include.includes('meta')) {
+  if (include.includes('meta') && !postId) {
     AND.push(
       Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`
     );
@@ -994,7 +994,9 @@ export const getAllImages = async (
     });
 
     // Check if user has access to collection
-    if (!permissions.read) return { nextCursor: undefined, items: [] };
+    if (!permissions.read) {
+      return { nextCursor: undefined, items: [] };
+    }
 
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
@@ -1007,14 +1009,14 @@ export const getAllImages = async (
         ${Prisma.raw(
           useRandomCursor
             ? `
-        ctcursor AS (
-          SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
-            WHERE ci."collectionId" = ${collectionId}
-              ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
-              AND ci."imageId" = ${cursor}
-            LIMIT 1
-        ),
-        `
+              ctcursor AS (
+                SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
+                  WHERE ci."collectionId" = ${collectionId}
+                    ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
+                    AND ci."imageId" = ${Number(cursor)}
+                  LIMIT 1
+              ),
+            `
             : ''
         )}
         ct AS (
@@ -1380,6 +1382,21 @@ export const getAllImages = async (
   });
 
   const imageMetrics = await getImageMetricsObject(filtered);
+
+  if (isModerator) {
+    // Temp log for debugging
+    logToAxiom(
+      {
+        type: 'info',
+        name: 'debug-image-infinite',
+        message: 'returning images',
+        input,
+        rawImages,
+        filtered,
+      },
+      'temp-search'
+    ).catch(() => null);
+  }
 
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
@@ -1782,7 +1799,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     userId = targetUser.id;
 
     logToAxiom(
-      { type: 'search-warning', message: 'Using username instead of userId' },
+      { type: 'info', message: 'Using username instead of userId' },
       'temp-search'
     ).catch();
   }
@@ -1953,10 +1970,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
   if (reviewId || modelId || prioritizedUserIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
-    logToAxiom(
-      { type: 'cant-use-search', input: JSON.stringify(missingKeys) },
-      'temp-search'
-    ).catch();
+    logToAxiom({ type: 'info', input: JSON.stringify(missingKeys) }, 'temp-search').catch();
   }
 
   // Sort
@@ -2359,7 +2373,7 @@ export const getImage = async ({
         !withoutPost
           ? Prisma.sql`
             p."availability" "availability",
-            p."publishedAt" "publishedAt",
+            GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
           `
           : Prisma.sql`'Public' "availability",`
       }

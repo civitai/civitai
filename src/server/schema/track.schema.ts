@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { trackedReasons } from '~/utils/login-helpers';
 
 export const addViewSchema = z.object({

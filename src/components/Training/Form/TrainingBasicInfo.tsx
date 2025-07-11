@@ -1,7 +1,7 @@
 import { Badge, Button, Group, Image, Input, Radio, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -145,12 +145,8 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const schema = z.object({
     id: z.number().optional(),
     name: z.string().trim().min(1, 'Name cannot be empty.'),
-    trainingModelType: z.enum(constants.trainingModelTypes, {
-      errorMap: () => ({ message: 'A model type must be chosen.' }),
-    }),
-    trainingMediaType: z.enum(constants.trainingMediaTypes, {
-      errorMap: () => ({ message: 'A media type must be chosen.' }),
-    }),
+    trainingModelType: z.enum(constants.trainingModelTypes, 'A model type must be chosen.'),
+    trainingMediaType: z.enum(constants.trainingMediaTypes, 'A media type must be chosen.'),
   });
 
   const defaultValues: Omit<z.infer<typeof schema>, 'trainingModelType' | 'trainingMediaType'> & {

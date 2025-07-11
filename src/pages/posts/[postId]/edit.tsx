@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { PostEdit } from '~/components/Post/EditV2/PostEdit';
@@ -6,6 +5,7 @@ import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import * as z from 'zod/v4';
 
 const paramsSchema = z.object({
   postId: z.coerce.number(),

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
@@ -27,7 +27,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   if (!parsedParams.success)
     return res
       .status(400)
-      .json({ error: `Invalid id: ${parsedParams.error.flatten().fieldErrors.id}` });
+      .json({ error: `Invalid id: ${parsedParams.error.issues[0].input as string}` });
 
   try {
     const { items } = await getModelsWithVersions({

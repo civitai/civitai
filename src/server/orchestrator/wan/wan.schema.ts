@@ -1,5 +1,5 @@
 import type { CivitaiWanVideoGenInput } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { AspectRatioMap, AspectRatio } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -43,7 +43,7 @@ export const wanBaseModelMap = {
 };
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('wan').catch('wan'),
+  engine: z.literal('wan').default('wan').catch('wan'),
   baseModel: z.string().optional(),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,

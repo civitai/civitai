@@ -1,6 +1,6 @@
 import { Button, Center, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';

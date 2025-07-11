@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { Tracker } from '~/server/clickhouse/client';
 
 const schema = z.object({

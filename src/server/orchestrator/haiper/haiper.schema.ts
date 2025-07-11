@@ -5,7 +5,7 @@ import {
   seedSchema,
   sourceImageSchema,
 } from './../infrastructure/base.schema';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { promptSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
@@ -15,7 +15,7 @@ export const haiperDuration = [2, 4, 8] as const;
 export const haiperResolution = [720, 1080, 2160] as const;
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('haiper').catch('haiper'),
+  engine: z.literal('haiper').default('haiper').catch('haiper'),
   negativePrompt: negativePromptSchema,
   aspectRatio: z.enum(haiperAspectRatios).optional().catch('1:1'),
   sourceImage: sourceImageSchema.nullish(),

@@ -1,6 +1,6 @@
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';

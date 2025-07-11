@@ -1,5 +1,5 @@
 import type { TmpCookiesObj } from 'cookies-next/lib/types';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { booleanString } from '~/utils/zod-helpers';
 
 const cookiesSchema = z.object({

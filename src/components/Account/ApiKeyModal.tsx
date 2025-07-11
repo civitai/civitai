@@ -1,7 +1,7 @@
 import type { ModalProps } from '@mantine/core';
 import { Box, Button, Code, CopyButton, Group, Modal, Stack, Text } from '@mantine/core';
 import { IconClipboard } from '@tabler/icons-react';
-import type { TypeOf } from 'zod';
+import type * as z from 'zod/v4';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
 import { KeyScope } from '~/shared/utils/prisma/enums';
@@ -36,7 +36,7 @@ export function ApiKeyModal({ ...props }: Props) {
       });
     },
   });
-  const handleSaveApiKey = (values: TypeOf<typeof schema>) => {
+  const handleSaveApiKey = (values: z.infer<typeof schema>) => {
     mutate(values);
   };
 

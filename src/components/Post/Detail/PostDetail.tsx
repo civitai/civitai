@@ -162,15 +162,18 @@ export function PostDetailContent({ postId }: Props) {
   return (
     <>
       <Meta
-        title={(post?.title ?? `Image post by ${post?.user.username}`) + ' | Civitai'}
+        title={(post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai'}
         description={
-          `A post by ${post?.user.username}. Tagged with ${toStringList(
-            post?.tags.map((x) => x.name) ?? []
-          )}.` +
+          `A post by ${post?.user.username ?? 'civitai'}. ` +
           (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : '')
         }
+        keywords={toStringList(post?.tags.map((x) => x.name) ?? [])}
         images={images}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]
+            : undefined
+        }
         deIndex={post?.availability === Availability.Unsearchable}
       />
       <SensitiveShield
@@ -205,7 +208,7 @@ export function PostDetailContent({ postId }: Props) {
                 </div>
                 <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
                   <Text size="xs" c="dimmed">
-                    {relatedResource && (
+                    {relatedResource && relatedResource.modelId && (
                       <>
                         Posted to{' '}
                         <Anchor
@@ -236,7 +239,10 @@ export function PostDetailContent({ postId }: Props) {
                     </Button>
                     <ShareButton
                       url={`/posts/${post.id}`}
-                      title={post.title ?? `Post by ${post.user.username}`}
+                      title={
+                        post.title ??
+                        (post.user.username ? `Post by ${post.user.username}` : 'Post on Civitai')
+                      }
                       collect={{ type: CollectionType.Post, postId: post.id }}
                     >
                       <Button
@@ -374,8 +380,8 @@ export function PostDetailContent({ postId }: Props) {
                     hiddenExplained.hiddenByBrowsingSettings.length > 0 && (
                       <>
                         <Alert color="yellow" mb="md">
-                          While browsing with X or XXX enabled, content tagged as minor or potential celebrity is not shown.
-                          Some images in this post have been hidden.
+                          While browsing with X or XXX enabled, content tagged as minor or potential
+                          celebrity is not shown. Some images in this post have been hidden.
                         </Alert>
                       </>
                     )}
