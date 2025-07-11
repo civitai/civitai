@@ -1,6 +1,6 @@
 import { CloseButton, Skeleton, Table, Text, useMantineTheme } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -93,10 +93,6 @@ const imageData = [
 function Test() {
   const [count, setCount] = useState(0);
 
-  // // useEffect(() => {
-  // //   throw new Error('custom error for testing');
-  // // }, []);
-
   const theme = useMantineTheme();
 
   // useEffect(() => {
@@ -105,52 +101,45 @@ function Test() {
   //   });
   // }, []);
 
-  const [data, setData] = useState<any>(null);
-  // trpc.orchestrator.getImageWhatIf.useQuery({
-  //   resources: [{ id: 1410435 }, { id: 1365772 }, { id: 1019579 }],
-  //   params: {
-  //     cfgScale: 3.5,
-  //     sampler: 'Euler',
-  //     clipSkip: 2,
-  //     steps: 36,
-  //     nsfw: false,
-  //     draft: false,
-  //     baseModel: 'Illustrious',
-  //     denoise: 0.65,
-  //     workflow: 'img2img-hires',
-  //     experimental: false,
-  //     priority: 'low',
-  //     sourceImage: {
-  //       url: 'https://orchestration.civitai.com/v2/consumer/blobs/P6T8Z0JDB03N41HGEYSE1XP8P0.jpeg',
-  //       width: 832,
-  //       height: 1216,
-  //     },
-  //     disablePoi: true,
-  //     prompt: '',
-  //     aspectRatio: '2',
-  //     fluxUltraAspectRatio: '4',
-  //     width: 832,
-  //     height: 1216,
-  //     process: 'img2img',
-  //     remixSimilarity: 1,
-  //   },
-  //   authed: true,
-  // });
+  const [data, setData] = useState<{ url: string; width: number; height: number }[] | null>([
+    {
+      url: 'https://orchestration.civitai.com/v2/consumer/blobs/N6468H8QNQWH0NCJRB6C5XVSY0.jpeg',
+      height: 1216,
+      width: 832,
+    },
+    {
+      url: 'https://orchestration.civitai.com/v2/consumer/blobs/CXJQSCS1TYZR1PX45C7QBVB8E0.jpeg',
+      height: 1216,
+      width: 832,
+    },
+    {
+      url: 'https://orchestration.civitai.com/v2/consumer/blobs/CXHV148Y1K72MSDW3AJ6X32FZ0.jpeg',
+      height: 1216,
+      width: 832,
+    },
+    {
+      url: 'https://orchestration.civitai.com/v2/consumer/blobs/1RWAZZVXPDYN4NPD8PM312WCT0.jpeg',
+      height: 1216,
+      width: 832,
+    },
+  ]);
+
+  useEffect(() => {
+    console.log({ data });
+  }, [data]);
 
   return (
     <div className="container flex h-full max-w-sm flex-col gap-3">
-      <div className="flex gap-3">
-        <Text className="flex-1">
-          {`Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book.`}
-        </Text>
-        <div className="flex flex-1 flex-col">
-          {Array(6)
-            .fill(0)
-            .map((_, i) => (
-              <Skeleton key={i} className="my-1 h-4" />
+      <SourceImageUploadMultiple value={data} onChange={setData} max={7} warnOnMissingAiMetadata>
+        {(previewItems) => (
+          <div className="grid grid-cols-4 gap-4">
+            {previewItems.map((item, i) => (
+              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
             ))}
-        </div>
-      </div>
+            <SourceImageUploadMultiple.Dropzone />
+          </div>
+        )}
+      </SourceImageUploadMultiple>
     </div>
   );
 }
@@ -317,6 +306,7 @@ import { Label, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@h
 import { IconCheck, IconSelector } from '@tabler/icons-react';
 import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
+import { SourceImageUploadMultiple } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 const people = [
   {
