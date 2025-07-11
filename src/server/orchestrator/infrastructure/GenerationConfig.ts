@@ -2,11 +2,11 @@ import type { VideoGenInput } from '@civitai/client';
 import * as z from 'zod/v4';
 import { maxRandomSeed } from '~/server/common/constants';
 
-type VideoGenProcesses = 'txt2vid' | 'img2vid';
+type VideoGenProcesses = 'txt2vid' | 'img2vid' | 'ref2vid';
 export function VideoGenerationConfig2<
-  TSchema extends z.ZodObject = z.ZodObject,
-  TOutput extends VideoGenInput = VideoGenInput,
+  TSchema extends z.ZodType<Record<string, unknown>, Record<string, unknown>>,
   TDefaults extends z.input<TSchema> = z.input<TSchema>,
+  TOutput extends Record<string, unknown> = Record<string, unknown>,
   SchemaOutput = z.infer<TSchema>,
   RefinementOutput = SchemaOutput & TDefaults
 >({
