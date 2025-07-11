@@ -28,7 +28,7 @@ export const redeemableCodeRouter = router({
     .input(consumeRedeemableCodeSchema)
     .mutation(async ({ input, ctx }) => {
       const attempts = await redemptionCounter.incrementBy(ctx.user.id);
-      // if (attempts > 5) throw new Error('Too many failed redemption attempts');
+      if (attempts > 5) throw new Error('Too many failed redemption attempts');
 
       const consumedCode = await consumeRedeemableCode({ ...input, userId: ctx.user.id });
       await ctx.track.redeemableCode('consume', { code: input.code });

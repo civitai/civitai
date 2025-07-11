@@ -302,15 +302,14 @@ export async function consumeRedeemableCode({
           },
         });
 
-        await invalidateSession(userId);
-        await getMultipliersForUser(userId, true);
         await deliverMonthlyCosmetics({
           userIds: [userId],
         })
       });
-
     }
 
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
     return consumedCode;
   }, {
     // In prod it should hopefully be fast enough but better save than sorry

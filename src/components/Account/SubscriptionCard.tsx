@@ -20,7 +20,7 @@ export function SubscriptionCard() {
     ? getPlanDetails(subscription?.product, features)
     : { image: null };
 
-  const isCivitaiProvider = subscription?.product?.provider !== PaymentProvider.Civitai;
+  const isCivitaiProvider = subscription?.product?.provider === PaymentProvider.Civitai;
 
   return (
     <Card withBorder>
@@ -73,7 +73,7 @@ export function SubscriptionCard() {
                 </Text>
               </Stack>
             </Group>
-            {!subscription.cancelAt && isCivitaiProvider && (
+            {!subscription.cancelAt && !isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
                 buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}

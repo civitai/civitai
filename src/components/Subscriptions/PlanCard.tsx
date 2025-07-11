@@ -68,7 +68,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const _isActivePlan =
     hasActiveSubscription &&
     (subscription?.product?.id === product.id ||
-      // @ts-ignore
+      // @ts-ignore product metadata will always have tier
       subscription?.product?.metadata?.tier === product.metadata?.tier);
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;

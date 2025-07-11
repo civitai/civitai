@@ -198,11 +198,11 @@ export const deliverMonthlyCosmetics = async ({
         WHERE ${userIds.length > 0 ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})` : Prisma.sql`
           (
           -- Exact day match (normal case)
-          EXTRACT(day from "currentPeriodStart") = ${currentDay}
+          EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
           OR
           -- Handle month-end edge cases (e.g., Jan 30th -> Feb 28th, Jan 31st -> Apr 30th)
           (
-            EXTRACT(day from "currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
+            EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
             AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
           )
         )
