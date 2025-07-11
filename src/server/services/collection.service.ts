@@ -268,7 +268,8 @@ export const getUserCollectionsWithPermissions = async <
 }: {
   input: GetAllUserCollectionsInputSchema & { userId: number };
 }) => {
-  const { userId, permissions, permission, contributingOnly = true } = input;
+  const { userId, permission, contributingOnly = true } = input;
+  let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
@@ -319,14 +320,16 @@ export const getUserCollectionsWithPermissions = async <
     `);
   }
 
-  if (permissions || permission) {
+  permissions = [...permissions, permission].filter(isDefined);
+
+  if (permissions.length > 0) {
     queries.push(Prisma.sql`(
         ${SELECT}
         FROM "CollectionContributor" AS cc
         JOIN "Collection" AS c ON c."id" = cc."collectionId"
         WHERE cc."userId" = ${userId}
           AND cc."permissions" && ARRAY[${Prisma.raw(
-            (permissions || [permission]).map((p) => `'${p}'`).join(',')
+            permissions.map((p) => `'${p}'`).join(',')
           )}]::"CollectionContributorPermission"[]
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}

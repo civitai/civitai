@@ -44,6 +44,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
     sort: ImageSort.MostReactions,
     limit,
     pending: true,
+    withMeta: false,
   });
 
   const hiddenExplained = useExplainHiddenImages(flatData);

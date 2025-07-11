@@ -858,7 +858,7 @@ export const getAllImages = async (
   }
 
   // [x]
-  if (include.includes('meta') && !postId) {
+  if (include.includes('meta')) {
     AND.push(
       Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`
     );
