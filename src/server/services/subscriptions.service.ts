@@ -172,12 +172,15 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
  */
 export const deliverMonthlyCosmetics = async ({
   userIds = [],
+  tx,
 }: {
   userIds?: number[];
+  tx?: Prisma.TransactionClient;
 }) => {
+  const client = tx ?? dbWrite;
   const currentDay = new Date().getDate();
 
-  await dbWrite.$executeRaw`
+  await client.$executeRaw`
       with users_affected AS (
         SELECT 
           "userId",
@@ -191,7 +194,7 @@ export const deliverMonthlyCosmetics = async ({
             AND jsonb_typeof(pr.metadata->'level') != 'undefined'
             AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
             AND (pdl.metadata->>'level')::int <= (pr.metadata->>'level')::int
-        WHERE ${userIds.length > 0 ? Prisma.sql`cs."userId" IN (${userIds.join(',')})` : Prisma.sql`
+        WHERE ${userIds.length > 0 ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})` : Prisma.sql`
           (
           -- Exact day match (normal case)
           EXTRACT(day from "currentPeriodStart") = ${currentDay}

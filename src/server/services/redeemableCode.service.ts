@@ -45,7 +45,7 @@ export async function createRedeemableCodes({
   }
 
   const codes = Array.from({ length: quantity }, () => {
-    const code = `CS-${generateToken(4)}-${generateToken(4)}`.toUpperCase();
+    const code = `${type === RedeemableCodeType.Buzz ? 'CS' : 'MB'}-${generateToken(4)}-${generateToken(4)}`.toUpperCase();
     return { code, unitValue, expiresAt, type, priceId };
   });
 
@@ -312,5 +312,8 @@ export async function consumeRedeemableCode({
     }
 
     return consumedCode;
+  }, {
+    // In prod it should hopefully be fast enough but better save than sorry
+    timeout: 10000, // 10 seconds timeout for the transaction
   });
 }
