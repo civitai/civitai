@@ -30,6 +30,11 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
     onSuccess: async (consumedCode) => {
       // Generate success message based on code type
       let message = 'Code redeemed successfully';
+
+      if (!consumedCode) {
+        showErrorNotification({ title: 'Error redeeming code', error: new Error('Code not found or invalid') });
+        return;
+      }
       
       if (consumedCode.type === RedeemableCodeType.Buzz) {
         const buzzAmount = numberWithCommas(consumedCode.unitValue);
