@@ -147,6 +147,8 @@ export function SourceImageUploadMultiple({
 
   // TODO - better error messaging
 
+  const imagesMissingMetadataCount = previewImages.filter((x) => missingAiMetadata[x.url]).length;
+
   return (
     <Provider
       value={{
@@ -163,9 +165,16 @@ export function SourceImageUploadMultiple({
           {children(previewItems)}
         </Input.Wrapper>
         {}
-        {previewImages.some((x) => missingAiMetadata[x.url]) && (
-          <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
-            {`Outputs based on this image must be PG, PG-13, or they will be blocked and you will not be refunded.`}
+        {imagesMissingMetadataCount > 0 && (
+          <Alert
+            color="yellow"
+            title={`We couldn't detect valid metadata in ${
+              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
+            }.`}
+          >
+            {`Outputs based on ${
+              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
+            } must be PG, PG-13, or they will be blocked and you will not be refunded.`}
           </Alert>
         )}
       </div>
