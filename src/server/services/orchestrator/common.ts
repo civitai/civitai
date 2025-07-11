@@ -656,7 +656,7 @@ function formatVideoGenStep({
 
   if (!params.process && baseModel) {
     const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
-    if (wanProcess) params.process = wanProcess as any;
+    if (wanProcess) (params as any).process = wanProcess as any;
   }
 
   if (baseModel === 'WanVideo') {

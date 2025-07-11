@@ -343,7 +343,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     generation: z.enum(ImageGenerationProcess).array().optional(),
     ids: z.array(z.number()).optional(),
     imageId: z.number().optional(),
-    include: z.array(imageInclude).optional().default(['cosmetics']),
+    include: z.array(imageInclude).default(['cosmetics']),
     includeBaseModel: z.boolean().optional(),
     pending: z.boolean().optional(),
     postIds: z.number().array().optional(),
@@ -366,7 +366,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     }
     if (value.withMeta) {
       if (!value.include) value.include = [];
-      value.include.push('meta');
+      if (!value.include.includes('meta')) value.include.push('meta');
     }
     return value;
   });

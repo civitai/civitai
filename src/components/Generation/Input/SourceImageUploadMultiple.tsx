@@ -92,7 +92,9 @@ export function SourceImageUploadMultiple({
     return [...previewImages.filter((x) => !x.linkToId), ...uploads];
   }, [previewImages, uploads]);
 
-  useEffect(() => console.log({ previewImages }), [previewImages]);
+  useEffect(() => {
+    if (uploads.length > 0 && uploads.every((x) => x.status === 'complete')) setUploads([]);
+  }, [uploads]);
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -161,7 +163,7 @@ export function SourceImageUploadMultiple({
           {children(previewItems)}
         </Input.Wrapper>
         {}
-        {Object.values(missingAiMetadata).some((v) => v) && (
+        {value?.some((x) => missingAiMetadata[x.url]) && (
           <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
             {`Outputs based on this image must be PG, PG-13, or they will be blocked and you will not be refunded.`}
           </Alert>
@@ -331,11 +333,21 @@ export async function uploadOrchestratorImage(src: string | Blob | File) {
     const jpegBlob = await imageToJpegBlob(resized);
     body = await getBase64(jpegBlob);
   }
-  const response = await fetch('/api/orchestrator/uploadImage', { method: 'POST', body });
-  if (!response.ok) throw new Error(response.statusText);
-  const blob: ImageBlob = await response.json();
-  const size = await getImageDimensions(src);
-  return { ...blob, ...size };
+  try {
+    const response = await fetch('/api/orchestrator/uploadImage', { method: 'POST', body });
+    if (!response.ok) throw new Error(response.statusText);
+    const blob: ImageBlob = await response.json();
+    const size = await getImageDimensions(src);
+    return { ...blob, ...size };
+  } catch (e: any) {
+    const size = await getImageDimensions(src);
+    return {
+      url: body,
+      ...size,
+      available: false,
+      blockedReason: e.message,
+    };
+  }
 }
 
 export const InputSourceImageUploadMultiple = withController(SourceImageUploadMultiple);
