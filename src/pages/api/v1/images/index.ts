@@ -65,9 +65,9 @@ const imagesEndpointSchema = z.object({
         : val
     )
     .optional(),
-  type: z.nativeEnum(MediaType).optional(),
+  type: z.enum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray([...constants.baseModels]).optional(),
-  withMeta: booleanString().optional(),
+  withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
 });
 
@@ -183,7 +183,7 @@ function getNextPage({
 }) {
   const baseUrl = new URL(
     req.url ?? '/',
-    isProd ? `https://${req.headers.host}` : 'http://localhost:3000'
+    isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
 
   const hasNextPage = !!nextCursor;
