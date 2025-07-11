@@ -40,5 +40,7 @@ export const subscriptionMetadata = z
   .object({
     renewalEmailSent: z.boolean().optional(),
     renewalBonus: z.number().optional(),
+    prepaids: z.partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number()).optional(),
+    proratedDays: z.partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number()).optional(),
   })
   .passthrough();

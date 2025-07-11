@@ -8,7 +8,7 @@ import type {
   CreateRedeemableCodeInput,
   DeleteRedeemableCodeInput,
 } from '~/server/schema/redeemableCode.schema';
-import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionMetadata, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import {
   createBuzzTransaction,
   getMultipliersForUser,
@@ -152,6 +152,7 @@ export async function consumeRedeemableCode({
           productId: true,
           priceId: true,
           currentPeriodEnd: true,
+          metadata: true,
           product: {
             select: {
               id: true,
@@ -197,14 +198,17 @@ export async function consumeRedeemableCode({
           activeUserMembership.product.provider !== consumedCode.price.product.provider
         ) {
           throw new Error(
-            'Cannot redeem a code for a different provider than your current membership'
+            'Cannot redeem a code for a different provider than your current membership. '
           );
         }
 
+        const consumedProductMetadata = consumedCode.price.product
+          .metadata as SubscriptionProductMetadata;
+
+        const consumerProductTier = consumedProductMetadata.tier ?? 'free';
+
         if (activeUserMembership) {
           const membershipProductMetadata = activeUserMembership.product
-            .metadata as SubscriptionProductMetadata;
-          const consumedProductMetadata = consumedCode.price.product
             .metadata as SubscriptionProductMetadata;
 
           if (consumedProductMetadata.tier === 'free' || !consumedProductMetadata.tier) {
@@ -218,14 +222,39 @@ export async function consumeRedeemableCode({
             consumedProductMetadata.tier
           );
 
-          if (membershipTierOrder > consumedTierOrder) {
-            throw new Error('Cannot redeem a code for a lower tier than your current membership');
-          }
+          const subscriptionMetadata = (activeUserMembership.metadata ?? {}) as SubscriptionMetadata;
 
           // At this point, we can safely extend or improve the membership:
-          if (consumedTierOrder > membershipTierOrder) {
+          if (consumedTierOrder === membershipTierOrder) {
+            // If it's the same tier, we just extend the current period:
+            await tx.customerSubscription.update({
+              where: { id: activeUserMembership.id },
+              data: {
+                metadata: {
+                  ...subscriptionMetadata,
+                  prepaids: {
+                    ...subscriptionMetadata.prepaids,
+                    [consumerProductTier]:
+                      (subscriptionMetadata.prepaids?.[consumerProductTier] ?? 0) + consumedCode.unitValue
+                  }
+                },
+                status: 'active',
+                currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
+                  .add(
+                    consumedCode.unitValue,
+                    consumedCode.price.interval as 'day' | 'month' | 'year'
+                  )
+                  .toDate(),
+              },
+            });
+          }
+          else if (consumedTierOrder > membershipTierOrder) {
             const now = dayjs();
-            // We'll update the membership with this new product that it's better:
+            const proratedDays = now.diff(
+              dayjs(activeUserMembership.currentPeriodEnd)) -
+              (subscriptionMetadata.prepaids?.[membershipProductMetadata.tier ?? 'free'] ?? 0) * 30;
+
+
             await tx.customerSubscription.update({
               where: { id: activeUserMembership.id },
               data: {
@@ -239,78 +268,94 @@ export async function consumeRedeemableCode({
                     consumedCode.price.interval as 'day' | 'month' | 'year'
                   )
                   .toDate(),
+                metadata: {
+                  ...subscriptionMetadata,
+                  prepaids: {
+                    ...subscriptionMetadata.prepaids,
+                    [consumerProductTier]:
+                      (subscriptionMetadata.prepaids?.[consumerProductTier] ?? 0) + consumedCode.unitValue
+                  },
+                  proratedDays: {
+                    ...subscriptionMetadata.proratedDays,
+                    [membershipProductMetadata.tier ?? 'free']: + Math.min(0, proratedDays)
+                  }
+                }
               },
             });
-          } else if (consumedTierOrder === membershipTierOrder) {
-            // If it's the same tier, we just extend the current period:
+          } else {
+            // We'll only update the metadata for downgrades.
+            // The system will handle the downgrade logic automatically when the time comes.
             await tx.customerSubscription.update({
               where: { id: activeUserMembership.id },
               data: {
-                status: 'active',
-                currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
-                  .add(
-                    consumedCode.unitValue,
-                    consumedCode.price.interval as 'day' | 'month' | 'year'
-                  )
-                  .toDate(),
-              },
+                metadata: {
+                  ...subscriptionMetadata,
+                  prepaids: {
+                    ...subscriptionMetadata.prepaids,
+                    [consumerProductTier]:
+                      (subscriptionMetadata.prepaids?.[consumerProductTier] ?? 0) + consumedCode.unitValue
+                  }
+                },
+              }
             });
           }
         }
-      }
 
-      if (!activeUserMembership) {
-        // Create a new membership:
-        const now = dayjs();
-        await tx.customerSubscription.create({
-          data: {
-            id: `redeemable-code-${consumedCode.code}`,
+        if (!activeUserMembership) {
+          // Create a new membership:
+          const now = dayjs();
+          const metadata: SubscriptionMetadata = {
+            prepaids: {
+              [consumerProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
+            }
+          }
+          await tx.customerSubscription.create({
+            data: {
+              id: `redeemable-code-${consumedCode.code}`,
+              userId: userId,
+              productId: consumedCode.price.product.id,
+              priceId: consumedCode.price.id,
+              status: 'active',
+              currentPeriodStart: now.toDate(),
+              currentPeriodEnd: now
+                .add(consumedCode.unitValue, consumedCode.price.interval as 'day' | 'month' | 'year')
+                .toDate(),
+              cancelAtPeriodEnd: true, // We assume they want to cancel at the end of the period
+              cancelAt: null, // No cancellation date yet
+              metadata: JSON.stringify(metadata),
+              createdAt: now.toDate(),
+            },
+          });
+        }
+
+        const date = dayjs().format('YYYY-MM');
+
+        await withRetries(async () => {
+          // Grant buzz right away:
+          await grantBuzzPurchase({
             userId: userId,
-            productId: consumedCode.price.product.id,
-            priceId: consumedCode.price.id,
-            status: 'active',
-            currentPeriodStart: now.toDate(),
-            currentPeriodEnd: now
-              .add(consumedCode.unitValue, consumedCode.price.interval as 'day' | 'month' | 'year')
-              .toDate(),
-            cancelAtPeriodEnd: true, // We assume they want to cancel at the end of the period
-            cancelAt: null, // No cancellation date yet
-            metadata: {},
-            createdAt: now.toDate(),
-          },
+            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
+            description: `Membership Bonus`,
+            transactionType: TransactionType.Purchase,
+            externalTransactionId: `civitai-membership:${date}:${userId}:${consumedCode.price!.product.id
+              }`,
+            details: {
+              type: 'membership-purchase',
+              date: date,
+              productId: consumedCode.price!.product.id,
+            },
+          });
+
+          await deliverMonthlyCosmetics({
+            userIds: [userId],
+          })
         });
       }
 
-      const consumedProductMetadata = consumedCode.price.product
-        .metadata as SubscriptionProductMetadata;
-
-      const date = dayjs().format('YYYY-MM');
-
-      await withRetries(async () => {
-        // Grant buzz right away:
-        await grantBuzzPurchase({
-          userId: userId,
-          amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
-          description: `Membership Bonus`,
-          transactionType: TransactionType.Purchase,
-          externalTransactionId: `civitai-membership:${date}:${userId}:${consumedCode.price!.product.id
-            }`,
-          details: {
-            type: 'membership-purchase',
-            date: date,
-            productId: consumedCode.price!.product.id,
-          },
-        });
-
-        await deliverMonthlyCosmetics({
-          userIds: [userId],
-        })
-      });
+      await invalidateSession(userId);
+      await getMultipliersForUser(userId, true);
+      return consumedCode;
     }
-
-    await invalidateSession(userId);
-    await getMultipliersForUser(userId, true);
-    return consumedCode;
   }, {
     // In prod it should hopefully be fast enough but better save than sorry
     timeout: 10000, // 10 seconds timeout for the transaction
