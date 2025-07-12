@@ -130,7 +130,13 @@ function Test() {
 
   return (
     <div className="container flex h-full max-w-sm flex-col gap-3">
-      <SourceImageUploadMultiple value={data} onChange={setData} max={7} warnOnMissingAiMetadata>
+      <SourceImageUploadMultiple
+        value={data}
+        onChange={setData}
+        max={7}
+        warnOnMissingAiMetadata
+        // cropToFirstImage
+      >
         {(previewItems) => (
           <div className="grid grid-cols-4 gap-4">
             {previewItems.map((item, i) => (

@@ -29,6 +29,9 @@ import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
+import { isDefined } from '~/utils/type-guards';
 
 type SourceImageUploadProps = {
   value?: SourceImageProps[] | null;
@@ -37,6 +40,7 @@ type SourceImageUploadProps = {
   max?: number;
   warnOnMissingAiMetadata?: boolean;
   aspect?: 'square' | 'video';
+  cropToFirstImage?: boolean;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
 
 type ImageComplete = {
@@ -47,7 +51,11 @@ type ImageComplete = {
   id?: string;
   linkToId?: string;
 };
+
+type ImageCrop = { status: 'cropping'; url: string; id: string };
+
 type ImagePreview =
+  | ImageCrop
   | { status: 'uploading'; url: string; id: string }
   | { status: 'error'; url: string; src: string | Blob | File; error: string; id: string }
   | ImageComplete;
@@ -59,7 +67,8 @@ type SourceImageUploadContext = {
   max: number;
   missingAiMetadata: Record<string, boolean>;
   removeItem: (index: number) => void;
-  aspect?: 'square' | 'video';
+  aspect: 'square' | 'video';
+  cropToFirstImage: boolean;
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -75,6 +84,7 @@ export function SourceImageUploadMultiple({
   max = 1,
   warnOnMissingAiMetadata = false,
   aspect = 'square',
+  cropToFirstImage = false,
   ...props
 }: SourceImageUploadProps) {
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
@@ -162,6 +172,7 @@ export function SourceImageUploadMultiple({
         missingAiMetadata,
         removeItem,
         aspect,
+        cropToFirstImage,
       }}
     >
       <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8">
@@ -189,12 +200,18 @@ export function SourceImageUploadMultiple({
 SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { previewItems, setError, setUploads, max, aspect } = useContext();
+  const { previewItems, setError, setUploads, max, aspect, cropToFirstImage } = useContext();
   const canAddFiles = previewItems.length < max;
 
-  async function handleUpload(src: string | Blob | File) {
-    const previewUrl = typeof src !== 'string' ? URL.createObjectURL(src) : src;
-    setUploads((items) => [...items, { status: 'uploading', url: previewUrl, id: getRandomId() }]);
+  async function handleUpload(src: string | Blob | File, originUrl?: string) {
+    const previewUrl = originUrl ?? (typeof src !== 'string' ? URL.createObjectURL(src) : src);
+    setUploads((items) => {
+      const copy = [...items];
+      const index = copy.findIndex((x) => x.url === previewUrl);
+      if (index > -1) copy[index].status = 'uploading';
+      else copy.push({ status: 'uploading', url: previewUrl, id: getRandomId() });
+      return copy;
+    });
 
     const response = await uploadOrchestratorImage(src);
     setUploads((items) => {
@@ -221,6 +238,47 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
     });
   }
 
+  async function handleCrop(items: (string | Blob | File)[]) {
+    const incoming: ImageCrop[] = items.map((src) => ({
+      status: 'cropping',
+      id: getRandomId(),
+      url: typeof src !== 'string' ? URL.createObjectURL(src) : src,
+    }));
+    setUploads(incoming);
+    const current = previewItems.filter((x) => x.status === 'complete').map((x) => x.url);
+    const allImages = [...current, ...incoming.map((x) => x.url)];
+
+    const withAspectRatio = await Promise.all(
+      allImages.map(async (url) => {
+        const { width, height } = await getImageDimensions(url);
+        const aspectRatio = Math.round(((width / height) * 100) / 100);
+        return { url, width, height, aspectRatio };
+      })
+    );
+    if (
+      !withAspectRatio.every(({ aspectRatio }) => aspectRatio === withAspectRatio[0].aspectRatio)
+    ) {
+      dialogStore.trigger({
+        component: ImageCropModal,
+        props: {
+          images: withAspectRatio,
+          onConfirm: async (output) => {
+            const toUpload = output.filter(({ cropped }) => !!cropped);
+            await Promise.all(toUpload.map(({ cropped, src }) => handleUpload(cropped!, src)));
+          },
+          onCancel: () => undefined,
+        },
+      });
+    } else {
+      await Promise.all(incoming.map(({ url }) => handleUpload(url)));
+    }
+  }
+
+  async function handleChange(value: (string | File)[]) {
+    if (cropToFirstImage) await handleCrop(value);
+    else await Promise.all(value.map((src) => handleUpload(src)));
+  }
+
   async function handleDrop(files: File[]) {
     const remaining = max - previewItems.length;
     const toUpload = files
@@ -230,12 +288,12 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
         return !tooLarge;
       })
       .splice(0, remaining);
-    await Promise.all(toUpload.map(handleUpload));
+    await handleChange(toUpload);
   }
 
   async function handleDropCapture(e: DragEvent) {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (!!url?.length && previewItems.length < max) handleUpload(url);
+    if (!!url?.length && previewItems.length < max) await handleChange([url]);
   }
 
   if (!canAddFiles) return null;
@@ -310,7 +368,9 @@ SourceImageUploadMultiple.Image = function ImagePreview({
             aspect === 'square' ? 'aspect-square' : 'aspect-video'
           )}
         >
-          {previewItem.status === 'uploading' && <Loader size="sm" />}
+          {(previewItem.status === 'uploading' || previewItem.status === 'cropping') && (
+            <Loader size="sm" />
+          )}
           {previewItem.status === 'complete' && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}

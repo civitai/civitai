@@ -53,8 +53,8 @@ export function ViduFormInput() {
             { ...endSourceImage, label: 'Last Frame' },
           ],
           onConfirm: (urls) => {
-            if (urls[0] instanceof Blob) form.setValue('sourceImage', urls[0]);
-            if (urls[1] instanceof Blob) form.setValue('endSourceImage', urls[1]);
+            if (urls[0].cropped) form.setValue('sourceImage', urls[0].cropped ?? urls[0].src);
+            if (urls[1].cropped) form.setValue('endSourceImage', urls[1].cropped ?? urls[1].src);
           },
           onCancel: () => {
             form.setValue('endSourceImage', null);

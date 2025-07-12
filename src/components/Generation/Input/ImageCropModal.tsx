@@ -25,7 +25,7 @@ type CroppedImageProps = ImageProps & {
   croppedAreaPixels: Area | null;
   croppedArea: Area | null;
 };
-type OnConfirmFn = (urls: (string | Blob)[]) => void;
+type OnConfirmFn = (output: { src: string; cropped?: Blob }[]) => void;
 
 export function ImageCropModal(props: ImageCropperProps) {
   const dialog = useDialogContext();
@@ -110,11 +110,12 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
             (image.width !== image.croppedAreaPixels.width ||
               image.height !== image.croppedAreaPixels.height)
           ) {
-            return await getCroppedImg(image.url, image.croppedAreaPixels).then(
-              (res) => res ?? image.url
-            );
+            return await getCroppedImg(image.url, image.croppedAreaPixels).then((res) => ({
+              src: image.url,
+              cropped: res,
+            }));
           }
-          return image.url;
+          return { src: image.url };
         })
       );
       onConfirm(croppedImages);
