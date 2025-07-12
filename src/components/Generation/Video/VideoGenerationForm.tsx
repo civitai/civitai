@@ -39,7 +39,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   // const engine = useVideoGenerationStore((state) => state.engine);
   const storeData = useGenerationStore((state) => state.data);
 
-  const config = videoGenerationConfig2[engine];
+  const config = useMemo(() => videoGenerationConfig2[engine], [engine]);
   const status = useGenerationStatus();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : undefined),
@@ -105,7 +105,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   }
 
   useEffect(() => {
-    if (storeData) {
+    if (storeData && config) {
       // const registered = Object.keys(form.getValues());
       const { params, resources } = storeData;
       const validated = config.softValidate({ ...params, resources });
@@ -113,7 +113,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
 
       generationStore.clearData();
     }
-  }, [storeData]);
+  }, [storeData, config]);
 
   const InputsComponent = inputDictionary[engine];
   if (!InputsComponent)
