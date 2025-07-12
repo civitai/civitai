@@ -5,8 +5,11 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputText, useForm } from '~/libs/form';
 import type { ConsumeRedeemableCodeInput } from '~/server/schema/redeemableCode.schema';
 import { consumeRedeemableCodeSchema } from '~/server/schema/redeemableCode.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import classes from './RedeemCodeModal.module.scss';
 
 const SuccessAnimation = dynamic(
@@ -19,11 +22,36 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
   const queryUtils = trpc.useUtils();
 
   const [playAnimation, setPlayAnimation] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   const form = useForm({ schema: consumeRedeemableCodeSchema, defaultValues: { code } });
 
   const redeemCodeMutation = trpc.redeemableCode.consume.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (consumedCode) => {
+      // Generate success message based on code type
+      let message = 'Code redeemed successfully';
+
+      if (!consumedCode) {
+        showErrorNotification({ title: 'Error redeeming code', error: new Error('Code not found or invalid') });
+        return;
+      }
+      
+      if (consumedCode.type === RedeemableCodeType.Buzz) {
+        const buzzAmount = numberWithCommas(consumedCode.unitValue);
+        message = `${buzzAmount} Buzz has been added to your account!`;
+      } else if (consumedCode.type === RedeemableCodeType.Membership && consumedCode.price) {
+        const metadata = consumedCode.price.product.metadata as SubscriptionProductMetadata;
+        const timeValue = consumedCode.unitValue;
+        const interval = consumedCode.price.interval;
+        
+        // Calculate the time period
+        let timeDescription = `${timeValue} ${interval}${timeValue > 1 ? 's' : ''}`;
+        
+        const tierName = metadata.tier ? metadata.tier.charAt(0).toUpperCase() + metadata.tier.slice(1) : 'Premium';
+        message = `${timeDescription} of ${tierName} tier membership has been added to your account!`;
+      }
+      
+      setSuccessMessage(message);
       setPlayAnimation(true);
       await queryUtils.buzz.getAccountTransactions.invalidate();
       onSubmit?.();
@@ -46,8 +74,8 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
             align="center"
             justify="center"
           >
-            <Text size="xl" fw={500}>
-              Code redeemed successfully
+            <Text size="xl" fw={500} align="center">
+              {successMessage || 'Code redeemed successfully'}
             </Text>
           </SuccessAnimation>
           <Group justify="flex-end">

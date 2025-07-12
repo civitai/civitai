@@ -408,6 +408,7 @@ model CustomerSubscription {
 enum PaymentProvider {
   Stripe
   Paddle
+  Civitai
 }
 
 model Product {
@@ -439,6 +440,7 @@ model Price {
   customerSubscriptions CustomerSubscription[]
   purchases             Purchase[]
   provider              PaymentProvider        @default(Stripe)
+  redeemableCodes       RedeemableCode[]
 }
 
 model Purchase {
@@ -3322,6 +3324,8 @@ model RedeemableCode {
   expiresAt     DateTime?
   redeemedAt    DateTime?
   transactionId String?
+  priceId       String?
+  price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
 }
 
 enum ToolType {

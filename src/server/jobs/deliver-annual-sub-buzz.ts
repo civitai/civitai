@@ -24,7 +24,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
       WHERE EXTRACT(day from NOW()) = EXTRACT(day from "currentPeriodStart")
         AND "createdAt" <= NOW() - INTERVAL '1 month'
         AND status = 'active'
-        AND "currentPeriodEnd" > NOW()
+        AND "currentPeriodEnd"::date > NOW()::date
         AND p."interval" = 'year'
         AND pr.metadata->>'monthlyBuzz' IS NOT NULL
     `;
@@ -72,7 +72,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
         WHERE EXTRACT(day from NOW()) = EXTRACT(day from "currentPeriodStart")
           AND "createdAt" <= NOW() - INTERVAL '1 month'
           AND status = 'active'
-          AND "currentPeriodEnd" > NOW()
+          AND "currentPeriodEnd"::date > NOW()::date
           AND p."interval" = 'year'
           AND pr.metadata->>'monthlyBuzz' IS NOT NULL
       )

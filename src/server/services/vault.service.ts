@@ -3,7 +3,7 @@ import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import { SubscriptionProductMetadata, subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import type {
   GetPaginatedVaultItemsSchema,
   VaultItemFilesSchema,
@@ -76,12 +76,8 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
       new Error('MEMBERSHIP_REQUIRED')
     );
 
-  type SubscriptionMetadata = {
-    vaultSizeKb?: string;
-  };
-  const { vaultSizeKb: vaultSizeKbString }: SubscriptionMetadata =
-    (subscription.product.metadata as SubscriptionMetadata) ?? {};
-  const vaultSizeKb = parseInt(vaultSizeKbString ?? '', 10);
+  const { vaultSizeKb }: SubscriptionProductMetadata =
+    (subscription.product.metadata as SubscriptionProductMetadata) ?? {};
 
   if (!vaultSizeKb) {
     throw throwBadRequestError(
@@ -411,11 +407,11 @@ export const getPaginatedVaultItems = async (
       const { url } =
         item.status === VaultItemStatus.Stored
           ? await getGetUrlByKey(
-              constants.vault.keys.cover
-                .replace(':modelVersionId', item.modelVersionId.toString())
-                .replace(':userId', item.vaultId.toString()),
-              { bucket: env.S3_VAULT_BUCKET }
-            )
+            constants.vault.keys.cover
+              .replace(':modelVersionId', item.modelVersionId.toString())
+              .replace(':userId', item.vaultId.toString()),
+            { bucket: env.S3_VAULT_BUCKET }
+          )
           : { url: null };
 
       return {

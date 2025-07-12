@@ -175,6 +175,7 @@ export default function UserMembership() {
   const meta = product?.metadata as SubscriptionProductMetadata;
   const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
+  const isCivitaiProvider = subscriptionPaymentProvider === PaymentProvider.Civitai;
 
   return (
     <>
@@ -184,7 +185,7 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack>
               <Title>My Membership Plan</Title>
-              {subscriptionPaymentProvider !== paymentProvider && (
+              {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
                   this is completed you will be unable to upgrade your subscription. Migration is
@@ -307,22 +308,24 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && (
+                        {!subscription.cancelAt && !isCivitaiProvider && (
                           <CancelMembershipAction
                             variant="button"
                             buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
                           />
                         )}
                       </Group>
-                      {!subscription.cancelAt && isPaddle && managementUrls?.updatePaymentMethod && (
-                        <Anchor
-                          href={managementUrls?.updatePaymentMethod as string}
-                          target="_blank"
-                          size="xs"
-                        >
-                          Update payment details
-                        </Anchor>
-                      )}
+                      {!subscription.cancelAt &&
+                        isPaddle &&
+                        managementUrls?.updatePaymentMethod && (
+                          <Anchor
+                            href={managementUrls?.updatePaymentMethod as string}
+                            target="_blank"
+                            size="xs"
+                          >
+                            Update payment details
+                          </Anchor>
+                        )}
                     </Stack>
                   </Group>
                   {subscription.cancelAt && (
@@ -330,6 +333,14 @@ export default function UserMembership() {
                       Your membership will be canceled on{' '}
                       {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
                       benefits on that date.
+                    </Text>
+                  )}
+                  {isCivitaiProvider && (
+                    <Text c="yellow">
+                      This is a pre-paid membership that expires on{' '}
+                      {new Date(subscription.currentPeriodEnd).toLocaleDateString()}. You will lose
+                      your benefits on that date. No subsequent charges will be made to your
+                      account.
                     </Text>
                   )}
                 </Stack>
