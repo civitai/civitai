@@ -300,6 +300,9 @@ export const bulkSaveItemsHandler = async ({
       isModerator,
     });
 
+    if (!(permissions.write || permissions.writeReview))
+      throw throwAuthorizationError('You do not have permission to add items to this collection.');
+
     const resp = await bulkSaveItems({ input: { ...input, userId, isModerator }, permissions });
 
     for (const imgId of resp.imageIds) {

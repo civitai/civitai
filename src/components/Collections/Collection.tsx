@@ -554,7 +554,9 @@ export function Collection({
       <BrowsingSettingsAddonsProvider>
         {collection && (
           <Meta
-            title={`${collection.name} - collection posted by ${collection.user.username}`}
+            title={`${collection.name}${
+              collection.user.username ? ` - collection posted by ${collection.user.username}` : ''
+            } | Civitai`}
             description={
               collection.description
                 ? truncate(removeTags(collection.description), { length: 150 })
@@ -620,7 +622,7 @@ export function Collection({
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (
-                        <Text size="xs" c="dimmed">
+                        <Text component="div" size="xs" c="dimmed">
                           <CustomMarkdown
                             rehypePlugins={[rehypeRaw, remarkGfm]}
                             allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
@@ -650,7 +652,8 @@ export function Collection({
                     <Stack>
                       <Group gap={4} ml="auto" style={{ alignSelf: 'flex-start' }} wrap="nowrap">
                         {collection.mode === CollectionMode.Contest &&
-                        // Respect the submission period:
+                        // Respect the submission period and permissions:
+                        (permissions?.write || permissions?.writeReview) &&
                         (!metadata.submissionEndDate ||
                           new Date(metadata.submissionEndDate) > new Date()) &&
                         (!metadata.submissionStartDate ||
@@ -747,6 +750,7 @@ export function Collection({
                         </CollectionContextMenu>
                       </Group>
                       {entryCountDetails?.max &&
+                        (permissions?.write || permissions?.writeReview) &&
                         (() => {
                           const statuses = [
                             CollectionItemStatus.REJECTED,
@@ -785,7 +789,9 @@ export function Collection({
                                           value: (entryCount / totalEntries) * 100,
                                           color,
                                           // label,
-                                          tooltip: `${label}: ${entryCountDetails[status]}`,
+                                          tooltip: `${label}: ${
+                                            entryCountDetails[status] as number
+                                          }`,
                                         }
                                       : undefined;
                                   }),

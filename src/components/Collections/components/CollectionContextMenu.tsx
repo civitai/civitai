@@ -122,9 +122,8 @@ export function CollectionContextMenu({
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
         {permissions && (
-          <Menu.Item>
+          <Menu.Item component="div">
             <CollectionFollowAction
-              // @ts-ignore eslint-disable-next-line
               variant="transparent"
               collectionId={collectionId}
               permissions={permissions}
