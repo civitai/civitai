@@ -2,8 +2,8 @@ import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
-import type { TypeOf } from 'zod';
-import { z } from 'zod';
+
+import * as z from 'zod/v4';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
@@ -24,6 +24,7 @@ import {
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getBaseModelSetTypes,
+  getClosestAspectRatio,
   getIsFluxUltra,
   getSizeFromAspectRatio,
   getSizeFromFluxUltraAspectRatio,
@@ -47,9 +48,9 @@ import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.c
 
 // #region [schemas]
 
-type PartialFormData = Partial<TypeOf<typeof formSchema>>;
-type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
-export type GenerationFormOutput = TypeOf<typeof formSchema>;
+type PartialFormData = Partial<z.input<typeof formSchema>>;
+// type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
+export type GenerationFormOutput = z.infer<typeof formSchema>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
@@ -241,7 +242,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 // #endregion
 
 // #region [Provider]
-type GenerationFormProps = Omit<UsePersistFormReturn<TypeOf<typeof formSchema>>, 'reset'> & {
+type GenerationFormProps = Omit<UsePersistFormReturn<typeof formSchema>, 'reset'> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
 };
@@ -315,23 +316,28 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const { runType, remixOfId, resources, params } = storeData;
       if (!params.sourceImage && !params.workflow)
         form.setValue('workflow', params.process ?? 'txt2img');
+
+      const formData = form.getValues();
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
           break;
         case 'remix':
         case 'run':
-          const formData = form.getValues();
           const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
           const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-          const formResources: GenerationResource[] = [
+          const formResources = [
             formData.model,
             ...(formData.resources ?? []),
             formData.vae,
-          ].filter(isDefined);
+          ].filter(isDefined) as GenerationResource[];
 
           const data = formatGenerationData({
-            params: { ...params, workflow },
+            params: {
+              aspectRatio: formData.aspectRatio,
+              ...params,
+              workflow,
+            },
             remixOfId: runType === 'remix' ? remixOfId : undefined,
             resources:
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
@@ -358,6 +364,17 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }
   }, [status, currentUser, storeData]); // eslint-disable-line
 
+  const baseModel = form.watch('baseModel');
+  useEffect(() => {
+    if (!baseModel) return;
+    const formData = form.getValues();
+    if (formData.aspectRatio) {
+      const [w, h] = formData.aspectRatio.split(':').map(Number);
+      const aspectRatio = getClosestAspectRatio(w, h, baseModel);
+      if (formData.aspectRatio !== aspectRatio) form.setValue('aspectRatio', aspectRatio);
+    }
+  }, [baseModel]);
+
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       const baseModel = watchedValues.baseModel;
@@ -373,7 +390,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (!name || name === 'baseModel') {
-        if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
+        if (
+          (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') &&
+          watchedValues.workflow !== 'txt2img'
+        ) {
           form.setValue('workflow', 'txt2img');
         }
         const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];
@@ -446,17 +466,18 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   function setValues(data: PartialFormData) {
     // don't overwrite quantity
     const { quantity, ...params } = data;
-    const limited = sanitizeTextToImageParams(params, status.limits);
     const formData = form.getValues();
-    form.reset({ ...formData, ...limited }, { keepDefaultValues: true });
+    const parsed = partialSchema.parse({ ...formData, ...params });
+    const limited = sanitizeTextToImageParams(parsed, status.limits);
+    form.reset(limited, { keepDefaultValues: true });
     // for (const [key, value] of Object.entries(limited)) {
     //   form.setValue(key as keyof PartialFormData, value);
     // }
   }
 
-  function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
+  function getDefaultValues(overrides: PartialFormData): PartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
-    return sanitizeTextToImageParams(
+    const sanitized = sanitizeTextToImageParams(
       {
         ...defaultValues,
         // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
@@ -467,6 +488,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       },
       status.limits
     );
+
+    return sanitized;
   }
 
   function reset() {

@@ -11,6 +11,7 @@ import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { env } from '~/env/client';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 export function SubscriptionCard() {
   const { subscription, subscriptionLoading } = useActiveSubscription();
@@ -37,6 +38,7 @@ export function SubscriptionCard() {
       'noreferrer'
     );
   };
+  const isCivitaiProvider = subscription?.product?.provider === PaymentProvider.Civitai;
 
   return (
     <Card withBorder>
@@ -104,12 +106,12 @@ export function SubscriptionCard() {
                   </Text>
                 )}
                 <Text size="sm" c={subscription.cancelAt ? 'red' : 'dimmed'}>
-                  {subscription.cancelAt ? 'Ends' : 'Renews'}{' '}
+                  {subscription.cancelAt || isCivitaiProvider ? 'Ends' : 'Renews'}{' '}
                   {formatDate(subscription.currentPeriodEnd)}
                 </Text>
               </Stack>
             </Group>
-            {!subscription.cancelAt && !showRedirectMessage && (
+            {!subscription.cancelAt && !showRedirectMessage && !isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
                 buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}

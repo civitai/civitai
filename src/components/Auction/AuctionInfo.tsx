@@ -36,7 +36,7 @@ import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { AuctionFiltersDropdown } from '~/components/Auction/AuctionFiltersDropdown';

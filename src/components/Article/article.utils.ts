@@ -1,18 +1,17 @@
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ArticleSort } from '~/server/common/enums';
 import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -23,8 +22,8 @@ const articleQueryParamSchema = z
   .object({
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),
-    period: z.nativeEnum(MetricTimeframe),
-    sort: z.nativeEnum(ArticleSort),
+    period: z.enum(MetricTimeframe),
+    sort: z.enum(ArticleSort),
     section: z.enum(['published', 'draft']),
     favorites: booleanString(),
     hidden: booleanString(),

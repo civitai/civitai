@@ -399,7 +399,10 @@ const runClavata = async ({
           userId: Number(_metadata.userId),
         };
 
-        if (item.result === 'FALSE' || (item.matches?.length === 1 && item.matches[0] === 'NSFW')) {
+        const onlyNSFW = item.matches?.length === 1 && item.matches[0] === 'NSFW';
+        const allowedNSFWTypes: AllModKeys[] = ['Bounty', 'Model'];
+
+        if (item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type))) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }
@@ -609,8 +612,9 @@ async function runModQueue() {
 
   const aggedRows: EntityIdMap = queueRows.reduce((prev, curr) => {
     const table = curr.entityType;
-    if (!prev[table]) prev[table] = [];
-    prev[table].push(curr.entityId);
+    const arr = prev[table] ?? [];
+    arr.push(curr.entityId);
+    prev[table] = arr;
     return prev;
   }, {} as EntityIdMap);
 

@@ -121,7 +121,7 @@ export function SourceImageUpload({
   }
 
   useEffect(() => {
-    if (_value) {
+    if (_value && loaded) {
       addToHistory(_value);
 
       if (warnOnMissingAiMetadata || onWarnMissingAiMetadata) {
@@ -141,7 +141,7 @@ export function SourceImageUpload({
         });
       }
     }
-  }, [_value, warnOnMissingAiMetadata]);
+  }, [_value, warnOnMissingAiMetadata, loaded]);
 
   const _error = error ?? inputError;
   const showError = !!_error && _error !== timeoutError;

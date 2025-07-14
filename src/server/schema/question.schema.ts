@@ -1,7 +1,7 @@
 import { constants } from '~/server/common/constants';
 import { QuestionStatus } from './../common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { QuestionSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { tagSchema } from '~/server/schema/tag.schema';

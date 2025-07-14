@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';

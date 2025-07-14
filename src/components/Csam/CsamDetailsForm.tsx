@@ -20,7 +20,7 @@ import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 
 import { useEffect, useMemo } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';

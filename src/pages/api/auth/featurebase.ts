@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { createFeaturebaseToken } from '~/server/integrations/featurebase';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';

@@ -1,5 +1,5 @@
 import { Currency } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';

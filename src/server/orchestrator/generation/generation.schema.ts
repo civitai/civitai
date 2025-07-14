@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
@@ -14,7 +14,7 @@ export type GenerationDataSchema = z.infer<typeof generationDataSchema>;
 const generationDataSchema = z.discriminatedUnion('$type', [
   z.object({
     $type: z.literal('videoGen'),
-    data: z.record(z.any()).transform((data) => data as VideoGenerationSchema2),
+    data: z.record(z.string(), z.any()).transform((data) => data as VideoGenerationSchema2),
   }),
   z.object({
     $type: z.literal('videoEnhancement'),
@@ -22,14 +22,12 @@ const generationDataSchema = z.discriminatedUnion('$type', [
   }),
   z.object({
     $type: z.literal('image'),
-    data: z
-      .object({
-        workflow: z.string(),
-        process: z.enum(['txt2img', 'img2img']),
-        prompt: z.string().catch(''),
-        seed: z.number().optional(),
-      })
-      .passthrough(),
+    data: z.looseObject({
+      workflow: z.string(),
+      process: z.enum(['txt2img', 'img2img']),
+      prompt: z.string().default('').catch(''),
+      seed: z.number().optional(),
+    }),
   }),
 ]);
 

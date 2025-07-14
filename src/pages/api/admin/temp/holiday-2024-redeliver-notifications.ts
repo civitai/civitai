@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createNotification } from '~/server/services/notification.service';

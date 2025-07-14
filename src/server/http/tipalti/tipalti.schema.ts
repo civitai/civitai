@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { TipaltiStatus } from '~/server/common/enums';
 
 export namespace Tipalti {

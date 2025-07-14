@@ -631,19 +631,20 @@ function GeneratedImageWorkflowMenuItems({
 
   async function handleImg2Vid() {
     let engine = useGenerationFormStore.getState().engine;
-    if (engine) {
-      const config = videoGenerationConfig2[engine as OrchestratorEngine2];
-      if (!config?.processes.includes('img2vid')) {
-        engine = Object.entries(videoGenerationConfig2).find(([key, value]) =>
-          value.processes.includes('img2vid')
-        )?.[0];
-      }
+
+    const config = videoGenerationConfig2[engine as OrchestratorEngine2];
+    if (!config?.processes.includes('img2vid')) {
+      engine = Object.entries(videoGenerationConfig2).find(([key, value]) =>
+        value.processes.includes('img2vid')
+      )?.[0];
     }
+
     generationStore.setData({
       resources: [],
       params: {
         ...(step.params as any),
         sourceImage: await getSourceImageFromUrl({ url: image.url }),
+        process: 'img2vid',
       },
       type: 'video',
       engine,

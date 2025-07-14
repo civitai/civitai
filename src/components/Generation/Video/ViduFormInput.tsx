@@ -16,6 +16,10 @@ import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { titleCase } from '~/utils/string-helpers';
+import {
+  InputSourceImageUploadMultiple,
+  SourceImageUploadMultiple,
+} from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 export function ViduFormInput() {
   const form = useFormContext();
@@ -24,6 +28,8 @@ export function ViduFormInput() {
   const endSourceImage = form.watch('endSourceImage');
   const model = form.watch('model');
   const isTxt2Vid = process === 'txt2vid';
+  const isRef2Vid = process === 'ref2vid';
+
   const [Warning1, setWarning1] = useState<JSX.Element | null>(null);
   const [Warning2, setWarning2] = useState<JSX.Element | null>(null);
 
@@ -47,8 +53,8 @@ export function ViduFormInput() {
             { ...endSourceImage, label: 'Last Frame' },
           ],
           onConfirm: (urls) => {
-            if (urls[0] instanceof Blob) form.setValue('sourceImage', urls[0]);
-            if (urls[1] instanceof Blob) form.setValue('endSourceImage', urls[1]);
+            if (urls[0].cropped) form.setValue('sourceImage', urls[0].cropped ?? urls[0].src);
+            if (urls[1].cropped) form.setValue('endSourceImage', urls[1].cropped ?? urls[1].src);
           },
           onCancel: () => {
             form.setValue('endSourceImage', null);
@@ -60,7 +66,31 @@ export function ViduFormInput() {
 
   return (
     <>
-      <InputVideoProcess name="process" />
+      <InputSegmentedControl
+        size="sm"
+        name="process"
+        color="blue"
+        data={[
+          { label: 'Text to Video', value: 'txt2vid' },
+          { label: 'Image to Video', value: 'img2vid' },
+          { label: 'Reference to Video', value: 'ref2vid' },
+        ]}
+        classNames={{ label: '@max-xs:text-xs' }}
+      />
+      {process === 'ref2vid' && (
+        <div className="-mx-2">
+          <InputSourceImageUploadMultiple name="images" max={7} warnOnMissingAiMetadata>
+            {(previewItems) => (
+              <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
+                {previewItems.map((item, i) => (
+                  <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                ))}
+                <SourceImageUploadMultiple.Dropzone />
+              </div>
+            )}
+          </InputSourceImageUploadMultiple>
+        </div>
+      )}
       {process === 'img2vid' && (
         <div className="flex flex-col gap-2">
           <div className="flex justify-center gap-2">
@@ -96,7 +126,7 @@ export function ViduFormInput() {
         autosize
       />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
-      {model === 'q1' && isTxt2Vid && (
+      {model === 'q1' && (isTxt2Vid || isRef2Vid) && (
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"

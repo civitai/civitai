@@ -12,7 +12,7 @@ export type CryptoTransactionStatus = "WaitingForRamp" | "RampTimedOut" | "RampF
 
 export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
-export type PaymentProvider = "Stripe" | "Paddle";
+export type PaymentProvider = "Stripe" | "Paddle" | "Civitai";
 
 export type UserEngagementType = "Follow" | "Hide" | "Block";
 
@@ -487,6 +487,7 @@ export interface Price {
   customerSubscriptions?: CustomerSubscription[];
   purchases?: Purchase[];
   provider: PaymentProvider;
+  redeemableCodes?: RedeemableCode[];
 }
 
 export interface Purchase {
@@ -2505,6 +2506,8 @@ export interface RedeemableCode {
   expiresAt: Date | null;
   redeemedAt: Date | null;
   transactionId: string | null;
+  priceId: string | null;
+  price?: Price | null;
 }
 
 export interface Tool {

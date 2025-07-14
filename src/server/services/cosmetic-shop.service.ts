@@ -641,6 +641,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     period: MetricTimeframe.AllTime,
     periodMode: 'stats',
     types: [MediaType.image],
+    withMeta: false,
   });
 
   const images = userImages.items.slice(0, limit);
@@ -671,6 +672,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       periodMode: 'stats',
       sort: ImageSort.Newest,
       types: [MediaType.image],
+      withMeta: false,
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);

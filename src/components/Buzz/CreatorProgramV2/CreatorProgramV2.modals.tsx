@@ -134,7 +134,8 @@ export const openWithdrawalFeeModal = () => {
             Withdrawal fees vary depending on the Withdrawal Method you choose.
           </p>
           {keys.map((key) => {
-            if (!WITHDRAWAL_FEES[key]) {
+            const withdrawalFees = WITHDRAWAL_FEES[key];
+            if (!withdrawalFees) {
               return null;
             }
 
@@ -142,9 +143,9 @@ export const openWithdrawalFeeModal = () => {
               <div className="flex gap-4" key={key}>
                 <p className="font-bold">{getDisplayName(key)}</p>
                 <p>
-                  {WITHDRAWAL_FEES[key].type === 'percent'
-                    ? `${WITHDRAWAL_FEES[key].amount * 100}%`
-                    : `$${formatCurrencyForDisplay(WITHDRAWAL_FEES[key].amount, Currency.USD)}`}
+                  {withdrawalFees.type === 'percent'
+                    ? `${withdrawalFees.amount * 100}%`
+                    : `$${formatCurrencyForDisplay(withdrawalFees.amount, Currency.USD)}`}
                 </p>
               </div>
             );

@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, Button, Pagination } from '@mantine/core';
 import { IconCopy, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { Announcement } from '~/components/Announcements/Announcement';
 import { AnnouncementEditModal } from '~/components/Announcements/AnnouncementEditModal';
 import { Page } from '~/components/AppLayout/Page';

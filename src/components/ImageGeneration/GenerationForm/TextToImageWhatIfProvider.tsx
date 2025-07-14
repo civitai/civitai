@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   fluxStandardAir,
   fluxUltraAir,
@@ -21,6 +21,8 @@ import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/ty
 import { parseAIR } from '~/utils/string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { useGenerationStore } from '~/store/generation.store';
+import { useDebouncer } from '~/utils/debouncer';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -39,67 +41,127 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const currentUser = useCurrentUser();
   const watched = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
+  const loading = useGenerationStore((state) => state.loading);
+  const [query, setQuery] = useState<Record<string, any> | null>(null);
 
-  const query = useMemo(() => {
-    const values = { ...form.getValues(), ...watched };
-    const { model, resources, vae, ...params } = values;
-    const defaultModel =
-      generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
-        ?.checkpoint ?? model;
+  // const query = useMemo(() => {
+  //   const values = { ...form.getValues(), ...watched };
+  //   const { model, resources, vae, ...params } = values;
+  //   const defaultModel =
+  //     generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+  //       ?.checkpoint ?? model;
 
-    if (params.aspectRatio) {
-      const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
-      if (size) {
-        params.width = size.width;
-        params.height = size.height;
+  //   if (params.aspectRatio) {
+  //     const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
+  //     if (size) {
+  //       (params as Record<string, any>).width = size.width;
+  //       (params as Record<string, any>).height = size.height;
+  //     }
+  //   }
+
+  //   let modelVersionId = model?.id ?? defaultModel.id;
+  //   const isFlux = getIsFlux(params.baseModel);
+  //   const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
+  //   if (isFlux && params.fluxMode && isFluxStandard) {
+  //     const { version } = parseAIR(params.fluxMode);
+  //     modelVersionId = version;
+  //     if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
+  //   }
+
+  //   // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+  //   // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+  //   // else params.engine = undefined;
+
+  //   delete params.engine;
+  //   if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
+  //     params.engine = 'flux-pro-raw';
+  //   const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
+  //   if (imageGenEngine) {
+  //     params.engine = imageGenEngine;
+  //   }
+
+  //   const additionalResources =
+  //     resources?.map((x) => {
+  //       if (!x.epochDetails?.epochNumber) return { id: x.id as number };
+  //       return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
+  //     }) ?? [];
+
+  //   const parsed = textToImageParamsSchema.parse({
+  //     ...params,
+  //     ...whatIfQueryOverrides,
+  //   });
+
+  //   return {
+  //     resources: [{ id: modelVersionId }, ...additionalResources],
+  //     params: removeEmpty(parsed),
+  //   };
+  // }, [watched]);
+
+  const debouncer = useDebouncer(150);
+  useEffect(() => {
+    debouncer(() => {
+      const values = { ...form.getValues(), ...watched };
+      const { model, resources, vae, ...params } = values;
+      const defaultModel =
+        generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+          ?.checkpoint ?? model;
+
+      if (params.aspectRatio) {
+        const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
+        if (size) {
+          (params as Record<string, any>).width = size.width;
+          (params as Record<string, any>).height = size.height;
+        }
       }
-    }
 
-    let modelVersionId = model?.id ?? defaultModel.id;
-    const isFlux = getIsFlux(params.baseModel);
-    const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
-    if (isFlux && params.fluxMode && isFluxStandard) {
-      const { version } = parseAIR(params.fluxMode);
-      modelVersionId = version;
-      if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
-    }
+      let modelVersionId = model?.id ?? defaultModel.id;
+      const isFlux = getIsFlux(params.baseModel);
+      const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
+      if (isFlux && params.fluxMode && isFluxStandard) {
+        const { version } = parseAIR(params.fluxMode);
+        modelVersionId = version;
+        if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
+      }
 
-    // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
-    // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
-    // else params.engine = undefined;
+      // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+      // else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+      // else params.engine = undefined;
 
-    delete params.engine;
-    if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
-      params.engine = 'flux-pro-raw';
-    const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
-    if (imageGenEngine) {
-      params.engine = imageGenEngine;
-    }
+      delete params.engine;
+      if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
+        params.engine = 'flux-pro-raw';
+      const imageGenEngine = imageGenModelVersionMap.get(modelVersionId);
+      if (imageGenEngine) {
+        params.engine = imageGenEngine;
+      }
 
-    const additionalResources =
-      resources?.map((x) => {
-        if (!x.epochDetails?.epochNumber) return { id: x.id as number };
-        return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
-      }) ?? [];
+      const additionalResources =
+        resources?.map((x) => {
+          if (!x.epochDetails?.epochNumber) return { id: x.id as number };
+          return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
+        }) ?? [];
 
-    return {
-      resources: [{ id: modelVersionId }, ...additionalResources],
-      params: removeEmpty({
+      const parsed = textToImageParamsSchema.parse({
         ...params,
         ...whatIfQueryOverrides,
-      } satisfies TextToImageInput),
-    };
+      });
+
+      setQuery({
+        resources: [{ id: modelVersionId }, ...additionalResources],
+        params: removeEmpty(parsed),
+      });
+    });
   }, [watched]);
 
-  useEffect(() => {
-    // enable after timeout to prevent multiple requests as form data is set
-    setTimeout(() => setEnabled(true), 150);
-  }, []);
+  // useEffect(() => {
+  //   // enable after timeout to prevent multiple requests as form data is set
+  //   setTimeout(() => setEnabled(true), 300);
+  // }, []);
 
-  const [debounced] = useDebouncedValue(query, 100);
+  // const [debounced] = useDebouncedValue(query, 150);
 
-  const result = trpc.orchestrator.getImageWhatIf.useQuery(debounced, {
-    enabled: !!currentUser && debounced && enabled,
+  const result = trpc.orchestrator.getImageWhatIf.useQuery(query as any, {
+    enabled: !!currentUser && !loading && !!query,
   });
 
   return <Context.Provider value={result}>{children}</Context.Provider>;

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export namespace Ncmec {
   export const statusResponseSchema = z.object({

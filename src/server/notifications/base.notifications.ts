@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { NotificationCategory } from '~/server/common/enums';
 

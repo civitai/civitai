@@ -1,12 +1,13 @@
 import { buzzBulkBonusMultipliers } from '~/server/common/constants';
 
 export const getBuzzBulkMultiplier = ({
-  buzzAmount,
+  buzzAmount: _buzzAmount,
   purchasesMultiplier,
 }: {
   buzzAmount: number;
   purchasesMultiplier: number;
 }) => {
+  const buzzAmount = Number(_buzzAmount);
   const bulkBuzzMultiplier = buzzBulkBonusMultipliers.reduce((acc, [amount, multiplier]) => {
     if (buzzAmount >= amount) {
       return multiplier;

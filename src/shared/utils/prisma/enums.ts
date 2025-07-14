@@ -76,6 +76,7 @@ export type RewardsEligibility = (typeof RewardsEligibility)[keyof typeof Reward
 export const PaymentProvider = {
   Stripe: 'Stripe',
   Paddle: 'Paddle',
+  Civitai: 'Civitai',
 } as const;
 
 export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvider];

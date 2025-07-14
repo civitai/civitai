@@ -38,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import classes from '~/pages/pricing/index.module.scss';
 import type { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 interface MembershipPlansProps {
   reason?: JoinRedirectReason;
@@ -87,6 +88,7 @@ export function GreenMembershipPlans({
   const activeSubscriptionIsNotDefaultProvider =
     !features.disablePayments && subscription && subscriptionPaymentProvider !== paymentProvider;
   const isHolidays = isHolidaysTime();
+  const isCivitaiProvider = subscription && subscriptionPaymentProvider === PaymentProvider.Civitai;
 
   return (
     <>
@@ -148,7 +150,7 @@ export function GreenMembershipPlans({
       </Container>
       <Container size="xl">
         <Stack>
-          {features.disablePayments && (
+          {features.disablePayments && !features.prepaidMemberships && (
             <Center>
               <AlertWithIcon
                 color="red"
@@ -166,6 +168,29 @@ export function GreenMembershipPlans({
                     membership&rsquo;s expiration date.{' '}
                     <Anchor href="https://civitai.com/articles/14945" c="red.3">
                       Learn more
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
+          {features.disablePayments && features.prepaidMemberships && (
+            <Center>
+              <AlertWithIcon
+                color="blue"
+                iconColor="blue"
+                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack gap={0}>
+                  <Text size="xs" lh={1.2}>
+                    Regular membership purchases are temporarily disabled, but you can still
+                    purchase prepaid memberships! Prepaid memberships give you all the same benefits
+                    and will automatically activate when your current membership expires.{' '}
+                    <Anchor href="/purchase/prepaid-memberships" c="blue.3">
+                      Purchase prepaid membership
                     </Anchor>
                   </Text>
                 </Stack>
@@ -197,7 +222,7 @@ export function GreenMembershipPlans({
               </Stack>
             </AlertWithIcon>
           )}
-          {activeSubscriptionIsNotDefaultProvider && (
+          {activeSubscriptionIsNotDefaultProvider && !isCivitaiProvider && (
             <AlertWithIcon
               color="red"
               iconColor="red"

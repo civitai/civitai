@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 

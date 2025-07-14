@@ -1,7 +1,7 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';

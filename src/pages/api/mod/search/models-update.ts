@@ -1,6 +1,6 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';

@@ -2,7 +2,7 @@ import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, Title } f
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

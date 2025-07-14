@@ -22,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
@@ -35,6 +35,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { env } from '~/env/client';
@@ -127,8 +128,12 @@ export default function UserMembership() {
         title: 'Whoops!',
         error:
           error instanceof Error
-            ? error
-            : new Error('An error occurred while refreshing your subscription'),
+            ? { message: error.message }
+            : { message: 'An error occurred while refreshing your subscription' },
+        reason:
+          error instanceof Error
+            ? error.message
+            : 'An error occurred while refreshing your subscription',
       });
     }
   };
@@ -180,6 +185,7 @@ export default function UserMembership() {
   const meta = product?.metadata as SubscriptionProductMetadata;
   const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
+  const isCivitaiProvider = subscriptionPaymentProvider === PaymentProvider.Civitai;
 
   return (
     <>
@@ -219,6 +225,21 @@ export default function UserMembership() {
                       only available on the green environment.
                     </Text>
                   </Stack>
+                </Alert>
+              )}
+              {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
+                <Alert>
+                  We are currently migrating your account info to our new payment processor, until
+                  this is completed you will be unable to upgrade your subscription. Migration is
+                  taking a bit longer than expected, but we are working hard to get it done as soon
+                  as possible.
+                </Alert>
+              )}
+              {isDrowngrade && downgradedTier && (
+                <Alert>
+                  You have successfully downgraded your membership to the{' '}
+                  {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan to
+                  take effect. You may refresh the page to see the changes.
                 </Alert>
               )}
 
@@ -350,7 +371,7 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && !showRedirectMessage && (
+                        {!subscription.cancelAt && !showRedirectMessage && !isCivitaiProvider && (
                           <CancelMembershipAction
                             variant="button"
                             buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
@@ -378,8 +399,16 @@ export default function UserMembership() {
                       benefits on that date.
                     </Text>
                   )}
+                  {isCivitaiProvider && (
+                    <Text c="yellow">
+                      You are currently in a is a pre-paid membership. No subsequent charges will be
+                      made to your account.
+                    </Text>
+                  )}
                 </Stack>
               </Paper>
+
+              <PrepaidTimelineProgress subscription={subscription} />
 
               {benefits && (
                 <div

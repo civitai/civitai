@@ -28,7 +28,6 @@ export default function Pricing() {
     features.isGreen ? 'green' : queryBuzzType
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
-
   const { subscription, subscriptionPaymentProvider, isFreeTier } = useActiveSubscription({
     checkWhenInBadState: true,
   });

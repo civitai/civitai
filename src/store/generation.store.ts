@@ -115,7 +115,7 @@ export const useGenerationStore = create<GenerationState>()(
         // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
         if (engine) useGenerationFormStore.setState({ engine });
         const { params } = await transformParams(data.params);
-        if (type === 'video') {
+        if (type === 'video' && !params.process) {
           params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
         } else if (type === 'image') {
           params.process = params.sourceImage ? 'img2img' : 'txt2img';

@@ -2,7 +2,7 @@ import type { ListProps } from '@mantine/core';
 import { Alert, Center, Container, Divider, Group, List, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

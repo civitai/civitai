@@ -2,7 +2,7 @@ import { Anchor, Stack, Text } from '@mantine/core';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';

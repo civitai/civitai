@@ -1,7 +1,7 @@
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';

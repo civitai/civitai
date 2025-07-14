@@ -1,5 +1,5 @@
-import type { WanVdeoGenInput } from '@civitai/client';
-import z from 'zod';
+import type { CivitaiWanVideoGenInput } from '@civitai/client';
+import * as z from 'zod/v4';
 import { AspectRatioMap, AspectRatio } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -43,7 +43,7 @@ export const wanBaseModelMap = {
 };
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('wan').catch('wan'),
+  engine: z.literal('wan').default('wan').catch('wan'),
   baseModel: z.string().optional(),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
@@ -111,7 +111,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ sourceImage, resources, baseModel, ...args }): WanVdeoGenInput => {
+  inputFn: ({ sourceImage, resources, baseModel, ...args }): CivitaiWanVideoGenInput => {
     const ar = sourceImage
       ? AspectRatio.fromSize(sourceImage, { multiplier: 16 })
       : wanAspectRatioMap[args.aspectRatio ?? '1:1'];
@@ -121,6 +121,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       : undefined;
     return {
       ...args,
+      provider: 'civitai',
       width,
       height,
       sourceImage: sourceImage?.url,
@@ -128,6 +129,6 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       loras: resources?.map(({ air, strength }) => ({ air, strength })),
       model,
       // model: !sourceImage ? 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796' : undefined,
-    };
+    } as CivitaiWanVideoGenInput;
   },
 });

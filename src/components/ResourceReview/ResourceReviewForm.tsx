@@ -1,5 +1,5 @@
 import { Stack } from '@mantine/core';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useForm, Form, InputRating, InputRTE } from '~/libs/form';
 
 type FormData = { rating?: number; details?: string };

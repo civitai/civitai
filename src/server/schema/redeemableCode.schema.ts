@@ -1,5 +1,5 @@
 import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export type CreateRedeemableCodeInput = z.infer<typeof createRedeemableCodeSchema>;
 export const createRedeemableCodeSchema = z.object({
@@ -7,6 +7,7 @@ export const createRedeemableCodeSchema = z.object({
   type: z.nativeEnum(RedeemableCodeType),
   expiresAt: z.date().optional(),
   quantity: z.number().min(1).optional(),
+  priceId: z.string().optional(),
 });
 
 export type DeleteRedeemableCodeInput = z.infer<typeof deleteRedeemableCodeSchema>;

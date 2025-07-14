@@ -1,0 +1,10 @@
+.card {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  
+  &:hover {
+    border-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+  }
+}

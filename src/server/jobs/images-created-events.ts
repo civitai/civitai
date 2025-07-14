@@ -43,6 +43,7 @@ export const imagesCreatedEvents = createJob('images-created-events', '0 * * * *
             "userId",
             id,
             "nsfw",
+            "nsfwLevel",
             "type"
           FROM "Image"
           WHERE id BETWEEN ${start} AND ${end} AND nsfw != 'Blocked';
@@ -61,6 +62,7 @@ export const imagesCreatedEvents = createJob('images-created-events', '0 * * * *
           mediaType: x.type,
           createdAt: x.createdAt,
           nsfw: x.nsfw,
+          nsfwLevel: x.nsfwLevel,
           userId: x.userId,
         })),
         clickhouse_settings: {
@@ -85,5 +87,6 @@ type ImageRow = {
   createdAt: Date;
   userId: number;
   nsfw: string;
+  nsfwLevel: number;
   type: string;
 };

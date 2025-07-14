@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 
@@ -82,7 +82,7 @@ export const flux1KontextConfig = ImageGenConfig({
       engine: params.engine,
       model,
       prompt: params.prompt,
-      images: [imageUrl],
+      images: imageUrl ? [imageUrl] : undefined,
       aspectRatio: params.aspectRatio,
       quantity: params.quantity,
       guidanceScale: params.cfgScale,

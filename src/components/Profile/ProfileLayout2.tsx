@@ -31,7 +31,9 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
 
   const userMetaImage = user?.profilePicture
     ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
-    : user?.image;
+    : user?.image && user.image.startsWith('http')
+    ? user.image
+    : undefined;
   const metaSchema = user
     ? {
         '@context': 'https://schema.org',
@@ -46,7 +48,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           '@type': 'Person',
           name: user.username,
           image: userMetaImage,
-          url: `${env.NEXT_PUBLIC_BASE_URL}/${username}`,
+          url: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`,
           interactionStatistic: stats
             ? [
                 {
