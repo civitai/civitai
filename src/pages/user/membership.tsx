@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Box,
@@ -23,11 +22,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  useMutatePaddle,
-  usePaddleSubscriptionRefresh,
-  useSubscriptionManagementUrls,
-} from '~/components/Paddle/util';
+import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
@@ -35,6 +30,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -118,12 +114,18 @@ export default function UserMembership() {
         title: 'Subscription refreshed',
         message: 'Your subscription has been successfully refreshed',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to refresh subscription', error);
       showErrorNotification({
         title: 'Whoops!',
-        error: error?.message ?? 'An error occurred while refreshing your subscription',
-        reason: error?.message ?? 'An error occurred while refreshing your subscription',
+        error:
+          error instanceof Error
+            ? error.message
+            : { message: 'An error occurred while refreshing your subscription' },
+        reason:
+          error instanceof Error
+            ? error.message
+            : 'An error occurred while refreshing your subscription',
       });
     }
   };
@@ -337,14 +339,14 @@ export default function UserMembership() {
                   )}
                   {isCivitaiProvider && (
                     <Text c="yellow">
-                      This is a pre-paid membership that expires on{' '}
-                      {new Date(subscription.currentPeriodEnd).toLocaleDateString()}. You will lose
-                      your benefits on that date. No subsequent charges will be made to your
-                      account.
+                      You are currently in a is a pre-paid membership. No subsequent charges will be
+                      made to your account.
                     </Text>
                   )}
                 </Stack>
               </Paper>
+
+              <PrepaidTimelineProgress subscription={subscription} />
 
               {benefits && (
                 <>
