@@ -355,14 +355,15 @@ export async function consumeRedeemableCode({
 
         await withRetries(async () => {
           // Grant buzz right away:
-          await grantBuzzPurchase({
-            userId: userId,
-            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
-            description: `Membership Bonus`,
-            transactionType: TransactionType.Purchase,
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: userId,
+            type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id
             }`,
+            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
+            description: `Membership bonus`,
             details: {
               type: 'membership-purchase',
               date: date,
