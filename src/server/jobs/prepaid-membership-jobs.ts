@@ -5,8 +5,10 @@ import dayjs from 'dayjs';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
-import type { SubscriptionMetadata, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { constants } from '~/server/common/constants';
+import type {
+  SubscriptionMetadata,
+  SubscriptionProductMetadata,
+} from '~/server/schema/subscriptions.schema';
 
 export const deliverPrepaidMembershipBuzz = createJob(
   'deliver-civitai-membership-buzz',
@@ -59,11 +61,10 @@ export const deliverPrepaidMembershipBuzz = createJob(
       AND COALESCE((cs.metadata->'prepaids'->(pr.metadata->>'tier'))::int, 0) > 0
     `;
 
-
     if (!data.length) {
       console.log('No Civitai membership holders found for buzz delivery today');
       return;
-    };
+    }
 
     const buzzTransactions = data
       .map((d) => {
@@ -113,10 +114,12 @@ export const deliverPrepaidMembershipBuzz = createJob(
           SELECT 
             (value ->> 'id')::string AS "id",
             value AS data
-          FROM json_array_elements(${JSON.stringify(data.map(d => ({
-        id: d.id,
-        tier: d.tier,
-      })))}::json)
+          FROM json_array_elements(${JSON.stringify(
+            data.map((d) => ({
+              id: d.id,
+              tier: d.tier,
+            }))
+          )}::json)
         ) AS updates
         WHERE "CustomerSubscription"."id" = updates."id"
       `;
@@ -152,8 +155,8 @@ export const processPrepaidMembershipTransitions = createJob(
     });
 
     // Create a map for quick tier lookup
-    const productsByTier = new Map<string, typeof tierProducts[0]>();
-    tierProducts.forEach(product => {
+    const productsByTier = new Map<string, (typeof tierProducts)[0]>();
+    tierProducts.forEach((product) => {
       const meta = product.metadata as SubscriptionProductMetadata;
       if (meta?.tier && ['bronze', 'silver', 'gold'].includes(meta.tier)) {
         productsByTier.set(meta.tier, product);
@@ -213,7 +216,6 @@ export const processPrepaidMembershipTransitions = createJob(
       endedAt?: Date;
     }> = [];
 
-
     for (const membership of expiringMemberships) {
       try {
         const subscriptionMeta = (membership.metadata as SubscriptionMetadata) || {};
@@ -236,18 +238,22 @@ export const processPrepaidMembershipTransitions = createJob(
         for (let i = paidTiers.length - 1; i >= 0; i--) {
           const tier = paidTiers[i];
           const remainingMonths = prepaids[tier as keyof typeof prepaids] || 0;
+          const proratedDaysForTier = proratedDays[tier as keyof typeof proratedDays] || 0;
+          console.log({ proratedDaysForTier });
 
-          if (remainingMonths > 0) {
+          if (remainingMonths > 0 || proratedDaysForTier > 0) {
             nextTier = tier;
             nextMonths = remainingMonths;
-            nextProratedDays = proratedDays[tier as keyof typeof proratedDays] || 0;
+            nextProratedDays = proratedDaysForTier;
             break; // Take the first (best) tier found
           }
         }
 
-        if (!nextTier || nextMonths <= 0) {
+        if (!nextTier || (nextMonths <= 0 && nextProratedDays <= 0)) {
           // No prepaid memberships left, cancel the subscription
-          console.log(`User ${membership.userId}: No prepaid memberships left, canceling subscription`);
+          console.log(
+            `User ${membership.userId}: No prepaid memberships left, canceling subscription`
+          );
 
           membershipUpdates.push({
             id: membership.id,
@@ -268,10 +274,7 @@ export const processPrepaidMembershipTransitions = createJob(
 
         // Calculate the new period end date
         const newPeriodStart = now;
-        const newPeriodEnd = newPeriodStart
-          .add(nextMonths, 'month')
-          .add(nextProratedDays, 'day');
-
+        const newPeriodEnd = newPeriodStart.add(nextMonths, 'month').add(nextProratedDays, 'day');
 
         // Clear prorated days for this tier since we're using them
         const updatedProratedDays = { ...proratedDays };
@@ -293,11 +296,15 @@ export const processPrepaidMembershipTransitions = createJob(
 
         console.log(
           `User ${membership.userId}: Transitioned from ${currentTier} to ${nextTier} tier. ` +
-          `New period ends: ${newPeriodEnd.format('YYYY-MM-DD')}. Prepaid ${nextTier} months will be decremented by buzz delivery job.`
+            `New period ends: ${newPeriodEnd.format(
+              'YYYY-MM-DD'
+            )}. Prepaid ${nextTier} months will be decremented by buzz delivery job.`
         );
-
       } catch (error) {
-        console.error(`Error processing membership transition for user ${membership.userId}:`, error);
+        console.error(
+          `Error processing membership transition for user ${membership.userId}:`,
+          error
+        );
       }
     }
 
@@ -353,17 +360,19 @@ export const processPrepaidMembershipTransitions = createJob(
           SELECT 
             (value ->> 'id') AS id,
             value AS data
-          FROM json_array_elements(${JSON.stringify(membershipUpdates.map(update => ({
-        id: update.id,
-        productId: update.productId || null,
-        priceId: update.priceId || null,
-        currentPeriodStart: update.currentPeriodStart?.toISOString() || null,
-        currentPeriodEnd: update.currentPeriodEnd?.toISOString() || null,
-        metadata: update.metadata ? JSON.stringify(update.metadata) : null,
-        status: update.status || null,
-        canceledAt: update.canceledAt?.toISOString() || null,
-        endedAt: update.endedAt?.toISOString() || null,
-      })))}::json)
+          FROM json_array_elements(${JSON.stringify(
+            membershipUpdates.map((update) => ({
+              id: update.id,
+              productId: update.productId || null,
+              priceId: update.priceId || null,
+              currentPeriodStart: update.currentPeriodStart?.toISOString() || null,
+              currentPeriodEnd: update.currentPeriodEnd?.toISOString() || null,
+              metadata: update.metadata ? JSON.stringify(update.metadata) : null,
+              status: update.status || null,
+              canceledAt: update.canceledAt?.toISOString() || null,
+              endedAt: update.endedAt?.toISOString() || null,
+            }))
+          )}::json)
         ) AS updates
         WHERE "CustomerSubscription".id = updates.id
       `;
@@ -377,5 +386,3 @@ export const prepaidMembershipJobs = [
   deliverPrepaidMembershipBuzz,
   processPrepaidMembershipTransitions,
 ];
-
-
