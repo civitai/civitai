@@ -3,7 +3,7 @@ import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -60,6 +60,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getYoutubeRefreshToken } from '~/server/youtube/client';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
   CollectionContributorPermission,
@@ -1735,6 +1736,25 @@ export const validateContestCollectionEntry = async ({
     if (existingCollectionItemsOnFeaturedCollections) {
       throw throwBadRequestError(
         'At least one of the items provided is already featured by civitai and cannot be added to the contest.'
+      );
+    }
+  }
+
+  if (imageIds.length > 0 && metadata.forcedBrowsingLevel) {
+    // Check if the images have the correct browsing level
+    const allowedLevels = parseBitwiseBrowsingLevel(metadata.forcedBrowsingLevel);
+    const images = await dbRead.image.findMany({
+      select: { id: true, nsfwLevel: true },
+      where: { id: { in: imageIds } },
+    });
+
+    // filter images that are above the forced browsing level
+    const invalidImages = images.filter((image) => !allowedLevels.includes(image.nsfwLevel));
+    if (invalidImages.length > 0) {
+      throw throwBadRequestError(
+        `Some images have a higher rating than the allowed for the contest. Please ensure all images have a rating of ${allowedLevels
+          .map((level) => NsfwLevel[level])
+          .join(' or ')}.`
       );
     }
   }

@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Box,
   Button,
   Center,
@@ -138,7 +137,10 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const isCreate = !collectionId;
   const isImageCollection = collection?.type === CollectionType.Image;
   const isContestMode = collection?.mode === CollectionMode.Contest;
-  const joinUrl = `${env.NEXT_PUBLIC_BASE_URL}/collections/${collectionId}/join`;
+  const joinUrl =
+    env.NEXT_PUBLIC_BASE_URL && collectionId
+      ? `${env.NEXT_PUBLIC_BASE_URL}/collections/${collectionId}/join`
+      : '';
 
   return (
     <Modal {...dialog} size="lg" title={isCreate ? 'Create collection' : 'Edit collection'}>
@@ -228,6 +230,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                                 right={10}
                                 variant="transparent"
                                 style={{ transform: 'translateY(-50%) !important' }}
+                                disabled={!joinUrl}
                               >
                                 <IconClipboard />
                               </LegacyActionIcon>
