@@ -75,7 +75,6 @@ export function usePersistForm<
   const form = useForm<z.input<TSchema>, any, z.output<TSchema>>({
     resolver: zodResolver(schema),
     defaultValues: { ..._defaultValues.current, ...getParsedStorage() } as any,
-
     ...rest,
   });
 
@@ -165,6 +164,19 @@ export function usePersistForm<
       subscription.unsubscribe();
     };
   }, [form, storageKey, version]); // eslint-disable-line
+
+  useEffect(() => {
+    const errors = form.formState.errors;
+    const firstError = Object.keys(errors).reduce<string | null>((field, a) => {
+      const fieldKey = field as string;
+      return !!errors[fieldKey] ? fieldKey : a;
+    }, null);
+
+    if (firstError) {
+      const elem = document.getElementById(`input_${firstError}`);
+      elem?.scrollIntoView({ block: 'center' });
+    }
+  }, [form.formState.errors]);
 
   // if (!_formControl.current) {
   //   _formControl.current = {

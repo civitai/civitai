@@ -124,10 +124,10 @@ export const viduGenerationConfig = VideoGenerationConfig2({
         path: ['sourceImage'],
       });
     }
-    if (data.process === 'ref2vid' && !data.images?.length) {
+    if (data.process === 'ref2vid' && (!data.images || data.images.length < 3)) {
       ctx.addIssue({
         code: 'custom',
-        message: 'At least one image is required',
+        message: 'At least three images are required',
         path: ['images'],
       });
     }

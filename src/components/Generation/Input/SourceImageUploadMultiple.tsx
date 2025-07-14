@@ -41,7 +41,9 @@ type SourceImageUploadProps = {
   warnOnMissingAiMetadata?: boolean;
   aspect?: 'square' | 'video';
   cropToFirstImage?: boolean;
-} & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
+  error?: string;
+  id?: string;
+};
 
 type ImageComplete = {
   status: 'complete';
@@ -85,7 +87,8 @@ export function SourceImageUploadMultiple({
   warnOnMissingAiMetadata = false,
   aspect = 'square',
   cropToFirstImage = false,
-  ...props
+  error: initialError,
+  id,
 }: SourceImageUploadProps) {
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +164,7 @@ export function SourceImageUploadMultiple({
   // TODO - better error messaging
 
   const imagesMissingMetadataCount = previewImages.filter((x) => missingAiMetadata[x.url]).length;
+  const _error = initialError ?? error;
 
   return (
     <Provider
@@ -175,11 +179,10 @@ export function SourceImageUploadMultiple({
         cropToFirstImage,
       }}
     >
-      <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8">
-        <Input.Wrapper {...props} error={props.error ?? error}>
-          {children(previewItems)}
-        </Input.Wrapper>
-        {}
+      <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
+        {children(previewItems)}
+
+        {_error && <Alert color="red">{_error}</Alert>}
         {imagesMissingMetadataCount > 0 && (
           <Alert
             color="yellow"

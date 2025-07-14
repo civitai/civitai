@@ -1,5 +1,6 @@
+import { useMergedRef } from '@mantine/hooks';
 import type { ComponentType } from 'react';
-import { forwardRef } from 'react';
+import { forwardRef, useRef } from 'react';
 import type {
   ControllerFieldState,
   ControllerRenderProps,
@@ -32,15 +33,18 @@ export function withController<
 ) {
   const ControlledInput = forwardRef<HTMLElement, TComponentProps & { name: TName }>(
     ({ name, ...props }, ref) => {
+      const scopedRef = useRef<HTMLElement | null>(null);
+      const mergedRef = useMergedRef(ref, scopedRef);
       const { control, ...form } = useFormContext<TFieldValues>();
       return (
         <Controller
           control={control}
           name={name}
           render={({ field, fieldState, formState }) => {
-          const mappedProps = mapper?.({ field, fieldState, formState, props: props as any }); //eslint-disable-line
+            const mappedProps = mapper?.({ field, fieldState, formState, props: props as any }); //eslint-disable-line
 
-          const handleChange = (...values: any) => { //eslint-disable-line
+            const handleChange = (...values: any) => {
+              //eslint-disable-line
               props.onChange?.(...values);
               // @ts-ignore
               field.onChange(...values);
@@ -68,7 +72,7 @@ export function withController<
             return (
               <BaseComponent
                 id={`input_${name}`}
-                ref={ref}
+                ref={mergedRef}
                 {...(props as TComponentProps & { name: TName })}
                 {...mapped}
                 reset={(form as any).resetCount}
