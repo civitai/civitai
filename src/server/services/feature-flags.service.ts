@@ -121,6 +121,7 @@ const featureFlags = createFeatureFlags({
   changelogEdit: ['granted'],
   annualMemberships: ['public'],
   disablePayments: ['public'],
+  prepaidMemberships: ['public'],
   coinbasePayments: ['public'],
   coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
