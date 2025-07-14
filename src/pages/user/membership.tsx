@@ -339,8 +339,8 @@ export default function UserMembership() {
                   )}
                   {isCivitaiProvider && (
                     <Text c="yellow">
-                      You are currently in a is a pre-paid membership. No subsequent charges will be
-                      made to your account.
+                      You are currently in a pre-paid membership. No subsequent charges will be made
+                      to your account.
                     </Text>
                   )}
                 </Stack>
