@@ -96,7 +96,10 @@ export async function consumeRedeemableCode({
     throw new Error('Membership codes must have a price ID');
   }
 
-  if (codeRecord.price?.product?.provider !== PaymentProvider.Civitai) {
+  if (
+    codeRecord.type === RedeemableCodeType.Membership &&
+    codeRecord.price?.product?.provider !== PaymentProvider.Civitai
+  ) {
     throw new Error('Cannot redeem codes for non-Civitai products');
   }
 
