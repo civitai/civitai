@@ -23,6 +23,7 @@ import { cleanupWaitingRampUpTransactions, processPendingTransactions } from '~/
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
+import { prepaidMembershipJobs } from '~/server/jobs/prepaid-membership-jobs';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
@@ -145,6 +146,7 @@ export const jobs: Job[] = [
   ...newOrderJobs,
   updateModelVersionNsfwLevelsJob,
   deliverAnnualSubscriptionBuzz,
+  ...prepaidMembershipJobs,
   ...entityModerationJobs,
   processPendingTransactions,
   cleanupWaitingRampUpTransactions,

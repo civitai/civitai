@@ -30,8 +30,10 @@ export const redeemableCodeRouter = router({
       const attempts = await redemptionCounter.incrementBy(ctx.user.id);
       if (attempts > 5) throw new Error('Too many failed redemption attempts');
 
-      await consumeRedeemableCode({ ...input, userId: ctx.user.id });
+      const consumedCode = await consumeRedeemableCode({ ...input, userId: ctx.user.id });
       await ctx.track.redeemableCode('consume', { code: input.code });
       await redemptionCounter.clear(ctx.user.id);
+
+      return consumedCode;
     }),
 });
