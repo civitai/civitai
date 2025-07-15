@@ -15,11 +15,15 @@ type CustomImageOptions = ImageOptions & {
 
 export const CustomImage = ImageExtension.extend<CustomImageOptions>({
   draggable: true,
+
   addOptions() {
     return {
+      inline: false,
+      allowBase64: false,
+      HTMLAttributes: {},
       ...this.parent?.(),
       ...constants.richTextEditor,
-    };
+    } as CustomImageOptions;
   },
   addProseMirrorPlugins() {
     return [

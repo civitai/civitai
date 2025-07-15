@@ -10,7 +10,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
-import type { BuiltInProviderType } from 'next-auth/providers';
+import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { getProviders, signIn } from 'next-auth/react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

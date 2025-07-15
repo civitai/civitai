@@ -1,7 +1,6 @@
-import { ReactRenderer } from '@tiptap/react';
 import type { SuggestionOptions } from '@tiptap/suggestion';
-import type { Instance as TippyInstance } from 'tippy.js';
-import tippy from 'tippy.js';
+import { computePosition, flip, shift } from '@floating-ui/dom';
+import { posToDOMRect, ReactRenderer } from '@tiptap/react';
 
 import type { MentionListRef } from '~/components/RichTextEditor/MentionList';
 import { MentionList } from '~/components/RichTextEditor/MentionList';
@@ -17,8 +16,8 @@ export function getSuggestions(options?: Options) {
         .filter((suggestion) => suggestion.label.toLowerCase().startsWith(query.toLowerCase()))
         .slice(0, 5),
     render: () => {
-      let component: ReactRenderer<MentionListRef> | undefined;
-      let popup: TippyInstance[] | undefined;
+      let component: ReactRenderer<MentionListRef>;
+      // let popup: TippyInstance[] | undefined;
 
       return {
         onStart: (props) => {
@@ -27,40 +26,33 @@ export function getSuggestions(options?: Options) {
             editor: props.editor,
           });
           if (!props.clientRect) return;
+          (component.element as HTMLElement).style.position = 'absolute';
 
-          popup = tippy('body', {
-            getReferenceClientRect: props.clientRect as () => DOMRect,
-            appendTo: () => document.body,
-            content: component.element,
-            showOnCreate: true,
-            interactive: true,
-            trigger: 'manual',
-            placement: 'bottom-start',
-          });
+          document.body.appendChild(component.element);
+
+          updatePosition(props.editor, component.element);
         },
 
         onUpdate(props) {
-          component?.updateProps(props);
+          component.updateProps(props);
           if (!props.clientRect) return;
 
-          popup?.[0].setProps({
-            getReferenceClientRect: props.clientRect as () => DOMRect,
-          });
+          updatePosition(props.editor, component.element);
         },
 
         onKeyDown(props) {
           if (props.event.key === 'Escape') {
-            popup?.[0].hide();
+            component.destroy();
+
             return true;
           }
-          if (!component?.ref) return false;
 
-          return component?.ref.onKeyDown(props);
+          return component.ref?.onKeyDown(props) ?? true;
         },
 
         onExit() {
-          popup?.[0].destroy();
-          component?.destroy();
+          component.element.remove();
+          component.destroy();
         },
       };
     },
@@ -68,3 +60,21 @@ export function getSuggestions(options?: Options) {
 
   return suggestion;
 }
+
+const updatePosition = (editor: any, element: any) => {
+  const virtualElement = {
+    getBoundingClientRect: () =>
+      posToDOMRect(editor.view, editor.state.selection.from, editor.state.selection.to),
+  };
+
+  computePosition(virtualElement, element, {
+    placement: 'bottom-start',
+    strategy: 'absolute',
+    middleware: [shift(), flip()],
+  }).then(({ x, y, strategy }) => {
+    element.style.width = 'max-content';
+    element.style.position = strategy;
+    element.style.left = `${x}px`;
+    element.style.top = `${y}px`;
+  });
+};

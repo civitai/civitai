@@ -8,14 +8,16 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { Color } from '@tiptap/extension-color';
 import Heading from '@tiptap/extension-heading';
 import Mention from '@tiptap/extension-mention';
-import Placeholder from '@tiptap/extension-placeholder';
-import TextStyle from '@tiptap/extension-text-style';
+import { TextStyleKit } from '@tiptap/extension-text-style';
 import Underline from '@tiptap/extension-underline';
 import Youtube from '@tiptap/extension-youtube';
+
+import { Placeholder } from '@tiptap/extensions';
 import type { Editor, Extensions } from '@tiptap/react';
-import { BubbleMenu, Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
+import { Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
+import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
-import React, { useEffect, useImperativeHandle, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
@@ -138,137 +140,151 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
 
-  const linkExtension = withLinkValidation ? LinkWithValidation : Link;
-
   const { uploadToCF } = useCFImageUpload();
 
-  const extensions: Extensions = [
-    Placeholder.configure({ placeholder }),
-    StarterKit.configure({
-      // heading: !addHeading ? false : { levels: [1, 2, 3] },
-      heading: false,
-      bulletList: !addList ? false : undefined,
-      orderedList: !addList ? false : undefined,
-      bold: !addFormatting ? false : undefined,
-      italic: !addFormatting ? false : undefined,
-      strike: !addFormatting ? false : undefined,
-      code: !addFormatting ? false : undefined,
-      blockquote: !addFormatting ? false : undefined,
-      codeBlock: !addFormatting ? false : undefined,
-      dropcursor: !addMedia ? false : undefined,
-    }),
-    ...(addHeading
-      ? [
-          Heading.configure({
-            levels: [1, 2, 3],
-          }).extend({
-            addAttributes() {
-              return {
-                ...this.parent?.(),
-                id: { default: null },
-              };
-            },
-            addOptions() {
-              return {
-                ...this.parent?.(),
-                HTMLAttributes: {
-                  id: null,
-                },
-              };
-            },
-            renderHTML({ node }) {
-              const hasLevel = this.options.levels.includes(node.attrs.level);
-              const level = hasLevel ? node.attrs.level : this.options.levels[0];
-              const id = `${slugify(node.textContent.toLowerCase())}-${getRandomId()}`;
-
-              return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
-            },
-          }),
-        ]
-      : []),
-    ...(onSuperEnter
-      ? [
-          Extension.create({
-            name: 'onSubmitShortcut',
-            addKeyboardShortcuts: () => ({
-              'Mod-Enter': () => {
-                onSuperEnter();
-                return true; // Dunno why they want a boolean here
+  const extensions = useMemo(() => {
+    const arr: Extensions = [
+      Placeholder.configure({ placeholder }),
+      StarterKit.configure({
+        // heading: !addHeading ? false : { levels: [1, 2, 3] },
+        heading: false,
+        bulletList: !addList ? false : undefined,
+        orderedList: !addList ? false : undefined,
+        bold: !addFormatting ? false : undefined,
+        italic: !addFormatting ? false : undefined,
+        strike: !addFormatting ? false : undefined,
+        code: !addFormatting ? false : undefined,
+        blockquote: !addFormatting ? false : undefined,
+        codeBlock: !addFormatting ? false : undefined,
+        dropcursor: !addMedia ? false : undefined,
+        underline: !addFormatting ? false : undefined,
+        link: false,
+      }),
+    ];
+    // if (addFormatting) arr.push(Underline);
+    if (addColors) arr.push(TextStyleKit, Color);
+    if (addLink) {
+      const linkExtension = withLinkValidation ? LinkWithValidation : Link;
+      arr.push(linkExtension);
+    }
+    if (addHeading)
+      arr.push(
+        Heading.configure({
+          levels: [1, 2, 3],
+        }).extend({
+          addAttributes() {
+            return {
+              ...this.parent?.(),
+              id: { default: null },
+            };
+          },
+          addOptions() {
+            return {
+              ...this.parent?.(),
+              HTMLAttributes: {
+                id: null,
               },
-            }),
-          }),
-        ]
-      : []),
-    ...(addFormatting ? [Underline] : []),
-    ...(addColors ? [TextStyle, Color] : []),
-    ...(addLink ? [linkExtension] : []),
-    ...(addMedia
-      ? [
-          CustomImage.configure({
-            // To allow links on images
-            inline: true,
-            uploadImage: uploadToCF,
-            onUploadStart: () => {
-              showNotification({
-                id: UPLOAD_NOTIFICATION_ID,
-                loading: true,
-                withCloseButton: false,
-                autoClose: false,
-                message: 'Uploading images...',
-              });
-            },
-            onUploadEnd: () => {
-              hideNotification(UPLOAD_NOTIFICATION_ID);
-            },
-          }),
-          Youtube.configure({
-            addPasteHandler: false,
-            modestBranding: false,
-          }).extend({
-            renderHTML(input) {
-              const { HTMLAttributes } = input;
-              if (!HTMLAttributes.src || !this.parent) return ['div', { 'data-youtube-video': '' }];
+            };
+          },
+          renderHTML({ node }) {
+            const hasLevel = this.options.levels.includes(node.attrs.level);
+            const level: string | number = hasLevel ? node.attrs.level : this.options.levels[0];
+            const id = `${slugify(node.textContent.toLowerCase())}-${getRandomId()}`;
 
-              return this.parent(input);
-            },
-            addPasteRules() {
-              return [
-                nodePasteRule({
-                  find: /^(https?:\/\/)?(www\.|music\.)?(youtube\.com|youtu\.be)(?!.*\/channel\/)(?!\/@)(.+)?$/g,
-                  type: this.type,
-                  getAttributes: (match) => ({ src: match.input }),
-                }),
-              ];
-            },
-          }),
-          Instagram.configure({
-            HTMLAttributes: { class: classes.instagramEmbed },
-            height: 'auto',
-          }),
-        ]
-      : []),
-    ...(addMentions
-      ? [
-          Mention.configure({
-            suggestion: getSuggestions({ defaultSuggestions }),
-            HTMLAttributes: {
-              class: classes.mention,
-            },
-            renderLabel({ options, node }) {
-              return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+            return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
+          },
+        })
+      );
+    if (onSuperEnter)
+      arr.push(
+        Extension.create({
+          name: 'onSubmitShortcut',
+          addKeyboardShortcuts: () => ({
+            'Mod-Enter': () => {
+              onSuperEnter();
+              return true; // Dunno why they want a boolean here
             },
           }),
-        ]
-      : []),
-    ...(addPolls
-      ? [
-          StrawPoll.configure({
-            HTMLAttributes: { class: classes.strawPollEmbed },
-            height: 'auto',
-          }),
-        ]
-      : []),
-  ];
+        })
+      );
+    if (addMedia) {
+      arr.push(
+        CustomImage.configure({
+          // To allow links on images
+          inline: true,
+          uploadImage: uploadToCF,
+          onUploadStart: () => {
+            showNotification({
+              id: UPLOAD_NOTIFICATION_ID,
+              loading: true,
+              withCloseButton: false,
+              autoClose: false,
+              message: 'Uploading images...',
+            });
+          },
+          onUploadEnd: () => {
+            hideNotification(UPLOAD_NOTIFICATION_ID);
+          },
+        }),
+        Youtube.configure({
+          addPasteHandler: false,
+          modestBranding: false,
+        }).extend({
+          renderHTML(input) {
+            const { HTMLAttributes } = input;
+            if (!HTMLAttributes.src || !this.parent) return ['div', { 'data-youtube-video': '' }];
+            return this.parent(input);
+          },
+          addPasteRules() {
+            return [
+              nodePasteRule({
+                find: /^(https?:\/\/)?(www\.|music\.)?(youtube\.com|youtu\.be)(?!.*\/channel\/)(?!\/@)(.+)?$/g,
+                type: this.type,
+                getAttributes: (match) => ({ src: match.input }),
+              }),
+            ];
+          },
+        }),
+        Instagram.configure({
+          HTMLAttributes: { class: classes.instagramEmbed },
+          height: 'auto',
+        })
+      );
+    }
+    if (addMentions)
+      arr.push(
+        Mention.configure({
+          suggestion: getSuggestions({ defaultSuggestions }),
+          HTMLAttributes: {
+            class: classes.mention,
+          },
+          renderLabel({ options, node }) {
+            const label = node.attrs.label ?? node.attrs.id;
+            return `${options.suggestion.char ?? ''}${typeof label === 'string' ? label : ''}`;
+          },
+        })
+      );
+    if (addPolls)
+      arr.push(
+        StrawPoll.configure({
+          HTMLAttributes: { class: classes.strawPollEmbed },
+          height: 'auto',
+        })
+      );
+
+    return arr;
+  }, [
+    addList,
+    addFormatting,
+    addColors,
+    addLink,
+    withLinkValidation,
+    addHeading,
+    onSuperEnter,
+    addMedia,
+    addMentions,
+    addPolls,
+  ]);
 
   const editor = useEditor({
     extensions,

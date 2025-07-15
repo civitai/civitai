@@ -66,7 +66,7 @@ export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
   images: CsamReportImage[];
 };
 
-const baseDir = `${isProd ? env.DIRNAME : process.cwd()}/csam`;
+const baseDir = `${isProd && env.DIRNAME ? env.DIRNAME : process.cwd()}/csam`;
 
 export async function getImageResources({ ids }: GetImageResourcesOutput) {
   return await dbRead.imageResourceHelper.findMany({
@@ -328,11 +328,15 @@ async function constructReportPayload({
   if (reportedUser) {
     if (minorDepiction === 'non-real')
       additionalInfo.push(
-        `${reportedUser.username} (${reportedUser.id}), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.`
+        `${reportedUser.username as string} (${
+          reportedUser.id
+        }), appears to have used the following models' image/video generation and/or editing capabilities to produce sexual content depicting non-real minors.`
       );
     else if (minorDepiction === 'real')
       additionalInfo.push(
-        `${reportedUser.username} (${reportedUser.id}), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.`
+        `${reportedUser.username as string} (${
+          reportedUser.id
+        }), appears to have used the following models' image/video editing capabilities to modify images of real minors for the apparent purpose of sexualizing them.`
       );
 
     additionalInfo.push(section2);
@@ -491,8 +495,9 @@ export async function processCsamReport(report: CsamReportProps) {
           const additionalInfo: string[] = [];
           if (modelId) additionalInfo.push(`model id: ${modelId}`);
           if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-          if (prompt) additionalInfo.push(`prompt: ${prompt}`);
-          if (negativePrompt) additionalInfo.push(`negativePrompt: ${negativePrompt}`);
+          if (prompt && typeof prompt === 'string') additionalInfo.push(`prompt: ${prompt}`);
+          if (negativePrompt && typeof negativePrompt === 'string')
+            additionalInfo.push(`negativePrompt: ${negativePrompt}`);
 
           const fileAnnotations =
             imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
@@ -793,7 +798,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             ? image.name.substring(0, image.name.lastIndexOf('.'))
             : image.url;
           const name = imageName.length ? imageName : image.url;
-          const filename = `${name}.${blob.type.split('/').pop()}`;
+          const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
           archive.append(buffer, { name: filename });
         });

@@ -64,7 +64,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!features?.canBuyBuzz) {
+    if (!features?.canBuyBuzz && env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN) {
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
@@ -120,7 +120,7 @@ export default function UserMembership() {
         title: 'Whoops!',
         error:
           error instanceof Error
-            ? error.message
+            ? error
             : { message: 'An error occurred while refreshing your subscription' },
         reason:
           error instanceof Error

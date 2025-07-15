@@ -214,16 +214,22 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         title={`${article.title} | Civitai`}
         description={truncate(removeTags(article.content), { length: 150 })}
         images={article?.coverImage}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
-            rel: 'canonical',
-          },
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}`,
-            rel: 'alternate',
-          },
-        ]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [
+                {
+                  href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(
+                    article.title
+                  )}`,
+                  rel: 'canonical',
+                },
+                {
+                  href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}`,
+                  rel: 'alternate',
+                },
+              ]
+            : []
+        }
         deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={article.nsfwLevel}>

@@ -14,7 +14,7 @@ const parsers = {
 };
 
 export async function ExifParser(file: File | string) {
-  let tags: ExifReader.Tags = {};
+  let tags: ExifReader.Tags = {} as ExifReader.Tags;
   try {
     tags = await ExifReader.load(file, { includeUnknown: true });
   } catch (e) {
