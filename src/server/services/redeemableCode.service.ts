@@ -23,6 +23,7 @@ import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
 import { Prisma } from '@prisma/client';
+import { setVaultFromSubscription } from '~/server/services/vault.service';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -377,6 +378,9 @@ export async function consumeRedeemableCode({
         });
       }
 
+      await setVaultFromSubscription({
+        userId,
+      });
       await invalidateSession(userId);
       await getMultipliersForUser(userId, true);
       return consumedCode;
