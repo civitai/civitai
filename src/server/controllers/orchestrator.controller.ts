@@ -1,4 +1,3 @@
-import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants, maxRandomSeed } from '~/server/common/constants';
