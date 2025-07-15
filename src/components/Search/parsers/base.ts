@@ -1,5 +1,5 @@
 import type { UiState } from 'instantsearch.js';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import {
   ARTICLES_SEARCH_INDEX,
   USERS_SEARCH_INDEX,

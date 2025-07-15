@@ -1,8 +1,8 @@
-import { number, z } from 'zod';
+import * as z from 'zod/v4';
 
 export type GetAnswersInput = z.infer<typeof getAnswersSchema>;
 export const getAnswersSchema = z.object({
-  questionId: number(),
+  questionId: z.number(),
 });
 
 export type UpsertAnswerInput = z.infer<typeof upsertAnswerSchema>;

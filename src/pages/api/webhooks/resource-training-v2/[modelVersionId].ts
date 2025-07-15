@@ -1,7 +1,7 @@
 import type { ImageResourceTrainingStep, Workflow } from '@civitai/client';
 import { WorkflowStatus } from '@civitai/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';

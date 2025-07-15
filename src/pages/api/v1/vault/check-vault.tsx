@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from 'next-auth';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { dbRead } from '~/server/db/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';

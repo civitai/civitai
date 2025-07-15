@@ -1,4 +1,4 @@
-import { ActionIcon, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
 import {
   IconMaximize,
   IconMinimize,
@@ -25,6 +25,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -119,7 +120,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       if (!container) return;
 
       if (!document.fullscreenElement) {
-        container.requestFullscreen().catch((err) => {
+        container.requestFullscreen().catch((err: Error) => {
           console.error(`Error attempting to enable fullscreen mode: ${err.message}`);
         });
       } else {
@@ -157,18 +158,18 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     const showCustomControls = loaded && controls && !html5Controls;
     const enableAudioControl = ref.current && hasAudio(ref.current);
+    const inSafari =
+      typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
 
     if (!initialMuted && loaded && ref.current) ref.current.volume = volume;
 
     useEffect(() => {
       // Hard set the width to 100% for Safari because it doesn't render in full size otherwise ¯\_(ツ)_/¯ -Manuel
-      const inSafari =
-        typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
       if (inSafari && ref.current) {
         ref.current.classList.add('w-full');
       }
       if (fadeIn && ref.current?.readyState === 4) ref.current.style.opacity = '1';
-    }, [fadeIn]);
+    }, [fadeIn, inSafari]);
 
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
@@ -181,17 +182,19 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     const node = useScrollAreaRef();
 
+    // ensure that video only plays when it is in the current view/dialog
+    const dialogCount = useDialogStore((state) => state.dialogs.length);
+    const stackRef = useRef<number | null>(null);
+    if (stackRef.current === null) stackRef.current = dialogCount;
+    const isCurrentStack = stackRef.current === dialogCount;
+
+    const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem || !options?.anim || props.autoPlay) return;
       const observer = new IntersectionObserver(
-        ([{ intersectionRatio, target }]) => {
-          const elem = target as HTMLVideoElement;
-          if (intersectionRatio >= threshold && elem.paused) {
-            elem.play().catch(() => elem.play());
-          } else if (intersectionRatio < threshold && !elem.paused) {
-            elem.pause();
-          }
+        ([{ intersectionRatio }]) => {
+          setCanPlay(intersectionRatio >= threshold);
         },
         { root: node?.current, threshold: [threshold, 1 - threshold] }
       );
@@ -200,6 +203,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         observer.unobserve(videoElem);
       };
     }, [threshold, options?.anim, loaded]);
+
+    useEffect(() => {
+      const videoElem = ref.current;
+      if (!videoElem) return;
+      if (isCurrentStack && (canPlay || props.autoPlay)) videoElem.play();
+      else videoElem.pause();
+    }, [canPlay, loaded, isCurrentStack]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -247,7 +257,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
-          preload="none"
+          preload={inSafari ? 'auto' : 'none'}
           onError={onError}
           {...props}
         >

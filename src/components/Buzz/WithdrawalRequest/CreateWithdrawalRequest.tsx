@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import classes from '~/components/Buzz/buzz.module.scss';
 import {
@@ -52,7 +52,9 @@ export const CreateWithdrawalRequest = () => {
   });
 
   const amount = form.watch('amount');
-  const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(amount);
+  const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(
+    amount ?? constants.buzz.minBuzzWithdrawal
+  );
 
   const handleSuccess = () => {
     showSuccessNotification({

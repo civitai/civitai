@@ -1,11 +1,11 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export const workflowIdSchema = z.object({
   workflowId: z.string(),
 });
 
 export const workflowUpdateSchema = workflowIdSchema.extend({
-  metadata: z.record(z.any()),
+  metadata: z.record(z.string(), z.any()),
 });
 
 export type WorkflowQuerySchema = z.input<typeof workflowQuerySchema>;
@@ -32,7 +32,7 @@ export const jsonPatchSchema = z.object({
       z.string(),
       z.number(),
       z.boolean(),
-      z.record(z.unknown()),
+      z.record(z.string(), z.unknown()),
       z.unknown().array(),
       z.null(),
     ])

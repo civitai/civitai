@@ -1,5 +1,5 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { buzzAccountTypes } from '~/server/schema/buzz.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 

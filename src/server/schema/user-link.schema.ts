@@ -1,5 +1,5 @@
 import { LinkType } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { zc } from '~/utils/schema-helpers';
 
 export type GetUserLinksQuery = z.infer<typeof getUserLinksSchema>;

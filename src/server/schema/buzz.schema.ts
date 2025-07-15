@@ -1,6 +1,5 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
-import { stringDate } from '~/utils/zod-helpers';
 
 export enum TransactionType {
   Tip = 0,
@@ -161,14 +160,18 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .omit({
     type: true,
   })
-  .superRefine((data) => {
+  .check((ctx) => {
     if (
-      data.entityType &&
-      ['Image', 'Model', 'Article'].includes(data.entityType) &&
-      data.amount > constants.buzz.maxEntityTip
-    )
-      return false;
-    return true;
+      ctx.value.entityType &&
+      ['Image', 'Model', 'Article'].includes(ctx.value.entityType) &&
+      ctx.value.amount > constants.buzz.maxEntityTip
+    ) {
+      ctx.issues.push({
+        code: 'custom',
+        message: `Your generosity abounds. Unfortunately you're attempting to tip more buzz than allowed in a single transaction`,
+        input: ctx.value,
+      });
+    }
   });
 
 export const getBuzzAccountSchema = z.object({
@@ -192,7 +195,7 @@ export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
 export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
-  date: stringDate(),
+  date: z.coerce.date(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;

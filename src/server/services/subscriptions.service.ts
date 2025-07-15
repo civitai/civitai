@@ -8,6 +8,7 @@ import type {
 } from '~/server/schema/subscriptions.schema';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { Prisma } from '@prisma/client';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -161,4 +162,72 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
   });
 
   return nonFreeProducts.length > 0;
+};
+
+/**
+ * Delivers monthly cosmetics to users with active Civitai subscriptions.
+ * TODO: This should be updated to do any provider not only Civitai.Not needed right now, but in the future
+ * @param { userIds = [], tx }: { userIds?: number[]; tx?: Prisma.TransactionClient }
+ * @returns {Promise<void>}
+ */
+export const deliverMonthlyCosmetics = async ({
+  userIds = [],
+  tx,
+}: {
+  userIds?: number[];
+  tx?: Prisma.TransactionClient;
+}) => {
+  const client = tx ?? dbWrite;
+  const currentDay = new Date().getDate();
+
+  await client.$executeRaw`
+      with users_affected AS (
+        SELECT 
+          "userId",
+          COALESCE(pdl.id, pr.id) "productId",
+          NOW() as "createdAt"
+        FROM "CustomerSubscription" cs
+        JOIN "Product" pr ON pr.id = cs."productId"
+        JOIN "Price" p ON p.id = cs."priceId"
+        LEFT JOIN "Product" pdl
+          ON pdl.active
+            AND jsonb_typeof(pr.metadata->'level') != 'undefined'
+            AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
+            AND (pdl.metadata->>'level')::int <= (pr.metadata->>'level')::int
+            AND pdl.provider = pr.provider
+        WHERE ${
+          userIds.length > 0
+            ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`
+            : Prisma.sql`
+          (
+          -- Exact day match (normal case)
+          EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
+          OR
+          -- Handle month-end edge cases (e.g., Jan 30th -> Feb 28th, Jan 31st -> Apr 30th)
+          (
+            EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
+            AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
+          )
+        )
+        `
+        }
+        AND status = 'active'
+        AND "currentPeriodEnd" > NOW()
+        AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
+        AND pr.provider = 'Civitai'
+        AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+      )
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
+      SELECT DISTINCT
+        p."userId",
+        c.id "cosmeticId",
+        now(),
+        'claimed'
+      FROM users_affected p
+      JOIN "Cosmetic" c ON
+        c."productId" = p."productId"
+        AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
+        AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
+      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
+    `;
 };

@@ -197,7 +197,7 @@ export const setTosViolationHandler = async ({
       category: NotificationCategory.System,
       key: `tos-violation:image:${uuid()}`,
       details: {
-        modelName: image.post?.title ?? `post #${image.postId}`,
+        modelName: image.post?.title ?? `post #${image.postId as number}`,
         entity: 'image',
         url: `/images/${id}`,
       },
@@ -400,6 +400,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
+        sortAt: image.sortAt,
         createdAt,
         user,
         images,

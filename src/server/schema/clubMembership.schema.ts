@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { ClubMembershipSort } from '~/server/common/enums';
 

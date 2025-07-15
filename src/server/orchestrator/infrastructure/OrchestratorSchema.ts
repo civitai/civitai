@@ -1,11 +1,11 @@
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 
-interface IOrchestratorSchema<TSchema extends z.AnyZodObject> {
+interface IOrchestratorSchema<TSchema extends z.ZodObject> {
   schemas: TSchema[];
   validateInput: (args: z.input<TSchema>) => z.output<TSchema>;
 }
 
-export class OrchestratorSchema<TSchema extends z.AnyZodObject>
+export class OrchestratorSchema<TSchema extends z.ZodObject>
   implements IOrchestratorSchema<TSchema>
 {
   schemas: TSchema[];

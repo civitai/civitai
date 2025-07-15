@@ -48,6 +48,8 @@ export const getServerSideProps = createServerSideProps({
       await ssg?.image.getInfinite.prefetchInfinite({
         postId,
         pending: !!session?.user,
+        withMeta: false,
+        include: [],
       });
       await ssg?.post.getContestCollectionDetails.prefetch({ id: postId });
       await ssg?.hiddenPreferences.getHidden.prefetch();

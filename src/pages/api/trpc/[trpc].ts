@@ -27,8 +27,8 @@ export default withAxiom(
           'Cache-Control': [
             'public',
             `max-age=${ctx.cache.browserTTL ?? 0}`,
-            `s-maxage=${ctx.cache.edgeTTL}`,
-            `stale-while-revalidate=${ctx.cache.staleWhileRevalidate}`,
+            `s-maxage=${ctx.cache.edgeTTL ?? 0}`,
+            `stale-while-revalidate=${ctx.cache.staleWhileRevalidate ?? 0}`,
           ].join(', '),
         };
         if (ctx.cache.tags) headers['Cache-Tag'] = ctx.cache.tags.join(', ');
@@ -65,7 +65,7 @@ export default withAxiom(
           'civitai-prod'
         );
       } else {
-        console.error(`❌ tRPC failed on ${path}`);
+        console.error(`❌ tRPC failed on ${path ?? 'unknown'}`);
         console.error(error);
       }
 

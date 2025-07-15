@@ -253,12 +253,8 @@ export function CommentContent({
           {!editing ? (
             <>
               <Box my={5}>
-                <LineClamp lineClamp={3}>
-                  <RenderHtml
-                    html={comment.content}
-                    className="text-sm"
-                    allowCustomStyles={false}
-                  />
+                <LineClamp className="text-sm" lineClamp={3} variant="block">
+                  <RenderHtml html={comment.content} allowCustomStyles={false} />
                 </LineClamp>
               </Box>
               {/* COMMENT INTERACTION */}
@@ -300,7 +296,7 @@ export function CommentContent({
           <Divider
             label={
               <Group gap="xs" align="center">
-                <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={onToggleReplies}>
+                <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={onToggleReplies} inherit>
                   Show {replyCount} More
                 </Text>
               </Group>
@@ -342,7 +338,7 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
                 <Divider
                   label={
                     <Group gap="xs" align="center">
-                      <Text c="blue.4" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
+                      <Text c="blue.4" sx={{ cursor: 'pointer' }} onClick={toggleShowMore} inherit>
                         Show {remaining} More
                       </Text>
                     </Group>

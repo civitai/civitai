@@ -1,7 +1,8 @@
-import { Title, Text } from '@mantine/core';
+import { Title, Text, Button } from '@mantine/core';
 import type { ErrorInfo, ReactNode } from 'react';
 import React, { Component } from 'react';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { generationFormStore, generationStore } from '~/store/generation.store';
 
 interface Props {
   children: ReactNode;
@@ -21,6 +22,12 @@ class GenerationErrorBoundary extends Component<Props, State> {
   static getDerivedStateFromError(error: Error) {
     // Update state so the next render will show the fallback UI
     return { hasError: true, error };
+  }
+
+  resetErrorBoundary() {
+    this.setState({ hasError: false });
+    generationStore.clearData();
+    generationFormStore.reset();
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -52,7 +59,19 @@ class GenerationErrorBoundary extends Component<Props, State> {
           </div>
           <br />
           <Title order={3}>{`Something went wrong :(`}</Title>
-          <Text>Try refreshing your browser</Text>
+          <Button
+            onClick={() => {
+              const keys = Object.keys(localStorage).filter((key) =>
+                key.startsWith('generation-form')
+              );
+              for (const key of keys) {
+                localStorage.removeItem(key);
+              }
+              this.resetErrorBoundary();
+            }}
+          >
+            Reset Generator State
+          </Button>
         </div>
       </div>
     );

@@ -1,6 +1,6 @@
 import { Button, SegmentedControl, Tabs, Text, Title } from '@mantine/core';
 import { forwardRef, useRef, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwLoader } from '~/components/TwLoader/TwLoader';
 import { Form, InputTextArea, useForm } from '~/libs/form';

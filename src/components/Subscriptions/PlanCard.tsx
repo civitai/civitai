@@ -36,6 +36,7 @@ import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -64,7 +65,11 @@ const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
 export function PlanCard({ product, subscription }: PlanCardProps) {
   const features = useFeatureFlags();
   const hasActiveSubscription = subscription?.status === 'active';
-  const _isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
+  const _isActivePlan =
+    hasActiveSubscription &&
+    (subscription?.product?.id === product.id ||
+      // @ts-ignore product metadata will always have tier
+      subscription?.product?.metadata?.tier === product.metadata?.tier);
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
   const defaultPriceId = _isActivePlan

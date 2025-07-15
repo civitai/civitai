@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Box,
@@ -18,16 +17,12 @@ import {
 import { IconInfoCircle, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  useMutatePaddle,
-  usePaddleSubscriptionRefresh,
-  useSubscriptionManagementUrls,
-} from '~/components/Paddle/util';
+import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
@@ -35,6 +30,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -118,12 +114,18 @@ export default function UserMembership() {
         title: 'Subscription refreshed',
         message: 'Your subscription has been successfully refreshed',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to refresh subscription', error);
       showErrorNotification({
         title: 'Whoops!',
-        error: error?.message ?? 'An error occurred while refreshing your subscription',
-        reason: error?.message ?? 'An error occurred while refreshing your subscription',
+        error:
+          error instanceof Error
+            ? { message: error.message }
+            : { message: 'An error occurred while refreshing your subscription' },
+        reason:
+          error instanceof Error
+            ? error.message
+            : 'An error occurred while refreshing your subscription',
       });
     }
   };
@@ -175,6 +177,7 @@ export default function UserMembership() {
   const meta = product?.metadata as SubscriptionProductMetadata;
   const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
+  const isCivitaiProvider = subscriptionPaymentProvider === PaymentProvider.Civitai;
 
   return (
     <>
@@ -184,7 +187,7 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack>
               <Title>My Membership Plan</Title>
-              {subscriptionPaymentProvider !== paymentProvider && (
+              {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
                   this is completed you will be unable to upgrade your subscription. Migration is
@@ -307,22 +310,24 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && (
+                        {!subscription.cancelAt && !isCivitaiProvider && (
                           <CancelMembershipAction
                             variant="button"
                             buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
                           />
                         )}
                       </Group>
-                      {!subscription.cancelAt && isPaddle && managementUrls?.updatePaymentMethod && (
-                        <Anchor
-                          href={managementUrls?.updatePaymentMethod as string}
-                          target="_blank"
-                          size="xs"
-                        >
-                          Update payment details
-                        </Anchor>
-                      )}
+                      {!subscription.cancelAt &&
+                        isPaddle &&
+                        managementUrls?.updatePaymentMethod && (
+                          <Anchor
+                            href={managementUrls?.updatePaymentMethod as string}
+                            target="_blank"
+                            size="xs"
+                          >
+                            Update payment details
+                          </Anchor>
+                        )}
                     </Stack>
                   </Group>
                   {subscription.cancelAt && (
@@ -332,8 +337,16 @@ export default function UserMembership() {
                       benefits on that date.
                     </Text>
                   )}
+                  {isCivitaiProvider && (
+                    <Text c="yellow">
+                      You are currently in a pre-paid membership. No subsequent charges will be made
+                      to your account.
+                    </Text>
+                  )}
                 </Stack>
               </Paper>
+
+              <PrepaidTimelineProgress subscription={subscription} />
 
               {benefits && (
                 <>

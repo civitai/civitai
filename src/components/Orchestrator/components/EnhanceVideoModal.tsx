@@ -12,6 +12,9 @@ import type { VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { GenForm } from '~/components/Generation/Form/GenForm';
+import * as z from 'zod/v4';
+
+const schema = z.looseObject({});
 
 export function EnhanceVideoModal({
   sourceUrl,
@@ -21,7 +24,7 @@ export function EnhanceVideoModal({
   params: Record<string, unknown>;
 }) {
   const dialog = useDialogContext();
-  const form = useForm();
+  const form = useForm({ schema });
   const generate = useGenerate();
   const [video, setVideo] = useState<VideoMetadata>();
 

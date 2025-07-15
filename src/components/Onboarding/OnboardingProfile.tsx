@@ -1,7 +1,7 @@
 import { Alert, Container, Loader, Stack, ThemeIcon, Group, Button } from '@mantine/core';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
@@ -15,12 +15,10 @@ import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
   username: usernameInputSchema,
-  email: z
-    .string({
-      invalid_type_error: 'Please provide a valid email',
-      required_error: 'Please provide an email',
-    })
-    .email(),
+  email: z.email({
+    error: (issue) =>
+      issue.input === undefined ? 'Please provide an email' : 'Please provide a valid email',
+  }),
 });
 
 export function OnboardingProfile() {

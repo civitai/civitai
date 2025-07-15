@@ -1,5 +1,5 @@
 import type { CivitaiWanVideoGenInput, FALWanVideoGenInput } from '@civitai/client';
-import z from 'zod';
+import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   seedSchema,
@@ -55,7 +55,7 @@ export const wanBaseModelMap = {
 };
 
 const schema = baseVideoGenerationSchema.extend({
-  engine: z.literal('wan').catch('wan'),
+  engine: z.literal('wan').default('wan').catch('wan'),
   baseModel: zodEnumFromObjKeys(wanBaseModelMap),
   sourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,

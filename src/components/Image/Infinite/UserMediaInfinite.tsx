@@ -1,13 +1,5 @@
 import type { SegmentedControlProps } from '@mantine/core';
-import {
-  Box,
-  Center,
-  Chip,
-  Group,
-  Loader,
-  SegmentedControl,
-  Stack,
-} from '@mantine/core';
+import { Box, Center, Chip, Group, Loader, SegmentedControl, Stack } from '@mantine/core';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React from 'react';

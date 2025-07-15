@@ -33,13 +33,14 @@ import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
+import { useDebouncer } from '~/utils/debouncer';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
   // const engine = useVideoGenerationStore((state) => state.engine);
   const storeData = useGenerationStore((state) => state.data);
 
-  const config = videoGenerationConfig2[engine];
+  const config = useMemo(() => videoGenerationConfig2[engine], [engine]);
   const status = useGenerationStatus();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : undefined),
@@ -105,7 +106,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   }
 
   useEffect(() => {
-    if (storeData) {
+    if (storeData && config) {
       // const registered = Object.keys(form.getValues());
       const { params, resources } = storeData;
       const validated = config.softValidate({ ...params, resources });
@@ -113,7 +114,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
 
       generationStore.clearData();
     }
-  }, [storeData]);
+  }, [storeData, config]);
 
   const baseModel = form.watch('baseModel');
   const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
@@ -176,6 +177,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const setState = useVideoGenerationStore((state) => state.setState);
   const config = videoGenerationConfig2[engine];
   const [query, setQuery] = useState<Record<string, any> | null>(null);
+  const [canQuery, setCanQuery] = useState(false);
   const { getValues, watch } = useFormContext();
   // const [error, setError] = useState<string | null>(null);
   const isUploadingImageValue = useIsMutating({
@@ -184,31 +186,34 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const isUploadingImage = isUploadingImageValue === 1;
   const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
     { $type: 'videoGen', data: query as Record<string, any> },
-    { keepPreviousData: false, enabled: !!query && !isUploadingImage }
+    { keepPreviousData: false, enabled: !!query && !isUploadingImage && canQuery }
   );
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
+  const debouncer = useDebouncer(150);
 
   useEffect(() => {
     function handleFormData() {
-      const formData = getValues();
-      const whatIfData = config.whatIfProps.reduce<Record<string, unknown>>(
-        (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
-        {}
-      );
+      debouncer(() => {
+        const formData = getValues();
+        const whatIfData = config.whatIfProps.reduce<Record<string, unknown>>(
+          (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
+          {}
+        );
 
-      try {
-        const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
-        if ('resources' in result && !!result.resources)
-          result.resources = (result.resources! as Record<string, any>[]).map(
-            ({ image, ...resource }) => resource
-          ) as any;
-        setQuery(result);
-      } catch (e: any) {
-        console.log({ e });
-        setQuery(null);
-      }
+        try {
+          const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
+          if ('resources' in result && !!result.resources)
+            result.resources = (result.resources! as Record<string, any>[]).map(
+              ({ image, ...resource }) => resource
+            ) as any;
+          setQuery(result);
+        } catch (e: any) {
+          console.log({ e });
+          setQuery(null);
+        }
+      });
     }
     handleFormData();
     const subscription = watch(() => {
@@ -216,6 +221,12 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
     });
     return subscription.unsubscribe;
   }, [engine]);
+
+  useEffect(() => {
+    setTimeout(() => {
+      setCanQuery(true);
+    }, 1000);
+  }, []);
 
   useEffect(() => {
     setState({ cost: data?.cost?.base ?? undefined });

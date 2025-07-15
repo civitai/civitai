@@ -43,6 +43,7 @@ import { joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from './index.module.scss';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 export default function Pricing() {
   const router = useRouter();
@@ -80,6 +81,7 @@ export default function Pricing() {
     tier: 'free',
   }) as SubscriptionProductMetadata;
   const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
+  const isCivitaiProvider = subscription && subscriptionPaymentProvider === PaymentProvider.Civitai;
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
@@ -142,7 +144,7 @@ export default function Pricing() {
       </Container>
       <Container size="xl">
         <Stack>
-          {features.disablePayments && (
+          {features.disablePayments && !features.prepaidMemberships && (
             <Center>
               <AlertWithIcon
                 color="red"
@@ -166,10 +168,39 @@ export default function Pricing() {
               </AlertWithIcon>
             </Center>
           )}
+          {features.disablePayments && features.prepaidMemberships && (
+            <Center>
+              <AlertWithIcon
+                color="blue"
+                iconColor="blue"
+                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+              >
+                <Stack gap={0}>
+                  <Text size="xs" lh={1.2}>
+                    Regular membership purchases are temporarily disabled, but you can still
+                    purchase prepaid memberships! Prepaid memberships give you all the same benefits
+                    and will automatically activate when your current membership expires.{' '}
+                    <Anchor
+                      target="_blank"
+                      href="https://buybuzz.io/collections/memberships"
+                      rel="noopener noreferrer"
+                      c="blue.3"
+                    >
+                      Purchase prepaid membership
+                    </Anchor>
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            </Center>
+          )}
           {(features.nowpaymentPayments ||
             features.coinbasePayments ||
             liveFeatures.buzzGiftCards) &&
-            features.disablePayments && (
+            features.disablePayments &&
+            !features.prepaidMemberships && (
               <Center>
                 <AlertWithIcon
                   color="yellow"
@@ -230,7 +261,7 @@ export default function Pricing() {
               </Stack>
             </AlertWithIcon>
           )}
-          {activeSubscriptionIsNotDefaultProvider && (
+          {activeSubscriptionIsNotDefaultProvider && !isCivitaiProvider && (
             <AlertWithIcon
               color="red"
               iconColor="red"

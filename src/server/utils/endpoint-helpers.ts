@@ -9,6 +9,7 @@ import type { Session, SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import type { Partner } from '~/shared/utils/prisma/models';
@@ -204,4 +205,19 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     const error = e as Error;
     return res.status(500).json({ message: 'An unexpected error occurred', error: error.message });
   }
+}
+
+export function OrchestratorEndpoint(
+  handler: (
+    req: AxiomAPIRequest,
+    res: NextApiResponse,
+    user: SessionUser,
+    token: string
+  ) => Promise<void | NextApiResponse>,
+  allowedMethods: string[] = ['GET']
+) {
+  return AuthedEndpoint(async (req, res, user) => {
+    const token = await getOrchestratorToken(user.id, { req, res });
+    return await handler(req, res, user, token);
+  }, allowedMethods);
 }

@@ -1,5 +1,5 @@
 import type { MantineColor } from '@mantine/core';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';

@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 const plans = [
   {

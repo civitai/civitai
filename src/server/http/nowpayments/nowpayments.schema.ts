@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 export namespace NOWPayments {
   export type CreatePaymentInvoiceInput = z.infer<typeof createPaymentInvoiceInputSchema>;

@@ -3,7 +3,7 @@ import { closeAllModals, openModal } from '@mantine/modals';
 import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconBrandInstagram } from '@tabler/icons-react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 
 import { Form, InputText, useForm } from '~/libs/form';
 import { INSTAGRAM_REGEX } from '~/libs/tiptap/extensions/Instagram';

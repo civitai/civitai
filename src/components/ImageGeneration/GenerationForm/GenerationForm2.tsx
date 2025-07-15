@@ -135,6 +135,7 @@ import {
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 
 let total = 0;
 const tips = {
@@ -215,7 +216,7 @@ export function GenerationFormContent() {
 
   async function handleParsePrompt() {
     const prompt = form.getValues('prompt');
-    const metadata = parsePromptMetadata(prompt);
+    const metadata = parsePromptMetadata(prompt ?? '');
     const result = imageGenerationSchema.safeParse(metadata);
     if (result.success) {
       form.setValues(result.data);
@@ -685,7 +686,10 @@ export function GenerationFormContent() {
                                               })
                                               .then((resource) => {
                                                 if (!resource) return;
-                                                const resources = [...formResources, resource];
+                                                const resources = [
+                                                  ...formResources,
+                                                  resource,
+                                                ] as GenerationResource[];
                                                 const newValue =
                                                   resourceSelectHandler.getValues(resources) ?? [];
                                                 form.setValue('resources', newValue);
@@ -1291,7 +1295,8 @@ export function GenerationFormContent() {
                                     {({ cfgScale, sampler }) => {
                                       const castedSampler = sampler as keyof typeof samplerOffsets;
                                       const samplerOffset = samplerOffsets[castedSampler] ?? 0;
-                                      const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
+                                      const cfgOffset =
+                                        Math.max(((cfgScale as number) ?? 0) - 4, 0) * 2;
                                       const samplerCfgOffset = samplerOffset + cfgOffset;
 
                                       return (
@@ -1461,18 +1466,20 @@ export function GenerationFormContent() {
                           I Understand, Continue Generating
                         </Button>
                       </Alert>
-                      <Text size="xs" c="dimmed" mt={4}>
-                        Is this a mistake?{' '}
-                        <Text
-                          component="a"
-                          td="underline"
-                          href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser?.username}`}
-                          target="_blank"
-                        >
-                          Submit your prompt for review
-                        </Text>{' '}
-                        so we can refine our system.
-                      </Text>
+                      {currentUser?.username && (
+                        <Text size="xs" c="dimmed" mt={4}>
+                          Is this a mistake?{' '}
+                          <Text
+                            component="a"
+                            td="underline"
+                            href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser.username}`}
+                            target="_blank"
+                          >
+                            Submit your prompt for review
+                          </Text>{' '}
+                          so we can refine our system.
+                        </Text>
+                      )}
                     </div>
                   ) : !status.available ? (
                     <AlertWithIcon

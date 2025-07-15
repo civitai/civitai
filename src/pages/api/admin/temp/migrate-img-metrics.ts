@@ -5,7 +5,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { chunk, remove } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
@@ -91,7 +91,7 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           FROM "BuzzTip"
          WHERE "entityId" BETWEEN ${start} AND ${end}
            AND "createdAt" < ${cutoff}
-           AND "entityType" = 'Image' 
+           AND "entityType" = 'Image'
       `);
       cancelFns.push(buzzQuery.cancel);
       data = data.concat(await buzzQuery.result());

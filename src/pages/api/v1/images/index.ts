@@ -3,7 +3,7 @@ import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from 'dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
@@ -56,7 +56,7 @@ const imagesEndpointSchema = z.object({
       return nsfwLevelMapDeprecated[value] as number;
     }),
   browsingLevel: z.coerce.number().optional(),
-  tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
+  tags: commaDelimitedNumberArray().optional(),
   cursor: z
     .union([z.bigint(), z.number(), z.string(), z.date()])
     .transform((val) =>
@@ -65,9 +65,9 @@ const imagesEndpointSchema = z.object({
         : val
     )
     .optional(),
-  type: z.nativeEnum(MediaType).optional(),
-  baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
-  withMeta: booleanString().optional(),
+  type: z.enum(MediaType).optional(),
+  baseModels: commaDelimitedEnumArray([...constants.baseModels]).optional(),
+  withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
 });
 
@@ -183,7 +183,7 @@ function getNextPage({
 }) {
   const baseUrl = new URL(
     req.url ?? '/',
-    isProd ? `https://${req.headers.host}` : 'http://localhost:3000'
+    isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
 
   const hasNextPage = !!nextCursor;

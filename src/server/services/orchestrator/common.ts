@@ -17,7 +17,7 @@ import {
 } from '@civitai/client';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
@@ -667,7 +667,7 @@ function formatVideoGenStep({
 
   if (!params.process && baseModel) {
     const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
-    if (wanProcess) params.process = wanProcess as any;
+    if (wanProcess) (params as any).process = wanProcess as any;
   }
 
   if (baseModel === 'WanVideo') {

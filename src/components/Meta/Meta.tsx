@@ -12,6 +12,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   deIndex,
   images,
   imageUrl,
+  keywords,
 }: {
   title?: string;
   description?: string;
@@ -20,6 +21,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   deIndex?: boolean;
   images?: TImage | TImage[] | null;
   imageUrl?: string;
+  keywords?: string | string[];
 }) {
   const _images = images ? ([] as TImage[]).concat(images) : undefined;
   const _image = _images?.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
@@ -27,6 +29,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
     _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
   const _imageUrl = _image ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps }) : imageUrl;
   const { canIndex } = useAppContext();
+  const stringifiedKeywords = Array.isArray(keywords) ? keywords.join(', ') : keywords;
 
   return (
     <Head>
@@ -45,6 +48,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
           <meta property="twitter:description" content={description} />
         </>
       )}
+      {stringifiedKeywords && <meta name="keywords" content={stringifiedKeywords} />}
       <meta property="og:type" content="website" />
       <meta property="twitter:card" content="summary_large_image" />
       {_imageUrl && (

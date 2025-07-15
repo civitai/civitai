@@ -34,7 +34,7 @@ import dayjs from 'dayjs';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { z } from 'zod';
+import type * as z from 'zod/v4';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ChangelogFiltersDropdown } from '~/components/Changelog/ChangelogFiltersDropdown';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';

@@ -2,7 +2,7 @@ import type { SelectProps } from '@mantine/core';
 import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
 import dayjs from 'dayjs';
 import { useRef } from 'react';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   Form,

@@ -30,7 +30,7 @@ export const getServerSideProps = createServerSideProps({
 export default function Collections({ collectionId }: { collectionId: number }) {
   return (
     <CollectionsLayout>
-      {collectionId && <Collection collectionId={collectionId} fluid />}
+      {collectionId && <Collection collectionId={collectionId} />}
     </CollectionsLayout>
   );
 }

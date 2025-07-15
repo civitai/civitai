@@ -1,11 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import * as z from 'zod/v4';
 import { runPayout } from '~/server/jobs/deliver-creator-compensation';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { stringDate } from '~/utils/zod-helpers';
 
 const schema = z.object({
-  date: stringDate(),
+  date: z.coerce.date(),
 });
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
