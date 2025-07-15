@@ -10,7 +10,7 @@ import { constants } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function CreateMenu() {
-  const isMobile = useIsMobile({ breakpoint: 'md' });
+  const isMobile = useIsMobile({ breakpoint: 'md', type: 'media' });
 
   return (
     <Menu
