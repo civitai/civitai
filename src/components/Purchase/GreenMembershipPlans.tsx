@@ -189,7 +189,12 @@ export function GreenMembershipPlans({
                     Regular membership purchases are temporarily disabled, but you can still
                     purchase prepaid memberships! Prepaid memberships give you all the same benefits
                     and will automatically activate when your current membership expires.{' '}
-                    <Anchor href="/purchase/prepaid-memberships" c="blue.3">
+                    <Anchor
+                      target="_blank"
+                      href="https://buybuzz.io/collections/memberships"
+                      rel="noopener noreferrer"
+                      c="blue.3"
+                    >
                       Purchase prepaid membership
                     </Anchor>
                   </Text>

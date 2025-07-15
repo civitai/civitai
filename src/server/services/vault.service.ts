@@ -3,7 +3,10 @@ import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { SubscriptionProductMetadata, subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import {
+  SubscriptionProductMetadata,
+  subscriptionProductMetadataSchema,
+} from '~/server/schema/subscriptions.schema';
 import type {
   GetPaginatedVaultItemsSchema,
   VaultItemFilesSchema,
@@ -89,7 +92,7 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
   await dbWrite.vault.create({
     data: {
       userId,
-      storageKb: vaultSizeKb,
+      storageKb: Number(vaultSizeKb),
     },
   });
 
@@ -407,11 +410,11 @@ export const getPaginatedVaultItems = async (
       const { url } =
         item.status === VaultItemStatus.Stored
           ? await getGetUrlByKey(
-            constants.vault.keys.cover
-              .replace(':modelVersionId', item.modelVersionId.toString())
-              .replace(':userId', item.vaultId.toString()),
-            { bucket: env.S3_VAULT_BUCKET }
-          )
+              constants.vault.keys.cover
+                .replace(':modelVersionId', item.modelVersionId.toString())
+                .replace(':userId', item.vaultId.toString()),
+              { bucket: env.S3_VAULT_BUCKET }
+            )
           : { url: null };
 
       return {
@@ -514,7 +517,7 @@ export const setVaultFromSubscription = async ({ userId }: { userId: number }) =
     await dbWrite.vault.update({
       where: { userId: vault.userId },
       data: {
-        storageKb: parsedMeta.data.vaultSizeKb,
+        storageKb: Number(parsedMeta.data.vaultSizeKb),
       },
     });
   }

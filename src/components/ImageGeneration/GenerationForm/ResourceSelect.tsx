@@ -1,7 +1,7 @@
 import type { ButtonProps, GroupProps, InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
-import React, { useEffect } from 'react';
+import React, { forwardRef, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import type {
   ResourceSelectOptions,
@@ -11,21 +11,7 @@ import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/
 import { withController } from '~/libs/form/hoc/withController';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 
-export const ResourceSelect = ({
-  value,
-  onChange,
-  buttonLabel,
-  modalTitle,
-  buttonProps,
-  options = {},
-  allowRemove = true,
-  selectSource = 'generation',
-  disabled,
-  hideVersion,
-  groupPosition,
-  showAsCheckpoint,
-  ...inputWrapperProps
-}: {
+type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: GenerationResource | null;
   onChange?: (value: GenerationResource | null) => void;
   buttonLabel: React.ReactNode;
@@ -37,71 +23,95 @@ export const ResourceSelect = ({
   hideVersion?: boolean;
   groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
-} & Omit<InputWrapperProps, 'children' | 'onChange'> & { disabled?: boolean }) => {
-  const types = options.resources?.map((x) => x.type);
-  const _value = types && value && !types.includes(value.model.type) ? undefined : value;
-
-  function handleChange(resource?: GenerationResource | null) {
-    if (
-      selectSource === 'generation' &&
-      resource &&
-      !resource.canGenerate &&
-      resource.substitute?.canGenerate
-    ) {
-      onChange?.({ ...resource, ...resource.substitute });
-    } else {
-      onChange?.(resource ?? null);
-    }
-  }
-
-  const handleRemove = () => {
-    handleChange(undefined);
-  };
-
-  const handleOpenResourceSearch = () => {
-    openResourceSelectModal({
-      title: modalTitle ?? buttonLabel,
-      onSelect: handleChange,
-      options,
-      selectSource,
-    });
-  };
-
-  // removes resources that have unsupported types
-  useEffect(() => {
-    if (!_value && !!value) onChange?.(_value ?? null);
-  }, [value]); //eslint-disable-line
-
-  return (
-    <Input.Wrapper {...inputWrapperProps}>
-      {!value ? (
-        <div>
-          <Button
-            variant="light"
-            leftSection={<IconPlus size={18} />}
-            fullWidth
-            onClick={handleOpenResourceSearch}
-            disabled={disabled}
-            {...buttonProps}
-          >
-            {buttonLabel}
-          </Button>
-        </div>
-      ) : (
-        <ResourceSelectCard
-          resource={value}
-          selectSource={selectSource}
-          onUpdate={handleChange}
-          onRemove={allowRemove ? handleRemove : undefined}
-          onSwap={handleOpenResourceSearch}
-          hideVersion={hideVersion}
-          groupPosition={groupPosition}
-          showAsCheckpoint={showAsCheckpoint}
-        />
-      )}
-    </Input.Wrapper>
-  );
+  disabled?: boolean;
 };
+
+export const ResourceSelect = forwardRef<HTMLDivElement, Props>(
+  (
+    {
+      value,
+      onChange,
+      buttonLabel,
+      modalTitle,
+      buttonProps,
+      options = {},
+      allowRemove = true,
+      selectSource = 'generation',
+      disabled,
+      hideVersion,
+      groupPosition,
+      showAsCheckpoint,
+      ...inputWrapperProps
+    },
+    ref
+  ) => {
+    const types = options.resources?.map((x) => x.type);
+    const _value = types && value && !types.includes(value.model.type) ? undefined : value;
+
+    function handleChange(resource?: GenerationResource | null) {
+      if (
+        selectSource === 'generation' &&
+        resource &&
+        !resource.canGenerate &&
+        resource.substitute?.canGenerate
+      ) {
+        onChange?.({ ...resource, ...resource.substitute });
+      } else {
+        onChange?.(resource ?? null);
+      }
+    }
+
+    const handleRemove = () => {
+      handleChange(undefined);
+    };
+
+    const handleOpenResourceSearch = () => {
+      openResourceSelectModal({
+        title: modalTitle ?? buttonLabel,
+        onSelect: handleChange,
+        options,
+        selectSource,
+      });
+    };
+
+    // removes resources that have unsupported types
+    useEffect(() => {
+      if (!_value && !!value) onChange?.(_value ?? null);
+    }, [value]); //eslint-disable-line
+
+    return (
+      <Input.Wrapper {...inputWrapperProps}>
+        {!value ? (
+          <div ref={ref}>
+            <Button
+              variant="light"
+              leftSection={<IconPlus size={18} />}
+              fullWidth
+              onClick={handleOpenResourceSearch}
+              disabled={disabled}
+              {...buttonProps}
+            >
+              {buttonLabel}
+            </Button>
+          </div>
+        ) : (
+          <ResourceSelectCard
+            resource={value}
+            selectSource={selectSource}
+            onUpdate={handleChange}
+            onRemove={allowRemove ? handleRemove : undefined}
+            onSwap={handleOpenResourceSearch}
+            hideVersion={hideVersion}
+            groupPosition={groupPosition}
+            showAsCheckpoint={showAsCheckpoint}
+          />
+        )}
+      </Input.Wrapper>
+    );
+  }
+);
+
+ResourceSelect.displayName = 'ResourceSelect';
 
 const InputResourceSelect = withController(ResourceSelect, ({ field }) => ({
   value: field.value,
