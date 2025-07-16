@@ -17,11 +17,12 @@ import {
   purchasableRewardDetails,
   purchasableRewardDetailsModerator,
 } from '~/server/selectors/purchasableReward.selector';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const getPaginatedPurchasableRewards = async (
   input: GetPaginatedPurchasableRewardsSchema & { userId?: number }
@@ -276,16 +277,18 @@ export const purchasableRewardPurchase = async ({
   }
 
   // Pay for reward:
-  const transaction = await createBuzzTransaction({
+  const prefix = `purchasable-reward-purchase-${userId}-${purchasableRewardId}`;
+  const data = await createMultiAccountBuzzTransaction({
     fromAccountId: userId, // bank
+    fromAccountTypes: getBuzzTransactionSupportedAccountTypes({}),
     toAccountId: 0,
     amount: reward.unitPrice,
     type: TransactionType.Purchase,
     description: 'Purchase of reward',
     // Safeguard in case the above check fails :shrug:
-    externalTransactionId: `purchasable-reward-purchase-${userId}-${purchasableRewardId}`,
+    externalTransactionIdPrefix: prefix,
   });
-  if (!transaction.transactionId) {
+  if (!data.transactionCount || data.transactionCount === 0) {
     throw throwBadRequestError('Failed to create transaction');
   }
 
@@ -294,7 +297,7 @@ export const purchasableRewardPurchase = async ({
     data: {
       userId,
       purchasableRewardId,
-      buzzTransactionId: transaction.transactionId,
+      buzzTransactionId: prefix,
       code,
       meta: {
         // Store core data for safekeeping in case the reward is ever deleted:

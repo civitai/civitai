@@ -530,8 +530,8 @@ export const purchaseCosmeticShopItem = async ({
     externalTransactionIdPrefix: prefix,
   });
 
-  const transactionId = data.transactionCount > 1 ? prefix : data.transactionIds[0].transactionId;
-  if (!transactionId) {
+  const transactionId = prefix;
+  if (!transactionId || (data.transactionCount ?? 0) === 0) {
     throw new Error('There was an error creating the transaction');
   }
 

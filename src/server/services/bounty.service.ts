@@ -539,7 +539,7 @@ export const addBenefactorUnitAmount = async ({
 }: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
   const bounty = await dbRead.bounty.findUnique({
     where: { id: bountyId },
-    select: { complete: true },
+    select: { complete: true, id: true, nsfw: true, nsfwLevel: true },
   });
 
   if (!bounty) {
@@ -578,16 +578,28 @@ export const addBenefactorUnitAmount = async ({
 
   switch (currency) {
     case Currency.BUZZ:
-      await createBuzzTransaction({
+      const prefix = getBountyTransactionPrefix(bounty.id, userId);
+      await createMultiAccountBuzzTransaction({
         fromAccountId: userId,
+        fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+          isNsfw: bounty.nsfw,
+          nsfwLevel: bounty.nsfwLevel,
+        }),
+        externalTransactionIdPrefix: prefix,
         toAccountId: 0,
         amount: unitAmount,
         type: TransactionType.Bounty,
         description: 'You have supported a bounty',
+
         details: {
-          entityId: bountyId,
+          entityId: bounty.id,
           entityType: 'Bounty',
         },
+      });
+
+      await dbWrite.bountyBenefactor.update({
+        where: { bountyId_userId: { userId, bountyId: bounty.id } },
+        data: { buzzTransactionId: prefix },
       });
       break;
     default: // Do no checks
