@@ -47,19 +47,16 @@ export const cosmeticShopNotifications = createNotificationProcessor({
   'cosmetic-shop-item-sold': {
     displayName: 'Shop: Your Item got bought (Creator Program exclusive)',
     category: NotificationCategory.System,
-    prepareMessage: ({ details }) => {
-      console.log({ details });
-      return {
-        message: details.buyer
-          ? `${details.buyer as string} bought your "${
-              details.shopItemTitle as string
-            }" shop item. You got paid ${numberWithCommas(details.buzzAmount as number)} Buzz!`
-          : `You got paid ${numberWithCommas(details.buzzAmount as number)} Buzz for selling 1 "${
-              details.shopItemTitle as string
-            }" item`,
-        url: `/user/transactions`,
-      };
-    },
+    prepareMessage: ({ details }) => ({
+      message: details.buyer
+        ? `${details.buyer as string} bought your "${
+            details.shopItemTitle as string
+          }" shop item. You got paid ${numberWithCommas(details.buzzAmount as number)} Buzz!`
+        : `You got paid ${numberWithCommas(details.buzzAmount as number)} Buzz for selling 1 "${
+            details.shopItemTitle as string
+          }" item`,
+      url: `/user/transactions`,
+    }),
     prepareQuery: ({ lastSent }) => `
       WITH sold_items AS (
         SELECT DISTINCT
