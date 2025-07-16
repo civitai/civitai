@@ -27,11 +27,11 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
   const restoredRef = useRef(false);
   const mountTimeRef = useRef(new Date());
   // #endregion
-
-  const defaultKey =
+  const defaultKey: string =
     typeof window !== 'undefined'
-      ? `${history.state.key}_${location.pathname.substring(1)}`
+      ? history.state?.key + `_${location.pathname.substring(1)}`
       : 'default';
+
   const _key = key ?? defaultKey;
 
   // #region [scroll emitter]

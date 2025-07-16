@@ -1,21 +1,21 @@
-import { Node } from '@tiptap/core';
 import type { ReactNodeViewProps } from '@tiptap/react';
-import { NodeViewWrapper, ReactNodeViewRenderer, mergeAttributes } from '@tiptap/react';
-import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
-import { formatBytes } from '~/utils/number-helpers';
 
 import { constants } from '~/server/common/constants';
 import { useEffect, useRef } from 'react';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { blobToFile, fetchBlobAsFile } from '~/utils/file-utils';
+import { fetchBlobAsFile } from '~/utils/file-utils';
 import { Loader } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
+import { showWarningNotification } from '~/utils/notifications';
 
 type NodeOptions = {
-  uploadFile: (file: File) => Promise<UploadResult>;
+  accepts: MediaType[];
 };
 
 interface SetMediaOptions {
@@ -32,62 +32,37 @@ declare module '@tiptap/core' {
   }
 }
 
-export const EdgeMediaNode = Node.create<NodeOptions>({
-  name: 'media',
-  atom: true,
-  draggable: true,
-  group: 'block',
-
-  addAttributes() {
-    return {
-      url: {
-        default: null,
-      },
-      type: {
-        default: null,
-      },
-      filename: {
-        default: null,
-      },
-    };
-  },
-
+export const EdgeMediaEditNode = EdgeMediaNode.extend<NodeOptions>({
   addOptions() {
-    return {
-      uploadFile: async () => {
-        console.warn('"uploadFile" has not been configured in the EdgeMediaNode');
-        return {} as UploadResult;
-      },
-    };
-  },
-
-  parseHTML() {
-    return [
-      {
-        tag: 'edge-media',
-      },
-    ];
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ['edge-media', mergeAttributes(HTMLAttributes)];
+    return { ...this.parent?.(), accepts: ['image'] };
   },
   addNodeView() {
-    return ReactNodeViewRenderer(EdgeMediaWrapper);
+    return ReactNodeViewRenderer(EdgeMediaEditComponent);
   },
   addCommands() {
     return {
       addMedia:
-        (file) =>
-        ({ commands }) => {
-          return commands.insertContent({
-            type: this.name,
-            attrs: {
-              url: URL.createObjectURL(file),
-              type: MEDIA_TYPE[file.type],
-              filename: file.name,
-            },
-          });
-        },
+        // @ts-ignore
+
+
+          (file) =>
+          // @ts-ignore
+          ({ commands }) => {
+            const type = MEDIA_TYPE[file.type];
+            if (!this.options.accepts.includes(type)) {
+              showWarningNotification({ message: `invalid file type: ${file.type}` });
+              return true;
+            } else {
+              return commands.insertContent({
+                type: this.name,
+                attrs: {
+                  url: URL.createObjectURL(file),
+                  type,
+                  filename: file.name,
+                },
+              });
+            }
+          },
     };
   },
 
@@ -97,7 +72,6 @@ export const EdgeMediaNode = Node.create<NodeOptions>({
         key: new PluginKey('mediaUpload'),
         props: {
           handlePaste: (view, event) => {
-            console.log({ event });
             const items = event.clipboardData?.items;
             if (!items) return false;
 
@@ -105,13 +79,14 @@ export const EdgeMediaNode = Node.create<NodeOptions>({
               if (!(constants.richTextEditor.accept as string[]).includes(item.type)) return false;
 
               const file = item.getAsFile();
-              if (file) this.editor.commands.addMedia(file);
+              if (file) {
+                this.editor.commands.addMedia(file);
+              }
             }
 
             return true;
           },
           handleDrop: (view, event) => {
-            console.log({ event });
             const files = event.dataTransfer?.files;
             if (!files) return false;
 
@@ -128,13 +103,11 @@ export const EdgeMediaNode = Node.create<NodeOptions>({
 
 const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
 
-function EdgeMediaWrapper({
+function EdgeMediaEditComponent({
   node,
   selected,
   ref,
-  view,
   updateAttributes,
-  editor,
 }: ReactNodeViewProps<HTMLDivElement>) {
   const { url, type, filename } = node.attrs as SetMediaOptions;
   const { uploadToCF } = useCFImageUpload();
@@ -172,18 +145,52 @@ function EdgeMediaWrapper({
   if (!url) return null;
 
   return (
-    <NodeViewWrapper className="edge-media">
+    <NodeViewWrapper>
       <div ref={ref as any} data-drag-handle>
         {isObjectUrl ? (
           <Loader type="dots" />
         ) : (
-          <EdgeMediaNodePreview url={url} type={type} filename={filename} />
+          <EdgeMediaComponent url={url} type={type} filename={filename} />
         )}
       </div>
     </NodeViewWrapper>
   );
 }
 
-export function EdgeMediaNodePreview({ url, type, filename }: SetMediaOptions) {
-  return <EdgeMedia2 src={url} type={type} name={filename} />;
+export const EdgeMediaLayoutNode = EdgeMediaNode.extend({
+  addNodeView() {
+    return ReactNodeViewRenderer(EdgeMediaLayoutComponent);
+  },
+});
+
+export function EdgeMediaLayoutComponent({ node }: ReactNodeViewProps<HTMLDivElement>) {
+  const { url, type, filename } = node.attrs as SetMediaOptions;
+  const { url: src } = useEdgeUrl(url, { original: true });
+  if (!url) return null;
+  return (
+    <NodeViewWrapper>
+      {type === 'image' ? (
+        // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
+        <img src={src} alt={filename} />
+      ) : type === 'video' ? (
+        <video playsInline disablePictureInPicture controls preload="metadata">
+          <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
+          <source src={src} type="video/mp4" />
+        </video>
+      ) : null}
+    </NodeViewWrapper>
+  );
+}
+
+export function EdgeMediaComponent({ url, type, filename }: SetMediaOptions) {
+  const { url: src } = useEdgeUrl(url, { original: true });
+  return type === 'image' ? (
+    // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
+    <img src={src} alt={filename} />
+  ) : type === 'video' ? (
+    <video playsInline disablePictureInPicture controls preload="metadata">
+      <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
+      <source src={src} type="video/mp4" />
+    </video>
+  ) : null;
 }

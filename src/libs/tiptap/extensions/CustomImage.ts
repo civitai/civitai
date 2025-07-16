@@ -14,7 +14,7 @@ type CustomImageOptions = ImageOptions & {
   onUploadEnd?: () => void;
 };
 
-export const CustomImage = ImageExtension.extend<CustomImageOptions>({
+export const CustomImage = ImageExtension.configure({ inline: true }).extend<CustomImageOptions>({
   draggable: true,
 
   addOptions() {

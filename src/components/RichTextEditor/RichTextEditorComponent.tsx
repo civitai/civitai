@@ -4,34 +4,34 @@ import { openModal } from '@mantine/modals';
 import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { Color } from '@tiptap/extension-color';
-import Heading from '@tiptap/extension-heading';
-import Mention from '@tiptap/extension-mention';
 import { TextStyleKit } from '@tiptap/extension-text-style';
 import ImageExtension from '@tiptap/extension-image';
-import Youtube from '@tiptap/extension-youtube';
-
 import { Placeholder } from '@tiptap/extensions';
 import type { Editor, Extensions } from '@tiptap/react';
-import { Extension, mergeAttributes, nodePasteRule, useEditor } from '@tiptap/react';
+import { Extension, nodePasteRule, useEditor } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
-import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { Instagram } from '~/libs/tiptap/extensions/Instagram';
-import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
-import { InsertImageControl } from './InsertImageControl';
+import { validateThirdPartyUrl } from '~/utils/string-helpers';
+import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
 import clsx from 'clsx';
-import { EdgeMediaNode } from '~/components/RichTextEditor/EdgeMediaNode';
+import { EdgeMediaEditNode } from '~/components/TipTap/EdgeMediaNode';
+import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
+import { MentionNode } from '~/components/TipTap/MentionNode';
+import { InstagramNode } from '~/components/TipTap/InstagramNode';
+import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
+import { YoutubeNode } from '~/components/TipTap/YoutubeNode';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
+import { hideNotification, showNotification } from '@mantine/notifications';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -39,7 +39,7 @@ import { EdgeMediaNode } from '~/components/RichTextEditor/EdgeMediaNode';
 //   lg: '70px',
 //   xl: '90px',
 // };
-
+const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
 const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
   sm: {
     minHeight: 30,
@@ -133,11 +133,20 @@ export function RichTextEditor({
   const addColors = addFormatting && includeControls.includes('colors');
   const addList = includeControls.includes('list');
   const addLink = includeControls.includes('link');
-  const addMedia = includeControls.includes('media');
+  const addVideo = includeControls.includes('video');
+  const addImages = includeControls.includes('media');
+  const addMedia = addImages || addVideo;
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
 
   const { uploadToCF } = useCFImageUpload();
+
+  const accepts = useMemo(() => {
+    const accepts: MediaType[] = [];
+    if (addVideo) accepts.push('video');
+    if (addImages) accepts.push('image');
+    return accepts;
+  }, [addImages, addVideo]);
 
   const extensions = useMemo(() => {
     const arr: Extensions = [
@@ -159,39 +168,12 @@ export function RichTextEditor({
       }),
     ];
     // if (addFormatting) arr.push(Underline);
-    if (addColors) arr.push(TextStyleKit, Color);
+    if (addColors) arr.push(TextStyleKit);
     if (addLink) {
       const linkExtension = withLinkValidation ? LinkWithValidation : Link;
       arr.push(linkExtension);
     }
-    if (addHeading)
-      arr.push(
-        Heading.configure({
-          levels: [1, 2, 3],
-        }).extend({
-          addAttributes() {
-            return {
-              ...this.parent?.(),
-              id: { default: null },
-            };
-          },
-          addOptions() {
-            return {
-              ...this.parent?.(),
-              HTMLAttributes: {
-                id: null,
-              },
-            };
-          },
-          renderHTML({ node }) {
-            const hasLevel = this.options.levels.includes(node.attrs.level);
-            const level: string | number = hasLevel ? node.attrs.level : this.options.levels[0];
-            const id = `${slugify(node.textContent.toLowerCase())}-${getRandomId()}`;
-
-            return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
-          },
-        })
-      );
+    if (addHeading) arr.push(CustomHeading);
     if (onSuperEnter)
       arr.push(
         Extension.create({
@@ -204,17 +186,41 @@ export function RichTextEditor({
           }),
         })
       );
+    if (addVideo) {
+      arr.push(
+        EdgeMediaEditNode.configure({ accepts }),
+        ImageExtension.configure({ inline: true })
+      );
+    } else if (addImages) {
+      arr.push(
+        CustomImage.configure({
+          // To allow links on images
+          inline: true,
+          uploadImage: uploadToCF,
+          onUploadStart: () => {
+            showNotification({
+              id: UPLOAD_NOTIFICATION_ID,
+              loading: true,
+              withCloseButton: false,
+              autoClose: false,
+              message: 'Uploading images...',
+            });
+          },
+          onUploadEnd: () => {
+            hideNotification(UPLOAD_NOTIFICATION_ID);
+          },
+        })
+      );
+    }
     if (addMedia) {
       arr.push(
-        EdgeMediaNode.configure({ uploadFile: uploadToCF }),
-        ImageExtension.configure({ inline: true }),
-        Youtube.configure({
-          addPasteHandler: false,
-          modestBranding: false,
-        }).extend({
+        YoutubeNode.extend({
+          // @ts-ignore
           renderHTML(input) {
             const { HTMLAttributes } = input;
+            // @ts-ignore
             if (!HTMLAttributes.src || !this.parent) return ['div', { 'data-youtube-video': '' }];
+            // @ts-ignore
             return this.parent(input);
           },
           addPasteRules() {
@@ -227,32 +233,12 @@ export function RichTextEditor({
             ];
           },
         }),
-        Instagram.configure({
-          HTMLAttributes: { class: classes.instagramEmbed },
-          height: 'auto',
-        })
+        InstagramNode
       );
     }
     if (addMentions)
-      arr.push(
-        Mention.configure({
-          suggestion: getSuggestions({ defaultSuggestions }),
-          HTMLAttributes: {
-            class: classes.mention,
-          },
-          renderLabel({ options, node }) {
-            const label = node.attrs.label ?? node.attrs.id;
-            return `${options.suggestion.char ?? ''}${typeof label === 'string' ? label : ''}`;
-          },
-        })
-      );
-    if (addPolls)
-      arr.push(
-        StrawPoll.configure({
-          HTMLAttributes: { class: classes.strawPollEmbed },
-          height: 'auto',
-        })
-      );
+      arr.push(MentionNode.configure({ suggestion: getSuggestions({ defaultSuggestions }) }));
+    if (addPolls) arr.push(StrawPollNode);
 
     return arr;
   }, [
@@ -266,12 +252,13 @@ export function RichTextEditor({
     addMedia,
     addMentions,
     addPolls,
+    accepts,
   ]);
 
   const editor = useEditor({
     extensions,
-    content: value,
-    onUpdate: onChange ? ({ editor }) => onChange(JSON.stringify(editor.getJSON())) : undefined,
+    content: value?.startsWith('{') ? JSON.parse(value) : value,
+    onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
     editable: !disabled,
     immediatelyRender: false,
     onDelete: (props) => console.log(props),
@@ -392,7 +379,11 @@ export function RichTextEditor({
 
             {addMedia && (
               <RTE.ControlsGroup>
-                <InsertImageControl />
+                {addVideo && addImages ? (
+                  <InsertImageControl accepts={accepts} />
+                ) : addImages ? (
+                  <InsertImageControlLegacy />
+                ) : null}
                 <InsertYoutubeVideoControl />
                 <InsertInstagramEmbedControl />
               </RTE.ControlsGroup>
@@ -449,6 +440,7 @@ type ControlType =
   | 'list'
   | 'link'
   | 'media'
+  | 'video'
   | 'mentions'
   | 'polls'
   | 'colors';
