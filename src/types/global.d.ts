@@ -4,6 +4,7 @@ import type { MantineSize } from '@mantine/core';
 import type { FileWithPath } from '@mantine/dropzone';
 import type { ImageAnalysisInput } from '~/server/schema/image.schema';
 import type { TrainingResults } from '~/server/schema/model-file.schema';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { LabelTypes } from '~/store/training.store';
 
 export {};
@@ -155,7 +156,7 @@ declare global {
 
   type TypeCategory = { id: number; name: string; priority: number; adminOnly: boolean };
 
-  type UploadResult = { url: string; id: string };
+  type UploadResult = { url: string; id: string; type: MediaType };
 
   type ImageUploadResponse = { id: string; uploadURL: string } | { error: string };
 

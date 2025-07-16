@@ -1,7 +1,6 @@
 import type { InputWrapperProps, MantineSize } from '@mantine/core';
 import { Group, Input, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
-import { hideNotification, showNotification } from '@mantine/notifications';
 import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons-react';
@@ -9,7 +8,7 @@ import { Color } from '@tiptap/extension-color';
 import Heading from '@tiptap/extension-heading';
 import Mention from '@tiptap/extension-mention';
 import { TextStyleKit } from '@tiptap/extension-text-style';
-import Underline from '@tiptap/extension-underline';
+import ImageExtension from '@tiptap/extension-image';
 import Youtube from '@tiptap/extension-youtube';
 
 import { Placeholder } from '@tiptap/extensions';
@@ -23,7 +22,6 @@ import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
@@ -33,6 +31,7 @@ import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
 import clsx from 'clsx';
+import { EdgeMediaNode } from '~/components/RichTextEditor/EdgeMediaNode';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -103,8 +102,6 @@ const LinkWithValidation = Link.extend({
     return valid;
   },
 });
-
-const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
 
 export function RichTextEditor({
   id,
@@ -209,23 +206,8 @@ export function RichTextEditor({
       );
     if (addMedia) {
       arr.push(
-        CustomImage.configure({
-          // To allow links on images
-          inline: true,
-          uploadImage: uploadToCF,
-          onUploadStart: () => {
-            showNotification({
-              id: UPLOAD_NOTIFICATION_ID,
-              loading: true,
-              withCloseButton: false,
-              autoClose: false,
-              message: 'Uploading images...',
-            });
-          },
-          onUploadEnd: () => {
-            hideNotification(UPLOAD_NOTIFICATION_ID);
-          },
-        }),
+        EdgeMediaNode.configure({ uploadFile: uploadToCF }),
+        ImageExtension.configure({ inline: true }),
         Youtube.configure({
           addPasteHandler: false,
           modestBranding: false,
@@ -289,9 +271,11 @@ export function RichTextEditor({
   const editor = useEditor({
     extensions,
     content: value,
-    onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
+    onUpdate: onChange ? ({ editor }) => onChange(JSON.stringify(editor.getJSON())) : undefined,
     editable: !disabled,
     immediatelyRender: false,
+    onDelete: (props) => console.log(props),
+    shouldRerenderOnTransaction: true,
   });
 
   const editorRef = useRef<Editor>();

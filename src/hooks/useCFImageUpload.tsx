@@ -24,6 +24,7 @@ type UploadResult = {
   url: string;
   id: string;
   objectUrl: string;
+  type: MediaType;
 };
 
 type UploadToCF = (file: File, metadata?: Record<string, string>) => Promise<UploadResult>;
@@ -146,7 +147,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       xhr.send(file);
     });
 
-    return { url: url.split('?')[0], id, objectUrl: imageData.objectUrl };
+    return { url: url.split('?')[0], id, objectUrl: imageData.objectUrl, type: imageData.type };
   };
 
   const removeImage = (imageUrl: string) => {

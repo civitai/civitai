@@ -2,32 +2,49 @@ import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
+import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 
 export function InsertImageControl(props: Props) {
   const { editor } = useRichTextEditorContext();
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const { uploadToCF } = useCFImageUpload();
 
   const handleClick = () => {
     inputRef.current?.click();
   };
 
   const handleFileChange = async (fileList: FileList) => {
-    const files = Array.from(fileList);
-    const images = await Promise.all(files.map((file) => uploadToCF(file))).catch((error) => {
-      console.error(error);
-      window.alert(`Failed to upload image. ${error.message}`);
-      return [];
-    });
+    if (!editor) return;
+    console.log({ editor });
 
-    if (images.length > 0)
-      images.map((image) =>
-        editor?.commands.setImage({ src: getEdgeUrl(image.id, { width: 525 }) })
-      );
+    for (const file of Array.from(fileList)) {
+      // const schema = editor.schema;
+      // const media = schema.nodes.media.create({
+      //   url: URL.createObjectURL(file),
+      //   type: MEDIA_TYPE[file.type],
+      //   filename: file.name,
+      // });
+      // console.log({ media });
+      // const transaction = editor.view.state.tr.replaceSelectionWith(media);
+      // editor.view.dispatch(transaction);
+      editor.commands.addMedia(file);
+      // editor?.commands.setMedia({
+      //   url: URL.createObjectURL(file),
+      //   type: MEDIA_TYPE[file.type],
+      //   filename: file.name,
+      // });
+    }
+
+    // const images = await Promise.all(files.map((file) => uploadToCF(file))).catch(
+    //   (error: Error) => {
+    //     console.error(error);
+    //     window.alert(`Failed to upload image. ${error.message}`);
+    //     return [];
+    //   }
+    // );
+
+    // if (images.length > 0)
+    //   images.map((image) => editor?.commands.setMedia({ url: image.id, type: image.type }));
   };
 
   return (

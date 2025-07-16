@@ -70,6 +70,7 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
+import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -368,9 +369,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </AspectRatio>
                 )}
 
-                {article.content && (
+                {article.contentJson && (
                   <article>
-                    <RenderHtml html={article.content} />
+                    <RenderRichText content={article.contentJson} />
                   </article>
                 )}
                 <Divider />

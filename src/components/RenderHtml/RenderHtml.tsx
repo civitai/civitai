@@ -1,11 +1,14 @@
 import type { TypographyStylesProviderProps } from '@mantine/core';
 import { useComputedColorScheme, lighten, darken } from '@mantine/core';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
+import { EdgeMediaNodePreview } from '~/components/RichTextEditor/EdgeMediaNode';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 
 // const useStyles = createStyles((theme) => ({
 //   htmlRenderer: {
@@ -172,6 +175,19 @@ export function RenderHtml({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [html, withMentions, colorScheme]
   );
+
+  useEffect(() => {
+    const edgeMediaElems = document.querySelectorAll('edge-media');
+    for (const elem of edgeMediaElems) {
+      const url = elem.attributes.getNamedItem('url')?.value;
+      const type = elem.attributes.getNamedItem('type')?.value;
+      const filename = elem.attributes.getNamedItem('filename')?.value;
+      if (url && type)
+        elem.innerHTML = renderToStaticMarkup(
+          <EdgeMediaNodePreview url={url} type={type as MediaType} filename={filename} />
+        );
+    }
+  }, [html]);
 
   return (
     <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>
