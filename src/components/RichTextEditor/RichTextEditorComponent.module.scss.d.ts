@@ -6,3 +6,4 @@ export declare const proseMirror: string;
 export declare const proseMirrorGapcursor: string;
 export declare const richTextEditor: string;
 export declare const strawPollEmbed: string;
+export declare const htmlRenderer: string;

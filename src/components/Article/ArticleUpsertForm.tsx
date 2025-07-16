@@ -205,6 +205,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'list',
                 'link',
                 'media',
+                'video',
                 'polls',
                 'colors',
               ]}

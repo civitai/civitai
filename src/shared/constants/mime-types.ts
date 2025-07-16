@@ -41,3 +41,17 @@ export const ZIP_MIME_TYPE = [MIME_TYPES.zip, MIME_TYPES.xZipCompressed, MIME_TY
 export function getMimeTypeFromExt(ext: string) {
   return MIME_TYPES[ext as keyof typeof MIME_TYPES];
 }
+
+const MediaTypeDictionary = {
+  [MediaType.image]: IMAGE_MIME_TYPE,
+  [MediaType.video]: VIDEO_MIME_TYPE,
+  [MediaType.audio]: AUDIO_MIME_TYPE,
+};
+
+export function getMimeTypesFromMediaTypes(types: MediaType[]) {
+  const arr: string[] = [];
+  for (const type of types) {
+    arr.push(...MediaTypeDictionary[type]);
+  }
+  return arr;
+}

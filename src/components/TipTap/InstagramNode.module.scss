@@ -1,0 +1,10 @@
+.instagramEmbed {
+  aspect-ratio: 9 / 16;
+  max-height: 1060px;
+  max-width: 50%;
+  overflow: hidden;
+
+  @container (max-width: theme('screens.sm')) {
+    max-width: 100%;
+  }
+}

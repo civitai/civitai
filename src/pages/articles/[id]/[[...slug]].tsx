@@ -70,6 +70,7 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
+import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -214,16 +215,22 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         title={`${article.title} | Civitai`}
         description={truncate(removeTags(article.content), { length: 150 })}
         images={article?.coverImage}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
-            rel: 'canonical',
-          },
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}`,
-            rel: 'alternate',
-          },
-        ]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL
+            ? [
+                {
+                  href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(
+                    article.title
+                  )}`,
+                  rel: 'canonical',
+                },
+                {
+                  href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}`,
+                  rel: 'alternate',
+                },
+              ]
+            : []
+        }
         deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={article.nsfwLevel}>
@@ -362,9 +369,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </AspectRatio>
                 )}
 
-                {article.content && (
+                {article.contentJson && (
                   <article>
-                    <RenderHtml html={article.content} />
+                    <RenderRichText content={article.contentJson} />
                   </article>
                 )}
                 <Divider />

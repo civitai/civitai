@@ -4,7 +4,7 @@ import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
@@ -205,7 +205,7 @@ export const constants = {
   },
   richTextEditor: {
     maxFileSize: 1024 * 1024 * 5, // 5MB
-    accept: IMAGE_MIME_TYPE,
+    accept: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE],
     // Taken from https://v5.mantine.dev/others/tiptap/#text-color
     presetColors: [
       '#25262b',

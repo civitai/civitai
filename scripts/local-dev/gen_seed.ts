@@ -2,7 +2,7 @@ import { faker } from '@faker-js/faker';
 import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
-import type { DatabaseError } from 'pg-protocol/src/messages';
+// import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
@@ -51,6 +51,7 @@ import {
   insertRows,
   randPrependBad,
 } from './utils';
+import type { DatabaseError } from 'pg';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
