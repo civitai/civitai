@@ -11,7 +11,12 @@ import dayjs from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  getUserBuzzAccount,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
 import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
@@ -40,6 +45,15 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
+
+export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {
+  return `bounty-${bountyId}-${userId}-${new Date().getTime()}`;
+};
+
+export const isBountyTransactionPrefix = (prefix: string) => {
+  return prefix.startsWith('bounty-') && prefix.split('-').length >= 4;
+};
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -226,9 +240,15 @@ export const createBounty = async ({
       }
 
       switch (currency) {
-        case Currency.BUZZ:
-          await createBuzzTransaction({
+        case Currency.BUZZ: {
+          const prefix = getBountyTransactionPrefix(bounty.id, userId);
+          await createMultiAccountBuzzTransaction({
             fromAccountId: userId,
+            fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+              isNsfw: bounty.nsfw,
+              nsfwLevel: bounty.nsfwLevel,
+            }),
+            externalTransactionIdPrefix: prefix,
             toAccountId: 0,
             amount: unitAmount,
             type: TransactionType.Bounty,
@@ -237,7 +257,14 @@ export const createBounty = async ({
               entityType: 'Bounty',
             },
           });
+
+          await dbWrite.bountyBenefactor.update({
+            where: { bountyId_userId: { userId, bountyId: bounty.id } },
+            data: { buzzTransactionId: prefix },
+          });
+
           break;
+        }
         default: // Do no checks
           break;
       }
@@ -434,19 +461,27 @@ export const deleteBountyById = async ({
   if (bounty.userId && !bounty.complete && !bounty.refunded) {
     const bountyCreator = await dbRead.bountyBenefactor.findUnique({
       where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
-      select: { unitAmount: true, currency: true },
+      select: { unitAmount: true, currency: true, buzzTransactionId: true },
     });
 
     switch (bountyCreator?.currency) {
-      case Currency.BUZZ:
-        await createBuzzTransaction({
-          fromAccountId: 0,
-          toAccountId: bounty.userId,
-          amount: bountyCreator.unitAmount,
-          type: TransactionType.Refund,
-          description: 'Refund reason: owner deleted bounty',
-        });
+      case Currency.BUZZ: {
+        if (bountyCreator?.buzzTransactionId) {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: bountyCreator.buzzTransactionId,
+            description: 'Refund reason: owner deleted bounty',
+          });
+        } else {
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: bounty.userId,
+            amount: bountyCreator.unitAmount,
+            type: TransactionType.Refund,
+            description: 'Refund reason: owner deleted bounty',
+          });
+        }
         break;
+      }
       default: // Do no checks
         break;
     }
@@ -662,19 +697,27 @@ export const refundBounty = async ({
     throw throwBadRequestError('No currency found for bounty');
   }
 
-  for (const { userId, unitAmount } of benefactors) {
+  for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
     if (unitAmount > 0) {
       switch (currency) {
-        case Currency.BUZZ:
-          await createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: userId,
-            amount: unitAmount,
-            type: TransactionType.Refund,
-            description: 'Reason: Bounty refund',
-          });
+        case Currency.BUZZ: {
+          if (buzzTransactionId) {
+            await refundMultiAccountTransaction({
+              externalTransactionIdPrefix: buzzTransactionId,
+              description: 'Refund reason: owner deleted bounty',
+            });
+          } else {
+            await createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: userId,
+              amount: unitAmount,
+              type: TransactionType.Refund,
+              description: 'Reason: Bounty refund',
+            });
+          }
 
           break;
+        }
         default: // Do nothing just yet.
           break;
       }

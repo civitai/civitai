@@ -5,7 +5,11 @@ import type {
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createBuzzTransactionMany,
+  getMultiAccountTransactionsByPrefix,
+} from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -223,20 +227,47 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       });
 
       switch (updatedBenefactor.currency) {
-        case Currency.BUZZ:
-          await createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: entry.userId,
-            amount: updatedBenefactor.unitAmount,
-            type: TransactionType.Bounty,
-            description: 'Reason: Bounty entry has been awarded!',
-            details: {
-              entityId: entry.bountyId,
-              entityType: 'Bounty',
-            },
-          });
+        case Currency.BUZZ: {
+          if (updatedBenefactor.buzzTransactionId) {
+            // This is a multi-transaction
+            const data = await getMultiAccountTransactionsByPrefix(
+              updatedBenefactor.buzzTransactionId
+            );
+            if (!data || !data.length) {
+              throw throwBadRequestError('No transactions found for this benefactor.');
+            }
+
+            const transactions = data.map((t) => ({
+              fromAccountId: 0,
+              toAccountId: entry.userId as number,
+              toAccountType: t.accountType,
+              amount: t.amount,
+              type: TransactionType.Bounty,
+              description: 'Reason: Bounty entry has been awarded!',
+              details: {
+                entityId: entry.bountyId,
+                entityType: 'Bounty',
+              },
+              externalTransactionId: `bounty-award-${id}-${t.accountType}`,
+            }));
+
+            await createBuzzTransactionMany(transactions);
+          } else {
+            await createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: entry.userId,
+              amount: updatedBenefactor.unitAmount,
+              type: TransactionType.Bounty,
+              description: 'Reason: Bounty entry has been awarded!',
+              details: {
+                entityId: entry.bountyId,
+                entityType: 'Bounty',
+              },
+            });
+          }
 
           break;
+        }
         default: // Do no checks
           break;
       }

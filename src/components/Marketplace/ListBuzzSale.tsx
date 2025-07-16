@@ -16,7 +16,7 @@ export function ListBuzzSale() {
   const { currency } = useMarketplaceContext();
   const form = useForm({ schema });
 
-  const handleSubmit = (data: z.input<typeof schema>) => {
+  const handleSubmit = (data: z.infer<typeof schema>) => {
     console.log(data);
   };
 

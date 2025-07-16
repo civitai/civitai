@@ -1329,3 +1329,40 @@ export const grantBuzzPurchase = async ({
 
   return transactionId;
 };
+
+export async function getMultiAccountTransactionsByPrefix(
+  externalTransactionIdPrefix: string
+): Promise<
+  {
+    transactionId: string;
+    externalTransactionId: string;
+    accountType: BuzzAccountType;
+    accountId: number;
+    amount: number;
+  }[]
+> {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
+  const queryParams = new URLSearchParams({
+    externalTransactionIdPrefix,
+  });
+
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/multi-transactions?${queryParams.toString()}`);
+
+  if (!response.ok) {
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError('Invalid request');
+      case 404:
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Transactions not found' });
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+
+  const data = await response.json();
+  return data;
+}
