@@ -2777,17 +2777,18 @@ model BountyEntryReaction {
 }
 
 model BountyBenefactor {
-  userId      Int
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bountyId    Int
-  bounty      Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  unitAmount  Int
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  awardedAt   DateTime?
-  awardedToId Int?
-  awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
-  currency    Currency     @default(BUZZ)
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId       Int
+  bounty         Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  unitAmount     Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  awardedAt      DateTime?
+  awardedToId    Int?
+  awartedTo      BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
+  currency       Currency     @default(BUZZ)
+  transactionIds String[]     @default([])
 
   @@id([bountyId, userId])
   @@index([bountyId], type: Hash)

@@ -2117,6 +2117,7 @@ export interface BountyBenefactor {
   awardedToId: number | null;
   awartedTo?: BountyEntry | null;
   currency: Currency;
+  transactionIds: string[];
 }
 
 export interface BountyEngagement {
