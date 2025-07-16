@@ -74,3 +74,6 @@ export const WITHDRAWAL_FEES: Record<CashWithdrawalMethod, WithdrawalFee | undef
 
 export const FIRST_CREATOR_PROGRAM_MONTH = new Date('2025-03-01');
 export const CAPPED_BUZZ_VALUE = (1 / 1000) * 100; // $0.001 per Buzz (*100 to convert to cents)
+
+// Order matters, the first one is the default color we'll show.
+export const SUPPORTED_BUZZ = ['green', 'user'] as const;

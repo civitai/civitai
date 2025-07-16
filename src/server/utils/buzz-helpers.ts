@@ -16,9 +16,9 @@ export const getBuzzBulkMultiplier = ({
     return acc;
   }, 1);
 
-  const yellowBuzzAdded = Math.floor(buzzAmount * purchasesMultiplier - buzzAmount);
+  const customBuzzAdded = Math.floor(buzzAmount * purchasesMultiplier - buzzAmount);
   const blueBuzzAdded = Math.max(
-    Math.floor(buzzAmount * bulkBuzzMultiplier - yellowBuzzAdded - buzzAmount),
+    Math.floor(buzzAmount * bulkBuzzMultiplier - customBuzzAdded - buzzAmount),
     0
   );
 
@@ -27,9 +27,9 @@ export const getBuzzBulkMultiplier = ({
     purchasesMultiplier,
     bulkBuzzMultiplier,
     blueBuzzAdded,
-    yellowBuzzAdded,
+    customBuzzAdded,
     totalBlueBuzz: blueBuzzAdded,
-    totalYellowBuzz: yellowBuzzAdded + buzzAmount,
-    totalBuzz: yellowBuzzAdded + blueBuzzAdded + buzzAmount,
+    totalCustomBuzz: customBuzzAdded + buzzAmount,
+    totalBuzz: customBuzzAdded + blueBuzzAdded + buzzAmount,
   };
 };

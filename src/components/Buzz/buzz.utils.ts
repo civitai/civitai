@@ -13,6 +13,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { purchasableBuzzAccountTypes } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, PurchasableBuzzType } from '~/server/schema/buzz.schema';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -87,7 +89,7 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
       };
 
       window.open(
-        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(query)}`,
+        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );
@@ -102,29 +104,34 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   };
 };
 
-export type BuzzTypeDistribution = {
-  pct: { blue: number; yellow: number };
-  amt: { blue: number; yellow: number };
-};
-
 export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   performTransactionOnPurchase?: boolean;
-  type?: 'Generation' | 'Default';
+  accountTypes?: BuzzAccountType[];
 }) => {
-  const { message, purchaseSuccessMessage, performTransactionOnPurchase, type } = opts ?? {};
+  const {
+    message,
+    purchaseSuccessMessage,
+    performTransactionOnPurchase,
+    accountTypes = ['user'],
+  } = opts ?? {};
+
+  if (accountTypes.length === 0) {
+    throw new Error(
+      'useBuzzTransaction hook requires at least one account type. This is likely be a bug. Please contact support.'
+    );
+  }
 
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
-  const { balance: userBalance, balanceLoading: userBalanceLoading } = useBuzz(undefined, 'user');
-  const { balance: generationBalance, balanceLoading: generationBalanceLoading } = useBuzz(
-    undefined,
-    'generation'
-  );
+  const { balances, balanceLoading } = useBuzz(undefined, accountTypes);
   const isMobile = useIsMobile();
   const onBuyBuzz = useBuyBuzz();
+  const purchasableValue = accountTypes.find((t) =>
+    purchasableBuzzAccountTypes.some((x) => x === t)
+  ) as PurchasableBuzzType;
 
   const { trackAction } = useTrackEvent();
 
@@ -141,51 +148,23 @@ export const useBuzzTransaction = (opts?: {
   });
 
   const getCurrentBalance = () => {
-    switch (type) {
-      case 'Generation':
-        return userBalance + generationBalance;
-      default:
-        return userBalance;
-    }
+    // Ensure we use the relevant sort:
+    return accountTypes
+      .map((t) => {
+        const record = balances.find((b) => b.accountType === t);
+        return record?.balance ?? 0;
+      })
+      .reduce((acc, b) => {
+        return acc + b;
+      }, 0);
   };
 
   const hasRequiredAmount = (buzzAmount: number) => getCurrentBalance() >= buzzAmount;
-  const hasTypeRequiredAmount = (buzzAmount: number) => {
-    switch (type) {
-      case 'Generation':
-        return generationBalance >= buzzAmount;
-      default:
-        return userBalance >= buzzAmount;
-    }
-  };
-  const getTypeDistribution = (buzzAmount: number): BuzzTypeDistribution => {
-    switch (type) {
-      case 'Generation':
-        if (generationBalance >= buzzAmount)
-          return { amt: { blue: buzzAmount, yellow: 0 }, pct: { blue: 1, yellow: 0 } };
-
-        const blueAmt = Math.max(0, generationBalance);
-        const yellowAmt = buzzAmount - blueAmt;
-
-        return {
-          amt: {
-            blue: blueAmt,
-            yellow: yellowAmt,
-          },
-          pct: {
-            blue: blueAmt / buzzAmount,
-            yellow: yellowAmt / buzzAmount,
-          },
-        };
-      default:
-        return { amt: { blue: 0, yellow: buzzAmount }, pct: { blue: 0, yellow: 1 } };
-    }
-  };
 
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
-    if (userBalanceLoading || generationBalanceLoading) return;
+    if (balanceLoading) return;
 
     const balance = getCurrentBalance();
     const meetsRequirement = hasRequiredAmount(buzzAmount);
@@ -194,11 +173,22 @@ export const useBuzzTransaction = (opts?: {
         () => undefined
       );
 
+      if (!purchasableValue) {
+        showErrorNotification({
+          title: 'Not enough Buzz',
+          error: new Error(`You need at least ${buzzAmount} Buzz to perform this action.`),
+        });
+
+        return;
+      }
+
       onBuyBuzz({
         message: typeof message === 'function' ? message(buzzAmount - balance) : message,
         minBuzzAmount: buzzAmount - balance,
         onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
         purchaseSuccessMessage,
+        // At this point, because `canPurchase` is true, we can safely assume the first type is a purchasable type:
+        initialBuzzType: purchasableValue,
       });
 
       return;
@@ -209,10 +199,9 @@ export const useBuzzTransaction = (opts?: {
 
   return {
     hasRequiredAmount,
-    hasTypeRequiredAmount,
-    getTypeDistribution,
     conditionalPerformTransaction,
     tipUserMutation,
-    isLoadingBalance: userBalanceLoading || generationBalanceLoading,
+    isLoadingBalance: balanceLoading,
+    canPurchase: !purchasableValue,
   };
 };

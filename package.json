@@ -283,8 +283,5 @@
   },
   "ct3aMetadata": {
     "initVersion": "6.2.1"
-  },
-  "overrides": {
-    "@react-aria/interactions": "3.16.0"
   }
 }

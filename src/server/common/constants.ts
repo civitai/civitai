@@ -1182,8 +1182,13 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 
 type CurrencyTheme = {
   icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
-  color: (theme: MantineTheme) => string;
-  fill?: (theme: MantineTheme) => string | undefined;
+  color: string;
+  fill?: string | undefined;
+  cssVariableName?: string;
+  classNames?: {
+    btn?: string;
+    gradient?: string;
+  };
 };
 
 export const CurrencyConfig: Record<
@@ -1192,24 +1197,59 @@ export const CurrencyConfig: Record<
 > = {
   [Currency.BUZZ]: {
     icon: IconBolt,
-    color: (theme) => theme.colors.yellow[7],
-    fill: (theme) => theme.colors.yellow[7],
+    color: '#f59f00',
+    fill: '#f59f00',
+    classNames: {
+      btn: 'bg-gradient-to-r from-orange-500 to-yellow-400 hover:from-orange-600 hover:to-yellow-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+      gradient: 'bg-gradient-to-r from-orange-500 to-yellow-400',
+    },
     themes: {
       generation: {
         icon: IconBolt,
-        color: (theme) => theme.colors.blue[4],
-        fill: (theme) => theme.colors.blue[4],
+        color: '#4dabf7',
+        fill: '#4dabf7',
+        classNames: {
+          btn: 'bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+          gradient: 'bg-gradient-to-r from-blue-500 to-cyan-400',
+        },
+      },
+      green: {
+        icon: IconBolt,
+        color: '#40c057',
+        fill: '#40c057',
+        classNames: {
+          btn: 'bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-600 hover:to-emerald-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+          gradient: 'bg-gradient-to-r from-green-500 to-emerald-400',
+        },
+      },
+      red: {
+        icon: IconBolt,
+        color: '#f03e3e',
+        fill: '#f03e3e',
+        classNames: {
+          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
+          gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
+        },
+      },
+      fakered: {
+        icon: IconBolt,
+        color: '#f03e3e',
+        fill: '#f03e3e',
+        classNames: {
+          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
+          gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
+        },
       },
     },
   },
   [Currency.USD]: {
     icon: IconCurrencyDollar,
-    color: (theme) => theme.colors.yellow[7],
+    color: '#f59f00',
     fill: undefined,
   },
   [Currency.USDC]: {
     icon: IconCurrencyDollar,
-    color: (theme) => theme.colors.yellow[7],
+    color: '#f59f00',
     fill: undefined,
   },
 };

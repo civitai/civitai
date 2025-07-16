@@ -151,15 +151,15 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 <Group>
                   <UserBuzz
                     accountId={accountId}
-                    accountType="user"
                     textSize="xl"
                     withAbbreviation={false}
+                    accountTypes={['user', 'fakered']}
                   />
                   <UserBuzz
                     accountId={accountId}
-                    accountType="generation"
                     textSize="xl"
                     withAbbreviation={false}
+                    accountTypes={['generation', 'green']}
                   />
 
                   <Popover width={350} withArrow withinPortal shadow="sm">

@@ -273,7 +273,7 @@ export const eventEngine = {
       const buzzAccount = await getUserBuzzAccount({ accountId });
       teamScores.push({
         team,
-        score: buzzAccount?.balance ?? 0,
+        score: buzzAccount[0]?.balance ?? 0,
         rank: 0,
       });
     }

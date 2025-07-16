@@ -85,7 +85,7 @@ export const processClubMembershipRecurringPayments = createJob(
           // Check if the user has buzz and can pay with buzz.
           const account = await getUserBuzzAccount({ accountId: clubMembership.userId });
 
-          if (!account) {
+          if (!account || !account[0]) {
             // TODO: Send email to user that they need to add a payment method.
             logger({
               data: {
@@ -102,7 +102,7 @@ export const processClubMembershipRecurringPayments = createJob(
           const downgradeClubTierId = clubMembership.downgradeClubTier?.id ?? undefined;
 
           if (chargedAmount > 0) {
-            if ((account?.balance ?? 0) >= chargedAmount) {
+            if ((account[0]?.balance ?? 0) >= chargedAmount) {
               // Pay with buzz.
               await dbWrite.$transaction(async (tx) => {
                 try {
@@ -200,7 +200,7 @@ export const processClubMembershipRecurringPayments = createJob(
             }
 
             const purchasedUnitAmount = Math.max(
-              chargedAmount - (account?.balance ?? 0),
+              chargedAmount - (account[0]?.balance ?? 0),
               constants.clubs.minStripeCharge
             );
 

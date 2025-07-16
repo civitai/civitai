@@ -124,6 +124,7 @@ const featureFlags = createFeatureFlags({
   prepaidMemberships: ['mod'],
   coinbasePayments: ['public'],
   coinbaseOnramp: ['mod'],
+  emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],

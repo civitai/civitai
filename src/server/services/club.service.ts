@@ -1178,13 +1178,13 @@ export const deleteClub = async ({
 
   const buzzAccount = await getUserBuzzAccount({ accountId: club.id, accountType: 'club' });
 
-  if ((buzzAccount?.balance ?? 0) > 0) {
+  if ((buzzAccount[0]?.balance ?? 0) > 0) {
     await createBuzzTransaction({
       toAccountId: club.userId,
       fromAccountId: club.id,
       fromAccountType: 'club',
       type: TransactionType.Tip,
-      amount: buzzAccount.balance as number,
+      amount: buzzAccount[0].balance as number,
     });
   }
 

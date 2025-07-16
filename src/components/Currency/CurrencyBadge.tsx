@@ -1,21 +1,16 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import {
-  Badge,
-  Loader,
-  Text,
-  Tooltip,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Badge, Loader, Text, Tooltip, useComputedColorScheme } from '@mantine/core';
 import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
-import type { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
 import { CurrencyConfig } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import classes from './CurrencyBadge.module.scss';
 import clsx from 'clsx';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzTypeDistribution } from '~/utils/buzz';
+import { createBuzzDistributionGradient, createBuzzDistributionLabel } from '~/utils/buzz';
 
 type Props = BadgeProps & {
   currency: Currency;
@@ -26,7 +21,7 @@ type Props = BadgeProps & {
   iconProps?: IconProps;
   textColor?: string;
   type?: string;
-  typeDistrib?: BuzzTypeDistribution;
+  typeDistribution?: BuzzTypeDistribution;
   asCounter?: boolean;
 };
 
@@ -50,7 +45,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       iconProps,
       textColor,
       type,
-      typeDistrib,
+      typeDistribution,
       asCounter,
       style,
       className,
@@ -59,21 +54,21 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
     ref
   ) => {
     const value = formatCurrencyForDisplay(unitAmount, currency);
-    const theme = useMantineTheme();
     const colorScheme = useComputedColorScheme('dark');
     const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
     const Icon = config.icon;
-    const colorString = textColor || config.color(theme);
+    const colorString = textColor || config.color;
+
+    const label = createBuzzDistributionLabel({
+      typeDistribution,
+    });
+
+    const gradient = createBuzzDistributionGradient({
+      typeDistribution,
+    });
 
     return (
-      <Tooltip
-        label={
-          typeDistrib
-            ? `Blue: ${typeDistrib.amt.blue} | Yellow: ${typeDistrib.amt.yellow}`
-            : undefined
-        }
-        disabled={!typeDistrib}
-      >
+      <Tooltip label={label} disabled={!typeDistribution}>
         <Badge
           ref={ref}
           variant={colorScheme === 'dark' ? 'filled' : 'light'}
@@ -88,16 +83,13 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
             color: colorString,
             position: 'relative',
             ...(style ?? {}),
-            '--border-image': typeDistrib
-              ? `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
-                  typeDistrib.pct.blue * 100
-                )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
-                  theme.colors.yellow[7]
-                } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`
-              : undefined,
+            '--border-image': gradient,
           }}
           classNames={{
-            root: clsx(typeDistrib && classes.badgeWithDistrib, className),
+            root: clsx(
+              !loading && typeDistribution && gradient && classes.badgeWithDistrib,
+              className
+            ),
             label: 'flex gap-0.5 items-center flex-nowrap',
           }}
           {...badgeProps}

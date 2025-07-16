@@ -3,7 +3,7 @@ import { Alert, Center, Container, Divider, Group, List, Stack, Text, Title } fr
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import * as z from 'zod/v4';
-import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -41,6 +41,7 @@ export const getServerSideProps = createServerSideProps({
 const schema = z.object({
   returnUrl: z.string().optional(),
   minBuzzAmount: z.coerce.number().optional(),
+  buzzType: z.enum(['green', 'fakered', 'red']).optional(),
 });
 
 const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
@@ -59,7 +60,7 @@ const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
 };
 export default function PurchaseBuzz() {
   const router = useRouter();
-  const { returnUrl, minBuzzAmount } = schema.parse(router.query);
+  const { returnUrl, minBuzzAmount, buzzType } = schema.parse(router.query);
   const [success, setSuccess] = useState<boolean>(false);
 
   const handlePurchaseSuccess = () => {
@@ -136,6 +137,7 @@ export default function PurchaseBuzz() {
         </ContainerGrid2.Col>
         <ContainerGrid2.Col span={{ base: 12, md: 9 }}>
           <BuzzPurchase
+            initialBuzzType={buzzType}
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}
             purchaseSuccessMessage={

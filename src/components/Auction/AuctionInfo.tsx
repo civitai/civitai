@@ -717,7 +717,6 @@ export const AuctionInfo = () => {
                   disabled={!validBid || createLoading}
                   label="Bid"
                   buzzAmount={bidPrice ?? 0}
-                  transactionType="Default"
                   onPerformTransaction={() =>
                     handleBuy({
                       bidPrice,

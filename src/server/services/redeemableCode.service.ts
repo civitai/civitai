@@ -25,7 +25,6 @@ import { deliverMonthlyCosmetics } from './subscriptions.service';
 import { Prisma } from '@prisma/client';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
-import { v } from '@faker-js/faker/dist/airline-C5Qwd7_q';
 
 export async function createRedeemableCodes({
   unitValue,
