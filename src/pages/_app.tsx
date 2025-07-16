@@ -80,6 +80,7 @@ import '@mantine/notifications/styles.layer.css';
 import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
 import 'mantine-react-table/styles.css'; //import MRT styles
+import { applyNodeOverrides } from '~/utils/node-override';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -89,6 +90,7 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 registerCustomProtocol('civitai', true);
+applyNodeOverrides();
 // registerCustomProtocol('urn', true);
 
 type CustomAppProps = {

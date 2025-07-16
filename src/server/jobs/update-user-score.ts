@@ -114,31 +114,15 @@ async function getArticleScore(ctx: Context) {
 
 async function getImageScore(ctx: Context) {
   const affected = await ctx.ch.$query<{ userId: number; score: number }>`
-    WITH affected AS (
-      SELECT DISTINCT ic.userId as userId
-      FROM entityMetricEvents em
-      JOIN images_created ic ON ic.id = em.entityId
-      WHERE entityType = 'Image'
-      AND metricType IN ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry', 'Comment')
-      AND em.createdAt > ${ctx.lastUpdate}
-    )
     SELECT
-      ic.userId as userId,
+      userId,
       (
-        sumIf(em.metricValue, em.metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) * ${ctx.scoreMultipliers.images.reactions}
-        + sumIf(em.metricValue, em.metricType = 'Comment') * ${ctx.scoreMultipliers.images.comments}
+        sumMerge(reactions) * ${ctx.scoreMultipliers.images.reactions}
+        + sumMerge(comments) * ${ctx.scoreMultipliers.images.comments}
       ) as score
-    FROM entityMetricEvents em
-    JOIN images_created ic ON ic.id = em.entityId
-    WHERE entityType = 'Image'
-    AND metricType IN ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry', 'Comment')
-    AND ic.id NOT IN (
-      SELECT imageId
-      FROM images i
-      WHERE i.type IN ('Delete', 'DeleteTOS')
-    )
-    AND ic.userId IN (SELECT userId FROM affected)
-    GROUP BY 1
+    FROM   image_metrics_user
+    GROUP  BY userId
+    HAVING maxMerge(updatedAt) >= ${ctx.lastUpdate}
   `;
 
   for (const { userId, score } of affected) {

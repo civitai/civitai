@@ -119,7 +119,7 @@ export function Files() {
           </Stack>
         </Group>
       </Dropzone>
-    <UploadNotice className="-mt-2" />
+      <UploadNotice className="-mt-2" />
       {files.length > 0 ? (
         <Button
           onClick={async () => {
