@@ -347,6 +347,7 @@ export const moderateImages = async ({
       data: {
         needsReview: null,
         ingestion: 'Scanned',
+        blockedFor: null,
         poi: reviewType === 'poi' ? false : undefined,
         minor: reviewType === 'minor' ? false : undefined,
       },
@@ -4091,7 +4092,8 @@ async function removeNameReference(images: number[]) {
         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
           "needsReview" = null,
           poi = false,
-          ingestion = 'Scanned'::"ImageIngestionStatus"
+          ingestion = 'Scanned'::"ImageIngestionStatus",
+          "blockedFor" = null
       FROM updates t
       WHERE t.id = i.id;
     `;

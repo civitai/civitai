@@ -1,9 +1,8 @@
 import jsSHA from 'jssha';
 
 const SIZE_1_GB = 1000 * 1024 * 1024; // 1 GB
-const CHUNK_SIZE = 16 * 1024 * 1024; // 16MB chunks for better performance
 
-const computeSHA256 = async (file: File, _onProgress?: (progress: number) => void) => {
+const computeSHA256 = async (file: File, onProgress?: (progress: number) => void) => {
   // Read the file as an ArrayBuffer
   const fileBuffer = await file.arrayBuffer();
 
@@ -14,24 +13,25 @@ const computeSHA256 = async (file: File, _onProgress?: (progress: number) => voi
   const hashArray = Array.from(new Uint8Array(hashArrayBuffer));
   const hashHex = hashArray.map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
+  if (onProgress) onProgress(100); // Call progress callback with 100% when done
+
   return hashHex;
 };
 
 const computeSHA256jsSHA = async (file: File, onProgress?: (progress: number) => void) => {
-  const reader = file.stream().getReader({ mode: 'byob' });
+  const reader = file.stream().getReader();
   const shaObj = new jsSHA('SHA-256', 'ARRAYBUFFER');
 
   try {
     let totalBytesRead = 0;
 
     while (true) {
-      const buffer = new Uint8Array(CHUNK_SIZE);
-      const { done, value } = await reader.read(buffer);
+      const { done, value } = await reader.read();
       if (done) break;
 
-      // value is the actual filled portion of the buffer
+      // value is a Uint8Array containing the actual data read
       if (value && value.byteLength > 0) {
-        shaObj.update(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+        shaObj.update(value);
         totalBytesRead += value.byteLength;
 
         // Call progress callback if provided
