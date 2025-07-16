@@ -261,7 +261,7 @@ export function RichTextEditor({
     onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
     editable: !disabled,
     immediatelyRender: false,
-    onDelete: (props) => console.log(props),
+    // onDelete: (props) => console.log(props), // TODO - handle image/video delete from s3 bucket
     shouldRerenderOnTransaction: true,
   });
 

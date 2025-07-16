@@ -114,8 +114,6 @@ function EdgeMediaEditComponent({
   const isObjectUrl = url?.startsWith('blob');
   const uploadingRef = useRef(false);
 
-  // useEffect(() => console.log({ url }), [url]);
-
   useEffect(() => {
     if (isObjectUrl && !uploadingRef.current) {
       uploadingRef.current = true;
