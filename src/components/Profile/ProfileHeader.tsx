@@ -102,7 +102,7 @@ export function ProfileHeader({ username }: { username: string }) {
             <IconBellFilled />
           </ThemeIcon>
           <Stack gap={0}>
-            <Text>
+            <Text component="div">
               <CustomMarkdown
                 rehypePlugins={[rehypeRaw, remarkGfm]}
                 allowedElements={['a', 'p']}

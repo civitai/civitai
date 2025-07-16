@@ -1,5 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 export const cosmeticShopNotifications = createNotificationProcessor({
   // Moveable (if created through API)
@@ -46,10 +47,19 @@ export const cosmeticShopNotifications = createNotificationProcessor({
   'cosmetic-shop-item-sold': {
     displayName: 'Shop: Your Item got bought (Creator Program exclusive)',
     category: NotificationCategory.System,
-    prepareMessage: ({ details }) => ({
-      message: `You got paid ${details.buzzAmount} Buzz for selling 1 "${details.shopItemTitle}" item`,
-      url: `/user/transactions`,
-    }),
+    prepareMessage: ({ details }) => {
+      console.log({ details });
+      return {
+        message: details.buyer
+          ? `${details.buyer as string} bought your "${
+              details.shopItemTitle as string
+            }" shop item. You got paid ${numberWithCommas(details.buzzAmount as number)} Buzz!`
+          : `You got paid ${numberWithCommas(details.buzzAmount as number)} Buzz for selling 1 "${
+              details.shopItemTitle as string
+            }" item`,
+        url: `/user/transactions`,
+      };
+    },
     prepareQuery: ({ lastSent }) => `
       WITH sold_items AS (
         SELECT DISTINCT
@@ -57,10 +67,12 @@ export const cosmeticShopNotifications = createNotificationProcessor({
           CAST(jsonb_array_elements(si.meta->'paidToUserIds') as INT) "ownerId",
           JSONB_BUILD_OBJECT(
             'shopItemTitle', si."title",
-            'buzzAmount', FLOOR(si."unitAmount" / jsonb_array_length(si.meta->'paidToUserIds'))
+            'buzzAmount', FLOOR(si."unitAmount" / jsonb_array_length(si.meta->'paidToUserIds')),
+			      'buyer', u.username
           ) "details"
         FROM "UserCosmeticShopPurchases" cp
         JOIN "CosmeticShopItem" si ON si.id = cp."shopItemId"
+		    LEFT JOIN "User" u ON u.id = cp."userId"
         WHERE cp."purchasedAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes' AND
         cp."purchasedAt" <= NOW() - INTERVAL '5 minutes'
       )
