@@ -17,11 +17,14 @@
     }
 
     .iconWrapper {
-      color: var(--mantine-color-white);
       display: none;
 
       @media (min-width: theme('screens.xs')) {
         display: inline-block !important;
+      }
+
+      .checkIcon {
+        color: var(--mantine-color-white);
       }
     }
   }

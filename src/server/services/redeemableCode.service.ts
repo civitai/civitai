@@ -23,6 +23,9 @@ import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
 import { Prisma } from '@prisma/client';
+import { setVaultFromSubscription } from '~/server/services/vault.service';
+import { updateServiceTier } from '~/server/integrations/freshdesk';
+import { v } from '@faker-js/faker/dist/airline-C5Qwd7_q';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -96,11 +99,14 @@ export async function consumeRedeemableCode({
     throw new Error('Membership codes must have a price ID');
   }
 
-  if (codeRecord.price?.product?.provider !== PaymentProvider.Civitai) {
+  if (
+    codeRecord.type === RedeemableCodeType.Membership &&
+    codeRecord.price?.product?.provider !== PaymentProvider.Civitai
+  ) {
     throw new Error('Cannot redeem codes for non-Civitai products');
   }
 
-  return await dbWrite.$transaction(
+  const consumedCode = await dbWrite.$transaction(
     async (tx) => {
       const consumedCode = await tx.redeemableCode
         .update({
@@ -352,14 +358,15 @@ export async function consumeRedeemableCode({
 
         await withRetries(async () => {
           // Grant buzz right away:
-          await grantBuzzPurchase({
-            userId: userId,
-            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
-            description: `Membership Bonus`,
-            transactionType: TransactionType.Purchase,
+          await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: userId,
+            type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id
             }`,
+            amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
+            description: `Membership bonus`,
             details: {
               type: 'membership-purchase',
               date: date,
@@ -373,8 +380,6 @@ export async function consumeRedeemableCode({
         });
       }
 
-      await invalidateSession(userId);
-      await getMultipliersForUser(userId, true);
       return consumedCode;
     },
     {
@@ -382,4 +387,22 @@ export async function consumeRedeemableCode({
       timeout: 10000, // 10 seconds timeout for the transaction
     }
   );
+
+  await invalidateSession(userId);
+  await getMultipliersForUser(userId, true);
+  await setVaultFromSubscription({
+    userId,
+  });
+
+  const consumedProductMetadata = consumedCode.price?.product
+    .metadata as SubscriptionProductMetadata;
+
+  if (consumedProductMetadata) {
+    await updateServiceTier({
+      userId,
+      serviceTier: consumedProductMetadata.tier ?? null,
+    });
+  }
+
+  return consumedCode;
 }

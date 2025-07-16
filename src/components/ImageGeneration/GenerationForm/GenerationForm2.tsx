@@ -1454,18 +1454,20 @@ export function GenerationFormContent() {
                         I Understand, Continue Generating
                       </Button>
                     </Alert>
-                    <Text size="xs" c="dimmed" mt={4}>
-                      Is this a mistake?{' '}
-                      <Text
-                        component="a"
-                        td="underline"
-                        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser?.username}`}
-                        target="_blank"
-                      >
-                        Submit your prompt for review
-                      </Text>{' '}
-                      so we can refine our system.
-                    </Text>
+                    {currentUser?.username && (
+                      <Text size="xs" c="dimmed" mt={4}>
+                        Is this a mistake?{' '}
+                        <Text
+                          component="a"
+                          td="underline"
+                          href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser.username}`}
+                          target="_blank"
+                        >
+                          Submit your prompt for review
+                        </Text>{' '}
+                        so we can refine our system.
+                      </Text>
+                    )}
                   </div>
                 ) : !status.available ? (
                   <AlertWithIcon

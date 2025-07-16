@@ -46,6 +46,7 @@ type FileRow = {
   metadata: FileMetadata;
   sizeKB: number;
   hash: string;
+  name: string;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -109,7 +110,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
   const files = await dbRead.$queryRaw<FileRow[]>`
-    SELECT mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mfh.hash
+    SELECT mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mfh.hash, mf.name
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'AutoV2'
     WHERE mf."modelVersionId" = ${id}
@@ -206,6 +207,7 @@ export default MixedAuthEndpoint(async function handler(
     publishedAt: modelVersion.publishedAt,
     size: primaryFile.sizeKB, // nullable
     fileType: primaryFile.type,
+    fileName: primaryFile.name,
     // nullable - hashes
     hashes: {
       AutoV2: primaryFile.hash, // nullable

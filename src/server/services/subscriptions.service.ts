@@ -60,7 +60,7 @@ export const getPlans = async ({
     .filter(({ metadata }) => {
       return env.TIER_METADATA_KEY
         ? !!(metadata as any)?.[env.TIER_METADATA_KEY] &&
-        ((metadata as any)?.[env.TIER_METADATA_KEY] !== 'free' || includeFree)
+            ((metadata as any)?.[env.TIER_METADATA_KEY] !== 'free' || includeFree)
         : true;
     })
     .map((product) => {
@@ -164,7 +164,6 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
   return nonFreeProducts.length > 0;
 };
 
-
 /**
  * Delivers monthly cosmetics to users with active Civitai subscriptions.
  * TODO: This should be updated to do any provider not only Civitai.Not needed right now, but in the future
@@ -195,7 +194,11 @@ export const deliverMonthlyCosmetics = async ({
             AND jsonb_typeof(pr.metadata->'level') != 'undefined'
             AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
             AND (pdl.metadata->>'level')::int <= (pr.metadata->>'level')::int
-        WHERE ${userIds.length > 0 ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})` : Prisma.sql`
+            AND pdl.provider = pr.provider
+        WHERE ${
+          userIds.length > 0
+            ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`
+            : Prisma.sql`
           (
           -- Exact day match (normal case)
           EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
@@ -206,8 +209,8 @@ export const deliverMonthlyCosmetics = async ({
             AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
           )
         )
-        `}
-        AND "createdAt" < NOW()::date -- Don't grant on the first day (already granted when membership started)
+        `
+        }
         AND status = 'active'
         AND "currentPeriodEnd" > NOW()
         AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
@@ -227,4 +230,4 @@ export const deliverMonthlyCosmetics = async ({
         AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
-}
+};
