@@ -5,16 +5,14 @@ import slugify from 'slugify';
 export const CustomHeading = Heading.configure({ levels: [1, 2, 3] }).extend({
   addAttributes() {
     return {
-      // eslint-disable-next-line
-      ...this.parent?.(),
+      ...(this as any).parent?.(),
       id: { default: null },
     };
   },
   // @ts-ignore
   addOptions() {
     return {
-      // eslint-disable-next-line
-      ...this.parent?.(),
+      ...(this as any).parent?.(),
       HTMLAttributes: { id: null },
     };
   },
