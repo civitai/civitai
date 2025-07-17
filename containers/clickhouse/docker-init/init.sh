@@ -6,7 +6,7 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists default.actions
     (
-        type Enum16('AddToBounty_Click' = 1, 'AddToBounty_Confirm' = 2, 'AwardBounty_Click' = 3, 'AwardBounty_Confirm' = 4, 'Tip_Click' = 5, 'Tip_Confirm' = 6, 'TipInteractive_Click' = 7, 'TipInteractive_Cancel' = 8, 'NotEnoughFunds' = 9, 'PurchaseFunds_Cancel' = 10, 'PurchaseFunds_Confirm' = 11, 'LoginRedirect' = 12, 'Membership_Cancel' = 13),
+        type Enum16('AddToBounty_Click' = 1, 'AddToBounty_Confirm' = 2, 'AwardBounty_Click' = 3, 'AwardBounty_Confirm' = 4, 'Tip_Click' = 5, 'Tip_Confirm' = 6, 'TipInteractive_Click' = 7, 'TipInteractive_Cancel' = 8, 'NotEnoughFunds' = 9, 'PurchaseFunds_Cancel' = 10, 'PurchaseFunds_Confirm' = 11, 'LoginRedirect' = 12, 'Membership_Cancel' = 13, 'CSAM_Help_Triggered' = 14),
         details     String   default '',
         time        DateTime default now(),
         userId      Int32    default 0,
