@@ -20,6 +20,8 @@ export const updateCreatorResourceCompensation = createJob(
   async () => {
     if (!clickhouse) return;
 
+    // TODO.resourceCompensations: We don't need to update this at all anymore. I'll wait for our new table
+    // To be 1 month old before removing this.
     await clickhouse.$query`
       INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count)
       SELECT
@@ -85,7 +87,7 @@ export const updateCreatorResourceCompensation = createJob(
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
     if (shouldPayout) {
       await runPayout(lastPayout);
-      await setLastPayout();
+      // await setLastPayout();
     }
   }
 );
@@ -105,11 +107,11 @@ export async function runPayout(lastUpdate: Date) {
     SELECT
       modelVersionId,
 	    accountType,
-	    MAX(FLOOR(amount))
+	    MAX(FLOOR(amount))::int AS amount
     FROM orchestration.resourceCompensations
     WHERE date = ${date}
     GROUP BY modelVersionId, accountType 
-    HAVING MAX(FLOOR(amount)) > 0;
+    HAVING amount > 0;
   `;
   if (!compensations.length) return;
 
