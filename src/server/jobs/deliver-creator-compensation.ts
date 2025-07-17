@@ -87,7 +87,7 @@ export const updateCreatorResourceCompensation = createJob(
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
     if (shouldPayout) {
       await runPayout(lastPayout);
-      // await setLastPayout();
+      await setLastPayout();
     }
   }
 );
