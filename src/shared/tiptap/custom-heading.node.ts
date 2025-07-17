@@ -5,6 +5,7 @@ import slugify from 'slugify';
 export const CustomHeading = Heading.configure({ levels: [1, 2, 3] }).extend({
   addAttributes() {
     return {
+      // eslint-disable-next-line
       ...this.parent?.(),
       id: { default: null },
     };
@@ -12,12 +13,12 @@ export const CustomHeading = Heading.configure({ levels: [1, 2, 3] }).extend({
   // @ts-ignore
   addOptions() {
     return {
-      // @ts-ignore
+      // eslint-disable-next-line
       ...this.parent?.(),
       HTMLAttributes: { id: null },
     };
   },
-  // @ts-ignore
+  // eslint-disable-next-line
   renderHTML({ node, HTMLAttributes }) {
     const hasLevel = this.options.levels.includes(node.attrs.level);
     const level: string | number = hasLevel ? node.attrs.level : this.options.levels[0];
