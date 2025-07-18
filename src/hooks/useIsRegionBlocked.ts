@@ -9,9 +9,7 @@ export function useIsRegionBlocked() {
     // Check the user's region using the currentUser region info
     const regionInfo = currentUser?.region;
     if (regionInfo) {
-      return isRegionBlocked(
-        regionInfo.countryCode === 'US' ? regionInfo.fullLocationCode : regionInfo.countryCode
-      );
+      return isRegionBlocked(regionInfo);
     }
 
     // If no region info available, assume not blocked

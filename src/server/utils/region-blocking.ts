@@ -23,17 +23,21 @@ export const RESTRICTED_REGIONS = process.env.RESTRICTED_REGIONS
 /**
  * Check if a country code is in the restricted regions list
  */
-export function isRegionBlocked(countryCode: string | null): boolean {
-  if (!countryCode) return false;
-  return RESTRICTED_REGIONS.includes(countryCode.toUpperCase());
+export function isRegionBlocked(region: RegionInfo): boolean {
+  const { countryCode, fullLocationCode = '' } = region;
+  if (!countryCode || !fullLocationCode) return false;
+
+  return RESTRICTED_REGIONS.includes(
+    countryCode === 'US' ? fullLocationCode.toUpperCase() : countryCode.toUpperCase()
+  );
 }
 
 /**
  * Check if a country code should allow API access
  * Currently, we block API access for the same regions as web access
  */
-export function isAPIAccessBlocked(countryCode: string | null): boolean {
-  return isRegionBlocked(countryCode);
+export function isAPIAccessBlocked(region: RegionInfo): boolean {
+  return isRegionBlocked(region);
 }
 
 /**

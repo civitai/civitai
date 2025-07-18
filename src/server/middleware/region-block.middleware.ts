@@ -54,10 +54,10 @@ export const regionBlockMiddleware = createMiddleware({
   },
   handler: async ({ request }) => {
     // Get country from Cloudflare header
-    const { countryCode, fullLocationCode } = getRegion(request);
+    const region = getRegion(request);
 
     // Check if the user is from a restricted region
-    if (isRegionBlocked(countryCode === 'US' ? fullLocationCode : countryCode)) {
+    if (isRegionBlocked(region)) {
       // Redirect to region-blocked page
       return NextResponse.redirect(new URL('/region-blocked', request.url));
     }

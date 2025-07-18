@@ -6,10 +6,10 @@ export const apiRegionBlockMiddleware = createMiddleware({
   matcher: ['/api/:path*'],
   handler: async ({ request }) => {
     // Get country from Cloudflare header
-    const { countryCode, fullLocationCode } = getRegion(request);
+    const region = getRegion(request);
 
     // Check if the user is from a restricted region
-    if (isAPIAccessBlocked(countryCode === 'US' ? fullLocationCode : countryCode)) {
+    if (isAPIAccessBlocked(region)) {
       // Return 451 status code (Unavailable For Legal Reasons)
       return new NextResponse(
         JSON.stringify({

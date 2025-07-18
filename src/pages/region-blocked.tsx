@@ -16,10 +16,10 @@ export const getServerSideProps = createServerSideProps({
   useSSG: false,
   resolver: async ({ ctx }) => {
     // Get region from headers
-    const { countryCode, fullLocationCode } = getRegion(ctx.req);
+    const region = getRegion(ctx.req);
 
     // Check if user should be blocked
-    const shouldBlock = isRegionBlocked(countryCode === 'US' ? fullLocationCode : countryCode);
+    const shouldBlock = isRegionBlocked(region);
 
     // If user is not blocked, redirect to homepage
     if (!shouldBlock) {
@@ -34,10 +34,10 @@ export const getServerSideProps = createServerSideProps({
     // Determine which markdown file to load based on region
 
     try {
-      const contentFile = countryCode
-        ? `${countryCode.toLowerCase()}-region-block.md`
+      const contentFileName = region.countryCode
+        ? `${region.countryCode.toLowerCase()}-region-block.md`
         : 'uk-region-block.md';
-      const fileName = fs.readFileSync(`${contentRoot}/${contentFile}`, 'utf-8');
+      const fileName = fs.readFileSync(`${contentRoot}/${contentFileName}`, 'utf-8');
       const { data, content } = matter(fileName);
 
       return {
