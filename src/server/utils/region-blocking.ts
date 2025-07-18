@@ -18,7 +18,7 @@ export type RegionBlockConfig = {
 };
 
 // Default restricted regions based on ISO country codes
-const DEFAULT_RESTRICTED_REGIONS = ['GB', 'UK'];
+const DEFAULT_RESTRICTED_REGIONS = ['GB'];
 
 // Get restricted regions from environment variable or use default
 export const RESTRICTED_REGIONS = process.env.RESTRICTED_REGIONS
@@ -30,7 +30,6 @@ export const RESTRICTED_REGIONS = process.env.RESTRICTED_REGIONS
 // Example: "GB:2025-07-24,FR:2025-08-01,US:CA:2025-07-24"
 const DEFAULT_REGION_BLOCK_CONFIG: RegionBlockConfig[] = [
   { region: 'GB', effectiveDate: '2025-07-24' },
-  { region: 'UK', effectiveDate: '2025-07-24' },
 ];
 
 export const REGION_BLOCK_CONFIG: RegionBlockConfig[] = process.env.REGION_BLOCK_CONFIG
