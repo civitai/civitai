@@ -1,14 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
-import {
-  Button,
-  Center,
-  List,
-  Paper,
-  Stack,
-  Text,
-  Title,
-  Group,
-} from '@mantine/core';
+import { Button, Center, List, Paper, Stack, Text, Title, Group } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
@@ -97,16 +88,6 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
       <Stack gap={4}>
         <Group gap="xs" align="center">
           <Title order={2}>Earn Buzz</Title>
-          <Button
-            size="compact-xs"
-            mt={4}
-            onClick={() => {
-              dialogStore.trigger({ component: RedeemCodeModal });
-            }}
-            variant="outline"
-          >
-            Redeem Code
-          </Button>
         </Group>
         <Text>Need some Buzz? Here&rsquo;s how you can earn it</Text>
       </Stack>
