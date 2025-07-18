@@ -55,7 +55,9 @@ export function CivitaiSessionProvider({
     };
     if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
     return currentUser;
-  }, [disableHidden, canViewNsfw, region]);
+    // data?.expires seems not used but is needed to remotely kill sessions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.expires, disableHidden, canViewNsfw, region]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
