@@ -36,7 +36,7 @@ export const getServerSideProps = createServerSideProps({
     try {
       const contentFileName = region.countryCode
         ? `${region.countryCode.toLowerCase()}-region-block.md`
-        : 'uk-region-block.md';
+        : 'gb-region-block.md';
       const fileName = fs.readFileSync(`${contentRoot}/${contentFileName}`, 'utf-8');
       const { data, content } = matter(fileName);
 
@@ -45,7 +45,7 @@ export const getServerSideProps = createServerSideProps({
       };
     } catch (error) {
       // Fallback if specific file doesn't exist
-      const fileName = fs.readFileSync(`${contentRoot}/uk-region-block.md`, 'utf-8');
+      const fileName = fs.readFileSync(`${contentRoot}/gb-region-block.md`, 'utf-8');
       const { data, content } = matter(fileName);
 
       return {

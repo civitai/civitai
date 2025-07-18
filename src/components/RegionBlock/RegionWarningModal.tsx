@@ -39,7 +39,8 @@ export function RegionWarningModal() {
     if (!currentUser?.region || !contentData || !isPendingBlock) return null;
 
     const blockDate = getRegionBlockDate(currentUser.region);
-    if (!blockDate || blockDate < new Date()) return null;
+    const currentDate = new Date();
+    if (!blockDate || blockDate < currentDate) return null;
 
     return {
       title: contentData.title,

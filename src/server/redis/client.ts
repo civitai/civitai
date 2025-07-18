@@ -185,7 +185,7 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
     pingInterval: 4 * 60 * 1000,
     disableClientInfo: true, // this is for twemproxy, DONT REMOVE
   });
-  baseClient.on('error', (err: Error) => log(`Redis Error: ${err.message}`));
+  baseClient.on('error', (err: Error) => log(`Redis Error`, err));
   baseClient.on('connect', () => log('Redis connected'));
   baseClient.on('reconnecting', () => log('Redis reconnecting'));
   baseClient.on('ready', () => log('Redis ready!'));

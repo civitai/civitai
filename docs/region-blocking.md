@@ -176,8 +176,8 @@ src/
 │   └── RegionBlock/
 │       └── RegionWarningModal.tsx (Redis-backed)
 └── static-content/
-    ├── uk-region-block.md
-    └── uk-region-block-warning.md
+    ├── gb-region-block.md
+    └── gb-region-block-warning.md
 ```
 
 ## Error Handling
