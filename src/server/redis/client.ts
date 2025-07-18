@@ -185,7 +185,7 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
     pingInterval: 4 * 60 * 1000,
     disableClientInfo: true, // this is for twemproxy, DONT REMOVE
   });
-  baseClient.on('error', (err) => log(`Redis Error: ${err}`));
+  baseClient.on('error', (err: Error) => log(`Redis Error: ${err.message}`));
   baseClient.on('connect', () => log('Redis connected'));
   baseClient.on('reconnecting', () => log('Redis reconnecting'));
   baseClient.on('ready', () => log('Redis ready!'));
@@ -455,6 +455,14 @@ export const REDIS_SYS_KEYS = {
       // hset, dynamic keys with packed string[]
       URLS: 'packed:system:entity-moderation:urls',
     },
+  },
+  CONTENT: {
+    /*
+      Use: Store markdown content for region restrictions and other warnings
+      Structure: hset with content keys and markdown string values
+      Example: 'region-warning:GB' -> markdown content
+     */
+    REGION_WARNING: 'system:content:region-warning',
   },
 } as const;
 

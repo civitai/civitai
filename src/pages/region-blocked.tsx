@@ -1,5 +1,5 @@
 import React from 'react';
-import { Container, Paper, Title, Stack } from '@mantine/core';
+import { Container, Paper, Title, Stack, Text, Anchor } from '@mantine/core';
 import { Meta } from '~/components/Meta/Meta';
 import Image from 'next/image';
 import fs from 'fs';
@@ -97,6 +97,19 @@ export default function RegionBlockedPage({
               )}
 
               <CustomMarkdown>{content}</CustomMarkdown>
+
+              <div className="mt-8 border-t pt-6">
+                <Text size="sm" c="dimmed">
+                  If you have questions or concerns, please contact our support team at{' '}
+                  <Anchor
+                    href="mailto:support@civitai.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    support@civitai.com
+                  </Anchor>
+                </Text>
+              </div>
             </Stack>
           </TypographyStylesWrapper>
         </Paper>
