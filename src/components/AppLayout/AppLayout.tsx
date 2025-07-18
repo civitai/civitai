@@ -10,6 +10,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { RegionWarningModal } from '~/components/RegionBlock/RegionWarningModal';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -57,7 +58,7 @@ export function AppLayout({
         shownReadonly = true;
       }
     }
-  }, []);
+  }, [isMounted, features.canWrite]);
 
   return (
     <div className="flex h-full flex-1 flex-col">
@@ -86,6 +87,7 @@ export function AppLayout({
       )}
       <ChatPortal showFooter={false} />
       <AdhesiveFooter />
+      <RegionWarningModal />
     </div>
   );
 }
