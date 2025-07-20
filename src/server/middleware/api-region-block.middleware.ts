@@ -27,6 +27,6 @@ export const apiRegionBlockMiddleware = createMiddleware({
     }
 
     // Allow request to continue for non-restricted regions
-    return NextResponse.next();
+    // return NextResponse.next();
   },
 });

@@ -63,6 +63,6 @@ export const regionBlockMiddleware = createMiddleware({
     }
 
     // Allow request to continue for non-restricted regions
-    return NextResponse.next();
+    // return NextResponse.next();
   },
 });
