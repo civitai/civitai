@@ -81,6 +81,8 @@ import '@mantine/nprogress/styles.layer.css';
 import '@mantine/tiptap/styles.layer.css';
 import 'mantine-react-table/styles.css'; //import MRT styles
 import { applyNodeOverrides } from '~/utils/node-override';
+import type { RegionInfo } from '~/server/utils/region-blocking';
+import { getRegion } from '~/server/utils/region-blocking';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -104,6 +106,7 @@ type CustomAppProps = {
   settings: UserSettingsSchema;
   canIndex: boolean;
   hasAuthCookie: boolean;
+  region?: RegionInfo;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -118,6 +121,7 @@ function MyApp(props: CustomAppProps) {
       canIndex,
       hasAuthCookie,
       settings,
+      region,
       ...pageProps
     },
   } = props;
@@ -165,7 +169,7 @@ function MyApp(props: CustomAppProps) {
               <FeatureFlagsProvider flags={flags}>
                 <GoogleAnalytics />
                 <AccountProvider>
-                  <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                  <CivitaiSessionProvider disableHidden={cookies.disableHidden} region={region}>
                     <ErrorBoundary>
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
@@ -288,13 +292,14 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const session = token?.user ? { user: token.user as SessionUser } : null;
   const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host });
 
-  const settings = await fetch(`${baseUrl}/api/user/settings`, {
+  const settings = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,
   }).then((res) => res.json() as UserSettingsSchema);
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   }
+  const region = getRegion(request);
 
   return {
     pageProps: {
@@ -308,6 +313,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       flags,
       seed: Date.now(),
       hasAuthCookie,
+      region,
     },
     ...appProps,
   };
