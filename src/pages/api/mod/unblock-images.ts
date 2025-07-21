@@ -16,8 +16,13 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
  * Secured for moderators only.
  */
 
+const BATCH_LIMIT = 100;
+
 async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
-  console.log('[unblock-images] Handler invoked');
+  logToAxiom(
+    { type: 'info', name: 'unblock-images-handler-invoked', message: 'Handler invoked' },
+    'webhooks'
+  );
 
   const startedAt = Date.now();
   const updatedIds: number[] = [];
@@ -25,17 +30,16 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   try {
     let batchCount = 0;
     let offset = 0;
-    const limit = 100;
 
     while (true) {
       console.log(
-        `[unblock-images] Fetching images: offset=${offset}, limit=${limit}, batch=${
+        `[unblock-images] Fetching images: offset=${offset}, limit=${BATCH_LIMIT}, batch=${
           batchCount + 1
         }}`
       );
       const { data: images } = await getImagesFromSearch({
         browsingLevel: allBrowsingLevelsFlag,
-        limit,
+        limit: BATCH_LIMIT,
         offset,
         period: MetricTimeframe.AllTime,
         periodMode: 'published',
@@ -73,7 +77,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       }
 
       batchCount++;
-      offset += limit;
+      offset += BATCH_LIMIT;
     }
 
     console.log(`[unblock-images] Updating ${updatedIds.length} images in the database...`);
@@ -116,9 +120,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       stack: e.stack,
     });
 
-    return res
-      .status(500)
-      .json({ error: 'Internal Server Error', message: e.message, stack: e.stack });
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: e.message,
+      ...(process.env.NODE_ENV === 'development' && { stack: e.stack }),
+    });
   }
 }
 
