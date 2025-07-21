@@ -23,6 +23,8 @@ import {
   IconMoodDollar,
   IconGift,
   IconTrendingUp,
+  IconTicket,
+  IconExternalLink,
 } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
@@ -154,9 +156,10 @@ const BuzzPurchasePaymentButton = ({
       }
       size="md"
       radius="md"
-      variant="gradient"
-      gradient={{ from: 'yellow.6', to: 'yellow.4', deg: 45 }}
-      leftSection={<IconBolt size={20} />}
+      variant="light"
+      color="yellow"
+      leftSection={<IconBolt size={18} />}
+      fw={500}
     >
       {features.disablePayments ? (
         <Group gap="xs" wrap="nowrap">
@@ -165,17 +168,56 @@ const BuzzPurchasePaymentButton = ({
         </Group>
       ) : (
         <Group gap="sm">
-          <Text size="sm" fw={600}>
+          <Text size="sm" fw={500}>
             Complete Purchase
           </Text>
           {!!unitAmount && (
-            <Badge size="sm" variant="white" color="yellow.6">
+            <Badge size="sm" variant="light" color="yellow.8" c="white">
               ${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}
             </Badge>
           )}
         </Group>
       )}
     </Button>
+  );
+};
+
+// Separate component for redeemable codes section
+const RedeemableCodesSection = () => {
+  return (
+    <Card padding="md" radius="md" withBorder>
+      <Stack gap="sm">
+        <Group gap="sm">
+          <ThemeIcon size="sm" variant="light" color="gray" radius="sm">
+            <IconTicket size={16} />
+          </ThemeIcon>
+          <div style={{ flex: 1 }}>
+            <Text size="sm" fw={500}>
+              Alternative Payment Method
+            </Text>
+            <Text size="xs" c="dimmed">
+              Purchase redeemable codes for yourself or as gifts
+            </Text>
+          </div>
+        </Group>
+
+        <Button
+          component="a"
+          href="/redeem-code"
+          target="_blank"
+          rel="noopener noreferrer"
+          size="sm"
+          radius="md"
+          variant="light"
+          color="yellow"
+          leftSection={<IconExternalLink size={16} />}
+          fw={500}
+          fullWidth
+        >
+          Redeem or get a Code
+        </Button>
+      </Stack>
+    </Card>
   );
 };
 
@@ -215,7 +257,6 @@ export const BuzzPurchaseImproved = ({
     membershipMultiplier > 1 ? Math.round((membershipMultiplier - 1) * 100) : 0;
   const bulkMultiplier = buzzCalculation.bulkBuzzMultiplier ?? 1;
   const bulkBonusPercent = bulkMultiplier > 1 ? Math.round((bulkMultiplier - 1) * 100) : 0;
-
   // Get membership tier
   const membershipTier = subscription?.product.metadata?.tier
     ? (subscription.product.metadata.tier as string).charAt(0).toUpperCase() +
@@ -576,7 +617,7 @@ export const BuzzPurchaseImproved = ({
                         <Text size="md" fw={600} mb={0}>
                           Complete Purchase
                         </Text>
-                        {unitAmount && (
+                        {unitAmount ? (
                           <Stack gap="xs">
                             <Group justify="space-between" gap="sm">
                               <Group gap="sm">
@@ -712,6 +753,22 @@ export const BuzzPurchaseImproved = ({
                               </Card>
                             )}
                           </Stack>
+                        ) : (
+                          <Card className={classes.selectionPrompt} padding="md" radius="sm">
+                            <Stack gap="sm" align="center">
+                              <ThemeIcon size="lg" variant="light" color="yellow">
+                                <IconInfoCircle size={24} />
+                              </ThemeIcon>
+                              <div style={{ textAlign: 'center' }}>
+                                <Text size="sm" fw={600} c="yellow.6" mb="xs">
+                                  Ready to Purchase Buzz?
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  Please select a package above or set a custom amount to continue
+                                </Text>
+                              </div>
+                            </Stack>
+                          </Card>
                         )}
                       </div>
 
@@ -719,7 +776,7 @@ export const BuzzPurchaseImproved = ({
 
                       {/* Payment Methods */}
                       <div>
-                        <Group gap="xs" wrap="wrap">
+                        <Group gap="sm" wrap="wrap">
                           {features.coinbasePayments && (
                             <>
                               {features.coinbaseOnramp && (
@@ -771,6 +828,11 @@ export const BuzzPurchaseImproved = ({
                           />
                         </Group>
                       </div>
+
+                      <Divider />
+
+                      {/* Alternative Payment Section */}
+                      <RedeemableCodesSection />
 
                       {/* Footer Info */}
                       {(liveFeatures.buzzGiftCards ||

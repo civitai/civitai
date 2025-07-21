@@ -351,6 +351,11 @@
   margin-top: var(--mantine-spacing-xs);
 }
 
+/* Selection prompt for when no package/amount is selected */
+.selectionPrompt {
+  background: light-dark(var(--mantine-color-yellow-0), var(--mantine-color-dark-7));
+}
+
 /* Bulk benefits styling */
 .bulkTable {
   .bulkRow {

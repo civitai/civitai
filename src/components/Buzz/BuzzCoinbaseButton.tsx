@@ -1,10 +1,7 @@
-import { Button, Group, Stack, Text } from '@mantine/core';
+import { Button, Stack } from '@mantine/core';
 import { IconCoinBitcoin } from '@tabler/icons-react';
 import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { COINBASE_FIXED_FEE } from '~/server/common/constants';
-import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 
 export const BuzzCoinbaseButton = ({
   unitAmount,
@@ -15,7 +12,6 @@ export const BuzzCoinbaseButton = ({
   unitAmount: number;
   buzzAmount: number;
 }) => {
-  const features = useFeatureFlags();
   const { createBuzzOrder, creatingBuzzOrder, creatingBuzzOrderOnramp } = useMutateCoinbase();
   const { isLoading: checkingHealth, healthy } = useCoinbaseStatus();
 
@@ -35,18 +31,20 @@ export const BuzzCoinbaseButton = ({
   };
 
   return (
-    <Stack gap={0} align="center">
+    <Stack gap={0}>
       <Button
-        disabled={disabled || checkingHealth}
+        disabled={disabled || creatingBuzzOrder || creatingBuzzOrderOnramp}
         loading={creatingBuzzOrder || creatingBuzzOrderOnramp}
         onClick={handleClick}
-        radius="xl"
+        size="md"
+        radius="md"
+        variant="light"
+        color="yellow"
+        leftSection={<IconCoinBitcoin size={16} />}
+        fw={500}
         fullWidth
       >
-        <Group gap="xs" wrap="nowrap">
-          <IconCoinBitcoin size={20} />
-          <span>Crypto</span>
-        </Group>
+        Pay with Crypto
       </Button>
     </Stack>
   );
