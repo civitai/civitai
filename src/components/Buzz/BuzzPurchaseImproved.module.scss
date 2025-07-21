@@ -1,0 +1,435 @@
+/* Main wrapper */
+.wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--mantine-spacing-sm);
+  
+  // Mobile improvements for better readability
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-xs);
+    
+    .mantine-Stack-root {
+      gap: var(--mantine-spacing-sm);
+    }
+    
+    .mantine-Card-root {
+      padding: var(--mantine-spacing-sm) !important;
+      margin-bottom: var(--mantine-spacing-sm);
+    }
+    
+    .mantine-Text-root {
+      line-height: 1.4;
+    }
+    
+    .mantine-Button-root {
+      height: 44px;
+      font-size: var(--mantine-font-size-sm);
+    }
+    
+    .mantine-Group-root {
+      gap: var(--mantine-spacing-xs);
+    }
+  }
+}
+
+/* Header section */
+.headerCard {
+  background: linear-gradient(135deg, var(--mantine-color-yellow-5) 0%, var(--mantine-color-orange-6) 100%);
+  border: none;
+  color: white;
+  
+  .title {
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+  
+  .subtitle {
+    color: rgba(255, 255, 255, 0.95);
+  }
+}
+
+.trustBadge {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+}
+
+/* Package selection */
+.packagesGrid {
+  gap: var(--mantine-spacing-xs);
+}
+
+.packageSection {
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
+}
+
+.packageCard {
+  position: relative;
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 140px;
+
+  &:hover {
+    border-color: light-dark(var(--mantine-color-yellow-4), var(--mantine-color-yellow-5));
+    transform: translateY(-2px);
+    box-shadow: light-dark(0 4px 12px rgba(251, 191, 36, 0.15), 0 4px 12px rgba(251, 191, 36, 0.3));
+  }
+
+  &.selected {
+    border-color: var(--mantine-color-yellow-4);
+    background: linear-gradient(135deg, var(--mantine-color-yellow-1) 0%, var(--mantine-color-yellow-4) 1%, light-dark(var(--mantine-color-white), var(--mantine-color-dark-7)) 1%);
+    box-shadow: 0 0 0 2px var(--mantine-color-yellow-4), light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
+  }
+
+  &.packageCardDisabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    
+    &:hover {
+      transform: none;
+      border-color: light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+    }
+  }
+
+  &.packageCardPopular {
+    border-color: var(--mantine-color-orange-6);
+  }
+}
+
+.packageBuzzAmount {
+  color: var(--mantine-color-yellow-6);
+  font-weight: 700;
+}
+
+.packagePrice {
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
+  font-weight: 600;
+}
+
+.bonusBadge {
+  background: linear-gradient(135deg, var(--mantine-color-yellow-5) 0%, var(--mantine-color-orange-6) 100%);
+  color: white;
+  font-weight: 600;
+  border: none;
+}
+
+.popularBadge {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+/* Custom amount accordion */
+.customAmountCard {
+  background: light-dark(
+    linear-gradient(135deg, var(--mantine-color-yellow-0) 0%, var(--mantine-color-white) 100%),
+    linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
+  );
+  border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+}
+
+.customAmountAccordion {
+  border: none;
+  border-radius: var(--mantine-radius-md);
+}
+
+/* Bulk benefits */
+.bulkBenefitsCard {
+  background: light-dark(
+    linear-gradient(135deg, var(--mantine-color-blue-0) 0%, var(--mantine-color-white) 100%),
+    linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
+  );
+  border: 1px solid light-dark(var(--mantine-color-blue-1), var(--mantine-color-blue-6));
+}
+
+/* Payment section */
+.paymentSection {
+  background: light-dark(
+    linear-gradient(135deg, var(--mantine-color-gray-0) 0%, var(--mantine-color-white) 100%),
+    linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
+  );
+  border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+  
+  // Mobile improvements
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-sm) !important;
+    
+    .mantine-Group-root {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--mantine-spacing-sm);
+    }
+    
+    .mantine-Button-root {
+      width: 100%;
+      justify-content: center;
+    }
+    
+    .mantine-Divider-root {
+      margin: var(--mantine-spacing-sm) 0;
+    }
+  }
+}
+
+.bonusBreakdown {
+  background: light-dark(var(--mantine-color-yellow-0), var(--mantine-color-dark-8));
+  border: none;
+
+  // Mobile improvements
+  @container (max-width: 768px) {
+    padding: var(--mantine-spacing-sm) !important;
+  }
+}
+
+.benefitsBreakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-sm);
+
+  // Mobile stacking and spacing
+  @container (max-width: 480px) {
+    gap: var(--mantine-spacing-xs);
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+  }
+}
+
+.benefitRow {
+  // Mobile-specific layout improvements
+  @container (max-width: 480px) {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: var(--mantine-spacing-xs) !important;
+    padding: var(--mantine-spacing-sm);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    margin-bottom: var(--mantine-spacing-xs);
+    
+    // Add a subtle separator instead of borders
+    &:not(:last-child) {
+      border-bottom: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+      padding-bottom: var(--mantine-spacing-sm);
+    }
+  }
+}
+
+.benefitInfo {
+  // Mobile text improvements
+  @container (max-width: 480px) {
+    width: 100%;
+    
+    div {
+      text-align: left;
+    }
+    
+    .mantine-Text-root {
+      line-height: 1.4;
+      word-break: break-word;
+    }
+  }
+}
+
+.benefitBadge {
+  // Mobile badge positioning
+  @container (max-width: 480px) {
+    align-self: flex-end;
+    margin-top: 0;
+    font-size: var(--mantine-font-size-xs);
+  }
+}
+
+.membershipInfo {
+  // Mobile membership info
+  @container (max-width: 480px) {
+    padding: var(--mantine-spacing-sm);
+    margin: var(--mantine-spacing-sm) 0;
+    
+    .mantine-Group-root {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--mantine-spacing-sm);
+    }
+    
+    .mantine-ThemeIcon-root {
+      align-self: center;
+    }
+  }
+}
+
+.totalBuzzValue {
+  // Mobile total value display
+  @container (max-width: 480px) {
+    margin-top: var(--mantine-spacing-sm);
+    padding-top: var(--mantine-spacing-sm);
+    border-top: 1px solid var(--mantine-color-gray-3);
+    text-align: center;
+    
+    @media (prefers-color-scheme: dark) {
+      border-top-color: var(--mantine-color-dark-4);
+    }
+    
+    .mantine-Group-root {
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: var(--mantine-spacing-xs);
+    }
+  }
+}
+
+.membershipBenefitsCard {
+  background: linear-gradient(135deg, var(--mantine-color-yellow-0) 0%, var(--mantine-color-yellow-1) 100%);
+  border: 1px solid var(--mantine-color-yellow-3);
+
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%);
+    border: 1px solid var(--mantine-color-yellow-9);
+  }
+}
+
+.benefitsTitle {
+  color: var(--mantine-color-yellow-7);
+
+  @media (prefers-color-scheme: dark) {
+    color: var(--mantine-color-yellow-4);
+  }
+}
+
+.benefitsBreakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+}
+
+.benefitCard {
+  background: var(--mantine-color-white);
+  border: 1px solid var(--mantine-color-gray-2);
+
+  @media (prefers-color-scheme: dark) {
+    background: var(--mantine-color-dark-8);
+    border: 1px solid var(--mantine-color-dark-4);
+  }
+}
+
+.totalAmount {
+  color: var(--mantine-color-yellow-6);
+}
+
+/* Links */
+.giftCardLink {
+  color: var(--mantine-color-yellow-6);
+  text-decoration: none;
+  
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.cryptoLink {
+  color: var(--mantine-color-yellow-6);
+  text-decoration: none;
+  
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* Cancel button */
+.cancelButton {
+  margin-top: var(--mantine-spacing-xs);
+}
+
+/* Bulk benefits styling */
+.bulkTable {
+  .bulkRow {
+    border-radius: var(--mantine-radius-sm);
+    border: 1px solid light-dark(var(--mantine-color-blue-1), var(--mantine-color-dark-5));
+    transition: all 0.2s ease;
+    
+    &:hover {
+      background: light-dark(var(--mantine-color-blue-0), var(--mantine-color-dark-7));
+      border-color: light-dark(var(--mantine-color-blue-3), var(--mantine-color-blue-7));
+    }
+    
+    // Mobile responsive
+    @media (max-width: 480px) {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--mantine-spacing-sm);
+      
+      .mantine-Group-root {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: var(--mantine-spacing-xs);
+      }
+      
+      .mantine-Badge-root {
+        align-self: flex-end;
+        margin-top: var(--mantine-spacing-xs);
+      }
+    }
+  }
+}
+
+// Remove old bulk benefit styles that are no longer needed
+.bulkBenefitsContainer {
+  @container (max-width: 480px) {
+    gap: var(--mantine-spacing-xs);
+  }
+}
+
+.bulkBenefitRow {
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-8));
+  border: 1px solid light-dark(var(--mantine-color-blue-2), var(--mantine-color-dark-5));
+  transition: all 0.2s ease;
+  
+  &:hover {
+    border-color: light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-7));
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    
+    @media (prefers-color-scheme: dark) {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+  }
+  
+  @container (max-width: 480px) {
+    .mantine-Group-root {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--mantine-spacing-sm);
+    }
+  }
+}
+
+.bulkBenefitInfo {
+  flex: 1;
+  
+  @container (max-width: 480px) {
+    width: 100%;
+    
+    .mantine-Group-root {
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      gap: var(--mantine-spacing-xs);
+    }
+  }
+}
+
+.bulkBenefitBadge {
+  @container (max-width: 480px) {
+    align-self: flex-end;
+  }
+}

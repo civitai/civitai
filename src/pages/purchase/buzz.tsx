@@ -14,6 +14,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import animationClasses from '~/libs/animations.module.scss';
+import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchaseImproved';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -135,7 +136,7 @@ export default function PurchaseBuzz() {
           </Stack>
         </ContainerGrid2.Col>
         <ContainerGrid2.Col span={{ base: 12, md: 9 }}>
-          <BuzzPurchase
+          <BuzzPurchaseImproved
             onPurchaseSuccess={handlePurchaseSuccess}
             minBuzzAmount={minBuzzAmount}
             purchaseSuccessMessage={
