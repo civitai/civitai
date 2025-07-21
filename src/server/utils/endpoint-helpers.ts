@@ -183,8 +183,10 @@ export function ModEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!req.method || !allowedMethods.includes(req.method))
+    if (!req.method || !allowedMethods.includes(req.method)) {
+      res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
+    }
 
     const session = await getServerAuthSession({ req, res });
     if (!session || !session.user?.isModerator || !!session.user.bannedAt)
