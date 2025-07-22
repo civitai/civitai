@@ -1,13 +1,16 @@
-import { Button, Paper, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Button, Group, Stack, Text, TextInput, ThemeIcon, Loader } from '@mantine/core';
+import { IconTicket } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
+import { numberWithCommas } from '~/utils/number-helpers';
+import classes from './RedeemCodeCard.module.scss';
 
 interface RedeemCodeCardProps {
   /**
-   * Whether to show the credit card upsell text
+   * Whether to show the icon section
    */
-  showUpsell?: boolean;
+  showIcon?: boolean;
   /**
    * Custom text for the description
    */
@@ -21,17 +24,27 @@ interface RedeemCodeCardProps {
    */
   initialCode?: string;
   /**
-   * Whether to show the header title
+   * Custom title text
    */
-  showHeader?: boolean;
+  title?: string;
+  /**
+   * Custom placeholder text
+   */
+  placeholder?: string;
+  /**
+   * Custom class name for styling
+   */
+  className?: string;
 }
 
 export function RedeemCodeCard({
-  showUpsell = true,
-  description = 'Got a Buzz code? Redeem it instantly for rewards and exclusive perks.',
-  size = 'md',
+  showIcon = true,
+  description = 'Enter your unique code to instantly receive rewards',
+  size = 'lg',
   initialCode = '',
-  showHeader = true,
+  title = 'Redeem Your Code',
+  placeholder = 'BUZZ-CODE-HERE',
+  className,
 }: RedeemCodeCardProps) {
   const [code, setCode] = useState(initialCode);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,9 +54,10 @@ export function RedeemCodeCard({
       setCode('');
       setIsLoading(false);
       showNotification({
-        title: 'Code redeemed successfully!',
-        message: `You received ${result.unitValue} Buzz!`,
+        title: '🎉 Code redeemed successfully!',
+        message: `You received ${numberWithCommas(result.unitValue)} Buzz!`,
         color: 'green',
+        autoClose: 5000,
       });
     },
     onError: (error: { message: string }) => {
@@ -70,109 +84,80 @@ export function RedeemCodeCard({
     redeemCodeMutation.mutate({ code: code.trim() });
   };
 
+  const handleCodeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    // Remove spaces and convert to uppercase automatically
+    const cleanedCode = event.currentTarget.value.replace(/\s+/g, '').toUpperCase();
+    setCode(cleanedCode);
+  };
+
   const handleKeyPress = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' && !isLoading) {
       handleRedeem();
     }
   };
-  const sizeClasses = {
-    sm: {
-      padding: 'md',
-      gap: 'sm',
-      titleSize: 'text-xl',
-      textSize: 'sm',
-      inputSize: 'sm',
-      buttonSize: 'sm',
-    },
-    md: {
-      padding: 'xl',
-      gap: 'md',
-      titleSize: 'text-2xl',
-      textSize: 'md',
-      inputSize: 'md',
-      buttonSize: 'md',
-    },
-    lg: {
-      padding: '2.5rem',
-      gap: 'lg',
-      titleSize: 'text-3xl',
-      textSize: 'lg',
-      inputSize: 'lg',
-      buttonSize: 'lg',
-    },
-  };
-
-  const classes = sizeClasses[size];
 
   return (
-    <Paper
-      className="relative overflow-hidden rounded-xl border-l-4 border-l-yellow-500 bg-blue-50 shadow-lg dark:bg-dark-6"
-      p={0}
-      withBorder
-    >
-      <Stack p={classes.padding} align="center" justify="center" gap={classes.gap}>
-        {showHeader && (
-          <div className="space-y-2 text-center">
-            <Title
-              order={2}
-              className={`${classes.titleSize} font-bold text-blue-900 dark:text-blue-100`}
+    <div className={`${classes.redeemSection} ${className || ''}`}>
+      {/* Content Section */}
+      <div className={classes.contentSection}>
+        <Stack gap="sm">
+          <Group align="center">
+            {/* Icon Section */}
+            {showIcon && (
+              <div className={classes.iconSection}>
+                <ThemeIcon
+                  size="xl"
+                  variant="gradient"
+                  gradient={{ from: 'yellow.4', to: 'orange.5' }}
+                  radius="md"
+                >
+                  <IconTicket size={28} />
+                </ThemeIcon>
+              </div>
+            )}
+            <div>
+              <Text size="xl" fw={700} className={classes.redeemTitle}>
+                {title}
+              </Text>
+              <Text size="sm" c="dimmed" className={classes.redeemDescription}>
+                {description}
+              </Text>
+            </div>
+          </Group>
+
+          <Group gap="sm" wrap="nowrap" className={classes.inputGroup}>
+            <TextInput
+              placeholder={placeholder}
+              value={code}
+              onChange={handleCodeChange}
+              onKeyPress={handleKeyPress}
+              size={size}
+              disabled={isLoading}
+              className={classes.codeInput}
+              style={{ flex: 1 }}
+              variant="filled"
+              radius="md"
+            />
+
+            <Button
+              onClick={handleRedeem}
+              loading={isLoading}
+              size={size}
+              variant="gradient"
+              gradient={{ from: 'yellow.4', to: 'orange.5' }}
+              className={classes.redeemButton}
+              px="xl"
+              radius="md"
             >
-              Redeem Buzz Code
-            </Title>
-            <Text size={classes.textSize} className="mx-auto max-w-sm font-medium" c="dimmed">
-              {description}
-            </Text>
-          </div>
-        )}
-        {!showHeader && description && (
-          <div className="text-center">
-            <Text size={classes.textSize} className="mx-auto max-w-sm font-medium" c="dimmed">
-              {description}
-            </Text>
-          </div>
-        )}
+              {isLoading ? <Loader size="sm" color="white" /> : 'Redeem'}
+            </Button>
+          </Group>
 
-        <div className="w-full max-w-sm space-y-3">
-          <TextInput
-            placeholder="Enter your Buzz code"
-            value={code}
-            onChange={(event) => setCode(event.currentTarget.value)}
-            onKeyPress={handleKeyPress}
-            size={classes.inputSize}
-            disabled={isLoading}
-            className="text-center"
-            styles={{
-              input: {
-                textAlign: 'center',
-                fontWeight: 'bold',
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-              },
-            }}
-          />
-          <Button
-            onClick={handleRedeem}
-            loading={isLoading}
-            size={classes.buttonSize}
-            fullWidth
-            variant="filled"
-            color="yellow"
-            maw={250}
-            className="mx-auto"
-          >
-            {isLoading ? 'Redeeming...' : 'Redeem Code'}
-          </Button>
-        </div>
-
-        {showUpsell && (
-          <Text size="sm" className="font-medium" c="dimmed">
-            Don&rsquo;t have one yet?{' '}
-            <Text component="a" href="#" className="font-semibold underline" c="blue">
-              Purchase now
-            </Text>
+          <Text size="xs" c="dimmed" className={classes.helpText}>
+            Case-insensitive • Spaces auto-removed • Instant processing
           </Text>
-        )}
-      </Stack>
-    </Paper>
+        </Stack>
+      </div>
+    </div>
   );
 }
