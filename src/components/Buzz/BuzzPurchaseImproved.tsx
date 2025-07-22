@@ -464,7 +464,7 @@ export const BuzzPurchaseImproved = ({
                         >
                           <Accordion.Item value="customAmount">
                             <Accordion.Control py="xs">
-                              <Group gap="sm">
+                              <Group gap="sm" wrap="nowrap">
                                 <ThemeIcon size="sm" variant="light" color="yellow">
                                   <IconMoodDollar size={16} />
                                 </ThemeIcon>
@@ -553,7 +553,7 @@ export const BuzzPurchaseImproved = ({
                     <Accordion variant="subtle">
                       <Accordion.Item value="bulkBenefits">
                         <Accordion.Control py="sm">
-                          <Group gap="sm">
+                          <Group gap="sm" wrap="nowrap">
                             <ThemeIcon size="sm" variant="light" color="blue">
                               <IconTrendingUp size={16} />
                             </ThemeIcon>
