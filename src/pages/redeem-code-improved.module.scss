@@ -1,0 +1,358 @@
+@use 'sass:color';
+
+.wrapper {
+  min-height: 100vh;
+  background: light-dark(#ffffff, #1a1b23);
+
+  @media (max-width: 768px) {
+    padding: 0 1rem;
+  }
+}
+
+.heroSection {
+  margin-bottom: 2rem;
+  padding-bottom: 2rem;
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60px;
+    height: 3px;
+    background: linear-gradient(90deg, var(--mantine-color-yellow-4), var(--mantine-color-orange-5));
+    border-radius: 2px;
+  }
+
+  @media (max-width: 768px) {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+
+    &::after {
+      width: 40px;
+      height: 2px;
+    }
+  }
+}
+
+.heroTitle {
+  font-size: 2.5rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--mantine-color-yellow-4), var(--mantine-color-orange-5));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  margin-bottom: 0.2rem;
+  text-align: center;
+  letter-spacing: -0.02em;
+
+  @media (max-width: 768px) {
+    font-size: 2.5rem;
+  }
+
+  @media (max-width: 480px) {
+    font-size: 2rem;
+    letter-spacing: -0.01em;
+  }
+}
+
+.heroDescription {
+  max-width: 32rem;
+  margin: 0 auto;
+  line-height: 1.6;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-4));
+  font-size: 1.125rem;
+  font-weight: 400;
+
+  @media (max-width: 768px) {
+    max-width: 100%;
+    font-size: 1rem;
+  }
+
+  @media (max-width: 480px) {
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+}
+
+// Redeem Section - Modern clean design
+.redeemSection {
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-xl);
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+  }
+
+  @media (max-width: 768px) {
+    padding: var(--mantine-spacing-lg);
+    border-radius: var(--mantine-radius-sm);
+  }
+
+  @media (max-width: 640px) {
+    .iconSection {
+      display: none;
+    }
+    
+    .contentSection {
+      width: 100%;
+    }
+  }
+}
+
+.iconSection {
+  flex-shrink: 0;
+}
+
+.contentSection {
+  flex: 1;
+  min-width: 0;
+}
+
+.redeemTitle {
+  color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
+  margin-bottom: 0;
+}
+
+.redeemDescription {
+  margin-bottom: 0;
+}
+
+.inputGroup {
+  @media (max-width: 640px) {
+    flex-direction: column;
+    gap: var(--mantine-spacing-sm);
+    
+    .codeInput {
+      order: 1;
+      width: 100%;
+    }
+    
+    button {
+      order: 2;
+      width: 100%;
+    }
+  }
+}
+
+.codeInput {
+  :global(.mantine-TextInput-input) {
+    text-align: center;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 1rem;
+    background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+    border: 2px solid light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-5));
+    border-radius: var(--mantine-radius-sm);
+    transition: all 0.2s ease;
+    min-height: 2.75rem;
+
+    &:focus {
+      border-color: var(--mantine-color-yellow-4);
+      background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+    }
+
+    &::placeholder {
+      color: var(--mantine-color-dimmed);
+      font-weight: 500;
+    }
+
+    @media (max-width: 768px) {
+      font-size: 0.95rem;
+      min-height: 2.5rem;
+    }
+  }
+}
+
+.redeemButton {
+  font-weight: 600;
+  border-radius: var(--mantine-radius-sm);
+  transition: all 0.2s ease;
+  min-height: 2.75rem;
+
+  &:hover {
+    transform: translateY(-1px);
+  }
+
+  @media (max-width: 768px) {
+    min-height: 2.5rem;
+  }
+}
+
+.helpText {
+  opacity: 0.7;
+  margin-top: var(--mantine-spacing-xs);
+  text-align: left;
+  
+  @media (max-width: 640px) {
+    text-align: center;
+    margin-top: var(--mantine-spacing-sm);
+  }
+}
+
+.sectionTitle {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: light-dark(#111827, #f9fafb);
+
+  @media (max-width: 768px) {
+    font-size: 1.125rem;
+  }
+}
+
+.infoText {
+  font-style: italic;
+  opacity: 0.8;
+  max-width: 32rem;
+  margin: 0 auto;
+}
+
+.footerCard {
+  background: light-dark(#f8fafc, #2c2e33);
+  border: 1px solid light-dark(#e2e8f0, #373a40);
+
+  @media (max-width: 768px) {
+    margin: 0 -1rem;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+}
+
+.footerLink {
+  color: light-dark(#3b82f6, #60a5fa);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease;
+
+  &:hover {
+    color: light-dark(#1d4ed8, #93c5fd);
+    text-decoration: underline;
+  }
+}
+
+// Responsive adjustments
+@media (max-width: 1024px) {
+  .redeemCard,
+  .benefitsSection,
+  .purchaseSection {
+    padding: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .redeemCard {
+    padding: 1rem;
+  }
+
+  .heroSection {
+    padding: 0 1rem;
+  }
+}
+
+// Dark mode specific adjustments
+@media (prefers-color-scheme: dark) {
+  .wrapper {
+    background-attachment: fixed;
+  }
+
+  .heroTitle {
+    filter: brightness(1.1);
+  }
+
+  .redeemCard {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  }
+}
+
+// Modern, fluid design with subtle backgrounds
+.benefitsSection {
+  padding: 1.5rem;
+  background: light-dark(#f8fafc, #25262b);
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid light-dark(#e2e8f0, #373a40);
+
+  @media (max-width: 768px) {
+    margin: 0 -1rem;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    padding: 1rem;
+  }
+}
+
+.benefitsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.benefitItem {
+  padding: 1rem;
+  background: light-dark(#ffffff, rgba(0, 0, 0, 0.2));
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid light-dark(#e5e7eb, rgba(55, 58, 64, 0.5));
+  transition: all 0.2s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+    background: light-dark(#f9fafb, rgba(0, 0, 0, 0.3));
+    box-shadow: light-dark(
+      0 4px 12px rgba(0, 0, 0, 0.1),
+      0 4px 12px rgba(0, 0, 0, 0.3)
+    );
+  }
+}
+
+.buzzFeatures {
+  padding-top: 0.75rem;
+  border-top: 1px solid light-dark(#e5e7eb, rgba(55, 58, 64, 0.5));
+  margin-top: 0.5rem;
+}
+
+.purchaseSection {
+  padding: 1.5rem;
+  background: light-dark(#f0f9ff, #1e293b);
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid light-dark(#bae6fd, #475569);
+
+  @media (max-width: 768px) {
+    margin: 0 -1rem;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    padding: 1rem;
+  }
+}
+
+.purchaseContent {
+  @media (max-width: 768px) {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+}
+
+.subtleDivider {
+  border-color: light-dark(rgba(229, 231, 235, 0.5), rgba(55, 58, 64, 0.5));
+  margin: 2rem 0 1.5rem 0;
+
+  @media (max-width: 768px) {
+    margin: 1.5rem 0 1rem 0;
+  }
+}
+
+.footerSection {
+  padding: 1rem 0;
+  margin-top: 1rem;
+}
