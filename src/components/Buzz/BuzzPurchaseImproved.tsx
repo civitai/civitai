@@ -808,7 +808,7 @@ export const BuzzPurchaseImproved = ({
                                       onPurchaseSuccess={onPurchaseSuccess}
                                       disabled={!ctaEnabled}
                                       purchaseSuccessMessage={purchaseSuccessMessage}
-                                      {...(type !== 'default' && { type })}
+                                      type={type as 'default' | 'international'}
                                     />
                                   ))}
                                 </>
