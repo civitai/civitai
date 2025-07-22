@@ -800,21 +800,17 @@ export const BuzzPurchaseImproved = ({
                             <>
                               {features.coinbaseOnramp && (
                                 <>
-                                  <BuzzCoinbaseOnrampButton
-                                    unitAmount={unitAmount}
-                                    buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                                    onPurchaseSuccess={onPurchaseSuccess}
-                                    disabled={!ctaEnabled}
-                                    purchaseSuccessMessage={purchaseSuccessMessage}
-                                  />
-                                  <BuzzCoinbaseOnrampButton
-                                    unitAmount={unitAmount}
-                                    buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                                    onPurchaseSuccess={onPurchaseSuccess}
-                                    disabled={!ctaEnabled}
-                                    purchaseSuccessMessage={purchaseSuccessMessage}
-                                    type="international"
-                                  />
+                                  {['default', 'international'].map((type) => (
+                                    <BuzzCoinbaseOnrampButton
+                                      key={type}
+                                      unitAmount={unitAmount}
+                                      buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                      onPurchaseSuccess={onPurchaseSuccess}
+                                      disabled={!ctaEnabled}
+                                      purchaseSuccessMessage={purchaseSuccessMessage}
+                                      {...(type !== 'default' && { type })}
+                                    />
+                                  ))}
                                 </>
                               )}
                               <BuzzCoinbaseButton
