@@ -63,12 +63,7 @@
 }
 
 .giftCardButtons {
-  @media (max-width: 640px) {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0;
-    margin: auto;
-  }
+  margin-left: auto;
 }
 
 .giftCardBackground {
@@ -115,7 +110,7 @@
   color: var(--mantine-color-orange-7) !important;
   text-decoration: none !important;
   font-weight: 600;
-  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-md);
   border-radius: var(--mantine-radius-md);
   transition: all 0.2s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);

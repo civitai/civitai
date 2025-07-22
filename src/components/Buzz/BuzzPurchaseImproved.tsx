@@ -328,7 +328,7 @@ export const BuzzPurchaseImproved = ({
             {liveFeatures.buzzGiftCards && (
               <Card className={classes.giftCardPromo} padding="md" radius="md">
                 <div className={classes.giftCardBackground}>
-                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <Stack gap="xs">
                     <Group gap="md" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
                       <div className={classes.giftIconWrapper}>
                         <IconGift size={24} className={classes.giftIcon} />
@@ -343,7 +343,7 @@ export const BuzzPurchaseImproved = ({
                       </div>
                     </Group>
 
-                    <Group gap="sm" wrap="nowrap" className={classes.giftCardButtons}>
+                    <Group gap="xs" wrap="nowrap" className={classes.giftCardButtons}>
                       <Anchor
                         href="https://buybuzz.io/"
                         target="_blank"
@@ -368,7 +368,7 @@ export const BuzzPurchaseImproved = ({
                         </Text>
                       </Anchor>
                     </Group>
-                  </Group>
+                  </Stack>
                 </div>
               </Card>
             )}
