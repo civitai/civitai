@@ -57,6 +57,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import classes from '~/components/Buzz/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -258,9 +259,9 @@ export const BuzzPurchaseImproved = ({
   const bulkMultiplier = buzzCalculation.bulkBuzzMultiplier ?? 1;
   const bulkBonusPercent = bulkMultiplier > 1 ? Math.round((bulkMultiplier - 1) * 100) : 0;
   // Get membership tier
-  const membershipTier = subscription?.product.metadata?.tier
-    ? (subscription.product.metadata.tier as string).charAt(0).toUpperCase() +
-      (subscription.product.metadata.tier as string).slice(1)
+  const subscriptionMeta = subscription?.product.metadata as SubscriptionProductMetadata;
+  const membershipTier = subscriptionMeta?.tier
+    ? subscriptionMeta.tier.charAt(0).toUpperCase() + subscriptionMeta.tier.slice(1)
     : null;
 
   const onValidate = () => {
