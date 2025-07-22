@@ -3,9 +3,10 @@
   max-width: 1200px;
   margin: 0 auto;
   padding: var(--mantine-spacing-sm);
+  width: 100%;
   
   // Mobile improvements for better readability
-  @media (max-width: 480px) {
+  @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs);
     
     .mantine-Stack-root {
@@ -44,7 +45,7 @@
   );
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   
-  @media (max-width: 480px) {
+  @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm) !important;
   }
 }
@@ -57,13 +58,41 @@
   border: 2px solid var(--mantine-color-yellow-3);
   box-shadow: 0 4px 20px rgba(251, 191, 36, 0.25);
   
-  @media (max-width: 768px) {
+  @media (max-width: theme('screens.md')) {
     padding: var(--mantine-spacing-md) !important;
   }
 }
 
 .giftCardButtons {
   margin-left: auto;
+  
+  @media (max-width: theme('screens.md')) {
+    margin-left: 0;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.giftCardLayout {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  
+  @media (max-width: theme('screens.md')) {
+    flex-direction: column;
+    gap: var(--mantine-spacing-md);
+    align-items: stretch;
+  }
+}
+
+.giftCardContent {
+  flex: 1;
+  min-width: 0;
+  
+  @media (max-width: theme('screens.md')) {
+    justify-content: center;
+    text-align: center;
+  }
 }
 
 .giftCardBackground {
@@ -75,7 +104,7 @@
   color: var(--mantine-color-dark-9);
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8);
   
-  @media (max-width: 480px) {
+  @media (max-width: theme('screens.xs')) {
     font-size: 1rem;
   }
 }
@@ -95,8 +124,8 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   flex-shrink: 0;
   
-  @media (max-width: 480px) {
-    padding: calc(var(--mantine-spacing-xs) * 0.75);
+  @media (max-width: theme('screens.xs')) {
+    display: none;
   }
 }
 
@@ -121,7 +150,7 @@
     background: rgba(255, 255, 255, 0.95);
   }
   
-  @media (max-width: 480px) {
+  @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
     font-size: var(--mantine-font-size-xs);
   }
@@ -139,7 +168,7 @@
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
   
-  @media (max-width: 480px) {
+  @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs);
     font-size: var(--mantine-font-size-xs);
   }
@@ -274,7 +303,7 @@
   border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
   
   // Mobile improvements
-  @media (max-width: 480px) {
+  @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm) !important;
     
     .mantine-Group-root {
@@ -299,7 +328,7 @@
   border: none;
 
   // Mobile improvements
-  @container (max-width: 768px) {
+  @container (max-width: theme('screens.md')) {
     padding: var(--mantine-spacing-sm) !important;
   }
 }
@@ -310,7 +339,7 @@
   gap: var(--mantine-spacing-sm);
 
   // Mobile stacking and spacing
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     gap: var(--mantine-spacing-xs);
     padding: 0;
     background: transparent;
@@ -321,7 +350,7 @@
 
 .benefitRow {
   // Mobile-specific layout improvements
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     flex-direction: column !important;
     align-items: flex-start !important;
     gap: var(--mantine-spacing-xs) !important;
@@ -341,7 +370,7 @@
 
 .benefitInfo {
   // Mobile text improvements
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     width: 100%;
     
     div {
@@ -357,7 +386,7 @@
 
 .benefitBadge {
   // Mobile badge positioning
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     align-self: flex-end;
     margin-top: 0;
     font-size: var(--mantine-font-size-xs);
@@ -366,7 +395,7 @@
 
 .membershipInfo {
   // Mobile membership info
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm);
     margin: var(--mantine-spacing-sm) 0;
     
@@ -384,7 +413,7 @@
 
 .totalBuzzValue {
   // Mobile total value display
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     margin-top: var(--mantine-spacing-sm);
     padding-top: var(--mantine-spacing-sm);
     border-top: 1px solid var(--mantine-color-gray-3);
@@ -482,7 +511,7 @@
     }
     
     // Mobile responsive
-    @media (max-width: 480px) {
+    @media (max-width: theme('screens.xs')) {
       flex-direction: column;
       align-items: flex-start;
       gap: var(--mantine-spacing-sm);
@@ -503,7 +532,7 @@
 
 // Remove old bulk benefit styles that are no longer needed
 .bulkBenefitsContainer {
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     gap: var(--mantine-spacing-xs);
   }
 }
@@ -523,7 +552,7 @@
     }
   }
   
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     .mantine-Group-root {
       flex-direction: column;
       align-items: flex-start;
@@ -535,7 +564,7 @@
 .bulkBenefitInfo {
   flex: 1;
   
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     width: 100%;
     
     .mantine-Group-root {
@@ -547,7 +576,7 @@
 }
 
 .bulkBenefitBadge {
-  @container (max-width: 480px) {
+  @container (max-width: theme('screens.xs')) {
     align-self: flex-end;
   }
 }
