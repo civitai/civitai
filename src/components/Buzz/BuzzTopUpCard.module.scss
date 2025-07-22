@@ -1,0 +1,100 @@
+.topUpCard {
+  background: light-dark(
+    linear-gradient(135deg, var(--mantine-color-yellow-0) 0%, var(--mantine-color-orange-0) 100%),
+    linear-gradient(135deg, var(--mantine-color-dark-6) 0%, var(--mantine-color-dark-5) 100%)
+  );
+  border: 1px solid light-dark(var(--mantine-color-yellow-2), var(--mantine-color-yellow-9));
+  box-shadow: var(--mantine-shadow-sm);
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-md);
+    transform: translateY(-2px);
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--mantine-color-yellow-4), var(--mantine-color-orange-5));
+  }
+}
+
+.bannerCard {
+  background: light-dark(
+    var(--mantine-color-yellow-0),
+    var(--mantine-color-dark-6)
+  );
+  border: 1px solid light-dark(var(--mantine-color-yellow-2), var(--mantine-color-yellow-9));
+  border-left: 4px solid var(--mantine-color-yellow-5);
+  transition: all 0.2s ease;
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-sm);
+  }
+}
+
+.topUpIcon {
+  box-shadow: var(--mantine-shadow-sm);
+}
+
+.topUpTitle {
+  color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
+  margin-bottom: var(--mantine-spacing-xs);
+}
+
+.bannerTitle {
+  color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
+}
+
+.topUpBadge {
+  border: 1px solid light-dark(var(--mantine-color-yellow-3), var(--mantine-color-yellow-8));
+}
+
+.balanceCard {
+  background: light-dark(
+    rgba(255, 255, 255, 0.7),
+    rgba(0, 0, 0, 0.2)
+  );
+  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+}
+
+.benefitsList {
+  padding: var(--mantine-spacing-xs);
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(
+    rgba(255, 255, 255, 0.5),
+    rgba(0, 0, 0, 0.1)
+  );
+}
+
+.topUpButton {
+  font-weight: 600;
+  box-shadow: var(--mantine-shadow-sm);
+  transition: all 0.2s ease;
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-md);
+    transform: translateY(-1px);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .topUpCard {
+    padding: var(--mantine-spacing-md);
+  }
+
+  .bannerCard {
+    padding: var(--mantine-spacing-sm);
+  }
+
+  .benefitsList {
+    text-align: center;
+  }
+}
