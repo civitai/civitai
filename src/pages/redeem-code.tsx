@@ -72,13 +72,15 @@ const PurchaseOptionsCard = () => {
             </Button>
             <Button
               component="a"
-              href="#store" // Will be updated with actual store URL
+              href="https://buybuzz.io/"
               variant="outline"
               color="gray"
               size="sm"
+              target="_blank"
+              rel="noopener noreferrer"
               leftSection={<IconGift size={16} />}
             >
-              Gift Codes
+              Purchase Codes
             </Button>
           </Group>
         </div>
