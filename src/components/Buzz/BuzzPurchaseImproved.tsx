@@ -45,7 +45,6 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -57,7 +56,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import classes from '~/components/Buzz/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -312,46 +311,65 @@ export const BuzzPurchaseImproved = ({
         <Grid.Col span={{ base: 12, md: canUpgradeMembership ? 8 : 12 }}>
           <Stack gap="md">
             {message && (
-              <AlertWithIcon
-                icon={<IconInfoCircle />}
-                iconSize="sm"
-                size="sm"
-                className={classes.messageAlert}
-              >
-                {message}
-              </AlertWithIcon>
+              <Card className={classes.messageCard} padding="md" radius="md">
+                <Group gap="sm" align="center">
+                  <ThemeIcon size="md" variant="light" color="blue" radius="md">
+                    <IconInfoCircle size={20} />
+                  </ThemeIcon>
+                  <div style={{ flex: 1 }}>
+                    <Text size="sm" fw={500} lh={1.4}>
+                      {message}
+                    </Text>
+                  </div>
+                </Group>
+              </Card>
             )}
 
             {liveFeatures.buzzGiftCards && (
-              <Card className={classes.giftCardPromo} padding="sm" radius="md">
-                <Group>
-                  <IconGift size={24} color="var(--mantine-color-yellow-6)" />
-                  <div style={{ flex: 1 }}>
-                    <Text size="sm" fw={600}>
-                      Buzz Gift Cards Available!
-                    </Text>
-                    <Group gap="md">
-                      <Anchor
-                        href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        size="xs"
-                        className={classes.giftCardLink}
-                      >
-                        Learn More →
-                      </Anchor>
+              <Card className={classes.giftCardPromo} padding="md" radius="md">
+                <div className={classes.giftCardBackground}>
+                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                    <Group gap="md" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                      <div className={classes.giftIconWrapper}>
+                        <IconGift size={24} className={classes.giftIcon} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text size="lg" fw={700} className={classes.giftCardTitle}>
+                          Buzz Gift Cards Available!
+                        </Text>
+                        <Text size="sm" className={classes.giftCardSubtitle}>
+                          Multiple payment methods supported, great way to support us.
+                        </Text>
+                      </div>
+                    </Group>
+
+                    <Group gap="sm" wrap="nowrap" className={classes.giftCardButtons}>
                       <Anchor
                         href="https://buybuzz.io/"
                         target="_blank"
                         rel="noopener noreferrer"
-                        size="xs"
-                        className={classes.giftCardLink}
+                        className={classes.giftCardCta}
                       >
-                        Buy Gift Cards →
+                        <Group gap="xs">
+                          <Text size="sm" fw={600}>
+                            Buy Now
+                          </Text>
+                          <IconExternalLink size={14} />
+                        </Group>
+                      </Anchor>
+                      <Anchor
+                        href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={classes.giftCardLearnMore}
+                      >
+                        <Text size="sm" fw={500}>
+                          Learn More
+                        </Text>
                       </Anchor>
                     </Group>
-                  </div>
-                </Group>
+                  </Group>
+                </div>
               </Card>
             )}
 

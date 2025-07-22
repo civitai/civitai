@@ -89,7 +89,7 @@ export function BuzzTopUpCard({
               gradient={{ from: 'yellow.4', to: 'orange.5' }}
               radius="md"
             >
-              <IconBolt size={24} />
+              <IconBolt fill="currentColor" size={24} />
             </ThemeIcon>
             <div style={{ flex: 1 }}>
               <Text size="sm" fw={600} className={classes.bannerTitle}>

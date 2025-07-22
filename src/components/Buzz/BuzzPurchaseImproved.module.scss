@@ -32,6 +32,124 @@
   }
 }
 
+/* Message card styling */
+.messageCard {
+  background: light-dark(
+    rgba(var(--mantine-color-blue-2-rgb), 0.3),
+    rgba(var(--mantine-color-blue-8-rgb), 0.2)
+  );
+  border: 1px solid light-dark(
+    var(--mantine-color-blue-3),
+    var(--mantine-color-blue-7)
+  );
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-sm) !important;
+  }
+}
+
+/* Gift Card Promo - Clean and Eye-catching */
+.giftCardPromo {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-yellow-4) 0%, 
+    var(--mantine-color-orange-5) 100%);
+  border: 2px solid var(--mantine-color-yellow-3);
+  box-shadow: 0 4px 20px rgba(251, 191, 36, 0.25);
+  
+  @media (max-width: 768px) {
+    padding: var(--mantine-spacing-md) !important;
+  }
+}
+
+.giftCardButtons {
+  @media (max-width: 640px) {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+    margin: auto;
+  }
+}
+
+.giftCardBackground {
+  position: relative;
+  z-index: 1;
+}
+
+.giftCardTitle {
+  color: var(--mantine-color-dark-9);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8);
+  
+  @media (max-width: 480px) {
+    font-size: 1rem;
+  }
+}
+
+.giftCardSubtitle {
+  color: var(--mantine-color-dark-7);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+
+.giftIconWrapper {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  padding: var(--mantine-spacing-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  
+  @media (max-width: 480px) {
+    padding: calc(var(--mantine-spacing-xs) * 0.75);
+  }
+}
+
+.giftIcon {
+  color: var(--mantine-color-orange-6);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+
+.giftCardCta {
+  background: white;
+  color: var(--mantine-color-orange-7) !important;
+  text-decoration: none !important;
+  font-weight: 600;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  border-radius: var(--mantine-radius-md);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    background: rgba(255, 255, 255, 0.95);
+  }
+  
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+    font-size: var(--mantine-font-size-xs);
+  }
+}
+
+.giftCardLearnMore {
+  color: rgba(255, 255, 255, 0.9) !important;
+  text-decoration: underline !important;
+  font-weight: 500;
+  padding: var(--mantine-spacing-sm);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    color: white !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+  
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-xs);
+    font-size: var(--mantine-font-size-xs);
+  }
+}
+
 /* Header section */
 .headerCard {
   background: linear-gradient(135deg, var(--mantine-color-yellow-5) 0%, var(--mantine-color-orange-6) 100%);
