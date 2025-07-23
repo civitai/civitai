@@ -200,14 +200,11 @@
 
 /* Single pulse animation using CSS custom property */
 @keyframes subtlePulse {
-  0% {
+  0%, 100% {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
   50% {
-    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px var(--glow-color);
-  }
-  100% {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.15), 0 0 8px 1px var(--glow-color);
   }
 }
 
@@ -236,5 +233,5 @@
 .supportButton.supportButtonGift .supportButtonIcon,
 .supportButton.supportButtonRoyal .supportButtonIcon,
 .supportButton.supportButtonPremium .supportButtonIcon {
-  animation: subtleBounce 2s infinite ease-in-out;
+  animation: subtleBounce 3s infinite ease-in-out;
 }

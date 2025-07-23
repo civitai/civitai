@@ -107,11 +107,7 @@ export const SupportButton = () => {
             <Text size="xs" fw={700} className={classes.supportButtonText}>
               {selectedOption.text}
             </Text>
-            <selectedOption.icon
-              size={14}
-              className={classes.supportButtonIcon}
-              fill="currentColor"
-            />
+            <selectedOption.icon size={16} className={classes.supportButtonIcon} />
           </Group>
         </Button>
       </HoverCard.Target>
