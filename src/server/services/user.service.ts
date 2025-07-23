@@ -82,7 +82,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key-generator';
-import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
@@ -593,13 +593,13 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   const user = await getUserByUsername({ username, select: { id: true } });
   if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
-  const { take, skip } = getPagination(limit, page);
+  const { take = DEFAULT_PAGE_SIZE, skip = 0 } = getPagination(limit, page);
   const filteredUsers = [-1, user.id]; // Exclude civitai user and the user themselves
 
   if (type === 'blocked') {
     // For blocked users, we need to use the cache since it's stored differently
     const allBlocked = await BlockedUsers.getCached({ userId: user.id });
-    const items = allBlocked.slice(skip, take);
+    const items = allBlocked.slice(skip, skip + take);
 
     return getPagingData({ items, count: allBlocked.length }, limit, page);
   }
