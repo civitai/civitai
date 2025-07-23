@@ -18,6 +18,7 @@ import {
   IconRocket,
   IconUsers,
   IconPhoto,
+  IconDiamond,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -122,7 +123,7 @@ const BenefitsSection = () => {
           <div className={classes.benefitItem}>
             <Group gap="sm" wrap="nowrap">
               <ThemeIcon size="md" variant="light" color="grape" radius="md">
-                <IconCrown fill="currentColor" size={20} />
+                <IconDiamond fill="currentColor" size={20} />
               </ThemeIcon>
               <div>
                 <Text size="sm" fw={600} c="grape.6">

@@ -835,7 +835,7 @@ function WithMemberMenuItem({
         <Menu.Item {...props} className="relative pr-10">
           <span>{children}</span>
           <div className="absolute inset-y-0 right-1 flex items-center">
-            <ThemeIcon variant="filled" color="blue" size="md">
+            <ThemeIcon variant="filled" color="grape" size="md">
               <IconDiamond stroke={2} />
             </ThemeIcon>
           </div>
