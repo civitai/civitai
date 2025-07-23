@@ -62,8 +62,8 @@ import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { BlockedReason } from '~/server/common/enums';
+import { DEFAULT_EDGE_IMAGE_WIDTH, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
@@ -115,6 +115,7 @@ type State = {
   isAddingResource: boolean;
   toggleHidePrompt: () => void;
   addResource: (modelVersionId: number) => void;
+  nsfwLicenseViolation: ReturnType<typeof hasNsfwLicenseViolation>;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -166,6 +167,35 @@ const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
   return type === MediaType.video || !isMadeOnSite(meta);
 };
 
+// Check if image violates NSFW license restrictions
+const hasNsfwLicenseViolation = (image: PostEditImageDetail) => {
+  const { nsfwLevel, resourceHelper } = image;
+
+  // Check if image has X or XXX NSFW level
+  const hasRestrictedNsfwLevel = nsfwLevel === NsfwLevel.X || nsfwLevel === NsfwLevel.XXX;
+  if (!hasRestrictedNsfwLevel) return { violation: false };
+
+  // Check if any resources use restricted base models
+  const restrictedResources = resourceHelper.filter(
+    (resource) =>
+      resource.modelVersionBaseModel &&
+      nsfwRestrictedBaseModels.includes(resource.modelVersionBaseModel as any)
+  );
+
+  if (restrictedResources.length > 0) {
+    return {
+      violation: true,
+      nsfwLevel,
+      restrictedResources: restrictedResources.map((r) => ({
+        modelName: r.modelName,
+        baseModel: r.modelVersionBaseModel,
+      })),
+    };
+  }
+
+  return { violation: false };
+};
+
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
@@ -189,6 +219,10 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const allowedResources = useMemo(() => {
     return getAllowedResources(image.resourceHelper);
   }, [image.resourceHelper]);
+
+  const nsfwLicenseViolation = useMemo(() => {
+    return hasNsfwLicenseViolation(storedImage);
+  }, [storedImage.nsfwLevel, storedImage.resourceHelper]);
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
@@ -298,6 +332,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         toggleHidePrompt,
         addResource,
         isPendingManualAssignment,
+        nsfwLicenseViolation,
       }}
     >
       <div className="overflow-hidden rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
@@ -710,6 +745,7 @@ function EditDetail() {
                 </Text>
               </Alert>
             )}
+            <NsfwLicenseViolationAlert />
             {/* #endregion */}
 
             {/*
@@ -1160,6 +1196,51 @@ function PostImage() {
         </Menu>
       </div>
     </div>
+  );
+}
+
+function NsfwLicenseViolationAlert() {
+  const { nsfwLicenseViolation } = useAddedImageContext();
+  const { showPreview } = usePostPreviewContext();
+
+  if (!nsfwLicenseViolation.violation) return null;
+
+  const { restrictedResources, nsfwLevel } = nsfwLicenseViolation;
+  const nsfwLevelName = nsfwLevel === NsfwLevel.X ? 'X-rated' : 'XXX-rated';
+
+  return (
+    <Alert
+      color="orange"
+      className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
+      classNames={{ message: 'flex flex-col gap-2' }}
+    >
+      <Text c="orange" className="font-bold">
+        NSFW License Restriction Notice
+      </Text>
+      <Text size="sm">
+        This {nsfwLevelName} image uses models with restricted licenses that do not permit{' '}
+        {nsfwLevelName} content:
+      </Text>
+      <ul className="ml-4 list-disc">
+        {restrictedResources?.map((resource, index) => (
+          <li key={index} className="text-sm">
+            <Text span className="font-medium">
+              {resource.modelName}
+            </Text>
+            {resource.baseModel && (
+              <Text span c="dimmed">
+                {' '}
+                ({resource.baseModel})
+              </Text>
+            )}
+          </li>
+        ))}
+      </ul>
+      <Text size="sm" c="dimmed">
+        Consider using alternative models or adjusting the content rating to comply with license
+        terms.
+      </Text>
+    </Alert>
   );
 }
 
