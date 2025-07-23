@@ -5,6 +5,8 @@ import { showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
 import { numberWithCommas } from '~/utils/number-helpers';
 import classes from './RedeemCodeCard.module.scss';
+import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 interface RedeemCodeCardProps {
   /**
@@ -48,23 +50,53 @@ export function RedeemCodeCard({
 }: RedeemCodeCardProps) {
   const [code, setCode] = useState(initialCode);
   const [isLoading, setIsLoading] = useState(false);
+  const queryUtils = trpc.useUtils();
 
   const redeemCodeMutation = trpc.redeemableCode.consume.useMutation({
-    onSuccess: (result: { unitValue: number; type: string }) => {
+    onSuccess: async (consumedCode) => {
       setCode('');
       setIsLoading(false);
+      // Generate success message based on code type
+      let message = 'Code redeemed successfully';
+
+      if (!consumedCode) {
+        showNotification({
+          title: 'Error redeeming code',
+          message: 'Code not found or invalid.',
+          color: 'red',
+        });
+
+        return;
+      }
+
+      if (consumedCode.type === RedeemableCodeType.Buzz) {
+        const buzzAmount = numberWithCommas(consumedCode.unitValue);
+        message = `${buzzAmount} Buzz has been added to your account!`;
+      } else if (consumedCode.type === RedeemableCodeType.Membership && consumedCode.price) {
+        const metadata = consumedCode.price.product.metadata as SubscriptionProductMetadata;
+        const timeValue = consumedCode.unitValue;
+        const interval = consumedCode.price.interval ?? '';
+        // Calculate the time period
+        const timeDescription = `${timeValue} ${interval}${timeValue > 1 ? 's' : ''}`;
+        const tierName = metadata.tier
+          ? metadata.tier.charAt(0).toUpperCase() + metadata.tier.slice(1)
+          : 'Premium';
+        message = `${timeDescription} of ${tierName} tier membership has been added to your account!`;
+      }
+
       showNotification({
-        title: '🎉 Code redeemed successfully!',
-        message: `You received ${numberWithCommas(result.unitValue)} Buzz!`,
+        title: 'Success',
+        message,
         color: 'green',
-        autoClose: 5000,
       });
+
+      await queryUtils.buzz.getAccountTransactions.invalidate();
     },
-    onError: (error: { message: string }) => {
+    onError: (data) => {
       setIsLoading(false);
       showNotification({
         title: 'Failed to redeem code',
-        message: error.message,
+        message: 'There was an error processing your code. Please check the code and try again.',
         color: 'red',
       });
     },
@@ -77,6 +109,7 @@ export function RedeemCodeCard({
         message: 'Please enter a code to redeem',
         color: 'yellow',
       });
+
       return;
     }
 

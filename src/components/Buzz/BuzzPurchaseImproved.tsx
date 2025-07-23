@@ -338,7 +338,7 @@ export const BuzzPurchaseImproved = ({
                           Buzz Gift Cards Available!
                         </Text>
                         <Text size="sm" className={classes.giftCardSubtitle}>
-                          Multiple payment methods supported, great way to support us.
+                          Instantly redeemable digital gift-codes!
                         </Text>
                       </div>
                     </Group>
