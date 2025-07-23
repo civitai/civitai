@@ -188,37 +188,53 @@
   padding: 4px 8px;
 }
 
-/* Animations - Less Aggressive for Navbar */
+/* Animations - More Noticeable for Navbar */
 @keyframes subtleBounce {
   0%, 100% {
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
   50% {
-    transform: translateY(-1px);
+    transform: translateY(-3px) scale(1.1);
   }
 }
 
-/* Subtle pulse effect for navbar use */
+/* Single pulse animation using CSS custom property */
 @keyframes subtlePulse {
   0% {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
   50% {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), 0 0 0 2px rgba(var(--mantine-color-yellow-6-rgb), 0.3);
+    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px var(--glow-color);
   }
   100% {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   }
 }
 
-/* Apply subtle effects to special variants */
-.supportButtonSparkle,
-.supportButtonGift,
-.supportButtonRoyal,
-.supportButtonPremium {
-  animation: subtlePulse 4s infinite;
-  
-  .supportButtonIcon {
-    animation: subtleBounce 3s infinite;
-  }
+/* Apply variant-specific glow effects using CSS custom properties */
+.supportButton.supportButtonSparkle {
+  --glow-color: rgba(255, 193, 7, 0.8);
+  animation: subtlePulse 3s infinite ease-in-out;
+}
+
+.supportButton.supportButtonGift {
+  --glow-color: rgba(34, 197, 94, 0.8);
+  animation: subtlePulse 3s infinite ease-in-out;
+}
+
+.supportButton.supportButtonRoyal {
+  --glow-color: rgba(139, 69, 219, 0.8);
+  animation: subtlePulse 3s infinite ease-in-out;
+}
+
+.supportButton.supportButtonPremium {
+  --glow-color: rgba(6, 182, 212, 0.8);
+  animation: subtlePulse 3s infinite ease-in-out;
+}
+
+.supportButton.supportButtonSparkle .supportButtonIcon,
+.supportButton.supportButtonGift .supportButtonIcon,
+.supportButton.supportButtonRoyal .supportButtonIcon,
+.supportButton.supportButtonPremium .supportButtonIcon {
+  animation: subtleBounce 2s infinite ease-in-out;
 }
