@@ -26,7 +26,7 @@ type SupportButtonOption = {
 const options: SupportButtonOption[] = [
   {
     text: 'Pro',
-    icon: IconCrown,
+    icon: IconDiamond,
     variant: 'royal',
     href: '/pricing?utm_campaign=support_pro',
   },

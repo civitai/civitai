@@ -132,7 +132,7 @@
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   white-space: nowrap;
   font-size: 12px;
-  line-height: 1;
+  line-height: 1.2;
   
   @media (max-width: theme('screens.sm')) {
     font-size: 11px;
@@ -190,11 +190,20 @@
 
 /* Animations - More Noticeable for Navbar */
 @keyframes subtleBounce {
-  0%, 100% {
+  0% {
     transform: translateY(0) scale(1);
   }
   50% {
-    transform: translateY(-3px) scale(1.1);
+    transform: translateY(-2px) scale(1.1);
+  }
+  70% {
+    transform: translateY(0) scale(1);
+  }
+  85% {
+    transform: translateY(-1px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
   }
 }
 
