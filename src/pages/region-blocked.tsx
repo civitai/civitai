@@ -102,7 +102,7 @@ export default function RegionBlockedPage({
                 <Text size="xs" c="dimmed">
                   Want to be notified if access is restored in your region?{' '}
                   <Anchor
-                    href="/region-notification-signup"
+                    href="https://forms.clickup.com/8459928/f/825mr-14631/SF5SFIFKCR2UWRX995"
                     className="font-medium"
                     target="_blank"
                     rel="nofollow noreferrer"
