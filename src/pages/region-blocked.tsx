@@ -98,13 +98,27 @@ export default function RegionBlockedPage({
 
               <CustomMarkdown>{content}</CustomMarkdown>
 
-              <div className="mt-8 border-t pt-6">
-                <Text size="sm" c="dimmed">
+              <div className="mt-8 border-t pt-6 text-center">
+                <Text size="xs" c="dimmed">
+                  Want to be notified if access is restored in your region?{' '}
+                  <Anchor
+                    href="/region-notification-signup"
+                    className="font-medium"
+                    target="_blank"
+                    rel="nofollow noreferrer"
+                  >
+                    Submit your email here
+                  </Anchor>{' '}
+                  and we&apos;ll let you know if the situation changes.
+                </Text>
+
+                <Text size="xs" c="dimmed">
                   If you have questions or concerns, please contact our support team at{' '}
                   <Anchor
                     href="mailto:support@civitai.com"
+                    className="font-medium"
                     target="_blank"
-                    rel="noopener noreferrer"
+                    rel="nofollow noreferrer"
                   >
                     support@civitai.com
                   </Anchor>

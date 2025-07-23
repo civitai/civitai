@@ -63,6 +63,22 @@ If not set, defaults to `GB:2025-07-24,UK:2025-07-24` (United Kingdom effective 
 
 The system relies on Cloudflare's `CF-IPCountry` header to determine user location. Ensure your deployment is behind Cloudflare for this to work.
 
+### UK Region Header Support
+
+For UK-specific region detection, the system also supports the `x-isuk` header:
+
+- **Header**: `x-isuk`
+- **Values**: `true`, `1` (overrides countryCode to GB)
+- **Purpose**: Allows override of country detection for UK users regardless of CF-IPCountry
+- **Usage**: When `x-isuk` is set to `true` or `1`, the system overrides `countryCode` to `GB`
+
+**Example**:
+
+```bash
+# Test GB blocking regardless of actual location
+curl -H "x-isuk: true" http://localhost:3000/
+```
+
 ### Redis Content Management
 
 The system uses Redis to store dynamic markdown content for region-specific warnings and block pages:
@@ -122,10 +138,22 @@ Your markdown content here with **bold** text for emphasis...
 
 ### Local Testing
 
-To test the region blocking locally, you can manually set the `CF-IPCountry` header:
+To test the region blocking locally, you can manually set headers:
+
+**Standard Country Testing**:
 
 ```bash
 curl -H "CF-IPCountry: GB" http://localhost:3000/
+```
+
+**UK Region Testing**:
+
+```bash
+# Test GB blocking with x-isuk header (overrides countryCode)
+curl -H "x-isuk: true" http://localhost:3000/
+
+# Test with both headers (x-isuk overrides CF-IPCountry to GB)
+curl -H "CF-IPCountry: US" -H "x-isuk: 1" http://localhost:3000/
 ```
 
 Or you can use a browser extension like [Requestly](https://requestly.com/) to override request headers if needed.

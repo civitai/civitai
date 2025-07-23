@@ -161,7 +161,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               variant="light"
               color="gray"
               radius="xl"
-              classNames={{ root: 'flex gap-2 flex-nowrap' }}
+              classNames={{ root: 'flex gap-2 flex-nowrap', label: 'flex gap-1 flex-noWrap' }}
             >
               <Group gap={2}>
                 <IconDownload size={14} strokeWidth={2.5} />
