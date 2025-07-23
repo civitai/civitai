@@ -52,11 +52,12 @@ import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import classes from '~/components/Buzz/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -229,7 +230,7 @@ export const BuzzPurchaseImproved = ({
   purchaseSuccessMessage,
 }: BuzzPurchaseImprovedProps) => {
   const features = useFeatureFlags();
-  const canUpgradeMembership = false;
+  const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -386,7 +387,7 @@ export const BuzzPurchaseImproved = ({
               <Card className={classes.packageSection} padding="md" radius="md">
                 <Stack gap="md">
                   <div>
-                    <Title order={3} size="lg" className={classes.sectionTitle} mb={0}>
+                    <Title order={3} size="lg" mb={0}>
                       Choose Your Package
                     </Title>
                     <Text c="dimmed" size="sm">
@@ -429,7 +430,7 @@ export const BuzzPurchaseImproved = ({
                             >
                               {/* Absolute positioned popular badge */}
                               <Stack align="center" gap="xs">
-                                <div className={classes.packageIconSmall}>
+                                <div>
                                   <BuzzTierIcon tier={index + 1} size="sm" />
                                 </div>
 
@@ -500,7 +501,6 @@ export const BuzzPurchaseImproved = ({
                                     }}
                                     step={1000}
                                     size="sm"
-                                    className={classes.customInput}
                                   />
 
                                   <NumberInputWrapper
@@ -532,7 +532,6 @@ export const BuzzPurchaseImproved = ({
                                     }}
                                     format="currency"
                                     size="sm"
-                                    className={classes.customInput}
                                   />
                                 </SimpleGrid>
 
@@ -910,10 +909,14 @@ export const BuzzPurchaseImproved = ({
             )}
           </Stack>
         </Grid.Col>
-
-        {canUpgradeMembership && (
+        {!isLoading && (
           <Grid.Col span={{ base: 12, md: 4 }}>
-            <MembershipUpsell buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount ?? 0} />
+            <Stack>
+              <BuzzFeatures title="What can you do with Buzz?" variant="card" compact />
+              {canUpgradeMembership && (
+                <MembershipUpsell buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount ?? 0} />
+              )}
+            </Stack>
           </Grid.Col>
         )}
       </Grid>

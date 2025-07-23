@@ -33,7 +33,7 @@ export default function BuyBuzzModal({
       {...dialog}
       id="buyBuzz"
       withCloseButton={false}
-      size="xl"
+      size="xxl"
       radius="lg"
       fullScreen={isMobile}
     >

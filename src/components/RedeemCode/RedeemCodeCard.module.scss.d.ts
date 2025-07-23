@@ -1,0 +1,9 @@
+export declare const codeInput: string;
+export declare const contentSection: string;
+export declare const helpText: string;
+export declare const iconSection: string;
+export declare const inputGroup: string;
+export declare const redeemButton: string;
+export declare const redeemDescription: string;
+export declare const redeemSection: string;
+export declare const redeemTitle: string;

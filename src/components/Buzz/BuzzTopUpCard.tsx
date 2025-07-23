@@ -34,6 +34,7 @@ interface BuzzTopUpCardProps {
    * Whether to show the component as a banner/alert style
    */
   asBanner?: boolean;
+  btnLabel?: string;
 }
 
 export function BuzzTopUpCard({
@@ -44,14 +45,12 @@ export function BuzzTopUpCard({
   showBalance = true,
   className,
   asBanner = false,
+  btnLabel = 'Top Up Now',
 }: BuzzTopUpCardProps) {
   const handleTopUp = async () => {
     const BuyBuzzModal = (await import('~/components/Modals/BuyBuzzModal')).default;
     dialogStore.trigger({
       component: BuyBuzzModal,
-      props: {
-        message: 'Top up your Buzz to continue enjoying all the features Civitai has to offer!',
-      },
     });
   };
 
@@ -67,7 +66,7 @@ export function BuzzTopUpCard({
         className={className}
         radius="md"
       >
-        Top Up Buzz
+        {btnLabel}
       </Button>
     );
   }
@@ -108,7 +107,7 @@ export function BuzzTopUpCard({
             leftSection={<IconPlus size={16} />}
             radius="md"
           >
-            Top Up
+            {btnLabel}
           </Button>
         </Group>
       </Card>

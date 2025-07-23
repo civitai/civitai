@@ -49,6 +49,8 @@ import { trpc } from '~/utils/trpc';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from './index.module.scss';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function Pricing() {
   const router = useRouter();
@@ -60,6 +62,7 @@ export default function Pricing() {
   const liveFeatures = useLiveFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
+  const currentUser = useCurrentUser();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
@@ -356,6 +359,18 @@ export default function Pricing() {
                     ),
                   },
                 ]}
+              />
+            </Center>
+          )}
+
+          {currentUser && (
+            <Center>
+              <BuzzTopUpCard
+                accountId={currentUser?.id}
+                variant="banner"
+                message="Looking for Buzz Bundles?"
+                showBalance={false}
+                btnLabel="Purchase now"
               />
             </Center>
           )}

@@ -1,15 +1,13 @@
-import type { ListProps } from '@mantine/core';
-import { Alert, Center, Container, Divider, Group, List, Stack, Text, Title } from '@mantine/core';
+import { Alert, Center, Container, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import * as z from 'zod/v4';
-import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
+import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { env } from '~/env/client';
-import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -31,7 +29,9 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.canBuyBuzz)
       return {
         redirect: {
-          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+          destination: `https://${
+            env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN || 'civitai'
+          }/purchase/buzz?sync-account=blue`,
           statusCode: 302,
           basePath: false,
         },
@@ -44,20 +44,6 @@ const schema = z.object({
   minBuzzAmount: z.coerce.number().optional(),
 });
 
-const BuzzFeatures = (props: Omit<ListProps, 'children'>) => {
-  return (
-    <List listStyleType="none" spacing="sm" {...props}>
-      {BUZZ_FEATURE_LIST.map((feature) => (
-        <List.Item key={feature}>
-          <Group wrap="nowrap">
-            <CurrencyIcon style={{ flexShrink: 0 }} currency={Currency.BUZZ} size={18} />
-            <Text>{feature}</Text>
-          </Group>
-        </List.Item>
-      ))}
-    </List>
-  );
-};
 export default function PurchaseBuzz() {
   const router = useRouter();
   const { returnUrl, minBuzzAmount } = schema.parse(router.query);
@@ -97,7 +83,7 @@ export default function PurchaseBuzz() {
               <Title order={3} className="text-center">
                 Where to go from here?
               </Title>
-              <BuzzFeatures />
+              <BuzzFeatures variant="list" showHeader={false} compact={false} />
             </Stack>
           )}
         </Center>
@@ -106,7 +92,7 @@ export default function PurchaseBuzz() {
   }
 
   return (
-    <Container size="lg" mb="lg">
+    <Container size="xl" mb="lg">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
           <Stack gap={0}>
@@ -128,34 +114,24 @@ export default function PurchaseBuzz() {
           <Title order={2}>Buy Buzz now</Title>
         </Group>
       </Alert>
-      <ContainerGrid2 gutter={48}>
-        <ContainerGrid2.Col span={{ base: 12, md: 3 }}>
-          <Stack>
-            <Title order={2}>Buzz Benefits</Title>
-            <BuzzFeatures />
-          </Stack>
-        </ContainerGrid2.Col>
-        <ContainerGrid2.Col span={{ base: 12, md: 9 }}>
-          <BuzzPurchaseImproved
-            onPurchaseSuccess={handlePurchaseSuccess}
-            minBuzzAmount={minBuzzAmount}
-            purchaseSuccessMessage={
-              returnUrl
-                ? (purchasedBalance) => (
-                    <Stack>
-                      <Text>Thank you for your purchase!</Text>
-                      <Text>
-                        We have added{' '}
-                        <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} /> to
-                        your account. You can now close this window and return to the previous site.
-                      </Text>
-                    </Stack>
-                  )
-                : undefined
-            }
-          />
-        </ContainerGrid2.Col>
-      </ContainerGrid2>
+      <BuzzPurchaseImproved
+        onPurchaseSuccess={handlePurchaseSuccess}
+        minBuzzAmount={minBuzzAmount}
+        purchaseSuccessMessage={
+          returnUrl
+            ? (purchasedBalance) => (
+                <Stack>
+                  <Text>Thank you for your purchase!</Text>
+                  <Text>
+                    We have added{' '}
+                    <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} /> to your
+                    account. You can now close this window and return to the previous site.
+                  </Text>
+                </Stack>
+              )
+            : undefined
+        }
+      />
     </Container>
   );
 }

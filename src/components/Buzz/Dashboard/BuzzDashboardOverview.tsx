@@ -225,6 +225,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                   variant="banner"
                   message="Need more Buzz?"
                   showBalance={false}
+                  btnLabel="Top up"
                 />
 
                 <SegmentedControl
