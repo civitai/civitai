@@ -3,7 +3,7 @@ import rehypeRaw from 'rehype-raw';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getRegionBlockDate, isRegionPendingBlock } from '~/server/utils/region-blocking';
+import { getRegionBlockDate } from '~/server/utils/region-blocking';
 import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
