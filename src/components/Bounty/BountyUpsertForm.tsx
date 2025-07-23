@@ -100,9 +100,9 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
   .extend({
-    startsAt: z.coerce
-      .date()
-      .min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
+    startsAt: stringToDate(
+      z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future')
+    ),
     expiresAt: stringToDate(
       z
         .date()

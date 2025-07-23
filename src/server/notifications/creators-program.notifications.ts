@@ -29,6 +29,15 @@ export const creatorsProgramNotifications = createNotificationProcessor({
       url: `/creator-program`,
     }),
   },
+  'creators-program-rejected-tipalti': {
+    displayName: 'Creators program Rejected (Tipalti)',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `We're sorry, but it looks like your tipalti account has been rejected for payments. If you need more information, you can contact support. This is not Civitai's decision, but Tipalti's.`,
+      url: `/creator-program`,
+    }),
+  },
   'creators-program-withdrawal-approved': {
     displayName: 'Creators program - Withdrawal Approved',
     category: NotificationCategory.Buzz,

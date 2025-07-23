@@ -11,7 +11,7 @@ export function GenerationDetails({
   controlProps,
   ...descriptionTableProps
 }: Props) {
-  const detailItems = Object.entries(params)
+  const detailItems = Object.entries(params ?? {})
     .filter(([, value]) => {
       if (Array.isArray(value) || typeof value === 'object') return false;
       if (typeof value === 'string') return !!value.length;
@@ -21,6 +21,8 @@ export function GenerationDetails({
       label: titleCase(getDisplayName(key)),
       value: <LineClamp lineClamp={2}>{`${value}`}</LineClamp>,
     }));
+
+  if (!params) return null;
 
   return (
     <Accordion

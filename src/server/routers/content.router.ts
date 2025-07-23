@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import { getStaticContent } from '~/server/services/content.service';
+import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
 import { publicProcedure, router } from '~/server/trpc';
 
 const slugSchema = z.object({
@@ -15,4 +15,7 @@ const slugSchema = z.object({
 
 export const contentRouter = router({
   get: publicProcedure.input(slugSchema).query(({ input }) => getStaticContent(input)),
+  getMarkdown: publicProcedure
+    .input(z.object({ key: z.string() }))
+    .query(({ input }) => getMarkdownContent(input)),
 });

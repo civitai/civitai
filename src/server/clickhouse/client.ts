@@ -200,6 +200,7 @@ export const ActionType = [
   'LoginRedirect',
   'Membership_Cancel',
   'Membership_Downgrade',
+  'CSAM_Help_Triggered',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

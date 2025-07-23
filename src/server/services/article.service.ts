@@ -47,6 +47,8 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
+import { generateJSON } from '@tiptap/html/server';
+import { tiptapExtensions } from '~/shared/tiptap/extensions';
 
 type ArticleRaw = {
   id: number;
@@ -635,6 +637,13 @@ export const getArticleById = async ({
       userId === article.userId ||
       (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
 
+    let contentJson: Record<string, any> | undefined;
+    if (article.content) {
+      contentJson = article.content.startsWith('{')
+        ? JSON.parse(article.content)
+        : generateJSON(article.content, tiptapExtensions);
+    }
+
     return {
       ...article,
       nsfwLevel: article.nsfwLevel as NsfwLevel,
@@ -644,6 +653,7 @@ export const getArticleById = async ({
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
       coverImage: canViewCoverImage ? coverImage : undefined,
+      contentJson,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -3,7 +3,7 @@ import { CdpClient } from '@coinbase/cdp-sdk';
 import { createPublicClient, erc20Abi, http, parseUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { checkOnrampStatus, getOnrampUrl } from './onramp';
-import type { SendUserOperationReturnType } from '@coinbase/cdp-sdk/_types/actions/evm/sendUserOperation';
+
 import { dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
@@ -20,6 +20,8 @@ export const cdp = new CdpClient({
   apiKeySecret: env.CDP_API_KEY_SECRET,
   walletSecret: env.CDP_WALLET_SECRET,
 });
+
+type SendUserOperationReturnType = AsyncReturnType<typeof cdp.evm.sendUserOperation>;
 
 // Initialize the public client
 // This is used to wait for the transaction receipt

@@ -32,18 +32,22 @@ export function stringToNumber<I extends z.ZodNumber>(schema?: I) {
 
 export function stringToNumberArray<I extends z.ZodArray<z.ZodNumber>>(schema?: I) {
   // return stringToNumber().array()
-  return z.preprocess(
-    (arr: string | number | string[] | number[], ctx) =>
-      (Array.isArray(arr) ? arr : [arr]).map((val) => {
-        if (typeof val === 'string') {
-          const parsed = Number(val);
-          if (isNaN(parsed)) ctx.addIssue(`'${val}' cannot be converted to a number`);
-          return parsed;
-        }
-        return val;
-      }),
-    schema ?? z.number().array()
-  );
+  return z.preprocess((arr: string | number | string[] | number[], ctx) => {
+    let fromString = arr;
+    if (typeof arr === 'string') {
+      try {
+        fromString = JSON.parse(arr);
+      } catch {}
+    }
+    return (Array.isArray(fromString) ? fromString : [fromString]).map((val) => {
+      if (typeof val === 'string') {
+        const parsed = Number(val);
+        if (isNaN(parsed)) ctx.addIssue(`'${val}' cannot be converted to a number`);
+        return parsed;
+      }
+      return val;
+    });
+  }, schema ?? z.number().array());
 }
 
 export function stringToDate<I extends z.ZodDate>(schema?: I) {

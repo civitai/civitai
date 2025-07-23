@@ -334,11 +334,13 @@ export async function updateByTipaltiAccount({
   ) {
     await createNotification({
       userId: userPaymentConfig.userId,
-      type: 'creators-program-rejected-stripe',
+      type: 'creators-program-rejected-tipalti',
       category: NotificationCategory.System,
-      key: `creators-program-rejected-stripe:${uuid()}`,
+      key: `creators-program-rejected-tipalti:${uuid()}`,
       details: {},
-    }).catch();
+    }).catch(() => {
+      log({ method: 'createNotification', userId: userPaymentConfig.userId });
+    });
   }
 
   return updated;

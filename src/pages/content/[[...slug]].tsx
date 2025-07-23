@@ -1,4 +1,4 @@
-import { Container, Title, TypographyStylesProvider } from '@mantine/core';
+import { Container, Title } from '@mantine/core';
 import fs from 'fs';
 import matter from 'gray-matter';
 import { truncate } from 'lodash-es';
@@ -61,8 +61,8 @@ export const getServerSideProps = createServerSideProps({
       const { data: frontmatter, content } = matter(fileName);
       return {
         props: {
-          title: frontmatter.title,
-          description: frontmatter.description,
+          title: frontmatter.title as string | null,
+          description: frontmatter.description as string | null,
           content,
         },
       };
@@ -80,9 +80,13 @@ export default function ContentPage({
   return (
     <>
       <Meta
-        title={`${title} | Civitai`}
+        title={title ? `${title} | Civitai` : undefined}
         description={description ?? truncate(removeTags(content), { length: 150 })}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/content/${title}`, rel: 'canonical' }]}
+        links={
+          env.NEXT_PUBLIC_BASE_URL && title
+            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/content/${title}`, rel: 'canonical' }]
+            : undefined
+        }
       />
       <Container size="md" pt="sm">
         <Title order={1} mb="sm">

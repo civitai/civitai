@@ -69,6 +69,7 @@ export const deliverAnnualSubscriptionBuzz = createJob(
             AND jsonb_typeof(pr.metadata->'level') != 'undefined'
             AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
             AND (pdl.metadata->>'level')::int <= (pr.metadata->>'level')::int
+            AND pdl.provider = pr.provider
         WHERE EXTRACT(day from NOW()) = EXTRACT(day from "currentPeriodStart")
           AND "createdAt" <= NOW() - INTERVAL '1 month'
           AND status = 'active'

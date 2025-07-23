@@ -128,7 +128,7 @@ export default function UserMembership() {
         title: 'Whoops!',
         error:
           error instanceof Error
-            ? { message: error.message }
+            ? error
             : { message: 'An error occurred while refreshing your subscription' },
         reason:
           error instanceof Error

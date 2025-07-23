@@ -22,6 +22,7 @@ export const deliverPurchasedCosmetics = createJob(
               AND jsonb_typeof(pd.metadata->'level') != 'undefined'
               AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
               AND (pdl.metadata->>'level')::int <= (pd.metadata->>'level')::int
+              AND pdl.provider = pd.provider
           WHERE p."createdAt" >= ${lastDelivered}
         )
         INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")

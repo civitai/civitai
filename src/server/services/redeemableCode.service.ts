@@ -375,6 +375,7 @@ export async function consumeRedeemableCode({
 
           await deliverMonthlyCosmetics({
             userIds: [userId],
+            tx,
           });
         });
       }
@@ -387,20 +388,22 @@ export async function consumeRedeemableCode({
     }
   );
 
-  await invalidateSession(userId);
-  await getMultipliersForUser(userId, true);
-  await setVaultFromSubscription({
-    userId,
-  });
-
-  const consumedProductMetadata = consumedCode.price?.product
-    .metadata as SubscriptionProductMetadata;
-
-  if (consumedProductMetadata) {
-    await updateServiceTier({
+  if (consumedCode.type === RedeemableCodeType.Membership) {
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
+    await setVaultFromSubscription({
       userId,
-      serviceTier: consumedProductMetadata.tier ?? null,
     });
+
+    const consumedProductMetadata = consumedCode.price?.product
+      .metadata as SubscriptionProductMetadata;
+
+    if (consumedProductMetadata) {
+      await updateServiceTier({
+        userId,
+        serviceTier: consumedProductMetadata.tier ?? null,
+      });
+    }
   }
 
   return consumedCode;
