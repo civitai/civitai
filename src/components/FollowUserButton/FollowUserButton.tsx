@@ -54,6 +54,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
     async onSettled() {
       await queryUtils.user.getFollowingUsers.invalidate();
       await queryUtils.user.getLists.invalidate();
+      await queryUtils.user.getList.invalidate();
     },
   });
   const handleFollowClick: MouseEventHandler<HTMLButtonElement> = (e) => {
