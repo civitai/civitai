@@ -12,13 +12,15 @@ function cleanBadJson(str: string) {
 
 export const swarmUIMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => {
-    if (!exif.generationDetails) return false;
-    if (!exif.generationDetails.includes('sui_image_params')) return false;
+    const params = exif.generationDetails ?? exif.parameters;
+    if (!params) return false;
+    if (!params.includes('sui_image_params')) return false;
 
     return true;
   },
   parse: (exif) => {
-    const generationDetails = JSON.parse(cleanBadJson(exif.generationDetails as string))
+    const params = exif.generationDetails ?? exif.parameters;
+    const generationDetails = JSON.parse(cleanBadJson(params as string))
       ?.sui_image_params as Record<string, any>;
     setGlobalValue('nodeJson', generationDetails);
 
