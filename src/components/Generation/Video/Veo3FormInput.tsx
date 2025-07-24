@@ -58,7 +58,7 @@ export function Veo3FormInput() {
             aspect="video"
           >
             {(previewItems) => (
-              <div className="mx-auto max-w-80">
+              <div className="mx-auto w-full max-w-80">
                 {previewItems.map((item, i) => (
                   <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
                 ))}
