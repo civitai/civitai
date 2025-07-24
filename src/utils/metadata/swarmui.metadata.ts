@@ -2,6 +2,8 @@ import { samplerMap } from '~/server/common/constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
+import { removeEmpty } from '~/utils/object-helpers';
+import { numericStringArray } from '~/utils/zod-helpers';
 
 function cleanBadJson(str: string) {
   return str
@@ -24,7 +26,7 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
       ?.sui_image_params as Record<string, any>;
     setGlobalValue('nodeJson', generationDetails);
 
-    const metadata: Record<string, any> = {
+    const metadata: Record<string, any> = removeEmpty({
       prompt: generationDetails.prompt,
       negativePrompt: generationDetails.negativeprompt,
       cfgScale: generationDetails.cfgscale,
@@ -36,7 +38,8 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
       scheduler: generationDetails.scheduler,
       version: generationDetails.swarmVersion,
       Model: generationDetails.model,
-    };
+      resources: getResources(generationDetails),
+    });
 
     a1111Compatability(metadata);
 
@@ -72,4 +75,17 @@ function a1111Compatability(metadata: ImageMetaProps) {
   }
   if (!a1111sampler) a1111sampler = findKeyForValue(samplerMap, samplerName);
   if (a1111sampler) metadata.sampler = a1111sampler;
+}
+
+function getResources(generationDetails: Record<string, any>) {
+  const resources: { name: string; weight?: number; type: string }[] = [];
+  if (generationDetails.model) resources.push({ type: 'model', name: generationDetails.model });
+  try {
+    const loras: string[] = generationDetails.loras ?? [];
+    const weights = numericStringArray().parse(generationDetails.loraweights ?? []);
+
+    resources.push(...loras.map((name, i) => ({ name, type: 'lora', weight: weights[i] })));
+  } catch {}
+
+  return resources;
 }
