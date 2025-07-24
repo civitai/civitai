@@ -1,7 +1,6 @@
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
-  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -62,8 +61,9 @@ import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { DEFAULT_EDGE_IMAGE_WIDTH, nsfwRestrictedBaseModels } from '~/server/common/constants';
-import { BlockedReason, NsfwLevel } from '~/server/common/enums';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { BlockedReason } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
@@ -77,14 +77,14 @@ import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
-import { isValidAIGeneration } from '~/utils/image-utils';
+import { isValidAIGeneration, hasImageLicenseViolation } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
-import { VotableTagModel } from '~/libs/tags';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -115,7 +115,7 @@ type State = {
   isAddingResource: boolean;
   toggleHidePrompt: () => void;
   addResource: (modelVersionId: number) => void;
-  nsfwLicenseViolation: ReturnType<typeof hasNsfwLicenseViolation>;
+  nsfwLicenseViolation: ReturnType<typeof hasImageLicenseViolation>;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -167,35 +167,6 @@ const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
   return type === MediaType.video || !isMadeOnSite(meta);
 };
 
-// Check if image violates NSFW license restrictions
-const hasNsfwLicenseViolation = (image: PostEditImageDetail) => {
-  const { nsfwLevel, resourceHelper } = image;
-
-  // Check if image has X or XXX NSFW level
-  const hasRestrictedNsfwLevel = nsfwLevel === NsfwLevel.X || nsfwLevel === NsfwLevel.XXX;
-  if (!hasRestrictedNsfwLevel) return { violation: false };
-
-  // Check if any resources use restricted base models
-  const restrictedResources = resourceHelper.filter(
-    (resource) =>
-      resource.modelVersionBaseModel &&
-      nsfwRestrictedBaseModels.includes(resource.modelVersionBaseModel as any)
-  );
-
-  if (restrictedResources.length > 0) {
-    return {
-      violation: true,
-      nsfwLevel,
-      restrictedResources: restrictedResources.map((r) => ({
-        modelName: r.modelName,
-        baseModel: r.modelVersionBaseModel,
-      })),
-    };
-  }
-
-  return { violation: false };
-};
-
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
@@ -221,7 +192,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   }, [image.resourceHelper]);
 
   const nsfwLicenseViolation = useMemo(() => {
-    return hasNsfwLicenseViolation(storedImage);
+    return hasImageLicenseViolation(storedImage);
   }, [storedImage.nsfwLevel, storedImage.resourceHelper]);
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
@@ -1206,7 +1177,13 @@ function NsfwLicenseViolationAlert() {
   if (!nsfwLicenseViolation.violation) return null;
 
   const { restrictedResources, nsfwLevel } = nsfwLicenseViolation;
-  const nsfwLevelName = nsfwLevel === NsfwLevel.X ? 'X-rated' : 'XXX-rated';
+
+  // Get human-readable NSFW level name
+  const getNsfwLevelName = (level: NsfwLevel) => {
+    return browsingLevelLabels[level] || 'Unknown';
+  };
+
+  const currentLevelName = getNsfwLevelName(nsfwLevel ?? 0);
 
   return (
     <Alert
@@ -1218,8 +1195,7 @@ function NsfwLicenseViolationAlert() {
         NSFW License Restriction Notice
       </Text>
       <Text size="sm">
-        This {nsfwLevelName} image uses models with restricted licenses that do not permit{' '}
-        {nsfwLevelName} content:
+        This {currentLevelName} image uses models with licenses that restrict this content level:
       </Text>
       <ul className="ml-4 list-disc">
         {restrictedResources?.map((resource, index) => (
@@ -1233,10 +1209,16 @@ function NsfwLicenseViolationAlert() {
                 ({resource.baseModel})
               </Text>
             )}
+            {resource.restrictedLevels && resource.restrictedLevels.length > 0 && (
+              <Text span size="xs" c="dimmed">
+                {' '}
+                - Restricts: {resource.restrictedLevels.map(getNsfwLevelName).join(', ')}
+              </Text>
+            )}
           </li>
         ))}
       </ul>
-      <Text size="sm" c="dimmed">
+      <Text size="sm">
         Consider using alternative models or adjusting the content rating to comply with license
         terms.
       </Text>

@@ -616,67 +616,61 @@ type LicenseDetails = {
   name: string;
   notice?: string;
   poweredBy?: string;
-  altName?: string;
+  restrictedNsfwLevels?: NsfwLevel[];
 };
 export const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
     url: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
     name: 'CreativeML Open RAIL-M',
-    altName: 'openrail',
   },
   'sdxl 0.9': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL0.9',
     name: 'SDXL 0.9 research license',
-    altName: 'sdxl 0.9',
   },
   'openrail++': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL1.0',
     name: 'CreativeML Open RAIL++-M',
-    altName: 'openrail++',
   },
   'sdxl turbo': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
     name: 'Stability AI Non-Commercial Research Community License',
-    altName: 'sdxl turbo',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   svd: {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
     name: 'Stable Video Diffusion Non-Commercial Research Community License',
-    altName: 'svd',
     notice:
       'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'playground v2': {
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
     name: 'Playground v2 Community License',
-    altName: 'playground v2',
   },
   agpl: {
     url: 'https://github.com/PixArt-alpha/PixArt-alpha/blob/master/LICENSE',
     name: 'agpl-3.0',
-    altName: 'agpl',
   },
   'SAI NC RC': {
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
     name: 'SAI NC RC',
-    altName: 'SAI NC RC',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'SAI CLA': {
     url: '',
     name: 'Stability AI Community License Agreement',
-    altName: 'SAI CLA',
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
     name: 'Tencent Hunyuan Community License Agreement',
-    altName: 'hunyuan community',
   },
   'hunyuan video': {
     url: 'https://huggingface.co/tencent/HunyuanVideo/blob/main/LICENSE',
@@ -684,17 +678,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of “Tencent Hunyuan” are owned by Tencent or its affiliate.',
     poweredBy: 'Powered by Tencent Hunyuan',
-    altName: 'hunyuan video',
   },
   'kolors license': {
     url: 'https://raw.githubusercontent.com/Kwai-Kolors/Kolors/master/MODEL_LICENSE',
     name: 'Kolors License',
-    altName: 'kolors license',
   },
   'apache 2.0': {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md',
     name: 'Apache 2.0',
-    altName: 'apache 2.0',
   },
   flux1D: {
     url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
@@ -703,42 +694,34 @@ export const baseLicenses: Record<string, LicenseDetails> = {
       'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
-    altName: 'flux1D',
   },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
     name: 'Illustrious License',
-    altName: 'illustrious license',
   },
   'ltxv license': {
     url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/License.txt',
     name: 'LTX Video License',
-    altName: 'ltxv license',
   },
   'cogvideox license': {
     url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
     name: 'CogVideoX License',
-    altName: 'cogvideox license',
   },
   noobAi: {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
     name: 'NoobAI License',
-    altName: 'noobAi',
   },
   mit: {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
     name: 'MIT',
-    altName: 'mit',
   },
   openai: {
     url: 'https://openai.com/policies/',
     name: 'OpenAI',
-    altName: 'openai',
   },
   imagen4: {
     url: 'https://deepmind.google/about/responsibility-safety/',
     name: 'Imagen4',
-    altName: 'imagen4',
   },
 };
 
@@ -799,27 +782,25 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
 
-// Licenses that restrict NSFW content
-const nsfwRestrictedLicenses = ['sdxl turbo', 'svd', 'SAI NC RC', 'SAI CLA'] as const;
-type NSFWRestrictedLicense = (typeof nsfwRestrictedLicenses)[number];
-
-// Base models that use restricted licenses (automatically exclude NSFW content)
+// Base models that use licenses with NSFW restrictions
 export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
   .filter(
     ([, license]) =>
-      license && nsfwRestrictedLicenses.includes(license.altName as NSFWRestrictedLicense)
+      license && license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0
   )
   .map(([baseModel]) => baseModel as BaseModel);
 
-// Helper function to check if a base model has license restrictions for NSFW content
-export function isBaseModelNSFWRestricted(baseModel: string): boolean {
-  return nsfwRestrictedBaseModels.includes(baseModel as BaseModel);
+export function getRestrictedNsfwLevelsForBaseModel(baseModel: string): NsfwLevel[] {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  return license?.restrictedNsfwLevels || [];
 }
 
-// Helper function to get license name for a base model
-export function getLicenseForBaseModel(baseModel: string): string | undefined {
-  const license = baseModelLicenses[baseModel as BaseModel];
-  return license?.name;
+export function isNsfwLevelRestrictedForBaseModel(
+  baseModel: string,
+  nsfwLevel: NsfwLevel
+): boolean {
+  const restrictedLevels = getRestrictedNsfwLevelsForBaseModel(baseModel);
+  return restrictedLevels.includes(nsfwLevel);
 }
 
 export const samplerMap = new Map<Sampler, string[]>([

@@ -5,6 +5,37 @@ import { TagType } from '~/shared/utils/prisma/enums';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, encodeMetadata } from '~/utils/metadata';
 import { createExifSegmentFromTags } from '~/utils/encoding-helpers';
+import {
+  isNsfwLevelRestrictedForBaseModel,
+  getRestrictedNsfwLevelsForBaseModel,
+} from '~/server/common/constants';
+import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
+
+export function hasImageLicenseViolation(image: {
+  nsfwLevel: number;
+  resourceHelper: ImageResourceHelper[];
+}) {
+  const { nsfwLevel, resourceHelper } = image;
+
+  const restrictedResources = resourceHelper.filter((resource) => {
+    if (!resource.modelVersionBaseModel) return false;
+    return isNsfwLevelRestrictedForBaseModel(resource.modelVersionBaseModel, nsfwLevel);
+  });
+
+  if (restrictedResources.length > 0) {
+    return {
+      violation: true,
+      nsfwLevel,
+      restrictedResources: restrictedResources.map((r) => ({
+        modelName: r.modelName,
+        baseModel: r.modelVersionBaseModel,
+        restrictedLevels: getRestrictedNsfwLevelsForBaseModel(r.modelVersionBaseModel || ''),
+      })),
+    };
+  }
+
+  return { violation: false };
+}
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
