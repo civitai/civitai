@@ -297,11 +297,11 @@ export const UserProfileLink = ({
 }) => {
   if (!user || !linkToProfile || !!user.deletedAt || !user.username) return <>{children}</>;
 
-  let href = `/user/${user.username}`;
-  if (!user.username && user.id) href += `?id=${user.id}`;
-
   return (
-    <Link href={href} onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}>
+    <Link
+      href={`/user/${user.username}`}
+      onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+    >
       {children}
     </Link>
   );
