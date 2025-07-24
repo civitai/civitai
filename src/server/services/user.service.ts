@@ -39,6 +39,7 @@ import type {
   GetAllUsersInput,
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
+  GetUserListSchema,
   ToggleBanUser,
   ToggleUserBountyEngagementsInput,
   UpdateContentSettingsInput,
@@ -56,7 +57,7 @@ import {
   usersSearchIndex,
 } from '~/server/search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
@@ -68,7 +69,11 @@ import {
 } from '~/server/services/paddle.service';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
-import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenModels,
+} from '~/server/services/user-preferences.service';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
@@ -77,6 +82,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key-generator';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
@@ -91,6 +97,7 @@ import {
   CollectionType,
   CosmeticSource,
   ModelStatus,
+  UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -580,6 +587,69 @@ export const toggleHideUser = async ({
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
   await userFollowsCache.bust(userId);
   return true;
+};
+
+export const getUserList = async ({ username, type, limit, page }: GetUserListSchema) => {
+  const user = await getUserByUsername({ username, select: { id: true } });
+  if (!user) throw throwNotFoundError(`No user with username ${username}`);
+
+  const { take = DEFAULT_PAGE_SIZE, skip = 0 } = getPagination(limit, page);
+  const filteredUsers = [-1, user.id]; // Exclude civitai user and the user themselves
+
+  if (type === 'blocked') {
+    // For blocked users, we need to use the cache since it's stored differently
+    const allBlocked = await BlockedUsers.getCached({ userId: user.id });
+    const items = allBlocked.slice(skip, skip + take);
+
+    return getPagingData({ items, count: allBlocked.length }, limit, page);
+  }
+
+  // For all other types, use userEngagement table with transaction
+  const isFollowing = type === 'following';
+  const isHidden = type === 'hidden';
+
+  if (isFollowing || isHidden) {
+    const whereClause = {
+      userId: user.id,
+      type: isHidden ? UserEngagementType.Hide : UserEngagementType.Follow,
+      targetUserId: { notIn: filteredUsers },
+    };
+
+    const [items, count] = await dbRead.$transaction([
+      dbRead.userEngagement.findMany({
+        where: whereClause,
+        select: { targetUser: { select: simpleUserSelect } },
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+      }),
+      dbRead.userEngagement.count({ where: whereClause }),
+    ]);
+
+    const users = items.map((item) => item.targetUser);
+    return getPagingData({ items: users, count }, limit, page);
+  } else {
+    // For followers
+    const whereClause = {
+      targetUserId: user.id,
+      type: UserEngagementType.Follow,
+      userId: { notIn: filteredUsers },
+    };
+
+    const [items, count] = await dbRead.$transaction([
+      dbRead.userEngagement.findMany({
+        where: whereClause,
+        select: { user: { select: simpleUserSelect } },
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+      }),
+      dbRead.userEngagement.count({ where: whereClause }),
+    ]);
+
+    const users = items.map((item) => item.user);
+    return getPagingData({ items: users, count }, limit, page);
+  }
 };
 
 export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
