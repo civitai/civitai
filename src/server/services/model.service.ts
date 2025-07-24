@@ -1457,6 +1457,7 @@ export const upsertModel = async (
     const hasRestrictedBaseModel = modelVersions.some((version) =>
       nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
     );
+
     if (hasRestrictedBaseModel) {
       throw throwBadRequestError(
         `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
@@ -1465,6 +1466,7 @@ export const upsertModel = async (
       );
     }
   }
+
   if (!id || templateId) {
     const result = await dbWrite.model.create({
       select: { id: true, nsfwLevel: true, meta: true, availability: true },
@@ -1748,6 +1750,7 @@ export const publishModelById = async ({
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
           nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
         );
+
         if (hasRestrictedBaseModel) {
           throw throwBadRequestError(
             `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(

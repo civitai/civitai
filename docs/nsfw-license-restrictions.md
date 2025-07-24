@@ -55,6 +55,14 @@ NOT (m."nsfw" = true AND EXISTS (
 ))
 ```
 
+- Validates during model creation/publishing to prevent NSFW models with restricted base models
+
+**Model Version Service**: Validates during version creation and publishing:
+
+- `upsertModelVersion()`: Checks if creating/updating a version with restricted base model for NSFW model
+- `publishModelVersionById()`: Validates before publishing individual versions
+- `publishModelVersionsWithEarlyAccess()`: Validates before publishing versions with early access
+
 **Image Service**: Filters images in `getAllImages()` using similar SQL logic to exclude R/X/XXX images linked to restricted models.
 
 ### Frontend Implementation
