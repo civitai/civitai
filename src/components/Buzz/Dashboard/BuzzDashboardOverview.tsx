@@ -28,6 +28,7 @@ import { Bar } from 'react-chartjs-2';
 import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/useBuzz';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
+import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
@@ -148,7 +149,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
             <Stack gap="xl" h="100%">
               <Stack gap={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
-                <Group>
+                <Group mb="sm">
                   <UserBuzz
                     accountId={accountId}
                     textSize="xl"
@@ -217,6 +218,16 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                     </Popover.Dropdown>
                   </Popover>
                 </Group>
+
+                {/* Top Up Card - Show when buzz is low */}
+                <BuzzTopUpCard
+                  accountId={accountId}
+                  variant="banner"
+                  message="Need more Buzz?"
+                  showBalance={false}
+                  btnLabel="Top up"
+                />
+
                 <SegmentedControl
                   value={reportFilters.window}
                   onChange={(v) =>

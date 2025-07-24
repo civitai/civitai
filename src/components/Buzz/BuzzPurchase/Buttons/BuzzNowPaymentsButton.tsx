@@ -1,6 +1,5 @@
-import { Anchor, Button, Stack, Text } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { Button, Stack, Text } from '@mantine/core';
+import { IconCoinBitcoin } from '@tabler/icons-react';
 import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
 import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
@@ -42,9 +41,13 @@ export const BuzzNowPaymentsButton = ({
         disabled={disabled || isLoading}
         loading={creatingPaymentInvoice}
         onClick={handleClick}
-        radius="xl"
+        size="md"
+        radius="md"
+        variant="light"
+        color="yellow"
+        leftSection={<IconCoinBitcoin size={16} />}
+        fw={500}
         fullWidth
-        color="grape"
       >
         Pay with Crypto{' '}
         {!!unitAmount

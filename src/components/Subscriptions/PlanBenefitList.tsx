@@ -50,26 +50,27 @@ export const PlanBenefitList = ({
         }
       >
         <Stack gap="xs">
-          {benefits.map(({ content, icon, iconColor, iconVariant }, index) => (
-            <List.Item
-              key={index}
-              icon={
-                !icon ? undefined : (
-                  <ThemeIcon
-                    color={iconColor ?? 'teal'}
-                    size={themeIconSize}
-                    radius="xl"
-                    variant={iconVariant}
-                    autoContrast
-                  >
-                    {icon}
-                  </ThemeIcon>
-                )
-              }
-            >
-              {content}
-            </List.Item>
-          ))}
+          {benefits.map(({ content, icon, iconColor, iconVariant }, index) =>
+            content ? (
+              <List.Item
+                key={index}
+                icon={
+                  !icon ? undefined : (
+                    <ThemeIcon
+                      color={iconColor ?? 'teal'}
+                      size={themeIconSize}
+                      radius="xl"
+                      variant={iconVariant}
+                    >
+                      {icon}
+                    </ThemeIcon>
+                  )
+                }
+              >
+                {content}
+              </List.Item>
+            ) : null
+          )}
         </Stack>
       </List>
       {useDefaultBenefits && (
@@ -88,6 +89,7 @@ export const PlanBenefitList = ({
                         variant="light"
                         size={themeIconSize}
                         radius="xl"
+                        autoContrast
                       >
                         {isUnavailable ? (
                           <IconCircleX size={benefitIconSize} />

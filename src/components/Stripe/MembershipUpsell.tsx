@@ -1,5 +1,4 @@
 import {
-  Paper,
   Text,
   Stack,
   Group,
@@ -8,9 +7,12 @@ import {
   Badge,
   Loader,
   Center,
+  Card,
+  Title,
+  ThemeIcon,
   Box,
 } from '@mantine/core';
-import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
+import { IconCheck, IconDiamond, IconStar } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -26,7 +28,13 @@ import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrev
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import classes from './MembershipUpsell.module.scss';
 
-export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
+export const MembershipUpsell = ({
+  buzzAmount,
+  onClick,
+}: {
+  buzzAmount: number;
+  onClick?: () => void;
+}) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
@@ -38,11 +46,16 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
 
   if (productsLoading || subscriptionLoading || !currentUser) {
     return (
-      <Paper className={classes.card}>
-        <Center w="100%">
-          <Loader type="bars" />
+      <Card className={classes.membershipCard} padding="lg" radius="md">
+        <Center w="100%" h={200}>
+          <Stack align="center" gap="xs">
+            <Loader type="bars" size="md" color="violet.6" />
+            <Text size="sm" c="dimmed">
+              Loading membership options...
+            </Text>
+          </Stack>
         </Center>
-      </Paper>
+      </Card>
     );
   }
 
@@ -74,78 +87,134 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   const { image, benefits } = planMeta;
 
   const targetTier = metadata.tier ?? 'free';
-  // const monthlyBuzz = metadata.monthlyBuzz ?? 0;
   const unitAmount = targetPlan.price.unitAmount ?? 0;
   const priceId = targetPlan.defaultPriceId ?? '';
 
   return (
-    <Paper className={classes.card}>
-      <Stack h="100%" w="100%">
-        <Badge variant="light" size="lg" color="green" ml="auto" mb={-36} px={8}>
-          <Group gap={4}>
-            <IconDiscountCheck size={18} />
-            <Text tt="uppercase">Get More</Text>
-          </Group>
-        </Badge>
-        {image && (
-          <Box w={80}>
-            <EdgeMedia src={image} />
-          </Box>
-        )}
-        <Stack gap={0}>
-          <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
-          <Text className={`${classes.subtitle} text-buzz`}>
-            {subscription ? 'Upgrade to get even more perks:' : 'Get more with a membership:'}
-          </Text>
-        </Stack>
-        <Stack gap={4}>
-          {benefits.map((benefit, index) => (
-            <Group gap="xs" key={index} wrap="nowrap">
-              <IconCheck size={18} />
-              <Text key={index} className={classes.listItem} c="dimmed">
-                {benefit.content}
+    <Card className={classes.membershipCard} padding="md" radius="md">
+      <Stack gap="sm">
+        {/* Header with badge */}
+        <Group justify="space-between" align="flex-start">
+          <Badge variant="light" size="md" color="grape" className={classes.badge}>
+            <Group gap={4}>
+              <IconStar size={16} fill="currentColor" />
+              <Text tt="uppercase" fw={600} size="xs">
+                Pro
               </Text>
             </Group>
-          ))}
+          </Badge>
+
+          {image && (
+            <Box className={classes.imageWrapper}>
+              <EdgeMedia src={image} width={50} />
+            </Box>
+          )}
+        </Group>
+
+        {/* Title and icon */}
+        <Group gap="sm" align="center">
+          <ThemeIcon size={40} radius="xl" className={classes.tierIcon}>
+            <IconDiamond size={20} />
+          </ThemeIcon>
+          <div>
+            <Title order={3} className={classes.title} size="md">
+              {capitalize(targetTier)} Membership
+            </Title>
+            <Text className={classes.subtitle} size="xs" c="dimmed">
+              {subscription ? 'Upgrade to unlock more:' : 'Get more with membership:'}
+            </Text>
+          </div>
+        </Group>
+
+        {/* Benefits - Compact list */}
+        <Stack gap="xs">
+          {benefits.slice(0, 3).map((benefit, index) =>
+            benefit.content ? (
+              <Group gap="xs" key={index} wrap="nowrap" align="flex-start">
+                <ThemeIcon size={16} radius="xl" color="grape" variant="light">
+                  <IconCheck size={10} />
+                </ThemeIcon>
+                <Text className={classes.benefitText} size="xs">
+                  {benefit.content}
+                </Text>
+              </Group>
+            ) : null
+          )}
+          {benefits.length > 3 && (
+            <Text size="xs" c="dimmed" ta="center">
+              + {benefits.length - 3} more benefits
+            </Text>
+          )}
         </Stack>
-        <div>
+
+        {/* CTA Section - Compact */}
+        <Stack gap="xs" mt="sm">
+          <Group justify="center" gap={4} align="baseline">
+            <Text size="lg" fw={700} className={classes.price}>
+              ${formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
+            </Text>
+            <Text size="xs" c="dimmed">
+              /month
+            </Text>
+          </Group>
+
           {subscription ? (
             <Button
-              radius="xl"
-              size="md"
-              mt="sm"
-              disabled={features.disablePayments}
-              onClick={() => {
-                dialogStore.trigger({
-                  component: MembershipUpgradeModal,
-                  props: {
-                    priceId,
-                    meta: planMeta,
-                    price: {
-                      id: priceId,
-                      interval: 'month', // All our default plans are monthly
-                    },
-                  },
-                });
-              }}
+              className={classes.upgradeButton}
+              size="sm"
+              radius="md"
+              fullWidth
+              component={features.disablePayments ? 'a' : undefined}
+              href={features.disablePayments ? '/pricing' : undefined}
+              onClick={
+                features.disablePayments
+                  ? onClick
+                  : () => {
+                      onClick?.();
+                      dialogStore.trigger({
+                        component: MembershipUpgradeModal,
+                        props: {
+                          priceId,
+                          meta: planMeta,
+                          price: {
+                            id: priceId,
+                            interval: 'month',
+                          },
+                        },
+                      });
+                    }
+              }
             >
-              Upgrade - ${formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
-              /Month
+              Upgrade Now
+            </Button>
+          ) : features.disablePayments ? (
+            <Button
+              href="/pricing"
+              className={classes.upgradeButton}
+              size="sm"
+              radius="md"
+              fullWidth
+              component="a"
+              onClick={onClick}
+            >
+              Get {capitalize(targetTier)}
             </Button>
           ) : (
             <SubscribeButton priceId={priceId} disabled={features.disablePayments}>
-              <Button radius="xl" size="md" mt="sm">
-                Get {capitalize(targetTier)} - $
-                {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
-                /Month
+              <Button className={classes.upgradeButton} size="sm" radius="md" fullWidth>
+                Get {capitalize(targetTier)}
               </Button>
             </SubscribeButton>
           )}
-        </div>
-        <Text mt="auto" size="sm">
-          Cancel for free anytime. <Anchor href="/pricing">Learn more</Anchor>
-        </Text>
+
+          <Text size="xs" c="dimmed" ta="center">
+            Cancel anytime •{' '}
+            <Anchor href="/pricing" size="xs">
+              Learn more
+            </Anchor>
+          </Text>
+        </Stack>
       </Stack>
-    </Paper>
+    </Card>
   );
 };

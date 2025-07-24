@@ -109,7 +109,6 @@ export function SelectMenuV2<T extends string | number>({
           onClose={() => setOpened(false)}
           classNames={{
             root: classes.root,
-            content: classes.content,
             header: classes.header,
             body: classes.body,
             close: classes.close,

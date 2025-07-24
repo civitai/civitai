@@ -7,6 +7,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchaseImproved';
 
 export type BuyBuzzModalProps = {
   message?: string;
@@ -36,7 +37,7 @@ export default function BuyBuzzModal({
       {...dialog}
       id="buyBuzz"
       withCloseButton={false}
-      size="xl"
+      size="xxl"
       radius="lg"
       fullScreen={isMobile}
     >
@@ -67,7 +68,7 @@ export default function BuyBuzzModal({
         />
         <Divider mx="-lg" />
         <Group>
-          <BuzzPurchase
+          <BuzzPurchaseImproved
             message={message}
             onPurchaseSuccess={() => {
               dialog.onClose();
@@ -76,7 +77,7 @@ export default function BuyBuzzModal({
             minBuzzAmount={minBuzzAmount}
             purchaseSuccessMessage={purchaseSuccessMessage}
             onCancel={handleClose}
-            initialBuzzType={initialBuzzType}
+            // initialBuzzType={initialBuzzType}
           />
         </Group>
       </Stack>

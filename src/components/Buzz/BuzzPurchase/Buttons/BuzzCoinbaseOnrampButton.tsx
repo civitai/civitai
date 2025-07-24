@@ -1,4 +1,4 @@
-import { Button, Group, Stack } from '@mantine/core';
+import { Button, Stack } from '@mantine/core';
 import { IconCreditCard, IconCreditCardFilled, IconMoodSad } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
@@ -95,22 +95,17 @@ export const BuzzCoinbaseOnrampButton = ({
         disabled={disabled || checkingHealth}
         loading={creatingBuzzOrderOnramp}
         onClick={handleClick}
-        radius="xl"
+        size="md"
+        radius="md"
+        variant="light"
+        color="yellow"
+        leftSection={
+          type === 'default' ? <IconCreditCardFilled size={16} /> : <IconCreditCard size={16} />
+        }
+        fw={500}
         fullWidth
       >
-        <Group gap="xs" wrap="nowrap">
-          {type === 'default' ? (
-            <>
-              <IconCreditCardFilled size={20} />
-              <span>Debit Card (US Only)</span>
-            </>
-          ) : (
-            <>
-              <IconCreditCard size={20} />
-              <span>Credit Card (International, Coinbase)</span>
-            </>
-          )}
-        </Group>
+        {type === 'default' ? 'Debit Card (US Only)' : 'Credit Card (International, Coinbase)'}
       </Button>
     </Stack>
   );
