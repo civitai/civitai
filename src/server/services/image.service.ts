@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from 'dayjs';
-import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
+import { chunk, join, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
@@ -1188,10 +1188,7 @@ export const getAllImages = async (
         JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" 
         WHERE irn."imageId" = i.id 
           AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
-          AND mv."baseModel" IN (${Prisma.join(
-            nsfwRestrictedBaseModels.map((baseModel) => Prisma.sql`${baseModel}`),
-            ','
-          )})
+          AND mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels)})
       )
     `);
   }
@@ -1860,9 +1857,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (nsfwRestrictedBaseModels.length > 0) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
-    // More efficient approach: exclude images that have BOTH restricted NSFW levels AND restricted base models
-    // This is equivalent to: NOT (nsfwLevel IN [R,X,XXX] AND baseModel IN [restricted])
-    // Which becomes: (nsfwLevel NOT IN [R,X,XXX] OR baseModel NOT IN [restricted])
+    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
     filters.push(
       `NOT (${nsfwLevelField} IN [${nsfwBrowsingLevelsArray.join(
         ','

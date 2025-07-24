@@ -1170,6 +1170,11 @@ function PostImage() {
   );
 }
 
+// Get human-readable NSFW level name
+const getNsfwLevelName = (level: NsfwLevel) => {
+  return browsingLevelLabels[level] || 'Unknown';
+};
+
 function NsfwLicenseViolationAlert() {
   const { nsfwLicenseViolation } = useAddedImageContext();
   const { showPreview } = usePostPreviewContext();
@@ -1177,12 +1182,6 @@ function NsfwLicenseViolationAlert() {
   if (!nsfwLicenseViolation.violation) return null;
 
   const { restrictedResources, nsfwLevel } = nsfwLicenseViolation;
-
-  // Get human-readable NSFW level name
-  const getNsfwLevelName = (level: NsfwLevel) => {
-    return browsingLevelLabels[level] || 'Unknown';
-  };
-
   const currentLevelName = getNsfwLevelName(nsfwLevel ?? 0);
 
   return (
