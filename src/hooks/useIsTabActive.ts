@@ -46,34 +46,46 @@ class BroadcastChannelPolyfill {
     if (type === 'message') {
       this.listeners.add(listener);
 
-      // Listen for storage events (cross-tab communication mechanism)
-      // Storage events are fired when localStorage is modified in other tabs
-      const storageListener = (e: StorageEvent) => {
-        if (e.key?.startsWith(`bc_${this.name}_`) && e.newValue) {
-          try {
-            const message = JSON.parse(e.newValue);
-            if (message.type === 'broadcast_channel_polyfill' && message.channel === this.name) {
-              // Create a MessageEvent to match the native BroadcastChannel API
-              const event = new MessageEvent('message', { data: message.data });
-              listener(event);
-            }
-          } catch (error) {
-            // Ignore parsing errors from corrupted localStorage data
-          }
-        }
-      };
+      // Only set up storage listener if one doesn't already exist
+      if (!this.storageListener) {
+        // Listen for storage events (cross-tab communication mechanism)
+        // Storage events are fired when localStorage is modified in other tabs
+        const storageListener = (e: StorageEvent) => {
+          if (e.key?.startsWith(`bc_${this.name}_`) && e.newValue) {
+            try {
+              const message = JSON.parse(e.newValue);
+              if (message.type === 'broadcast_channel_polyfill' && message.channel === this.name) {
+                // Create a MessageEvent to match the native BroadcastChannel API
+                const event = new MessageEvent('message', { data: message.data });
 
-      window.addEventListener('storage', storageListener);
-      this.storageListener = storageListener;
+                // Notify all listeners
+                this.listeners.forEach((listener) => listener(event));
+              }
+            } catch (error) {
+              // Ignore parsing errors from corrupted localStorage data
+            }
+          }
+        };
+
+        window.addEventListener('storage', storageListener);
+        this.storageListener = storageListener;
+      }
     }
   }
 
   /**
    * Remove event listener for messages
+   * Properly cleans up both internal listeners and window storage listeners
    */
   removeEventListener(type: string, listener: (event: MessageEvent) => void) {
     if (type === 'message') {
       this.listeners.delete(listener);
+
+      // If no more listeners, remove the storage event listener to prevent memory leaks
+      if (this.listeners.size === 0 && this.storageListener) {
+        window.removeEventListener('storage', this.storageListener);
+        this.storageListener = undefined;
+      }
     }
   }
 
@@ -84,24 +96,48 @@ class BroadcastChannelPolyfill {
     this.listeners.clear();
     if (this.storageListener) {
       window.removeEventListener('storage', this.storageListener);
+      this.storageListener = undefined;
     }
   }
 
   /**
    * Remove old messages from localStorage to prevent memory bloat
+   * Optimized to only scan keys that match our channel pattern
    * Messages older than 5 seconds are automatically cleaned up
    */
   private cleanupOldMessages() {
     const now = Date.now();
-    const keys = Object.keys(localStorage);
+    const channelPrefix = `bc_${this.name}_`;
 
-    keys.forEach((key) => {
-      if (key.startsWith(`bc_${this.name}_`)) {
-        const timestamp = parseInt(key.split('_').pop() || '0');
+    // More efficient approach: only get keys that start with our channel prefix
+    // This avoids scanning all localStorage keys
+    const keysToCheck: string[] = [];
+
+    // Iterate through localStorage more efficiently
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(channelPrefix)) {
+        keysToCheck.push(key);
+      }
+    }
+
+    // Process only the relevant keys
+    keysToCheck.forEach((key) => {
+      // Extract timestamp from key format: bc_{channelName}_{timestamp}
+      const timestampStr = key.substring(channelPrefix.length);
+
+      // Validate that the timestamp is a valid number
+      const timestamp = parseInt(timestampStr, 10);
+
+      // Check if parsing was successful and timestamp is reasonable
+      if (!isNaN(timestamp) && timestamp > 0 && timestamp <= now) {
         // Remove messages older than 5 seconds
         if (now - timestamp > 5000) {
           localStorage.removeItem(key);
         }
+      } else {
+        // Remove malformed keys that don't match expected format
+        localStorage.removeItem(key);
       }
     });
   }
