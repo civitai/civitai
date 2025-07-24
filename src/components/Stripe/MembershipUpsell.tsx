@@ -28,7 +28,13 @@ import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrev
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import classes from './MembershipUpsell.module.scss';
 
-export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
+export const MembershipUpsell = ({
+  buzzAmount,
+  onClick,
+}: {
+  buzzAmount: number;
+  onClick?: () => void;
+}) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
@@ -158,11 +164,13 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               size="sm"
               radius="md"
               fullWidth
-              href={features.disablePayments ? undefined : '/settings/membership'}
+              component={features.disablePayments ? 'a' : undefined}
+              href={features.disablePayments ? '/pricing' : undefined}
               onClick={
                 features.disablePayments
-                  ? undefined
+                  ? onClick
                   : () => {
+                      onClick?.();
                       dialogStore.trigger({
                         component: MembershipUpgradeModal,
                         props: {
@@ -186,6 +194,8 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
               size="sm"
               radius="md"
               fullWidth
+              component="a"
+              onClick={onClick}
             >
               Get {capitalize(targetTier)}
             </Button>

@@ -918,7 +918,14 @@ export const BuzzPurchaseImproved = ({
             <Stack>
               <BuzzFeatures title="What can you do with Buzz?" variant="card" compact />
               {canUpgradeMembership && (
-                <MembershipUpsell buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount ?? 0} />
+                <MembershipUpsell
+                  onClick={() => {
+                    if (features.disablePayments) {
+                      onCancel?.();
+                    }
+                  }}
+                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount ?? 0}
+                />
               )}
             </Stack>
           </Grid.Col>
