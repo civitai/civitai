@@ -9,6 +9,7 @@ import nsfwWordsSoft from './lists/words-nsfw-soft.json';
 import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
 import poiWords from './lists/words-poi.json';
 import youngWords from './lists/words-young.json';
+import { harmfulCombinations } from './lists/harmful-combinations';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
@@ -385,13 +386,40 @@ export function includesMinor(prompt: string | undefined, negativePrompt?: strin
   );
 }
 
+function includesHarmfulCombinations(prompt: string): 'minor' | 'poi' | false {
+  if (!prompt) return false;
+
+  const normalizedPrompt = normalizeText(prompt);
+
+  for (const combination of harmfulCombinations) {
+    if (combination.pattern.test(normalizedPrompt)) {
+      return combination.type;
+    }
+  }
+
+  return false;
+}
+
 export function includesInappropriate(
   input: { prompt?: string; negativePrompt?: string },
   nsfw?: boolean
 ) {
   if (!input.prompt) return false;
   input.prompt = input.prompt.replace(/'|\.|\-/g, '');
+
+  const harmfulCombo = includesHarmfulCombinations(input.prompt);
+  if (harmfulCombo) return harmfulCombo;
+
   if (!nsfw && !includesNsfw(input.prompt)) return false;
+
+  // Check for harmful combinations first
+
+  // Also check negative prompt for harmful combinations
+  if (input.negativePrompt) {
+    const negativeHarmfulCombo = includesHarmfulCombinations(input.negativePrompt);
+    if (negativeHarmfulCombo) return negativeHarmfulCombo;
+  }
+
   if (includesPoi(input.prompt)) return 'poi';
   if (includesMinor(input.prompt, input.negativePrompt)) return 'minor';
   return false;

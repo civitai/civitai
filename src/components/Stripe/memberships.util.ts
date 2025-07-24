@@ -43,6 +43,10 @@ export const useCanUpgrade = () => {
   );
   const features = useFeatureFlags();
 
+  if (!features.prepaidMemberships && features.disablePayments) {
+    return false;
+  }
+
   if (!currentUser || subscriptionLoading || productsLoading || !features.membershipsV2) {
     return false;
   }
