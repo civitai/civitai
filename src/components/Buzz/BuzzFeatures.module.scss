@@ -1,0 +1,138 @@
+/* Buzz Features Card - Compact Modern Design */
+.featuresCard {
+  background: light-dark(
+    linear-gradient(135deg, 
+      rgba(var(--mantine-color-yellow-0-rgb), 0.8) 0%, 
+      rgba(var(--mantine-color-orange-0-rgb), 0.4) 30%,
+      rgba(var(--mantine-color-white-rgb), 0.95) 60%,
+      var(--mantine-color-white) 100%
+    ),
+    linear-gradient(135deg, 
+      var(--mantine-color-yellow-0) 0%, 
+      rgba(var(--mantine-color-yellow-1-rgb), 0.4) 30%,
+      rgba(var(--mantine-color-dark-6-rgb), 0.98) 70%,
+      var(--mantine-color-dark-6) 100%
+    )
+  );
+  border: 2px solid var(--mantine-color-yellow-4);
+  box-shadow: 0 1px 8px rgba(251, 191, 36, 0.12);
+  position: relative;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 12px rgba(251, 191, 36, 0.18);
+  }
+  
+  @media (max-width: theme('screens.xs')) {
+    padding: 12px !important;
+  }
+}
+
+/* List wrapper for non-card variant */
+.listWrapper {
+  padding: var(--mantine-spacing-sm);
+}
+
+/* Header section */
+.header {
+  margin-bottom: var(--mantine-spacing-sm);
+}
+
+.headerIcon {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-yellow-6) 0%, 
+    var(--mantine-color-orange-7) 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.35);
+  
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(135deg, 
+      var(--mantine-color-yellow-5) 0%, 
+      var(--mantine-color-orange-6) 100%);
+    color: white;
+  }
+  
+  /* Ensure icon is visible */
+  svg {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+  }
+}
+
+.title {
+  font-weight: 700;
+  background: linear-gradient(135deg, 
+    var(--mantine-color-yellow-9) 0%, 
+    var(--mantine-color-orange-9) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 1px;
+  
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(135deg, 
+      var(--mantine-color-yellow-3) 0%, 
+      var(--mantine-color-orange-2) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+.subtitle {
+  font-weight: 500;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-4));
+  line-height: 1.1;
+}
+
+/* Feature list styling */
+.featureList {
+  gap: var(--mantine-spacing-xs);
+}
+
+.featureItem {
+  transition: all 0.2s ease;
+  padding: var(--mantine-spacing-xs);
+  border-radius: var(--mantine-radius-sm);
+  
+  &:hover {
+    background: light-dark(
+      rgba(var(--mantine-color-yellow-1-rgb), 0.3),
+      rgba(var(--mantine-color-yellow-8-rgb), 0.12)
+    );
+    transform: translateX(3px);
+  }
+}
+
+.featureIcon {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-yellow-5) 0%, 
+    var(--mantine-color-orange-6) 100%);
+  color: white;
+  box-shadow: 0 2px 6px rgba(251, 191, 36, 0.35);
+  flex-shrink: 0;
+  border-radius: 50%;
+  
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(135deg, 
+      var(--mantine-color-yellow-4) 0%, 
+      var(--mantine-color-orange-5) 100%);
+    color: white;
+  }
+  
+  /* Make icons visible but clean */
+  svg {
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
+  }
+}
+
+.featureText {
+  color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-2));
+  line-height: 1.4;
+  font-weight: 500;
+  
+  /* Add subtle animation on hover */
+  .featureItem:hover & {
+    color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-white));
+  }
+}
