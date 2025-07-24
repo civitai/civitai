@@ -1217,7 +1217,7 @@ export const changeModelModifierHandler = async ({
 
     const model = await getModel({ id, select: { id: true, meta: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
-    if (mode && model.mode === mode) throw throwBadRequestError(`Model is already ${mode}`);
+    if (model.mode === mode) throw throwBadRequestError(`Model is already ${mode}`);
     // If removing mode, but model is taken down, only moderators can do it
     if (model.mode === ModelModifier.TakenDown && mode === null && !ctx.user.isModerator)
       throw throwAuthorizationError();
