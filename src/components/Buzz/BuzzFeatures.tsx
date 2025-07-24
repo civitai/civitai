@@ -8,6 +8,7 @@ import classes from './BuzzFeatures.module.scss';
 interface BuzzFeaturesProps {
   /** Custom title for the features section */
   title?: string;
+  subtitle?: string;
   /** Whether to show as a card or just the list */
   variant?: 'card' | 'list';
   /** Custom features list - defaults to BUZZ_FEATURE_LIST */
@@ -20,6 +21,7 @@ interface BuzzFeaturesProps {
 
 export const BuzzFeatures = ({
   title = 'Buzz Benefits',
+  subtitle = '',
   variant = 'card',
   features = BUZZ_FEATURE_LIST,
   showHeader = true,
@@ -36,9 +38,11 @@ export const BuzzFeatures = ({
             <Title order={compact ? 4 : 3} className={classes.title} size={compact ? 'md' : 'lg'}>
               {title}
             </Title>
-            <Text size={compact ? 'xs' : 'sm'} c="dimmed" className={classes.subtitle}>
-              Everything you can do with Buzz
-            </Text>
+            {subtitle && (
+              <Text size={compact ? 'xs' : 'sm'} c="dimmed" className={classes.subtitle}>
+                Everything you can do with Buzz
+              </Text>
+            )}
           </div>
         </Group>
       )}

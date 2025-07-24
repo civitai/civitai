@@ -309,7 +309,7 @@ export const BuzzPurchaseImproved = ({
   return (
     <div className={classes.wrapper}>
       <Grid>
-        <Grid.Col span={{ base: 12, md: canUpgradeMembership ? 8 : 12 }}>
+        <Grid.Col span={{ base: 12, md: isLoading ? 12 : 8 }}>
           <Stack gap="md">
             {message && (
               <Card className={classes.messageCard} padding="md" radius="md">
@@ -431,7 +431,11 @@ export const BuzzPurchaseImproved = ({
                               {/* Absolute positioned popular badge */}
                               <Stack align="center" gap="xs">
                                 <div>
-                                  <BuzzTierIcon tier={index + 1} size="sm" />
+                                  <BuzzTierIcon
+                                    tier={index + 1}
+                                    totalPackages={packages.length}
+                                    size="sm"
+                                  />
                                 </div>
 
                                 <div className="text-center">
@@ -926,27 +930,48 @@ export const BuzzPurchaseImproved = ({
 
 interface BuzzTierIconProps {
   tier: number;
+  totalPackages?: number;
   size?: 'sm' | 'md' | 'lg';
 }
 
 const iconSizeMap = {
-  sm: [16, 20, 24],
-  md: [20, 26, 32],
-  lg: [24, 32, 40],
+  sm: [14, 16, 18, 20],
+  md: [18, 20, 22, 24],
+  lg: [22, 24, 26, 28],
 };
 
-const BuzzTierIcon = ({ tier, size = 'md' }: BuzzTierIconProps) => {
+const BuzzTierIcon = ({ tier, totalPackages = 3, size = 'md' }: BuzzTierIconProps) => {
   const sizes = iconSizeMap[size];
+
+  // Calculate how many bolts to show based on tier and total packages
+  let maxBolts;
+  let numBolts;
+
+  if (totalPackages <= 4) {
+    // For 4 or fewer packages, show that many bolt positions and use tier directly
+    maxBolts = totalPackages;
+    numBolts = tier;
+  } else {
+    // For more than 4 packages, cap at 4 bolts and distribute evenly
+    maxBolts = 4;
+    const ratio = tier / totalPackages;
+    if (ratio <= 0.25) numBolts = 1;
+    else if (ratio <= 0.5) numBolts = 2;
+    else if (ratio <= 0.75) numBolts = 3;
+    else numBolts = 4;
+  }
+
+  const activeBolts = Math.min(numBolts, maxBolts);
 
   return (
     <Group gap={-4} wrap="nowrap">
-      {Array.from({ length: 3 }).map((_, i) => (
+      {Array.from({ length: maxBolts }).map((_, i) => (
         <IconBolt
           key={i}
-          size={sizes[i]}
-          color={i < tier ? 'var(--mantine-color-yellow-6)' : 'currentColor'}
-          fill={i < tier ? 'var(--mantine-color-yellow-6)' : 'currentColor'}
-          opacity={i < tier ? 1 : 0.3}
+          size={sizes[i] || sizes[sizes.length - 1]} // Use last size if we run out
+          color={i < activeBolts ? 'var(--mantine-color-yellow-6)' : 'currentColor'}
+          fill={i < activeBolts ? 'var(--mantine-color-yellow-6)' : 'currentColor'}
+          opacity={i < activeBolts ? 1 : 0.3}
         />
       ))}
     </Group>
