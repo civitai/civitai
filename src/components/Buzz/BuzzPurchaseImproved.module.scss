@@ -5,6 +5,11 @@
   padding: var(--mantine-spacing-sm);
   width: 100%;
   
+  // Global buzz text color class
+  :global(.text-buzz) {
+    color: rgb(var(--buzz-color)) !important;
+  }
+  
   // Mobile improvements for better readability
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs);
@@ -53,10 +58,10 @@
 /* Gift Card Promo - Clean and Eye-catching */
 .giftCardPromo {
   background: linear-gradient(135deg, 
-    var(--mantine-color-yellow-4) 0%, 
-    var(--mantine-color-orange-5) 100%);
-  border: 2px solid var(--mantine-color-yellow-3);
-  box-shadow: 0 4px 20px rgba(251, 191, 36, 0.25);
+    rgb(var(--buzz-color)) 0%, 
+    rgba(var(--buzz-color), 0.8) 100%);
+  border: 2px solid rgb(var(--buzz-color));
+  box-shadow: 0 4px 20px rgba(var(--buzz-color), 0.25);
   
   @media (max-width: theme('screens.md')) {
     padding: var(--mantine-spacing-md) !important;
@@ -130,13 +135,13 @@
 }
 
 .giftIcon {
-  color: var(--mantine-color-orange-6);
+  color: rgb(var(--buzz-color));
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
 }
 
 .giftCardCta {
   background: white;
-  color: var(--mantine-color-orange-7) !important;
+  color: rgb(var(--buzz-color)) !important;
   text-decoration: none !important;
   font-weight: 600;
   padding: var(--mantine-spacing-xs) var(--mantine-spacing-md);
@@ -176,9 +181,13 @@
 
 /* Header section */
 .headerCard {
-  background: linear-gradient(135deg, var(--mantine-color-yellow-5) 0%, var(--mantine-color-orange-6) 100%);
-  border: none;
+  background: var(--buzz-gradient);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   color: white;
+  box-shadow: 
+    0 4px 20px rgba(var(--buzz-color), 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   
   .title {
     color: white;
@@ -214,21 +223,21 @@
 .packageCard {
   position: relative;
   background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
-  border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+  border: 1px solid light-dark(rgba(var(--buzz-color), 0.3), rgba(var(--buzz-color), 0.6));
   cursor: pointer;
   transition: all 0.2s ease;
   min-height: 140px;
 
   &:hover {
-    border-color: light-dark(var(--mantine-color-yellow-4), var(--mantine-color-yellow-5));
+    border-color: light-dark(rgba(var(--buzz-color), 0.6), rgba(var(--buzz-color), 0.8));
     transform: translateY(-2px);
-    box-shadow: light-dark(0 4px 12px rgba(251, 191, 36, 0.15), 0 4px 12px rgba(251, 191, 36, 0.3));
+    box-shadow: light-dark(0 4px 12px rgba(var(--buzz-color), 0.15), 0 4px 12px rgba(var(--buzz-color), 0.3));
   }
 
   &.selected {
-    border-color: var(--mantine-color-yellow-4);
-    background: linear-gradient(135deg, var(--mantine-color-yellow-1) 0%, var(--mantine-color-yellow-4) 1%, light-dark(var(--mantine-color-white), var(--mantine-color-dark-7)) 1%);
-    box-shadow: 0 0 0 2px var(--mantine-color-yellow-4), light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
+    border-color: rgb(var(--buzz-color));
+    background: linear-gradient(135deg, rgba(var(--buzz-color), 0.1) 0%, rgba(var(--buzz-color), 0.3) 1%, light-dark(var(--mantine-color-white), var(--mantine-color-dark-7)) 1%);
+    box-shadow: 0 0 0 2px rgb(var(--buzz-color)), light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
   }
 
   &.packageCardDisabled {
@@ -237,7 +246,7 @@
     
     &:hover {
       transform: none;
-      border-color: light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+      border-color: light-dark(rgba(var(--buzz-color), 0.3), rgba(var(--buzz-color), 0.6));
     }
   }
 
@@ -247,7 +256,7 @@
 }
 
 .packageBuzzAmount {
-  color: var(--mantine-color-yellow-6);
+  color: rgb(var(--buzz-color));
   font-weight: 700;
 }
 
@@ -257,10 +266,13 @@
 }
 
 .bonusBadge {
-  background: linear-gradient(135deg, var(--mantine-color-yellow-5) 0%, var(--mantine-color-orange-6) 100%);
+  background: var(--buzz-gradient);
   color: white;
   font-weight: 600;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 
+    0 2px 8px rgba(var(--buzz-color), 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .popularBadge {
@@ -274,10 +286,10 @@
 /* Custom amount accordion */
 .customAmountCard {
   background: light-dark(
-    linear-gradient(135deg, var(--mantine-color-yellow-0) 0%, var(--mantine-color-white) 100%),
+    linear-gradient(135deg, rgba(var(--buzz-color), 0.05) 0%, var(--mantine-color-white) 100%),
     linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
   );
-  border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+  border: 1px solid light-dark(rgba(var(--buzz-color), 0.2), rgba(var(--buzz-color), 0.6));
 }
 
 .customAmountAccordion {
@@ -300,7 +312,7 @@
     linear-gradient(135deg, var(--mantine-color-gray-0) 0%, var(--mantine-color-white) 100%),
     linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
   );
-  border: 1px solid light-dark(var(--mantine-color-yellow-1), var(--mantine-color-yellow-6));
+  border: 1px solid light-dark(rgba(var(--buzz-color), 0.2), rgba(var(--buzz-color), 0.6));
   
   // Mobile improvements
   @media (max-width: theme('screens.xs')) {
@@ -324,8 +336,11 @@
 }
 
 .bonusBreakdown {
-  background: light-dark(var(--mantine-color-yellow-0), var(--mantine-color-dark-8));
-  border: none;
+  background: light-dark(
+    linear-gradient(135deg, rgba(var(--buzz-color), 0.08) 0%, rgba(var(--buzz-color), 0.02) 100%),
+    linear-gradient(135deg, var(--mantine-color-dark-8) 0%, var(--mantine-color-dark-7) 100%)
+  );
+  border: 1px solid light-dark(rgba(var(--buzz-color), 0.15), rgba(var(--buzz-color), 0.3));
 
   // Mobile improvements
   @container (max-width: theme('screens.md')) {
@@ -432,20 +447,20 @@
 }
 
 .membershipBenefitsCard {
-  background: linear-gradient(135deg, var(--mantine-color-yellow-0) 0%, var(--mantine-color-yellow-1) 100%);
-  border: 1px solid var(--mantine-color-yellow-3);
+  background: linear-gradient(135deg, rgba(var(--buzz-color), 0.05) 0%, rgba(var(--buzz-color), 0.1) 100%);
+  border: 1px solid rgba(var(--buzz-color), 0.3);
 
   @media (prefers-color-scheme: dark) {
     background: linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%);
-    border: 1px solid var(--mantine-color-yellow-9);
+    border: 1px solid rgba(var(--buzz-color), 0.6);
   }
 }
 
 .benefitsTitle {
-  color: var(--mantine-color-yellow-7);
+  color: rgb(var(--buzz-color));
 
   @media (prefers-color-scheme: dark) {
-    color: var(--mantine-color-yellow-4);
+    color: rgb(var(--buzz-color));
   }
 }
 
@@ -466,12 +481,12 @@
 }
 
 .totalAmount {
-  color: var(--mantine-color-yellow-6);
+  color: rgb(var(--buzz-color));
 }
 
 /* Links */
 .giftCardLink {
-  color: var(--mantine-color-yellow-6);
+  color: rgb(var(--buzz-color));
   text-decoration: none;
   
   &:hover {
@@ -480,7 +495,7 @@
 }
 
 .cryptoLink {
-  color: var(--mantine-color-yellow-6);
+  color: rgb(var(--buzz-color));
   text-decoration: none;
   
   &:hover {
@@ -495,7 +510,7 @@
 
 /* Selection prompt for when no package/amount is selected */
 .selectionPrompt {
-  background: light-dark(var(--mantine-color-yellow-0), var(--mantine-color-dark-7));
+  background: light-dark(rgba(var(--buzz-color), 0.05), var(--mantine-color-dark-7));
 }
 
 /* Bulk benefits styling */

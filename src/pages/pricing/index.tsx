@@ -48,6 +48,7 @@ import classes from './index.module.scss';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PromoBanner } from '~/components/Buzz/PromoBanner';
 
 export default function Pricing() {
   const router = useRouter();
@@ -174,36 +175,15 @@ export default function Pricing() {
           )}
           {features.disablePayments && features.prepaidMemberships && (
             <Center>
-              <Card padding="md" radius="md" className={classes.prepaidCard}>
-                <Group align="flex-start" gap="md" wrap="nowrap">
-                  <div className={classes.prepaidIconWrapper}>
-                    <IconInfoCircle size={24} color="var(--mantine-color-orange-6)" />
-                  </div>
-                  <div className={classes.prepaidContent}>
-                    <Text size="lg" fw={700} className={classes.prepaidTitle}>
-                      Prepaid Memberships Available!
-                    </Text>
-                    <Text size="sm" className={classes.prepaidDescription}>
-                      Regular membership purchases are temporarily disabled, but you can still
+              <PromoBanner
+                icon={<IconInfoCircle size={24} />}
+                title="Prepaid Memberships Available!"
+                subtitle="Regular membership purchases are temporarily disabled, but you can still
                       purchase prepaid memberships! Prepaid memberships give you all the same
-                      benefits and can be stacked up!
-                    </Text>
-                    <Group gap="sm" wrap="nowrap">
-                      <Anchor
-                        target="_blank"
-                        href="https://buybuzz.io/collections/memberships"
-                        rel="noopener noreferrer"
-                        className={classes.prepaidButton}
-                      >
-                        <Text size="sm" fw={600}>
-                          Purchase Now
-                        </Text>
-                        <IconExternalLink size={16} />
-                      </Anchor>
-                    </Group>
-                  </div>
-                </Group>
-              </Card>
+                      benefits and can be stacked up!"
+                buyNowHref="https://buybuzz.io/collections/memberships"
+                buyNowText="Purchase Now!"
+              />
             </Center>
           )}
           {(features.nowpaymentPayments ||

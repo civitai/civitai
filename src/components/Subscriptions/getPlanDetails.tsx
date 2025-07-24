@@ -43,9 +43,7 @@ export const getPlanDetails: (
         iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text>
-            <Text span className={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : `text-buzz`}>
-              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz per month
-            </Text>
+            <Text span>{numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz per month</Text>
           </Text>
         ),
       },
@@ -80,7 +78,7 @@ export const getPlanDetails: (
                 </Text>
               ) : (
                 <Text>
-                  <Text span className="text-buzz">
+                  <Text span>
                     {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
                     purchases
                   </Text>
@@ -100,7 +98,7 @@ export const getPlanDetails: (
                 </Text>
               ) : (
                 <Text>
-                  <Text span className="text-buzz">
+                  <Text span>
                     Rewards give {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
                     Buzz!
                   </Text>

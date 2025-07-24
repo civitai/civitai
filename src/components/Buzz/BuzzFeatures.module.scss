@@ -2,26 +2,27 @@
 .featuresCard {
   background: light-dark(
     linear-gradient(135deg, 
-      rgba(var(--mantine-color-yellow-0-rgb), 0.8) 0%, 
-      rgba(var(--mantine-color-orange-0-rgb), 0.4) 30%,
-      rgba(var(--mantine-color-white-rgb), 0.95) 60%,
+      rgba(var(--buzz-color), 0.08) 0%, 
+      rgba(var(--buzz-color), 0.04) 30%,
+      rgba(255, 255, 255, 0.95) 60%,
       var(--mantine-color-white) 100%
     ),
     linear-gradient(135deg, 
-      var(--mantine-color-yellow-0) 0%, 
-      rgba(var(--mantine-color-yellow-1-rgb), 0.4) 30%,
+      rgba(var(--buzz-color), 0.12) 0%, 
+      rgba(var(--buzz-color), 0.06) 30%,
       rgba(var(--mantine-color-dark-6-rgb), 0.98) 70%,
       var(--mantine-color-dark-6) 100%
     )
   );
-  border: 2px solid var(--mantine-color-yellow-4);
-  box-shadow: 0 1px 8px rgba(251, 191, 36, 0.12);
+  border: 2px solid rgba(var(--buzz-color), 0.3);
+  box-shadow: 0 4px 12px rgba(var(--buzz-color), 0.12);
   position: relative;
   transition: all 0.2s ease;
   
   &:hover {
     transform: translateY(-1px);
-    box-shadow: 0 2px 12px rgba(251, 191, 36, 0.18);
+    box-shadow: 0 6px 20px rgba(var(--buzz-color), 0.18);
+    border-color: rgba(var(--buzz-color), 0.5);
   }
   
   @media (max-width: theme('screens.xs')) {
@@ -40,18 +41,9 @@
 }
 
 .headerIcon {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-yellow-6) 0%, 
-    var(--mantine-color-orange-7) 100%);
+  background: var(--buzz-gradient);
   color: white;
-  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.35);
-  
-  @media (prefers-color-scheme: dark) {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-yellow-5) 0%, 
-      var(--mantine-color-orange-6) 100%);
-    color: white;
-  }
+  box-shadow: 0 2px 8px rgba(var(--buzz-color), 0.35);
   
   /* Ensure icon is visible */
   svg {
@@ -61,22 +53,11 @@
 
 .title {
   font-weight: 700;
-  background: linear-gradient(135deg, 
-    var(--mantine-color-yellow-9) 0%, 
-    var(--mantine-color-orange-9) 100%);
+  background: var(--buzz-gradient);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 1px;
-  
-  @media (prefers-color-scheme: dark) {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-yellow-3) 0%, 
-      var(--mantine-color-orange-2) 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
 }
 
 .subtitle {
@@ -96,29 +77,17 @@
   border-radius: var(--mantine-radius-sm);
   
   &:hover {
-    background: light-dark(
-      rgba(var(--mantine-color-yellow-1-rgb), 0.3),
-      rgba(var(--mantine-color-yellow-8-rgb), 0.12)
-    );
+    background: rgba(var(--buzz-color), 0.08);
     transform: translateX(3px);
   }
 }
 
 .featureIcon {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-yellow-5) 0%, 
-    var(--mantine-color-orange-6) 100%);
+  background: var(--buzz-gradient);
   color: white;
-  box-shadow: 0 2px 6px rgba(251, 191, 36, 0.35);
+  box-shadow: 0 2px 6px rgba(var(--buzz-color), 0.35);
   flex-shrink: 0;
   border-radius: 50%;
-  
-  @media (prefers-color-scheme: dark) {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-yellow-4) 0%, 
-      var(--mantine-color-orange-5) 100%);
-    color: white;
-  }
   
   /* Make icons visible but clean */
   svg {

@@ -51,6 +51,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
 import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseOnrampButton';
+import { BuzzEmerchantPayButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzEmerchantPayButton';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -58,6 +59,14 @@ import classes from '~/components/Buzz/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
+import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
+import { env } from '~/env/client';
+import { QS } from '~/utils/qs';
+import { PromoBanner } from '~/components/Buzz/PromoBanner';
+import { capitalize } from '~/utils/string-helpers';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -67,6 +76,7 @@ export type BuzzPurchaseImprovedProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   onCancel?: () => void;
+  initialBuzzType?: PurchasableBuzzType;
 };
 
 const BuzzPurchasePaymentButton = ({
@@ -76,11 +86,13 @@ const BuzzPurchasePaymentButton = ({
   onPurchaseSuccess,
   purchaseSuccessMessage,
   disabled,
+  buzzConfig,
 }: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
   onValidate: () => boolean;
+  buzzConfig: ReturnType<typeof useBuzzCurrencyConfig>;
 }) => {
   const features = useFeatureFlags();
   const paymentProvider = usePaymentProvider();
@@ -158,7 +170,7 @@ const BuzzPurchasePaymentButton = ({
       size="md"
       radius="md"
       variant="light"
-      color="yellow"
+      color={buzzConfig.color}
       leftSection={<IconBolt size={18} />}
       fw={500}
     >
@@ -173,7 +185,7 @@ const BuzzPurchasePaymentButton = ({
             Complete Purchase
           </Text>
           {!!unitAmount && (
-            <Badge size="sm" variant="light" color="yellow.8" c="white">
+            <Badge size="sm" variant="light" color={buzzConfig.color} c="white">
               ${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}
             </Badge>
           )}
@@ -184,7 +196,11 @@ const BuzzPurchasePaymentButton = ({
 };
 
 // Separate component for redeemable codes section
-const RedeemableCodesSection = () => {
+const RedeemableCodesSection = ({
+  buzzConfig,
+}: {
+  buzzConfig: ReturnType<typeof useBuzzCurrencyConfig>;
+}) => {
   return (
     <Card padding="md" radius="md" withBorder>
       <Stack gap="sm">
@@ -210,7 +226,7 @@ const RedeemableCodesSection = () => {
           size="sm"
           radius="md"
           variant="light"
-          color="yellow"
+          color={buzzConfig.color}
           leftSection={<IconExternalLink size={16} />}
           fw={500}
           fullWidth
@@ -228,6 +244,7 @@ export const BuzzPurchaseImproved = ({
   minBuzzAmount,
   onCancel,
   purchaseSuccessMessage,
+  initialBuzzType,
 }: BuzzPurchaseImprovedProps) => {
   const features = useFeatureFlags();
   const canUpgradeMembership = useCanUpgrade();
@@ -237,8 +254,12 @@ export const BuzzPurchaseImproved = ({
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
+  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
+    features.isGreen ? 'green' : initialBuzzType
+  );
   const ctaEnabled = !!selectedPrice?.unitAmount || (!!customAmount && customAmount > 0);
 
+  const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
   const { packages = [], isLoading, processing } = useQueryBuzzPackages({});
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
@@ -302,12 +323,57 @@ export const BuzzPurchaseImproved = ({
     }
   }, [packages, minBuzzAmount]);
 
+  useEffect(() => {
+    if (selectedBuzzType === 'green' && !features.isGreen) {
+      // Redirect:
+      const query = {
+        minBuzzAmount: minBuzzAmount,
+        'sync-account': 'blue',
+      };
+
+      window.open(
+        `//${
+          env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN || 'green.civitai.com'
+        }/purchase/buzz?${QS.stringify(query)}`,
+        '_blank',
+        'noreferrer'
+      );
+    }
+  }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
+
   const minBuzzAmountPrice = minBuzzAmount
     ? Math.max(minBuzzAmount / 10, constants.buzz.minChargeAmount)
     : constants.buzz.minChargeAmount;
 
+  // If no buzz type is selected, show selection screen
+  if (!selectedBuzzType) {
+    return <BuzzTypeSelector onSelect={setSelectedBuzzType} onCancel={onCancel} />;
+  }
+
+  if (!features.isGreen && selectedBuzzType === 'green') {
+    return (
+      <GreenEnvironmentRedirect
+        destinationPath="/purchase/buzz"
+        queryParams={{ minBuzzAmount }}
+        title="Redirecting to Green Buzz Purchase"
+        heading="Redirecting to Green Buzz Purchase"
+        description="A new window should open and redirect you to the Green Buzz purchase screen."
+        buttonText="Go to Green Buzz Purchase Page"
+        fullPageLayout={false}
+        onGoBack={() => setSelectedBuzzType(undefined)}
+      />
+    );
+  }
+
   return (
-    <div className={classes.wrapper}>
+    <div
+      className={classes.wrapper}
+      style={{
+        // @ts-ignore
+        '--buzz-color': buzzConfig.colorRgb,
+        '--buzz-gradient': buzzConfig.cssGradient,
+      }}
+    >
       <Grid>
         <Grid.Col span={{ base: 12, md: isLoading ? 12 : 8 }}>
           <Stack gap="md">
@@ -327,51 +393,16 @@ export const BuzzPurchaseImproved = ({
             )}
 
             {liveFeatures.buzzGiftCards && (
-              <Card className={classes.giftCardPromo} padding="md" radius="md">
-                <div className={classes.giftCardBackground}>
-                  <div className={classes.giftCardLayout}>
-                    <Group gap="md" wrap="nowrap" className={classes.giftCardContent}>
-                      <div className={classes.giftIconWrapper}>
-                        <IconGift size={24} className={classes.giftIcon} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <Text size="lg" fw={700} className={classes.giftCardTitle}>
-                          Buzz Gift Cards Available!
-                        </Text>
-                        <Text size="sm" className={classes.giftCardSubtitle}>
-                          Instantly redeemable digital gift-codes!
-                        </Text>
-                      </div>
-                    </Group>
-
-                    <Group gap="xs" wrap="nowrap" className={classes.giftCardButtons}>
-                      <Anchor
-                        href="https://buybuzz.io/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={classes.giftCardCta}
-                      >
-                        <Group gap="xs">
-                          <Text size="sm" fw={600}>
-                            Buy Now
-                          </Text>
-                          <IconExternalLink size={14} />
-                        </Group>
-                      </Anchor>
-                      <Anchor
-                        href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={classes.giftCardLearnMore}
-                      >
-                        <Text size="sm" fw={500}>
-                          Learn More
-                        </Text>
-                      </Anchor>
-                    </Group>
-                  </div>
-                </div>
-              </Card>
+              <PromoBanner
+                icon={<IconGift size={24} />}
+                title="Buzz Gift Cards Available!"
+                subtitle="Instantly redeemable digital gift-codes!"
+                buyNowHref="https://buybuzz.io/"
+                buyNowText="Buy Now"
+                learnMoreHref="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
+                learnMoreText="Learn More"
+                buzzType="user"
+              />
             )}
 
             {isLoading || processing ? (
@@ -442,7 +473,7 @@ export const BuzzPurchaseImproved = ({
                                   <Text size="lg" fw={700} className={classes.packageBuzzAmount}>
                                     {numberWithCommas(buzzAmount)}
                                   </Text>
-                                  <Text size="xs" c="yellow.6" fw={600} mb="xs">
+                                  <Text size="xs" fw={600} mb="xs" className="text-buzz">
                                     Buzz
                                   </Text>
                                   <Text size="xl" fw={800} className={classes.packagePrice}>
@@ -470,7 +501,7 @@ export const BuzzPurchaseImproved = ({
                           <Accordion.Item value="customAmount">
                             <Accordion.Control py="xs">
                               <Group gap="sm" wrap="nowrap">
-                                <ThemeIcon size="sm" variant="light" color="yellow">
+                                <ThemeIcon size="sm" variant="light" color={buzzConfig.color}>
                                   <IconMoodDollar size={16} />
                                 </ThemeIcon>
                                 <div>
@@ -487,7 +518,11 @@ export const BuzzPurchaseImproved = ({
                                     label="Buzz Amount"
                                     placeholder={`Min ${numberWithCommas(minBuzzAmountPrice * 10)}`}
                                     leftSection={
-                                      <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                                      <CurrencyIcon
+                                        currency={Currency.BUZZ}
+                                        size={16}
+                                        type={selectedBuzzType}
+                                      />
                                     }
                                     value={customBuzzAmount}
                                     clampBehavior="blur"
@@ -588,7 +623,11 @@ export const BuzzPurchaseImproved = ({
                                   >
                                     <div>
                                       <Group gap="xs" wrap="nowrap">
-                                        <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                        <CurrencyIcon
+                                          size={16}
+                                          currency={Currency.BUZZ}
+                                          type={selectedBuzzType}
+                                        />
                                         <Text size="sm" fw={600}>
                                           {numberWithCommas(min)}
                                         </Text>
@@ -654,8 +693,12 @@ export const BuzzPurchaseImproved = ({
                                 </Text>
                               </Group>
                               <Group gap="xs">
-                                <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                                <Text size="sm" fw={600} c="yellow.6">
+                                <CurrencyIcon
+                                  currency={Currency.BUZZ}
+                                  size={16}
+                                  type={selectedBuzzType}
+                                />
+                                <Text size="sm" fw={600} className="text-buzz">
                                   {numberWithCommas(buzzCalculation.totalBuzz ?? 0)} Buzz
                                 </Text>
                               </Group>
@@ -666,10 +709,10 @@ export const BuzzPurchaseImproved = ({
                               <Card className={classes.bonusBreakdown} padding="md" radius="sm">
                                 <Stack gap="sm">
                                   <Group gap="sm">
-                                    <ThemeIcon size="sm" variant="light" color="yellow">
+                                    <ThemeIcon size="sm" variant="light" color={buzzConfig.color}>
                                       <IconGift size={16} />
                                     </ThemeIcon>
-                                    <Text size="sm" fw={600} c="yellow.6">
+                                    <Text size="sm" fw={600} className="text-buzz">
                                       Bonus Buzz Included!
                                     </Text>
                                   </Group>
@@ -687,13 +730,17 @@ export const BuzzPurchaseImproved = ({
                                           wrap="nowrap"
                                           className={classes.benefitInfo}
                                         >
-                                          <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                                          <CurrencyIcon
+                                            currency={Currency.BUZZ}
+                                            size={16}
+                                            type={selectedBuzzType}
+                                          />
                                           <div style={{ flex: 1 }}>
-                                            <Text size="sm" fw={500} c="yellow.6">
+                                            <Text size="sm" fw={500} className="text-buzz">
                                               {numberWithCommas(
                                                 buzzAmount + buzzCalculation.yellowBuzzBonus
                                               )}{' '}
-                                              Yellow Buzz
+                                              Buzz
                                             </Text>
                                             <Text size="xs" c="dimmed">
                                               {numberWithCommas(buzzAmount)} base +{' '}
@@ -705,7 +752,7 @@ export const BuzzPurchaseImproved = ({
                                         <Badge
                                           size="sm"
                                           variant="light"
-                                          color="yellow"
+                                          color={buzzConfig.color}
                                           className={classes.benefitBadge}
                                         >
                                           Membership
@@ -765,8 +812,12 @@ export const BuzzPurchaseImproved = ({
                                       Total Buzz Value:
                                     </Text>
                                     <Group gap="xs">
-                                      <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                                      <Text size="sm" fw={700} c="yellow.6">
+                                      <CurrencyIcon
+                                        currency={Currency.BUZZ}
+                                        size={16}
+                                        type={selectedBuzzType}
+                                      />
+                                      <Text size="sm" fw={700} className="text-buzz">
                                         {numberWithCommas(buzzCalculation.totalBuzz ?? 0)}
                                       </Text>
                                     </Group>
@@ -778,11 +829,11 @@ export const BuzzPurchaseImproved = ({
                         ) : (
                           <Card className={classes.selectionPrompt} padding="md" radius="sm">
                             <Stack gap="sm" align="center">
-                              <ThemeIcon size="lg" variant="light" color="yellow">
+                              <ThemeIcon size="lg" variant="light" color={buzzConfig.color}>
                                 <IconInfoCircle size={24} />
                               </ThemeIcon>
                               <div style={{ textAlign: 'center' }}>
-                                <Text size="sm" fw={600} c="yellow.6" mb="xs">
+                                <Text size="sm" fw={600} className="text-buzz" mb="xs">
                                   Ready to Purchase Buzz?
                                 </Text>
                                 <Text size="xs" c="dimmed">
@@ -799,58 +850,79 @@ export const BuzzPurchaseImproved = ({
                       {/* Payment Methods */}
                       <div>
                         <Group gap="sm" wrap="wrap">
-                          {features.coinbasePayments && (
+                          {selectedBuzzType === 'green' ? (
                             <>
-                              {features.coinbaseOnramp && (
-                                <>
-                                  {['default', 'international'].map((type) => (
-                                    <BuzzCoinbaseOnrampButton
-                                      key={type}
-                                      unitAmount={unitAmount}
-                                      buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                                      onPurchaseSuccess={onPurchaseSuccess}
-                                      disabled={!ctaEnabled}
-                                      purchaseSuccessMessage={purchaseSuccessMessage}
-                                      type={type as 'default' | 'international'}
-                                    />
-                                  ))}
-                                </>
+                              {features.emerchantpayPayments && (
+                                <BuzzEmerchantPayButton
+                                  unitAmount={unitAmount}
+                                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                  disabled={!ctaEnabled}
+                                />
                               )}
-                              <BuzzCoinbaseButton
+                              <BuzzPurchasePaymentButton
                                 unitAmount={unitAmount}
                                 buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
                                 onPurchaseSuccess={onPurchaseSuccess}
+                                onValidate={onValidate}
                                 disabled={!ctaEnabled}
                                 purchaseSuccessMessage={purchaseSuccessMessage}
+                                buzzConfig={buzzConfig}
                               />
                             </>
-                          )}
+                          ) : (
+                            <>
+                              {features.emerchantpayPayments && (
+                                <BuzzEmerchantPayButton
+                                  unitAmount={unitAmount}
+                                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                  disabled={!ctaEnabled}
+                                />
+                              )}
+                              {features.coinbasePayments && (
+                                <>
+                                  {features.coinbaseOnramp && (
+                                    <>
+                                      {['default', 'international'].map((type) => (
+                                        <BuzzCoinbaseOnrampButton
+                                          key={type}
+                                          unitAmount={unitAmount}
+                                          buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                          onPurchaseSuccess={onPurchaseSuccess}
+                                          disabled={!ctaEnabled}
+                                          purchaseSuccessMessage={purchaseSuccessMessage}
+                                          type={type as 'default' | 'international'}
+                                        />
+                                      ))}
+                                    </>
+                                  )}
+                                  <BuzzCoinbaseButton
+                                    unitAmount={unitAmount}
+                                    buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                    onPurchaseSuccess={onPurchaseSuccess}
+                                    disabled={!ctaEnabled}
+                                    purchaseSuccessMessage={purchaseSuccessMessage}
+                                  />
+                                </>
+                              )}
 
-                          {features.nowpaymentPayments && (
-                            <BuzzNowPaymentsButton
-                              unitAmount={unitAmount}
-                              buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                              onPurchaseSuccess={onPurchaseSuccess}
-                              disabled={!ctaEnabled}
-                              purchaseSuccessMessage={purchaseSuccessMessage}
-                            />
+                              {features.nowpaymentPayments && (
+                                <BuzzNowPaymentsButton
+                                  unitAmount={unitAmount}
+                                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                  onPurchaseSuccess={onPurchaseSuccess}
+                                  disabled={!ctaEnabled}
+                                  purchaseSuccessMessage={purchaseSuccessMessage}
+                                />
+                              )}
+                            </>
                           )}
-
-                          <BuzzPurchasePaymentButton
-                            unitAmount={unitAmount}
-                            buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                            onPurchaseSuccess={onPurchaseSuccess}
-                            onValidate={onValidate}
-                            disabled={!ctaEnabled}
-                            purchaseSuccessMessage={purchaseSuccessMessage}
-                          />
                         </Group>
                       </div>
 
                       <Divider />
 
                       {/* Alternative Payment Section */}
-                      <RedeemableCodesSection />
+                      <RedeemableCodesSection buzzConfig={buzzConfig} />
 
                       {/* Footer Info */}
                       {(liveFeatures.buzzGiftCards ||
@@ -875,20 +947,21 @@ export const BuzzPurchaseImproved = ({
                               </Text>
                             )}
 
-                            {(features.nowpaymentPayments || features.coinbasePayments) && (
-                              <Text ta="center" size="xs" c="dimmed">
-                                New to crypto?{' '}
-                                <Anchor
-                                  href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  size="xs"
-                                  className={classes.cryptoLink}
-                                >
-                                  Learn how →
-                                </Anchor>
-                              </Text>
-                            )}
+                            {(features.nowpaymentPayments || features.coinbasePayments) &&
+                              selectedBuzzType === 'fakered' && (
+                                <Text ta="center" size="xs" c="dimmed">
+                                  New to crypto?{' '}
+                                  <Anchor
+                                    href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    size="xs"
+                                    className={classes.cryptoLink}
+                                  >
+                                    Learn how →
+                                  </Anchor>
+                                </Text>
+                              )}
 
                             {onCancel && (
                               <Group justify="center">
@@ -916,7 +989,12 @@ export const BuzzPurchaseImproved = ({
         {!isLoading && (
           <Grid.Col span={{ base: 12, md: 4 }}>
             <Stack>
-              <BuzzFeatures title="What can you do with Buzz?" variant="card" compact />
+              <BuzzFeatures
+                title="What can you do with Buzz?"
+                variant="card"
+                compact
+                buzzType={selectedBuzzType}
+              />
               {canUpgradeMembership && (
                 <MembershipUpsell
                   onClick={() => {
@@ -976,8 +1054,8 @@ const BuzzTierIcon = ({ tier, totalPackages = 3, size = 'md' }: BuzzTierIconProp
         <IconBolt
           key={i}
           size={sizes[i] || sizes[sizes.length - 1]} // Use last size if we run out
-          color={i < activeBolts ? 'var(--mantine-color-yellow-6)' : 'currentColor'}
-          fill={i < activeBolts ? 'var(--mantine-color-yellow-6)' : 'currentColor'}
+          color={i < activeBolts ? 'rgb(var(--buzz-color))' : 'currentColor'}
+          fill={i < activeBolts ? 'rgb(var(--buzz-color))' : 'currentColor'}
           opacity={i < activeBolts ? 1 : 0.3}
         />
       ))}
