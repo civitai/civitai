@@ -31,10 +31,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import {
-  appliesForFounderDiscount,
-  useActiveSubscription,
-} from '~/components/Stripe/memberships.util';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PlanCard } from '~/components/Subscriptions/PlanCard';
@@ -51,6 +48,7 @@ import classes from './index.module.scss';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PromoBanner } from '~/components/Buzz/PromoBanner';
 
 export default function Pricing() {
   const router = useRouter();
@@ -88,7 +86,6 @@ export default function Pricing() {
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
   }) as SubscriptionProductMetadata;
-  const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
   const isCivitaiProvider = subscription && subscriptionPaymentProvider === PaymentProvider.Civitai;
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
@@ -178,36 +175,15 @@ export default function Pricing() {
           )}
           {features.disablePayments && features.prepaidMemberships && (
             <Center>
-              <Card padding="md" radius="md" className={classes.prepaidCard}>
-                <Group align="flex-start" gap="md" wrap="nowrap">
-                  <div className={classes.prepaidIconWrapper}>
-                    <IconInfoCircle size={24} color="var(--mantine-color-orange-6)" />
-                  </div>
-                  <div className={classes.prepaidContent}>
-                    <Text size="lg" fw={700} className={classes.prepaidTitle}>
-                      Prepaid Memberships Available!
-                    </Text>
-                    <Text size="sm" className={classes.prepaidDescription}>
-                      Regular membership purchases are temporarily disabled, but you can still
+              <PromoBanner
+                icon={<IconInfoCircle size={24} />}
+                title="Prepaid Memberships Available!"
+                subtitle="Regular membership purchases are temporarily disabled, but you can still
                       purchase prepaid memberships! Prepaid memberships give you all the same
-                      benefits and can be stacked up!
-                    </Text>
-                    <Group gap="sm" wrap="nowrap">
-                      <Anchor
-                        target="_blank"
-                        href="https://buybuzz.io/collections/memberships"
-                        rel="noopener noreferrer"
-                        className={classes.prepaidButton}
-                      >
-                        <Text size="sm" fw={600}>
-                          Purchase Now
-                        </Text>
-                        <IconExternalLink size={16} />
-                      </Anchor>
-                    </Group>
-                  </div>
-                </Group>
-              </Card>
+                      benefits and can be stacked up!"
+                buyNowHref="https://buybuzz.io/collections/memberships"
+                buyNowText="Purchase Now!"
+              />
             </Center>
           )}
           {(features.nowpaymentPayments ||
@@ -320,23 +296,6 @@ export default function Pricing() {
                 </Text>
               </AlertWithIcon>
             )} */}
-            {appliesForDiscount && (
-              <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
-                <Group gap="xs">
-                  <EdgeMedia src="df2b3298-7352-40d6-9fbc-17a08e2a43c5" width={48} />
-                  <Stack gap={0}>
-                    <Text c="blue" fw="bold">
-                      Supporter Offer!
-                    </Text>
-                    <Text>
-                      Get {constants.memberships.founderDiscount.discountPercent}% off your first
-                      month and get a special badge! Offer ends{' '}
-                      {formatDate(constants.memberships.founderDiscount.maxDiscountDate)}.
-                    </Text>
-                  </Stack>
-                </Group>
-              </Alert>
-            )}
           </Group>
           {(features.annualMemberships || interval === 'year') && (
             <Center>
@@ -422,12 +381,7 @@ export default function Pricing() {
                         />
                       </Center>
                       <Group justify="center" gap={4} align="flex-end" mb={24}>
-                        <Text
-                          className={classes.price}
-                          align="center"
-                          lh={1}
-                          mt={appliesForDiscount ? 'md' : undefined}
-                        >
+                        <Text className={classes.price} align="center" lh={1}>
                           $0
                         </Text>
                       </Group>

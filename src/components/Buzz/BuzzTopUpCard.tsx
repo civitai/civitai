@@ -158,13 +158,13 @@ export function BuzzTopUpCard({
               <Group gap="sm">
                 <UserBuzz
                   accountId={accountId}
-                  accountType="user"
+                  accountTypes={['user']}
                   textSize="sm"
                   withAbbreviation={false}
                 />
                 <UserBuzz
                   accountId={accountId}
-                  accountType="generation"
+                  accountTypes={['generation']}
                   textSize="sm"
                   withAbbreviation={false}
                 />

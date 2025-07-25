@@ -1,6 +1,6 @@
 import { Button, Stack } from '@mantine/core';
 import { IconCoinBitcoin } from '@tabler/icons-react';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
+import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 
 export const BuzzCoinbaseButton = ({

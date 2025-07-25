@@ -3,6 +3,8 @@ import { IconBolt, IconSparkles } from '@tabler/icons-react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
 import classes from './BuzzFeatures.module.scss';
 
 interface BuzzFeaturesProps {
@@ -17,6 +19,8 @@ interface BuzzFeaturesProps {
   showHeader?: boolean;
   /** Compact mode for smaller spaces */
   compact?: boolean;
+  /** Buzz type for theming */
+  buzzType?: PurchasableBuzzType;
 }
 
 export const BuzzFeatures = ({
@@ -26,12 +30,20 @@ export const BuzzFeatures = ({
   features = BUZZ_FEATURE_LIST,
   showHeader = true,
   compact = false,
+  buzzType,
 }: BuzzFeaturesProps) => {
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
+
   const content = (
     <Stack gap={compact ? 'xs' : 'sm'}>
       {showHeader && (
         <Group gap="sm" className={classes.header}>
-          <ThemeIcon size={compact ? 32 : 38} radius="lg" className={classes.headerIcon}>
+          <ThemeIcon
+            size={compact ? 32 : 38}
+            radius="lg"
+            className={classes.headerIcon}
+            color={buzzConfig.color}
+          >
             <IconSparkles size={compact ? 18 : 22} stroke={2.5} />
           </ThemeIcon>
           <div>
@@ -61,6 +73,7 @@ export const BuzzFeatures = ({
               radius="md"
               className={classes.featureIcon}
               variant="filled"
+              color={buzzConfig.color}
             >
               <IconBolt size={compact ? 14 : 16} stroke={2.5} fill="currentColor" />
             </ThemeIcon>
@@ -74,11 +87,31 @@ export const BuzzFeatures = ({
   );
 
   if (variant === 'list') {
-    return <div className={classes.listWrapper}>{content}</div>;
+    return (
+      <div
+        className={classes.listWrapper}
+        style={{
+          // @ts-ignore
+          '--buzz-color': buzzConfig.colorRgb,
+          '--buzz-gradient': buzzConfig.cssGradient,
+        }}
+      >
+        {content}
+      </div>
+    );
   }
 
   return (
-    <Card className={classes.featuresCard} padding={compact ? 'md' : 'lg'} radius="md">
+    <Card
+      className={classes.featuresCard}
+      padding={compact ? 'md' : 'lg'}
+      radius="md"
+      style={{
+        // @ts-ignore
+        '--buzz-color': buzzConfig.colorRgb,
+        '--buzz-gradient': buzzConfig.cssGradient,
+      }}
+    >
       {content}
     </Card>
   );

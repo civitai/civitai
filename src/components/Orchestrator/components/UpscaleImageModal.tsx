@@ -133,7 +133,7 @@ function UpscalImageForm({
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
-    type: 'Generation',
+    accountTypes: ['generation', 'user'],
   });
 
   function handleSubmit(formData: z.infer<typeof schema>) {

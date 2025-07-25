@@ -1,4 +1,4 @@
-import type { ButtonProps, MantineSize } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
 import {
   Badge,
   Button,
@@ -14,6 +14,10 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { getBuzzTypeDistribution } from '~/utils/buzz';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 
 type Props = ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>> & {
@@ -26,7 +30,7 @@ type Props = ButtonProps &
     performTransactionOnPurchase?: boolean;
     showPurchaseModal?: boolean;
     error?: string;
-    transactionType?: 'Generation' | 'Default';
+    accountTypes?: BuzzAccountType[];
     showTypePct?: boolean;
     priceReplacement?: React.ReactNode;
   };
@@ -42,28 +46,46 @@ export function BuzzTransactionButton({
   loading,
   showPurchaseModal = true,
   error,
-  transactionType,
+  accountTypes,
   showTypePct = false,
   priceReplacement,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
+  accountTypes ??= [features.isGreen ? 'green' : 'fakered', 'user']; // Default to user account type if not provided
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const {
-    conditionalPerformTransaction,
-    hasRequiredAmount,
-    hasTypeRequiredAmount,
-    getTypeDistribution,
-    isLoadingBalance,
-  } = useBuzzTransaction({
-    message,
-    purchaseSuccessMessage,
-    performTransactionOnPurchase,
-    type: transactionType,
+  const { balances } = useBuzz(undefined, accountTypes);
+  const [baseType] = accountTypes;
+  const { conditionalPerformTransaction, hasRequiredAmount, isLoadingBalance } = useBuzzTransaction(
+    {
+      message,
+      purchaseSuccessMessage,
+      performTransactionOnPurchase,
+      accountTypes,
+    }
+  );
+
+  const buzzTypeDistribution = getBuzzTypeDistribution({
+    balances,
+    buzzAmount,
+    accountTypes,
   });
 
+  const mainBuzzColor = Object.entries(buzzTypeDistribution.amt).reduce(
+    (max, [key, amount]) =>
+      amount > (buzzTypeDistribution.amt[max as BuzzAccountType] || 0) ? key : max,
+    Object.keys(buzzTypeDistribution.amt)[0] || baseType
+  ) as BuzzAccountType;
+
+  const colorConfig = useBuzzCurrencyConfig(mainBuzzColor);
+
   if (!features.buzz) return null;
+  if (accountTypes.length === 0) {
+    throw new Error(
+      'BuzzTransactionButton requires at least one account type. This is likely be a bug. Please contact support.'
+    );
+  }
 
   const onClick = () => {
     if (!showPurchaseModal) return;
@@ -74,14 +96,10 @@ export function BuzzTransactionButton({
   };
 
   const hasCost = buzzAmount > 0;
-  const meetsTypeRequiredAmount = hasTypeRequiredAmount(buzzAmount);
-  const takesBlue = transactionType === 'Generation';
-  const buttonColor = meetsTypeRequiredAmount && takesBlue ? 'blue.4' : 'yellow.7';
-  const typeDistrib = getTypeDistribution(buzzAmount);
 
   return (
     <Button
-      color={error ? 'red.9' : hasCost || loading ? buttonColor : 'blue'}
+      color={error ? 'red.9' : hasCost || loading ? colorConfig.color : 'blue'}
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
       px={8}
@@ -90,10 +108,7 @@ export function BuzzTransactionButton({
       }}
       size={size}
       disabled={buttonProps.disabled || !!error || isLoadingBalance || loading}
-      className={clsx(
-        !buttonColor.includes('blue') ? 'text-dark-8' : 'text-white',
-        buttonProps?.className
-      )}
+      className={clsx('text-white', buttonProps?.className)}
       classNames={{
         inner: 'flex gap-8 justify-between items-center',
         label: 'flex items-center justify-center w-full gap-1',
@@ -120,13 +135,11 @@ export function BuzzTransactionButton({
           pl={4}
           pr={8}
           loading={loading}
-          textColor={
-            meetsTypeRequiredAmount && takesBlue ? theme.colors.blue[4] : theme.colors.yellow[7]
-          }
+          textColor={colorConfig.color}
           color={colorScheme === 'dark' ? 'dark.8' : 'gray.2'}
           variant="filled"
           className="!h-[24px] !py-0"
-          typeDistrib={showTypePct ? typeDistrib : undefined}
+          typeDistribution={showTypePct ? buzzTypeDistribution : undefined}
         >
           {!hasRequiredAmount(buzzAmount) && (
             <Tooltip

@@ -1,7 +1,7 @@
 import { Button, Stack } from '@mantine/core';
 import { IconCreditCard, IconCreditCardFilled, IconMoodSad } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
+import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';

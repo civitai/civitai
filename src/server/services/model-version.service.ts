@@ -45,7 +45,10 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 import { uploadImageFromUrl } from '~/server/services/image.service';
@@ -63,6 +66,7 @@ import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prism
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1125,6 +1129,7 @@ export const earlyAccessPurchase = async ({
           id: true,
           name: true,
           userId: true,
+          nsfw: true,
         },
       },
     },
@@ -1191,18 +1196,24 @@ export const earlyAccessPurchase = async ({
       : (earlyAccesConfig.generationPrice as number);
 
   try {
-    const buzzTransaction = await createBuzzTransaction({
+    const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
+    const data = await createMultiAccountBuzzTransaction({
       fromAccountId: userId,
       toAccountId: modelVersion.model.userId,
       amount,
       type: TransactionType.Purchase,
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
+      externalTransactionIdPrefix: externalTransactionIdPrefix,
+      fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+        isNsfw: modelVersion.model.nsfw,
+      }),
     });
-    if (!buzzTransaction.transactionId)
+
+    if (data?.transactionCount === 0)
       throw throwBadRequestError('Failed to create Buzz transaction.');
 
-    buzzTransactionId = buzzTransaction.transactionId;
+    buzzTransactionId = externalTransactionIdPrefix;
     const accessRecord = await dbWrite.entityAccess.findFirst({
       where: {
         accessorId: userId,
@@ -1287,12 +1298,8 @@ export const earlyAccessPurchase = async ({
     return true;
   } catch (error) {
     if (buzzTransactionId) {
-      // Refund:
-      await createBuzzTransaction({
-        fromAccountId: modelVersion.model.userId,
-        toAccountId: userId,
-        amount,
-        type: TransactionType.Refund,
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: buzzTransactionId,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
     }

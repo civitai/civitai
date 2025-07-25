@@ -42,11 +42,12 @@ export const getServerSideProps = createServerSideProps({
 const schema = z.object({
   returnUrl: z.string().optional(),
   minBuzzAmount: z.coerce.number().optional(),
+  buzzType: z.enum(['yellow', 'green', 'red']).optional(),
 });
 
 export default function PurchaseBuzz() {
   const router = useRouter();
-  const { returnUrl, minBuzzAmount } = schema.parse(router.query);
+  const { returnUrl, minBuzzAmount, buzzType } = schema.parse(router.query);
   const [success, setSuccess] = useState<boolean>(false);
 
   const handlePurchaseSuccess = () => {

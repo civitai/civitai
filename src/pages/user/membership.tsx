@@ -14,7 +14,12 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconInfoCircle, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
+import {
+  IconInfoCircle,
+  IconInfoTriangleFilled,
+  IconRotateClockwise,
+  IconExternalLink,
+} from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import * as z from 'zod/v4';
@@ -32,6 +37,7 @@ import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembers
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -47,7 +53,7 @@ import styles from './membership.module.css';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx, features }) => {
+  resolver: async ({ session, ctx }) => {
     if (!session || !session.user)
       return {
         redirect: {
@@ -63,16 +69,6 @@ export const getServerSideProps = createServerSideProps({
           permanent: false,
         },
       };
-
-    if (!features?.canBuyBuzz && env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN) {
-      return {
-        redirect: {
-          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
-          statusCode: 302,
-          basePath: false,
-        },
-      };
-    }
   },
 });
 
@@ -99,6 +95,7 @@ export default function UserMembership() {
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
+  const { classNames: greenClassNames, colorRgb: greenColorRgb } = useBuzzCurrencyConfig('green');
   // const isCheckingPaddleSubscription = usePaddleSubscriptionRefresh();
   const isCheckingPaddleSubscription = false; // No refreshing for now since Paddle is dead
   const query = querySchema.safeParse(router.query);
@@ -106,6 +103,17 @@ export default function UserMembership() {
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
   const isUpdate = query.success ? query.data?.updated : false;
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
+
+  // Check if user has subscription but is on red environment
+  const showRedirectMessage = !features.isGreen && subscription;
+
+  const handleRedirectToGreen = () => {
+    window.open(
+      `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
+      '_blank',
+      'noreferrer'
+    );
+  };
 
   const handleRefreshSubscription = async () => {
     try {
@@ -187,6 +195,38 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack>
               <Title>My Membership Plan</Title>
+              {showRedirectMessage && (
+                <Alert color="blue" variant="light">
+                  <Stack gap="md">
+                    <Group justify="space-between" align="flex-start">
+                      <Stack gap="xs" style={{ flex: 1 }}>
+                        <Text size="sm" fw={500}>
+                          Red Memberships Currently Unavailable
+                        </Text>
+                        <Text size="sm">
+                          Red memberships are currently unavailable. We&rsquo;re working on bringing
+                          them back soon. In the meantime, your existing membership needs to be
+                          managed on Civitai Green.
+                        </Text>
+                      </Stack>
+                      <Button
+                        size="sm"
+                        radius="xl"
+                        rightSection={<IconExternalLink size={16} />}
+                        onClick={handleRedirectToGreen}
+                        className={greenClassNames?.btn}
+                        style={{ minWidth: '160px' }}
+                      >
+                        Manage on Green
+                      </Button>
+                    </Group>
+                    <Text size="sm" c="dimmed">
+                      Management actions like canceling, upgrading, or updating payment details are
+                      only available on the green environment.
+                    </Text>
+                  </Stack>
+                </Alert>
+              )}
               {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
@@ -202,14 +242,35 @@ export default function UserMembership() {
                   take effect. You may refresh the page to see the changes.
                 </Alert>
               )}
-              {isUpdate && (
-                <Alert>
-                  Your membership has been successfully updated. It may take a few minutes for your
-                  update to take effect. If you don&rsquo;t see the changes after refreshing the
-                  page in a few minutes, please contact support. Please note: Your membership bonus
-                  Buzz may take up to 1 hour to be delivered.
-                </Alert>
+
+              {!showRedirectMessage && (
+                <>
+                  {subscriptionPaymentProvider !== paymentProvider && (
+                    <Alert>
+                      We are currently migrating your account info to our new payment processor,
+                      until this is completed you will be unable to upgrade your subscription.
+                      Migration is taking a bit longer than expected, but we are working hard to get
+                      it done as soon as possible.
+                    </Alert>
+                  )}
+                  {isDrowngrade && downgradedTier && (
+                    <Alert>
+                      You have successfully downgraded your membership to the{' '}
+                      {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan
+                      to take effect. You may refresh the page to see the changes.
+                    </Alert>
+                  )}
+                  {isUpdate && (
+                    <Alert>
+                      Your membership has been successfully updated. It may take a few minutes for
+                      your update to take effect. If you don&rsquo;t see the changes after
+                      refreshing the page in a few minutes, please contact support. Please note:
+                      Your membership bonus Buzz may take up to 1 hour to be delivered.
+                    </Alert>
+                  )}
+                </>
               )}
+
               {subscription?.isBadState && (
                 <AlertWithIcon
                   color="red"
@@ -279,7 +340,7 @@ export default function UserMembership() {
                       <Group gap="xs">
                         {subscription.canceledAt && (
                           <>
-                            {price.active && (
+                            {price.active && !showRedirectMessage && (
                               <SubscribeButton
                                 priceId={price.id}
                                 disabled={features.disablePayments}
@@ -305,12 +366,12 @@ export default function UserMembership() {
                             )}
                           </>
                         )}
-                        {canUpgrade && (
+                        {canUpgrade && !showRedirectMessage && (
                           <Button component={Link} href="/pricing" radius="xl">
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && !isCivitaiProvider && (
+                        {!subscription.cancelAt && !showRedirectMessage && !isCivitaiProvider && (
                           <CancelMembershipAction
                             variant="button"
                             buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
@@ -318,6 +379,7 @@ export default function UserMembership() {
                         )}
                       </Group>
                       {!subscription.cancelAt &&
+                        !showRedirectMessage &&
                         isPaddle &&
                         managementUrls?.updatePaymentMethod && (
                           <Anchor
@@ -349,12 +411,23 @@ export default function UserMembership() {
               <PrepaidTimelineProgress subscription={subscription} />
 
               {benefits && (
-                <>
-                  <Title order={3}>Your membership benefits</Title>
+                <div
+                  style={{
+                    // @ts-ignore
+                    '--buzz-color': greenColorRgb,
+                  }}
+                >
+                  <Title order={3}>
+                    Your{' '}
+                    <Text component="span" className="text-xl font-bold text-buzz">
+                      Green
+                    </Text>{' '}
+                    membership benefits
+                  </Title>
                   <Paper withBorder className={styles.card}>
                     <PlanBenefitList benefits={benefits} />
                   </Paper>
-                </>
+                </div>
               )}
             </Stack>
           </Grid.Col>

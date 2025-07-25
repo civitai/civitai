@@ -1,0 +1,119 @@
+/* Promo Banner Component */
+.promoBanner {
+  background: var(--buzz-gradient);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 
+    0 4px 20px rgba(var(--buzz-color), 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.promoBackground {
+  position: relative;
+  z-index: 1;
+}
+
+.promoLayout {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--mantine-spacing-lg);
+  
+  @media (max-width: 768px) {
+    flex-direction: column;
+    gap: var(--mantine-spacing-md);
+    align-items: stretch;
+  }
+}
+
+.promoContent {
+  flex: 1;
+  min-width: 0;
+  
+  @media (max-width: 768px) {
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+.promoTitle {
+  color: var(--mantine-color-dark-9);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8);
+  
+  @media (max-width: 480px) {
+    font-size: 1rem;
+  }
+}
+
+.promoSubtitle {
+  color: var(--mantine-color-dark-7);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+
+.iconWrapper {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  padding: var(--mantine-spacing-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  
+  @media (max-width: 480px) {
+    display: none;
+  }
+  
+  :global(svg) {
+    color: rgb(var(--buzz-color));
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+  }
+}
+
+.promoButtons {
+  @media (max-width: 768px) {
+    justify-content: center;
+  }
+}
+
+.promoCta {
+  background: white;
+  color: rgb(var(--buzz-color)) !important;
+  text-decoration: none !important;
+  font-weight: 600;
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-md);
+  border-radius: var(--mantine-radius-sm);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    background: rgba(255, 255, 255, 0.95);
+  }
+  
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+    font-size: var(--mantine-font-size-xs);
+  }
+}
+
+.promoLearnMore {
+  color: rgba(255, 255, 255, 0.9) !important;
+  text-decoration: underline !important;
+  font-weight: 500;
+  padding: var(--mantine-spacing-sm);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    color: white !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+  
+  @media (max-width: 480px) {
+    padding: var(--mantine-spacing-xs);
+    font-size: var(--mantine-font-size-xs);
+  }
+}

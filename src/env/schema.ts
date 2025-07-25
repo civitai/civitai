@@ -242,6 +242,12 @@ export const serverSchema = z.object({
   CDP_USDC_ADDRESS: z.string().optional(),
   CDP_PAYMASTER_URL: z.string().optional(),
   CDP_CIVITAI_ADDRESS: z.string().optional(),
+
+  // EmerchantPay Related:
+  EMERCHANTPAY_WPF_URL: z.string().optional(),
+  EMERCHANTPAY_USERNAME: z.string().optional(),
+  EMERCHANTPAY_PASSWORD: z.string().optional(),
+  EMERCHANTPAY_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**

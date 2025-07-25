@@ -29,6 +29,7 @@ import { UserBuzz } from '../User/UserBuzz';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import classes from './SendTipModal.module.scss';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = z
   .object({
@@ -63,6 +64,7 @@ export default function SendTipModal({
   entityId?: number;
   entityType?: string;
 }) {
+  const features = useFeatureFlags();
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const colorScheme = useComputedColorScheme('dark');
@@ -154,7 +156,12 @@ export default function SendTipModal({
                 <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
                   Available Buzz
                 </Text>
-                <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />
+                <UserBuzz
+                  iconSize={16}
+                  textSize="sm"
+                  accountTypes={['user', 'green', 'fakered']}
+                  withTooltip
+                />
               </Group>
             </Badge>
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
@@ -226,7 +233,7 @@ export default function SendTipModal({
                 buzzAmount={amountToSend ?? 0}
                 disabled={(amountToSend ?? 0) === 0}
                 loading={sending}
-                color="yellow.7"
+                accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
                 type="submit"
               />
             </Group>
