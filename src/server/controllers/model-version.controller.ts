@@ -269,8 +269,7 @@ export const upsertModelVersionHandler = async ({
       ...input,
       trainingDetails: input.trainingDetails,
     });
-
-    if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
+    if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 
     // Just update early access deadline if updating the model version
     if (input.id)
@@ -378,7 +377,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         earlyAccessConfig: true,
-        model: { select: { userId: true } },
+        model: { select: { userId: true, nsfw: true } },
       },
     });
 

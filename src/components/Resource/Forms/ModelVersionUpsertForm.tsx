@@ -39,7 +39,13 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { activeBaseModels, constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
+import {
+  activeBaseModels,
+  constants,
+  EARLY_ACCESS_CONFIG,
+  nsfwRestrictedBaseModels,
+  type BaseModel,
+} from '~/server/common/constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -220,7 +226,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const { isDirty } = form.formState;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
   const usageControl = form.watch('usageControl');
-  const canSave = true;
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -247,6 +252,25 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     recommendedResources: rawRecommendedResources,
     ...data
   }: Schema) => {
+    // Validate NSFW + restricted base model combination
+    if (
+      model?.nsfw &&
+      data.baseModel &&
+      nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
+    ) {
+      showErrorNotification({
+        error: new Error(
+          `NSFW models cannot use base models with license restrictions. The base model "${
+            data.baseModel
+          }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+            ', '
+          )}`
+        ),
+        title: 'Base Model License Restriction',
+      });
+      return;
+    }
+
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
@@ -355,6 +379,12 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const resourceLabel = getDisplayName(model?.type ?? '');
   const modelDownloadEnabled = !usageControl || usageControl === ModelUsageControl.Download;
 
+  // Check if current base model selection violates NSFW restrictions
+  const hasNsfwBaseModelViolation =
+    model?.nsfw && baseModel && nsfwRestrictedBaseModels.includes(baseModel as BaseModel);
+
+  const canSave = !hasNsfwBaseModelViolation;
+
   return (
     <>
       <Form form={form} onSubmit={handleSubmit}>
@@ -402,6 +432,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     (x) =>
                       x.value !== ModelUsageControl.InternalGeneration || x.value === usageControl
                   )}
+                allowDeselect={false}
               />
 
               <Alert color="blue">
@@ -727,9 +758,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               name="baseModel"
               label="Base Model"
               placeholder="Base Model"
-              withAsterisk
               style={{ flex: 1 }}
               data={activeBaseModels.map((x) => ({ value: x, label: x }))}
+              allowDeselect={false}
+              withAsterisk
             />
             {hasBaseModelType && (
               <InputSelect
@@ -737,9 +769,21 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 label="Base Model Type"
                 placeholder="Base Model Type"
                 data={baseModelTypeOptions}
+                allowDeselect={false}
               />
             )}
           </Group>
+          {hasNsfwBaseModelViolation && (
+            <Alert color="red" title="License Restriction Violation">
+              <Text size="sm">
+                NSFW models cannot use base models with license restrictions. The selected base
+                model does not permit NSFW content. Please select a different base model.
+              </Text>
+              <Text size="sm" mt="xs">
+                Restricted base models: {nsfwRestrictedBaseModels.join(', ')}
+              </Text>
+            </Alert>
+          )}
           {baseModel === 'SD 3' && (
             <Alert color="yellow" title="SD3 Unsupported">
               <Text>
