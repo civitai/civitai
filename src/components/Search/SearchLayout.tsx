@@ -136,6 +136,7 @@ export function SearchLayout({
 
     return false;
   }, [router.query]);
+
   return (
     <SearchLayoutCtx.Provider value={ctx}>
       <InstantSearch
@@ -201,7 +202,7 @@ export function SearchLayout({
                           Online Support (global)
                         </Text>{' '}
                         <Anchor
-                          href="https://get-help.stopitnow.org.uk"
+                          href="https://www.stopitnow.org.uk/self-help/concerned-about-your-own-thoughts-or-behaviour/?utm_source=civitai&utm_medium=warning_message&utm_campaign=civitai_warning"
                           target="_blank"
                           rel="noopener noreferrer"
                         >
