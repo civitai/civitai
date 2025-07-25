@@ -16,9 +16,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
-import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
-import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -93,7 +92,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const disabledDueToYearlyPlan =
     !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
 
-  const ctaDisabled = disabledDueToProvider || disabledDueToYearlyPlan || features.disablePayments;
+  const redirectToPrepaidPage = features.disablePayments && features.prepaidMemberships;
+  const ctaDisabled = disabledDueToProvider || disabledDueToYearlyPlan || !redirectToPrepaidPage;
 
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
@@ -145,6 +145,17 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 {isActivePlan ? (
                   <Button radius="xl" {...btnProps} component={Link} href="/user/membership">
                     Manage your Membership
+                  </Button>
+                ) : redirectToPrepaidPage ? (
+                  <Button
+                    component="a"
+                    target="_blank"
+                    href="https://buybuzz.io/collections/memberships"
+                    rel="noopener noreferrer"
+                    radius="xl"
+                    {...btnProps}
+                  >
+                    Get Prepaid {capitalize(meta?.tier)}
                   </Button>
                 ) : isDowngrade ? (
                   <Button
