@@ -87,6 +87,13 @@ export const baseImageMetaSchema = z.object({
   clipSkip: z.coerce.number().optional(),
 });
 
+export const imageMetadataResourceSchema = z.object({
+  type: z.string(),
+  name: z.string().optional(),
+  weight: z.number().optional(),
+  hash: z.string().optional(),
+});
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -104,6 +111,7 @@ export const imageGenerationSchema = z.object({
   process: z.string().optional(),
   type: z.string().optional(),
   workflow: z.string().optional(),
+  resources: imageMetadataResourceSchema.array().optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),

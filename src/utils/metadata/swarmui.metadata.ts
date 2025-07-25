@@ -3,7 +3,6 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
 import { removeEmpty } from '~/utils/object-helpers';
-import { numericStringArray } from '~/utils/zod-helpers';
 
 function cleanBadJson(str: string) {
   return str
@@ -12,6 +11,12 @@ function cleanBadJson(str: string) {
     .replace(/\[Infinity\]/g, '[]');
 }
 
+type SwarmUiMetadata = {
+  sui_image_params?: Record<string, any>;
+  sui_models?: { name: string; param: string; hash: string; weight?: number }[];
+};
+
+// https://github.com/mcmonkeyprojects/SwarmUI/blob/master/docs/Image%20Metadata%20Format.md#sui_models
 export const swarmUIMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => {
     const params = exif.generationDetails ?? exif.parameters;
@@ -22,8 +27,9 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
   },
   parse: (exif) => {
     const params = exif.generationDetails ?? exif.parameters;
-    const generationDetails = JSON.parse(cleanBadJson(params as string))
-      ?.sui_image_params as Record<string, any>;
+    const parsed: SwarmUiMetadata = JSON.parse(cleanBadJson(params as string));
+    const generationDetails = parsed.sui_image_params ?? {};
+
     setGlobalValue('nodeJson', generationDetails);
 
     const metadata: Record<string, any> = removeEmpty({
@@ -38,7 +44,7 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
       scheduler: generationDetails.scheduler,
       version: generationDetails.swarmVersion,
       Model: generationDetails.model,
-      resources: getResources(generationDetails),
+      resources: getResources(parsed),
     });
 
     a1111Compatability(metadata);
@@ -61,7 +67,13 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
         model: meta.Model,
         swarmVersion: meta.version,
       },
-    });
+      sui_models: meta.resources?.map(({ type, name, weight, hash }) => ({
+        name: name!,
+        weight: weight,
+        hash: hash!,
+        param: type,
+      })),
+    } satisfies SwarmUiMetadata);
   },
 });
 
@@ -77,15 +89,21 @@ function a1111Compatability(metadata: ImageMetaProps) {
   if (a1111sampler) metadata.sampler = a1111sampler;
 }
 
-function getResources(generationDetails: Record<string, any>) {
-  const resources: { name: string; weight?: number; type: string }[] = [];
-  if (generationDetails.model) resources.push({ type: 'model', name: generationDetails.model });
-  try {
-    const loras: string[] = generationDetails.loras ?? [];
-    const weights = numericStringArray().parse(generationDetails.loraweights ?? []);
-
-    resources.push(...loras.map((name, i) => ({ name, type: 'lora', weight: weights[i] })));
-  } catch {}
+function getResources({ sui_image_params = {}, sui_models = [] }: SwarmUiMetadata) {
+  const loras: string[] = sui_image_params.loras ?? [];
+  const resources = sui_models.map(({ name, param, hash, weight }) => {
+    const nameWithoutExtension = name.split('.')[0];
+    let type = param;
+    if (type === 'loras') type = 'lora';
+    const loraIndex = loras.findIndex((lora) => lora === nameWithoutExtension);
+    return removeEmpty({
+      name: nameWithoutExtension,
+      type,
+      hash,
+      weight:
+        weight ?? (loraIndex > -1 ? Number(sui_image_params.loraweights[loraIndex]) : undefined),
+    });
+  });
 
   return resources;
 }

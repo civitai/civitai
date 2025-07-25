@@ -26,7 +26,6 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
-import classes from './[list].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 interface UserListContentProps {
@@ -57,43 +56,40 @@ function UserListContent({ items, type, totalCount, page, onPageChange }: UserLi
     }
   };
 
-  const renderUserItem = (user: { id: number; username: string | null; image?: string }) => {
-    const showUserAvatar = type !== 'blocked';
-
-    return (
-      <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
-        <Group justify="space-between">
-          <UserAvatar user={user} includeAvatar={showUserAvatar} withUsername linkToProfile />
-          {type === 'following' && <FollowUserButton userId={user.id} size="compact-sm" />}
-          {type === 'followers' && <FollowUserButton userId={user.id} size="compact-sm" />}
-          {type === 'hidden' && <HideUserButton userId={user.id} size="compact-sm" />}
-          {type === 'blocked' && <BlockUserButton userId={user.id} size="compact-sm" />}
-        </Group>
-      </List.Item>
-    );
-  };
-
   return (
     <>
-      <List
-        listStyleType="none"
-        styles={{ itemWrapper: { width: '100%' } }}
-        className={classes.striped}
-      >
-        {items.length > 0 ? (
-          items.map(renderUserItem)
-        ) : (
-          <List.Item classNames={{ itemLabel: 'w-full' }}>
-            <Paper p="xl" style={{ width: '100%' }} withBorder>
-              <Center>
-                <Text size="lg" fw="bold">
-                  {getEmptyMessage()}
-                </Text>
-              </Center>
-            </Paper>
-          </List.Item>
-        )}
-      </List>
+      {items.length > 0 ? (
+        <List listStyleType="none" styles={{ itemWrapper: { width: '100%' } }}>
+          {items.map((user: { id: number; username: string | null; image?: string }) => (
+            <List.Item
+              className="flex p-2 [&:nth-of-type(2n)]:bg-gray-0 dark:[&:nth-of-type(2n)]:bg-dark-8"
+              classNames={{ itemLabel: 'w-full' }}
+              key={user.id}
+            >
+              <Group justify="space-between">
+                <UserAvatar
+                  user={user}
+                  includeAvatar={type !== 'blocked'}
+                  withUsername
+                  linkToProfile
+                />
+                {type === 'following' && <FollowUserButton userId={user.id} size="compact-sm" />}
+                {type === 'followers' && <FollowUserButton userId={user.id} size="compact-sm" />}
+                {type === 'hidden' && <HideUserButton userId={user.id} size="compact-sm" />}
+                {type === 'blocked' && <BlockUserButton userId={user.id} size="compact-sm" />}
+              </Group>
+            </List.Item>
+          ))}
+        </List>
+      ) : (
+        <Paper p="xl" m={8} style={{ width: '100%' }} withBorder>
+          <Center>
+            <Text size="lg" fw="bold">
+              {getEmptyMessage()}
+            </Text>
+          </Center>
+        </Paper>
+      )}
 
       {totalPages > 1 && (
         <Center mt="xl">
