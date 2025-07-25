@@ -22,7 +22,7 @@ export function Username({
   inherit = false,
   badgeSize,
 }: Props) {
-  if (deletedAt) return <Text size={size}>[deleted]</Text>;
+  if (deletedAt || !username) return <Text size={size}>[deleted]</Text>;
 
   const nameplate = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'NamePlate' : undefined

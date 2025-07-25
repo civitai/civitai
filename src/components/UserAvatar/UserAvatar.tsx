@@ -295,13 +295,13 @@ export const UserProfileLink = ({
   user?: Partial<UserWithCosmetics> | null;
   linkToProfile?: boolean;
 }) => {
-  if (!user || !linkToProfile || !!user.deletedAt) return <>{children}</>;
-
-  let href = `/user/${user.username}`;
-  if (!user.username) href += `?id=${user.id}`;
+  if (!user || !linkToProfile || !!user.deletedAt || !user.username) return <>{children}</>;
 
   return (
-    <Link href={href} onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}>
+    <Link
+      href={`/user/${user.username}`}
+      onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+    >
       {children}
     </Link>
   );

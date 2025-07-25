@@ -24,7 +24,7 @@ export const useToggleHiddenPreferences = () => {
 
       return { previous };
     },
-    onSuccess: ({ added, removed }, { kind }) => {
+    onSuccess: async ({ added, removed }, { kind }) => {
       const key = kindMap[kind];
       queryUtils.hiddenPreferences.getHidden.setData(
         undefined,
@@ -50,6 +50,12 @@ export const useToggleHiddenPreferences = () => {
             }
           })
       );
+
+      // Invalidate user lists when user or blockedUser preferences change
+      if (kind === 'user' || kind === 'blockedUser') {
+        await queryUtils.user.getLists.invalidate();
+        await queryUtils.user.getList.invalidate();
+      }
     },
     onError: (_error, _variables, context) => {
       queryUtils.hiddenPreferences.getHidden.setData(undefined, context?.previous);

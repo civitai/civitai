@@ -1,11 +1,10 @@
 import {
-  ActionIcon,
-  Anchor,
   Center,
   Container,
   Group,
   List,
   Loader,
+  Pagination,
   Paper,
   Tabs,
   Text,
@@ -27,8 +26,85 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
-import styles from './[list].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+interface UserListContentProps {
+  items: Array<{ id: number; username: string | null; image?: string }>;
+  type: 'following' | 'followers' | 'hidden' | 'blocked';
+  totalCount: number;
+  page: number;
+  onPageChange: (page: number) => void;
+}
+
+const LIST_LIMIT = 20;
+
+function UserListContent({ items, type, totalCount, page, onPageChange }: UserListContentProps) {
+  const totalPages = Math.ceil(totalCount / LIST_LIMIT);
+
+  const getEmptyMessage = () => {
+    switch (type) {
+      case 'following':
+        return 'There are no following to show';
+      case 'followers':
+        return 'There are no followers to show';
+      case 'hidden':
+        return 'There are no hidden users to show';
+      case 'blocked':
+        return 'There are no blocked users to show';
+      default:
+        return 'No users to show';
+    }
+  };
+
+  return (
+    <>
+      {items.length > 0 ? (
+        <List listStyleType="none" styles={{ itemWrapper: { width: '100%' } }}>
+          {items.map((user: { id: number; username: string | null; image?: string }) => (
+            <List.Item
+              className="flex p-2 [&:nth-of-type(2n)]:bg-gray-0 dark:[&:nth-of-type(2n)]:bg-dark-8"
+              classNames={{ itemLabel: 'w-full' }}
+              key={user.id}
+            >
+              <Group justify="space-between">
+                <UserAvatar
+                  user={user}
+                  includeAvatar={type !== 'blocked'}
+                  withUsername
+                  linkToProfile
+                />
+                {type === 'following' && <FollowUserButton userId={user.id} size="compact-sm" />}
+                {type === 'followers' && <FollowUserButton userId={user.id} size="compact-sm" />}
+                {type === 'hidden' && <HideUserButton userId={user.id} size="compact-sm" />}
+                {type === 'blocked' && <BlockUserButton userId={user.id} size="compact-sm" />}
+              </Group>
+            </List.Item>
+          ))}
+        </List>
+      ) : (
+        <Paper p="xl" m={8} style={{ width: '100%' }} withBorder>
+          <Center>
+            <Text size="lg" fw="bold">
+              {getEmptyMessage()}
+            </Text>
+          </Center>
+        </Paper>
+      )}
+
+      {totalPages > 1 && (
+        <Center mt="xl">
+          <Pagination
+            value={page}
+            onChange={onPageChange}
+            total={totalPages}
+            siblings={1}
+            boundaries={1}
+          />
+        </Center>
+      )}
+    </>
+  );
+}
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx }) => {
@@ -45,16 +121,43 @@ export const getServerSideProps = createServerSideProps({
 export default function UserLists() {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { list, username } = router.query as {
-    list: 'following' | 'followers' | 'hidden';
+  const {
+    list,
+    username,
+    page: pageQuery,
+  } = router.query as {
+    list: 'following' | 'followers' | 'hidden' | 'blocked';
     username: string;
+    page?: string;
   };
+  const page = pageQuery ? parseInt(pageQuery, 10) : 1;
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
 
-  const { data, isLoading: loadingLists } = trpc.user.getLists.useQuery({ username });
+  const { data: countsData } = trpc.user.getLists.useQuery({ username });
+  const { data: listData, isLoading: loadingList } = trpc.user.getList.useQuery({
+    username,
+    type: list,
+    page,
+    limit: LIST_LIMIT,
+  });
 
-  if (!loadingLists && !data) return <FourOhFour />;
+  const handleTabChange = (value: string) => {
+    router.push({ pathname: `/user/${username}/${value}`, query: {} });
+  };
+
+  const handlePageChange = (newPage: number) => {
+    router.push(
+      {
+        pathname: `/user/${username}/${list}`,
+        query: newPage > 1 ? { page: newPage } : {},
+      },
+      undefined,
+      { shallow: true }
+    );
+  };
+
+  if (!loadingList && !listData) return <FourOhFour />;
 
   return (
     <Container size="xs">
@@ -70,163 +173,41 @@ export default function UserLists() {
           </Group>
         </ContainerGrid2.Col>
         <ContainerGrid2.Col span={12}>
-          <Tabs value={list} onChange={(value) => router.push(`/user/${username}/${value}`)}>
+          <Tabs value={list} onChange={(value) => value && handleTabChange(value)}>
             <Tabs.List grow>
               <Tabs.Tab value="following">{`Following (${abbreviateNumber(
-                data?.followingCount ?? 0
+                countsData?.followingCount ?? 0
               )})`}</Tabs.Tab>
               <Tabs.Tab value="followers">{`Followers (${abbreviateNumber(
-                data?.followersCount ?? 0
+                countsData?.followersCount ?? 0
               )})`}</Tabs.Tab>
               {isSameUser && (
                 <>
                   <Tabs.Tab value="hidden">
-                    {`Hidden (${abbreviateNumber(data?.hiddenCount ?? 0)})`}
+                    {`Hidden (${abbreviateNumber(countsData?.hiddenCount ?? 0)})`}
                   </Tabs.Tab>
                   <Tabs.Tab value="blocked">
-                    {`Blocked (${abbreviateNumber(data?.blockedCount ?? 0)})`}
+                    {`Blocked (${abbreviateNumber(countsData?.blockedCount ?? 0)})`}
                   </Tabs.Tab>
                 </>
               )}
             </Tabs.List>
-            {loadingLists && !data ? (
-              <Center p="xl">
-                <Loader />
-              </Center>
-            ) : (
-              <>
-                <Tabs.Panel value="following">
-                  <List
-                    listStyleType="none"
-                    styles={{ itemWrapper: { width: '100%' } }}
-                    className={styles.striped}
-                  >
-                    {data.following.length > 0 ? (
-                      data.following.map((user) => (
-                        <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
-                          <Text component={Link} variant="text" href={`/user/${user.username}`}>
-                            <Group className="w-full" justify="space-between">
-                              <UserAvatar user={user} withUsername />
-                              <FollowUserButton userId={user.id} size="compact-sm" />
-                            </Group>
-                          </Text>
-                        </List.Item>
-                      ))
-                    ) : (
-                      <List.Item classNames={{ itemLabel: 'w-full' }}>
-                        <Paper p="xl" style={{ width: '100%' }} withBorder>
-                          <Center>
-                            <Text size="lg" fw="bold">
-                              There are no following to show
-                            </Text>
-                          </Center>
-                        </Paper>
-                      </List.Item>
-                    )}
-                  </List>
-                </Tabs.Panel>
-                <Tabs.Panel value="followers">
-                  <List
-                    listStyleType="none"
-                    styles={{ itemWrapper: { width: '100%' } }}
-                    className={styles.striped}
-                  >
-                    {data.followers.length > 0 ? (
-                      data.followers.map((user) => (
-                        <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
-                          <Link legacyBehavior href={`/user/${user.username}`} passHref>
-                            <Anchor variant="text">
-                              <Group justify="space-between">
-                                <UserAvatar user={user} withUsername />
-                                <FollowUserButton userId={user.id} size="compact-sm" />
-                              </Group>
-                            </Anchor>
-                          </Link>
-                        </List.Item>
-                      ))
-                    ) : (
-                      <List.Item classNames={{ itemLabel: 'w-full' }}>
-                        <Paper p="xl" style={{ width: '100%' }} withBorder>
-                          <Center>
-                            <Text size="lg" fw="bold">
-                              There are no followers to show
-                            </Text>
-                          </Center>
-                        </Paper>
-                      </List.Item>
-                    )}
-                  </List>
-                </Tabs.Panel>
-                {isSameUser && (
-                  <>
-                    <Tabs.Panel value="hidden">
-                      <List
-                        listStyleType="none"
-                        styles={{ itemWrapper: { width: '100%' } }}
-                        className={styles.striped}
-                      >
-                        {data.hidden.length > 0 ? (
-                          data.hidden.map((user) => (
-                            <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
-                              <Link legacyBehavior href={`/user/${user.username}`} passHref>
-                                <Anchor variant="text">
-                                  <Group justify="space-between">
-                                    <UserAvatar user={user} withUsername />
-                                    <HideUserButton userId={user.id} size="compact-sm" />
-                                  </Group>
-                                </Anchor>
-                              </Link>
-                            </List.Item>
-                          ))
-                        ) : (
-                          <List.Item classNames={{ itemLabel: 'w-full' }}>
-                            <Paper p="xl" style={{ width: '100%' }} withBorder>
-                              <Center>
-                                <Text size="lg" fw="bold">
-                                  There are no hidden users to show
-                                </Text>
-                              </Center>
-                            </Paper>
-                          </List.Item>
-                        )}
-                      </List>
-                    </Tabs.Panel>
-                    <Tabs.Panel value="blocked">
-                      <List
-                        listStyleType="none"
-                        styles={{ itemWrapper: { width: '100%' } }}
-                        className={styles.striped}
-                      >
-                        {data.blocked.length > 0 ? (
-                          data.blocked.map((user) => (
-                            <List.Item classNames={{ itemLabel: 'w-full' }} key={user.id} p={8}>
-                              <Link legacyBehavior href={`/user/${user.username}`} passHref>
-                                <Anchor variant="text">
-                                  <Group justify="space-between">
-                                    <Text>{user.username}</Text>
-                                    <BlockUserButton userId={user.id} size="compact-sm" />
-                                  </Group>
-                                </Anchor>
-                              </Link>
-                            </List.Item>
-                          ))
-                        ) : (
-                          <List.Item classNames={{ itemLabel: 'w-full' }}>
-                            <Paper p="xl" style={{ width: '100%' }} withBorder>
-                              <Center>
-                                <Text size="lg" fw="bold">
-                                  There are no blocked users to show
-                                </Text>
-                              </Center>
-                            </Paper>
-                          </List.Item>
-                        )}
-                      </List>
-                    </Tabs.Panel>
-                  </>
-                )}
-              </>
-            )}
+
+            <Tabs.Panel value={list}>
+              {loadingList ? (
+                <Center p="xl">
+                  <Loader />
+                </Center>
+              ) : (
+                <UserListContent
+                  items={listData?.items ?? []}
+                  type={list}
+                  totalCount={listData?.totalItems ?? 0}
+                  page={page}
+                  onPageChange={handlePageChange}
+                />
+              )}
+            </Tabs.Panel>
           </Tabs>
         </ContainerGrid2.Col>
       </ContainerGrid2>

@@ -218,7 +218,8 @@ export function GenerationFormContent() {
     const metadata = parsePromptMetadata(prompt ?? '');
     const result = imageGenerationSchema.safeParse(metadata);
     if (result.success) {
-      form.setValues(result.data);
+      const { resources, ...data } = result.data;
+      form.setValues(data);
       setShowFillForm(false);
     } else {
       console.error(result.error);

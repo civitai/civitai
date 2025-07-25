@@ -24,6 +24,7 @@ import type {
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
+  GetUserListSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
   SetLeaderboardEligibilitySchema,
@@ -58,7 +59,11 @@ import {
   deleteCustomerPaymentMethod,
   getCustomerPaymentMethods,
 } from '~/server/services/stripe.service';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import {
   claimCosmetic,
   createUserReferral,
@@ -74,6 +79,7 @@ import {
   getUserDownloads,
   getUserEngagedModels,
   getUserEngagedModelVersions,
+  getUserList,
   getUserPurchasedRewards,
   getUsers,
   getUserSettings,
@@ -109,7 +115,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { Flags } from '~/shared/utils';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
-import { CosmeticType, ModelEngagementType } from '~/shared/utils/prisma/enums';
+import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
@@ -620,55 +626,49 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
   try {
     const { username } = input;
 
-    const user = await getUserByUsername({ username, select: { id: true, createdAt: true } });
+    const user = await getUserByUsername({ username, select: { id: true } });
     if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
     const filteredUsers = [-1, user.id]; // Exclude civitai user and the user themselves
 
-    const [userFollowing, userFollowers, userHidden, userBlocked] = await Promise.all([
-      getUserByUsername({
-        username,
-        select: {
-          _count: { select: { engagingUsers: { where: { type: 'Follow' } } } },
-          engagingUsers: {
-            select: { targetUser: { select: simpleUserSelect } },
-            where: { type: 'Follow', targetUserId: { notIn: filteredUsers } },
-          },
+    const [followingCount, followersCount] = await dbRead.$transaction([
+      dbRead.userEngagement.count({
+        where: {
+          userId: user.id,
+          type: UserEngagementType.Follow,
+          targetUserId: { notIn: filteredUsers },
         },
       }),
-      getUserByUsername({
-        username,
-        select: {
-          _count: { select: { engagedUsers: { where: { type: 'Follow' } } } },
-          engagedUsers: {
-            select: { user: { select: simpleUserSelect } },
-            where: { type: 'Follow', userId: { notIn: filteredUsers } },
-          },
+      dbRead.userEngagement.count({
+        where: {
+          targetUserId: user.id,
+          type: UserEngagementType.Follow,
+          userId: { notIn: filteredUsers },
         },
       }),
-      getUserByUsername({
-        username,
-        select: {
-          _count: { select: { engagingUsers: { where: { type: 'Hide' } } } },
-          engagingUsers: {
-            select: { targetUser: { select: simpleUserSelect } },
-            where: { type: 'Hide', targetUserId: { notIn: filteredUsers } },
-          },
-        },
-      }),
+    ]);
+
+    // Get blocked users separately since it uses cache
+    const [hiddenUsers, blockedUsers] = await Promise.all([
+      HiddenUsers.getCached({ userId: user.id }),
       BlockedUsers.getCached({ userId: user.id }),
     ]);
 
     return {
-      following: userFollowing?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
-      followingCount: userFollowing?._count.engagingUsers ?? 0,
-      followers: userFollowers?.engagedUsers.map(({ user }) => user) ?? [],
-      followersCount: userFollowers?._count.engagedUsers ?? 0,
-      hidden: userHidden?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
-      hiddenCount: userHidden?._count.engagingUsers ?? 0,
-      blocked: userBlocked ?? [],
-      blockedCount: userBlocked?.length ?? 0,
+      followingCount,
+      followersCount,
+      hiddenCount: hiddenUsers.length,
+      blockedCount: blockedUsers.length,
     };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getUserListHandler = async ({ input }: { input: GetUserListSchema }) => {
+  try {
+    return await getUserList(input);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
