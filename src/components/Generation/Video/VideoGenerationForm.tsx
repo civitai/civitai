@@ -32,6 +32,7 @@ import { LightricksFormInput } from '~/components/Generation/Video/LightricksFor
 import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
+import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
@@ -115,54 +116,59 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     }
   }, [storeData, config]);
 
+  const baseModel = form.watch('baseModel');
+  const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
+
   const InputsComponent = inputDictionary[engine];
   if (!InputsComponent)
     return <div className="flex items-center justify-center p-3">Form not implemented</div>;
 
   return (
-    <GenForm
-      form={form}
-      onSubmit={handleSubmit}
-      className="relative flex h-full flex-1 flex-col justify-between gap-2"
-    >
-      <div className="flex flex-col gap-3 px-2">
-        <InputsComponent />
-      </div>
-      <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
-        <DailyBoostRewardClaim />
-        {!error ? (
-          <QueueSnackbar />
-        ) : (
-          <Notification
-            icon={<IconX size={18} />}
-            color="red"
-            onClose={() => setError(undefined)}
-            className="rounded-md bg-red-8/20"
-          >
-            {error}
-          </Notification>
-        )}
-        <div className="flex gap-2">
-          <SubmitButton2 loading={isLoading || isLoadingDebounced} engine={engine} />
-          <Button onClick={handleReset} variant="default" className="h-auto px-3">
-            Reset
-          </Button>
+    <StepProvider value={stepProviderValue}>
+      <GenForm
+        form={form}
+        onSubmit={handleSubmit}
+        className="relative flex h-full flex-1 flex-col justify-between gap-2"
+      >
+        <div className="flex flex-col gap-3 px-2">
+          <InputsComponent />
         </div>
-        {status.message && !status.isLoading && (
-          <DismissibleAlert
-            color="yellow"
-            title="Generation Status Alert"
-            id={messageHash}
-            storage="sessionStorage"
-            getInitialValueInEffect={false}
-          >
-            <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
-              {status.message}
-            </CustomMarkdown>
-          </DismissibleAlert>
-        )}
-      </div>
-    </GenForm>
+        <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+          <DailyBoostRewardClaim />
+          {!error ? (
+            <QueueSnackbar />
+          ) : (
+            <Notification
+              icon={<IconX size={18} />}
+              color="red"
+              onClose={() => setError(undefined)}
+              className="rounded-md bg-red-8/20"
+            >
+              {error}
+            </Notification>
+          )}
+          <div className="flex gap-2">
+            <SubmitButton2 loading={isLoading || isLoadingDebounced} engine={engine} />
+            <Button onClick={handleReset} variant="default" className="h-auto px-3">
+              Reset
+            </Button>
+          </div>
+          {status.message && !status.isLoading && (
+            <DismissibleAlert
+              color="yellow"
+              title="Generation Status Alert"
+              id={messageHash}
+              storage="sessionStorage"
+              getInitialValueInEffect={false}
+            >
+              <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+                {status.message}
+              </CustomMarkdown>
+            </DismissibleAlert>
+          )}
+        </div>
+      </GenForm>
+    </StepProvider>
   );
 }
 
@@ -198,6 +204,10 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 
         try {
           const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
+          if ('resources' in result && !!result.resources)
+            result.resources = (result.resources! as Record<string, any>[]).map(
+              ({ image, ...resource }) => resource
+            ) as any;
           setQuery(result);
         } catch (e: any) {
           console.log({ e });

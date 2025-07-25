@@ -14,10 +14,11 @@ export const flux1KontextAspectRatios = [
   '9:21',
 ] as const;
 type Flux1Model = (typeof flux1KontextModels)[number];
-export const flux1KontextModels = ['pro', 'max'] as const;
+export const flux1KontextModels = ['dev', 'pro', 'max'] as const;
 const engine = 'flux1-kontext';
 
 export const fluxKontextModelVersionToModelMap = new Map<number, Flux1Model>([
+  [1945998, 'dev'],
   [1892509, 'pro'],
   [1892523, 'max'],
 ]);
@@ -31,6 +32,7 @@ export function getIsFluxContextFromEngine(value?: string) {
 }
 
 export const flux1ModelModeOptions = [
+  // { label: 'Dev', value: '1945998' },
   { label: 'Pro', value: '1892509' },
   { label: 'Max', value: '1892523' },
 ];
@@ -74,16 +76,19 @@ export const flux1KontextConfig = ImageGenConfig({
     }
 
     let imageUrl = params.sourceImage?.url;
-    if (whatIf && !imageUrl)
+    let aspectRatio = params.aspectRatio;
+    if (whatIf && !imageUrl) {
       imageUrl =
         'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/4a0f3c58d8c6a370bc926efe3279cbad.jpeg';
+      aspectRatio = '1:1';
+    }
 
     return schema.parse({
       engine: params.engine,
       model,
       prompt: params.prompt,
       images: imageUrl ? [imageUrl] : undefined,
-      aspectRatio: params.aspectRatio,
+      aspectRatio,
       quantity: params.quantity,
       guidanceScale: params.cfgScale,
       seed: params.seed,
