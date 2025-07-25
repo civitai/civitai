@@ -1690,6 +1690,7 @@ type ImageSearchInput = GetAllImagesInput & {
   isModerator?: boolean;
   offset?: number;
   entry?: number;
+  blockedFor?: string[];
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -1697,7 +1698,7 @@ type ImageSearchInput = GetAllImagesInput & {
   //reviewId?: number;
 };
 
-async function getImagesFromSearch(input: ImageSearchInput) {
+export async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
@@ -1726,7 +1727,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     offset,
     entry,
     postId,
-    //
     reviewId,
     modelId,
     prioritizedUserIds,
@@ -1740,6 +1740,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     requiringMeta,
     poiOnly,
     minorOnly,
+    blockedFor,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1780,6 +1781,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
     if (minorOnly) {
       filters.push(`minor = true`);
+    }
+    if (blockedFor?.length) {
+      filters.push(`blockedFor IN [${strArray(blockedFor)}]`);
     }
   }
 

@@ -1,0 +1,10 @@
+export declare const actions: string;
+export declare const control: string;
+export declare const desktopCarousel: string;
+export declare const discussionActionButton: string;
+export declare const engagementBar: string;
+export declare const headerButton: string;
+export declare const mobileCarousel: string;
+export declare const modelBadgeText: string;
+export declare const title: string;
+export declare const titleWrapper: string;

@@ -375,6 +375,7 @@ export async function consumeRedeemableCode({
 
           await deliverMonthlyCosmetics({
             userIds: [userId],
+            tx,
           });
         });
       }

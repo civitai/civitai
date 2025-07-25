@@ -15,7 +15,12 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
+import {
+  IconExclamationMark,
+  IconExternalLink,
+  IconInfoCircle,
+  IconInfoTriangleFilled,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
@@ -44,6 +49,8 @@ import { trpc } from '~/utils/trpc';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from './index.module.scss';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export default function Pricing() {
   const router = useRouter();
@@ -55,6 +62,7 @@ export default function Pricing() {
   const liveFeatures = useLiveFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
   const paymentProvider = usePaymentProvider();
+  const currentUser = useCurrentUser();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
@@ -170,30 +178,36 @@ export default function Pricing() {
           )}
           {features.disablePayments && features.prepaidMemberships && (
             <Center>
-              <AlertWithIcon
-                color="blue"
-                iconColor="blue"
-                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
-                iconSize={28}
-                py={11}
-                maw="calc(50% - 8px)"
-              >
-                <Stack gap={0}>
-                  <Text size="xs" lh={1.2}>
-                    Regular membership purchases are temporarily disabled, but you can still
-                    purchase prepaid memberships! Prepaid memberships give you all the same benefits
-                    and will automatically activate when your current membership expires.{' '}
-                    <Anchor
-                      target="_blank"
-                      href="https://buybuzz.io/collections/memberships"
-                      rel="noopener noreferrer"
-                      c="blue.3"
-                    >
-                      Purchase prepaid membership
-                    </Anchor>
-                  </Text>
-                </Stack>
-              </AlertWithIcon>
+              <Card padding="md" radius="md" className={classes.prepaidCard}>
+                <Group align="flex-start" gap="md" wrap="nowrap">
+                  <div className={classes.prepaidIconWrapper}>
+                    <IconInfoCircle size={24} color="var(--mantine-color-orange-6)" />
+                  </div>
+                  <div className={classes.prepaidContent}>
+                    <Text size="lg" fw={700} className={classes.prepaidTitle}>
+                      Prepaid Memberships Available!
+                    </Text>
+                    <Text size="sm" className={classes.prepaidDescription}>
+                      Regular membership purchases are temporarily disabled, but you can still
+                      purchase prepaid memberships! Prepaid memberships give you all the same
+                      benefits and can be stacked up!
+                    </Text>
+                    <Group gap="sm" wrap="nowrap">
+                      <Anchor
+                        target="_blank"
+                        href="https://buybuzz.io/collections/memberships"
+                        rel="noopener noreferrer"
+                        className={classes.prepaidButton}
+                      >
+                        <Text size="sm" fw={600}>
+                          Purchase Now
+                        </Text>
+                        <IconExternalLink size={16} />
+                      </Anchor>
+                    </Group>
+                  </div>
+                </Group>
+              </Card>
             </Center>
           )}
           {(features.nowpaymentPayments ||
@@ -345,6 +359,18 @@ export default function Pricing() {
                     ),
                   },
                 ]}
+              />
+            </Center>
+          )}
+
+          {currentUser && (
+            <Center>
+              <BuzzTopUpCard
+                accountId={currentUser?.id}
+                variant="banner"
+                message="Looking for Buzz Bundles?"
+                showBalance={false}
+                btnLabel="Purchase now"
               />
             </Center>
           )}

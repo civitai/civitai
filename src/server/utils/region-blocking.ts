@@ -135,7 +135,7 @@ export function isAPIAccessBlocked(region: RegionInfo): boolean {
  * Get region information from request headers
  */
 export function getRegion(req: NextRequest | NextApiRequest | IncomingMessage) {
-  const countryCode =
+  let countryCode =
     req.headers instanceof Headers
       ? req.headers.get('cf-ipcountry')
       : (req.headers['cf-ipcountry'] as string | null);
@@ -143,6 +143,15 @@ export function getRegion(req: NextRequest | NextApiRequest | IncomingMessage) {
     req.headers instanceof Headers
       ? req.headers.get('cf-region-code')
       : (req.headers['cf-region-code'] as string | null);
+  const isUKHeader =
+    req.headers instanceof Headers
+      ? req.headers.get('x-isuk')
+      : (req.headers['x-isuk'] as string | null);
+
+  // Override countryCode to GB if x-isuk header is present
+  if (isUKHeader === 'true' || isUKHeader === '1') {
+    countryCode = 'GB';
+  }
 
   return {
     countryCode,

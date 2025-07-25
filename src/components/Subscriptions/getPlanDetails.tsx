@@ -216,14 +216,14 @@ export const getPlanDetails: (
                 Exclusive cosmetics
               </Text>
             </Text>
-          ) : (
+          ) : !!isAnnual ? (
             <Text lh={1}>
               No{' '}
               <Text td="underline" component="a" href="/articles/14950" target="_blank">
                 exclusive cosmetics
               </Text>
             </Text>
-          ),
+          ) : null,
         icon: <IconHexagon3d size={benefitIconSize} />,
         iconColor:
           !metadata.badgeType || metadata.badgeType === 'none' || !isAnnual ? 'gray' : 'blue',
