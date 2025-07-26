@@ -141,7 +141,7 @@ export function getMonthAccount(month?: Date) {
 
 export async function getBanked(userId: number) {
   const monthAccount = getMonthAccount();
-  const total = await fetchThroughCache(
+  const balances = await fetchThroughCache(
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
     async () => {
       const supportedBalances = await Promise.all(
@@ -155,16 +155,18 @@ export async function getBanked(userId: number) {
         )
       );
 
-      const totalBalance = supportedBalances.reduce((sum, balanceInfo) => {
-        return sum + balanceInfo.totalBalance;
-      }, 0);
-
-      return totalBalance;
+      return supportedBalances.map((balance) => ({
+        accountType: balance.accountType,
+        total: balance.totalBalance,
+      }));
     },
     { ttl: CacheTTL.day }
   );
 
+  const total = balances.reduce((acc, balance) => acc + (balance.total ?? 0), 0);
+
   return {
+    balances,
     total,
     cap: (await getBankCap(userId))[userId],
   };

@@ -11,6 +11,8 @@ import {
   Text,
   Tooltip,
   NumberInput,
+  useCombobox,
+  Combobox,
 } from '@mantine/core';
 import {
   IconBuildingBank,
@@ -29,7 +31,7 @@ import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
@@ -66,6 +68,7 @@ import { useUserPaymentConfiguration } from '~/components/UserPaymentConfigurati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
+import { BuzzAccountType } from '~/server/schema/buzz.schema';
 import {
   getCreatorProgramAvailability,
   getCurrentValue,
@@ -374,8 +377,22 @@ export const CompensationPoolCard = () => {
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
-  const buzz = useBuzz(undefined, 'user');
-  const [buzzAccount] = buzz.balances;
+  const buzz = useBuzz(undefined, SUPPORTED_BUZZ as BuzzAccountType[]);
+  const buzzAccountTypeSelectorCB = useCombobox({
+    onDropdownClose: () => {
+      buzzAccountTypeSelectorCB.resetSelectedOption();
+      buzzAccountTypeSelectorCB.focusTarget();
+    },
+
+    onDropdownOpen: () => {
+      buzzAccountTypeSelectorCB.focusSearchInput();
+    },
+  });
+
+  const [activeBuzzAccountType, setActiveBuzzAccountType] = useState<BuzzAccountType>('user');
+  const buzzAccount = buzz.balances.find((b) => b.accountType === activeBuzzAccountType) ?? {
+    balance: 0,
+  };
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
@@ -387,7 +404,7 @@ const BankBuzzCard = () => {
 
   const handleBankBuzz = async () => {
     try {
-      await bankBuzz({ amount: toBank });
+      await bankBuzz({ amount: toBank, accountType: activeBuzzAccountType });
       showSuccessNotification({
         title: 'Success!',
         message: 'You have successfully banked your Buzz.',
@@ -422,7 +439,39 @@ const BankBuzzCard = () => {
             label="Buzz"
             labelProps={{ className: 'hidden' }}
             leftSection={
-              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={18} />
+              <Combobox
+                store={combobox}
+                width={250}
+                position="bottom-start"
+                withArrow
+                onOptionSubmit={(val) => {
+                  setActiveBuzzAccountType(val as BuzzAccountType);
+                }}
+              >
+                <Combobox.Target withAriaAttributes={false}>
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzAccountType} size={18} />
+                </Combobox.Target>
+
+                <Combobox.Dropdown>
+                  <Combobox.Options>
+                    {SUPPORTED_BUZZ.map((buzzType) => (
+                      <Combobox.Option
+                        key={buzzType}
+                        value={buzzType}
+                        selected={buzzType === activeBuzzAccountType}
+                        onClick={() => {
+                          setActiveBuzzAccountType(buzzType);
+                          buzzAccountTypeSelectorCB.closeDropdown();
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={18} />
+                        </div>
+                      </Combobox.Option>
+                    ))}
+                  </Combobox.Options>
+                </Combobox.Dropdown>
+              </Combobox>
             }
             value={toBank ? toBank : undefined}
             min={10000}
