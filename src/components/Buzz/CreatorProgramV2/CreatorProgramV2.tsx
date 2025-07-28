@@ -108,9 +108,6 @@ export const CreatorProgramV2 = () => {
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
   useCreatorPoolListener();
 
-  const test = useBuzz(undefined, ['user', 'generation']);
-  console.log(test);
-
   if (!currentUser || isLoading || !availability.isAvailable) {
     return null;
   }
@@ -614,7 +611,6 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
             </Table.Tr>
             {SUPPORTED_BUZZ.map((buzzType) => {
-              console.log(banked);
               const buzzBalance = banked.balances.find((b) => b.accountType === buzzType);
               if (!buzzBalance) return null;
 
