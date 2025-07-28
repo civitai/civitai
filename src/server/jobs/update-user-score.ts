@@ -229,7 +229,7 @@ type ScoreMultipliers = {
 };
 type ScoreCategory = keyof ScoreMultipliers | 'total';
 
-async function getScoreMultipliers() {
+export async function getScoreMultipliers() {
   const data = await sysRedis.packed.get<ScoreMultipliers>(
     REDIS_SYS_KEYS.SYSTEM.USER_SCORE_MULTIPLIERS
   );
