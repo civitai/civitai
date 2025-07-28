@@ -494,14 +494,12 @@ export const baseModelSets = {
   SD3: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
-    hidden: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
-    generation: false,
+    generation: true,
   }),
   SD3_5M: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 3.5 Medium'],
-    hidden: ['SD 3.5 Medium'],
-    generation: false,
+    generation: true,
   }),
   Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'], generation: true }),
   Flux1Kontext: new BaseModelSet({
@@ -1023,44 +1021,44 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
-  SD3: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 983309,
-      name: 'Large',
-      trainedWords: [],
-      baseModel: 'SD 3.5',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 878387,
-        name: 'Stable Diffusion 3.5 Large',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  SD3_5M: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 1003708,
-      name: 'Medium',
-      trainedWords: [],
-      baseModel: 'SD 3.5 Medium',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 896953,
-        name: 'Stable Diffusion 3.5 Medium',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
+  // SD3: {
+  //   aspectRatios: commonAspectRatios,
+  //   checkpoint: {
+  //     id: 983309,
+  //     name: 'Large',
+  //     trainedWords: [],
+  //     baseModel: 'SD 3.5',
+  //     strength: 1,
+  //     minStrength: -1,
+  //     maxStrength: 2,
+  //     canGenerate: true,
+  //     hasAccess: true,
+  //     model: {
+  //       id: 878387,
+  //       name: 'Stable Diffusion 3.5 Large',
+  //       type: 'Checkpoint',
+  //     },
+  //   } as GenerationResource,
+  // },
+  // SD3_5M: {
+  //   aspectRatios: commonAspectRatios,
+  //   checkpoint: {
+  //     id: 1003708,
+  //     name: 'Medium',
+  //     trainedWords: [],
+  //     baseModel: 'SD 3.5 Medium',
+  //     strength: 1,
+  //     minStrength: -1,
+  //     maxStrength: 2,
+  //     canGenerate: true,
+  //     hasAccess: true,
+  //     model: {
+  //       id: 896953,
+  //       name: 'Stable Diffusion 3.5 Medium',
+  //       type: 'Checkpoint',
+  //     },
+  //   } as GenerationResource,
+  // },
   OpenAI: {
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
@@ -1175,8 +1173,10 @@ export const minDownscaleSize = 320;
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
 export function getGenerationConfig(baseModel = 'SD1') {
-  if (!(baseModel in generationConfig))
-    throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
+  if (!(baseModel in generationConfig)) {
+    return getGenerationConfig(); // fallback to default config
+    // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
+  }
   return generationConfig[baseModel as keyof typeof generationConfig];
 }
 
