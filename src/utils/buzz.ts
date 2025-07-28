@@ -172,6 +172,21 @@ export const createBuzzDistributionGradient = ({
   return `linear-gradient(to ${direction}, ${gradientStops.join(', ')})`;
 };
 
+export const getAccountTypeLabel = (accountType: BuzzAccountType): string => {
+  switch (accountType) {
+    case 'user':
+      return 'Yellow';
+    case 'green':
+      return 'Green';
+    case 'fakered':
+      return 'Red';
+    case 'generation':
+      return 'Blue';
+    default:
+      return accountType.charAt(0).toUpperCase() + accountType.slice(1);
+  }
+};
+
 // Create tooltip label for distribution
 export const createBuzzDistributionLabel = ({
   typeDistribution,
@@ -183,16 +198,7 @@ export const createBuzzDistributionLabel = ({
   const entries = Object.entries(typeDistribution.amt).filter(([, amount]) => (amount || 0) > 0);
   return entries
     .map(([accountType, amount]) => {
-      const typeName =
-        accountType === 'generation'
-          ? 'Blue'
-          : accountType === 'green'
-          ? 'Green'
-          : accountType === 'user'
-          ? 'Yellow'
-          : accountType === 'fakered'
-          ? 'Red'
-          : accountType.charAt(0).toUpperCase() + accountType.slice(1);
+      const typeName = getAccountTypeLabel(accountType as BuzzAccountType);
       return `${typeName}: ${(amount || 0).toLocaleString()}`;
     })
     .join(' | ');

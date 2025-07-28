@@ -83,6 +83,7 @@ import {
 import { Flags } from '~/shared/utils';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { getAccountTypeLabel } from '~/utils/buzz';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
@@ -377,15 +378,11 @@ export const CompensationPoolCard = () => {
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
-  const buzz = useBuzz(undefined, SUPPORTED_BUZZ as BuzzAccountType[]);
+  const buzz = useBuzz(undefined, SUPPORTED_BUZZ as unknown as BuzzAccountType[]);
   const buzzAccountTypeSelectorCB = useCombobox({
     onDropdownClose: () => {
       buzzAccountTypeSelectorCB.resetSelectedOption();
       buzzAccountTypeSelectorCB.focusTarget();
-    },
-
-    onDropdownOpen: () => {
-      buzzAccountTypeSelectorCB.focusSearchInput();
     },
   });
 
@@ -440,7 +437,7 @@ const BankBuzzCard = () => {
             labelProps={{ className: 'hidden' }}
             leftSection={
               <Combobox
-                store={combobox}
+                store={buzzAccountTypeSelectorCB}
                 width={250}
                 position="bottom-start"
                 withArrow
@@ -449,7 +446,9 @@ const BankBuzzCard = () => {
                 }}
               >
                 <Combobox.Target withAriaAttributes={false}>
-                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzAccountType} size={18} />
+                  <ActionIcon onClick={() => buzzAccountTypeSelectorCB.toggleDropdown()}>
+                    <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzAccountType} size={18} />
+                  </ActionIcon>
                 </Combobox.Target>
 
                 <Combobox.Dropdown>
@@ -466,6 +465,9 @@ const BankBuzzCard = () => {
                       >
                         <div className="flex items-center gap-2">
                           <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={18} />
+                          <span className="text-sm">
+                            {capitalize(getAccountTypeLabel(buzzType))} Buzz
+                          </span>
                         </div>
                       </Combobox.Option>
                     ))}
@@ -505,8 +507,12 @@ const BankBuzzCard = () => {
                       <div className="flex flex-col gap-2">
                         <p>
                           You are about to add{' '}
-                          <CurrencyBadge unitAmount={toBank} currency={Currency.BUZZ} /> to the
-                          bank.{' '}
+                          <CurrencyBadge
+                            unitAmount={toBank}
+                            currency={Currency.BUZZ}
+                            type={activeBuzzAccountType}
+                          />{' '}
+                          to the bank.{' '}
                         </p>
                         <p> Are you sure?</p>
                       </div>
@@ -602,41 +608,51 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={'user'} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
               </Table.Td>
             </Table.Tr>
-            <Table.Tr>
-              <Table.Td>Your Banked Buzz</Table.Td>
-              <Table.Td className="text-right">
-                {cap && (
-                  <Text
-                    c="blue.4"
-                    className="cursor-pointer pr-2 text-sm"
-                    td="underline"
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: CreatorProgramCapsInfoModal,
-                      });
-                    }}
-                  >
-                    {abbreviateNumber(cap)} Cap
-                  </Text>
-                )}
-              </Table.Td>
-              <Table.Td className="border-l py-1 pl-2">
-                <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={16} />
-                  <span>{numberWithCommas(banked.total)}</span>
-                  {isCapped && (
-                    <Badge color="yellow" size="sm">
-                      Capped
-                    </Badge>
-                  )}
-                </div>{' '}
-              </Table.Td>
-            </Table.Tr>
+            {SUPPORTED_BUZZ.map((buzzType) => {
+              console.log(banked);
+              const buzzBalance = banked.balances.find((b) => b.accountType === buzzType);
+              if (!buzzBalance) return null;
+
+              const amt = buzzBalance.total ?? 0;
+
+              return (
+                <Table.Tr key={buzzType}>
+                  <Table.Td>
+                    <div className="flex items-center gap-1">
+                      <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
+                      <span>Your banked {capitalize(getAccountTypeLabel(buzzType))} Buzz</span>
+                    </div>
+                  </Table.Td>
+                  <Table.Td className="text-right">
+                    {cap && (
+                      <Text
+                        c="blue.4"
+                        className="cursor-pointer pr-2 text-sm"
+                        td="underline"
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: CreatorProgramCapsInfoModal,
+                          });
+                        }}
+                      >
+                        {abbreviateNumber(cap)} Cap
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td className="border-l py-1 pl-2">
+                    <div className="flex items-center gap-2">
+                      <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
+                      {formatCurrencyForDisplay(amt, Currency.BUZZ)}
+                    </div>
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
           </Table.Tbody>
         </Table>
 
