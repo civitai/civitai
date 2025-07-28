@@ -453,7 +453,7 @@ export const ApplyCustomFilter = ({
   ...props
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const filters = useMemo(() => {
-    const filterList = Array.isArray(_filters) ? _filters : [_filters];
+    const filterList = Array.isArray(_filters) ? _filters : _filters ? [_filters] : [];
     return filterList.map((f) => `(${f})`).join(' AND ');
   }, [_filters]);
 

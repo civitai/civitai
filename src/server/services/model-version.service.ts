@@ -300,9 +300,12 @@ export const upsertModelVersion = async ({
         dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
-    await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id, version.modelId);
-    await dataForModelsCache.bust(version.modelId);
+
+    await Promise.all([
+      preventReplicationLag('modelVersion', version.id),
+      bustMvCache(version.id, version.modelId),
+      dataForModelsCache.bust(version.modelId),
+    ]);
 
     return version;
   } else {
@@ -475,9 +478,11 @@ export const upsertModelVersion = async ({
       },
     });
 
-    await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id, version.modelId);
-    await dataForModelsCache.bust(version.modelId);
+    await Promise.all([
+      preventReplicationLag('modelVersion', version.id),
+      bustMvCache(version.id, version.modelId),
+      dataForModelsCache.bust(version.modelId),
+    ]);
 
     // Run it in the background to avoid blocking the request.
     ingestModelById({ id: version.modelId }).catch((error) =>

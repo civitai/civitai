@@ -494,12 +494,14 @@ export const baseModelSets = {
   SD3: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
-    generation: true,
+    hidden: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
+    generation: false,
   }),
   SD3_5M: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 3.5 Medium'],
-    generation: true,
+    hidden: ['SD 3.5 Medium'],
+    generation: false,
   }),
   Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'], generation: true }),
   Flux1Kontext: new BaseModelSet({

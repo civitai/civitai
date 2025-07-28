@@ -127,40 +127,6 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 
-// Utility function to get the NSFW restriction filter for Prisma queries
-function getNsfwRestrictedBaseModelFilter(): Prisma.ModelWhereInput {
-  if (nsfwRestrictedBaseModels.length === 0) return {};
-
-  return {
-    NOT: {
-      AND: [
-        { nsfw: true },
-        {
-          modelVersions: {
-            some: {
-              baseModel: { in: nsfwRestrictedBaseModels },
-            },
-          },
-        },
-      ],
-    },
-  };
-}
-
-// Utility function to get the NSFW restriction filter for raw SQL queries
-function getNsfwRestrictedBaseModelSqlFilter(): Prisma.Sql {
-  return Prisma.sql`
-    NOT (
-      m."nsfw" = true 
-      AND EXISTS (
-        SELECT 1 FROM "ModelVersion" mv 
-        WHERE mv."modelId" = m."id" 
-          AND mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels, ',')})
-      )
-    )
-  `;
-}
-
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
   user,
@@ -626,10 +592,6 @@ export const getModelsRaw = async ({
     )`);
   }
 
-  // Filter out NSFW models for license-restricted base models
-  // Models with nsfw=true cannot use base models with restricted licenses
-  AND.push(getNsfwRestrictedBaseModelSqlFilter());
-
   const browsingLevelQuery = Prisma.sql`(m."nsfwLevel" & ${browsingLevel}) != 0`;
   if (pending && (isModerator || userId)) {
     if (isModerator) {
@@ -769,6 +731,18 @@ export const getModelsRaw = async ({
 
         if (!!modelVersionIds?.length) {
           modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
+        }
+
+        // Filter out NSFW versions for license-restricted base models
+        // Models with nsfwLevel > R cannot use base models with restricted licenses
+        if (nsfwRestrictedBaseModels.length > 0) {
+          modelVersions = modelVersions.filter(
+            (mv) =>
+              !(
+                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                nsfwRestrictedBaseModels.includes(mv.baseModel)
+              )
+          );
         }
 
         if (hidePrivateModels) {
@@ -1016,10 +990,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
       },
     });
   }
-
-  // Filter out NSFW models for license-restricted base models
-  // Models with nsfw=true cannot use base models with restricted licenses
-  AND.push(getNsfwRestrictedBaseModelFilter());
 
   // TODO - filter by browsingLevel
   const where: Prisma.ModelWhereInput = {
