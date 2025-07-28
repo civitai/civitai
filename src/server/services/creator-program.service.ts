@@ -10,7 +10,7 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
@@ -19,6 +19,7 @@ import type {
 import type { UserTier } from '~/server/schema/user.schema';
 import {
   createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
   getCounterPartyBuzzTransactions,
   getUserBuzzAccount,
   refundTransaction,
@@ -141,7 +142,7 @@ export function getMonthAccount(month?: Date) {
 
 export async function getBanked(userId: number) {
   const monthAccount = getMonthAccount();
-  const total = await fetchThroughCache(
+  const balances = await fetchThroughCache(
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
     async () => {
       const supportedBalances = await Promise.all(
@@ -155,16 +156,18 @@ export async function getBanked(userId: number) {
         )
       );
 
-      const totalBalance = supportedBalances.reduce((sum, balanceInfo) => {
-        return sum + balanceInfo.totalBalance;
-      }, 0);
-
-      return totalBalance;
+      return supportedBalances.map((balance) => ({
+        accountType: balance.counterPartyAccountType,
+        total: balance.totalBalance,
+      }));
     },
     { ttl: CacheTTL.day }
   );
 
+  const total = balances.reduce((acc, balance) => acc + (balance.total ?? 0), 0);
+
   return {
+    balances,
     total,
     cap: (await getBankCap(userId))[userId],
   };
@@ -330,7 +333,7 @@ async function getFlippedPhaseStatus() {
   return await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES);
 }
 
-export async function bankBuzz(userId: number, amount: number) {
+export async function bankBuzz(userId: number, amount: number, accountType?: BuzzAccountType) {
   // Check that we're in the banking phase
   const user = await dbWrite.user.findFirstOrThrow({
     where: { id: userId },
@@ -354,7 +357,7 @@ export async function bankBuzz(userId: number, amount: number) {
     amount,
     fromAccountId: userId,
     // TODO.red-split: Need a way to specify multiple account types.
-    fromAccountType: 'user',
+    fromAccountType: accountType ?? 'user',
     toAccountId: monthAccount,
     toAccountType: 'creatorprogrambank',
     type: TransactionType.Bank,
@@ -399,29 +402,32 @@ export async function extractBuzz(userId: number) {
   // Charge fee and extract banked amount
   // Give full amount back to user, to then take fee...
   const monthAccount = getMonthAccount();
-  await createBuzzTransaction({
-    amount: banked.total,
-    fromAccountId: monthAccount,
-    fromAccountType: 'creatorprogrambank',
-    toAccountId: userId,
-    // TODO.red-split: Need a way to specify multiple account types.
-    toAccountType: 'user',
-    type: TransactionType.Extract,
-    externalTransactionId: `extraction-${monthAccount}-${userId}`,
-    description: `Extracted from Bank`,
-  });
+  await Promise.all(
+    banked.balances.map((balance) => {
+      return createBuzzTransaction({
+        amount: balance.total,
+        fromAccountId: monthAccount,
+        fromAccountType: 'creatorprogrambank',
+        toAccountId: userId,
+        // TODO.red-split: Need a way to specify multiple account types.
+        toAccountType: balance.accountType,
+        type: TransactionType.Extract,
+        externalTransactionId: `extraction-${monthAccount}-${userId}-${balance.accountType}`,
+        description: `Extracted from Bank`,
+      });
+    })
+  );
 
   if (fee > 0) {
     // Burn fee
-    await createBuzzTransaction({
+    await createMultiAccountBuzzTransaction({
       amount: fee,
       fromAccountId: userId,
-      // TODO.red-split: Need a way to specify multiple account types.
-      fromAccountType: 'user',
+      fromAccountTypes: SUPPORTED_BUZZ as unknown as BuzzAccountType[],
       toAccountId: 0,
       toAccountType: 'user',
       type: TransactionType.Fee,
-      externalTransactionId: `extraction-fee-${monthAccount}-${userId}`,
+      externalTransactionIdPrefix: `extraction-fee-${monthAccount}-${userId}`,
       description: 'Extraction fee',
     });
   }

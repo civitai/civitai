@@ -49,7 +49,7 @@ export const purchasableBuzzAccountTypes = ['green', 'fakered', 'red', 'user'] a
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 export type PurchasableBuzzType = (typeof purchasableBuzzAccountTypes)[number];
 
-function preprocessAccountType(value: unknown) {
+export function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? (value?.toLowerCase() as BuzzAccountType) : undefined;
 }
 

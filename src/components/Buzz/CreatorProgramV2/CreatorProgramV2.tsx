@@ -11,6 +11,8 @@ import {
   Text,
   Tooltip,
   NumberInput,
+  useCombobox,
+  Combobox,
 } from '@mantine/core';
 import {
   IconBuildingBank,
@@ -29,7 +31,7 @@ import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
@@ -66,6 +68,7 @@ import { useUserPaymentConfiguration } from '~/components/UserPaymentConfigurati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
+import { BuzzAccountType } from '~/server/schema/buzz.schema';
 import {
   getCreatorProgramAvailability,
   getCurrentValue,
@@ -80,6 +83,7 @@ import {
 import { Flags } from '~/shared/utils';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { getAccountTypeLabel } from '~/utils/buzz';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
@@ -374,8 +378,18 @@ export const CompensationPoolCard = () => {
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
-  const buzz = useBuzz(undefined, 'user');
-  const [buzzAccount] = buzz.balances;
+  const buzz = useBuzz(undefined, SUPPORTED_BUZZ as unknown as BuzzAccountType[]);
+  const buzzAccountTypeSelectorCB = useCombobox({
+    onDropdownClose: () => {
+      buzzAccountTypeSelectorCB.resetSelectedOption();
+      buzzAccountTypeSelectorCB.focusTarget();
+    },
+  });
+
+  const [activeBuzzAccountType, setActiveBuzzAccountType] = useState<BuzzAccountType>('user');
+  const buzzAccount = buzz.balances.find((b) => b.accountType === activeBuzzAccountType) ?? {
+    balance: 0,
+  };
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
@@ -387,7 +401,7 @@ const BankBuzzCard = () => {
 
   const handleBankBuzz = async () => {
     try {
-      await bankBuzz({ amount: toBank });
+      await bankBuzz({ amount: toBank, accountType: activeBuzzAccountType });
       showSuccessNotification({
         title: 'Success!',
         message: 'You have successfully banked your Buzz.',
@@ -422,7 +436,44 @@ const BankBuzzCard = () => {
             label="Buzz"
             labelProps={{ className: 'hidden' }}
             leftSection={
-              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={18} />
+              <Combobox
+                store={buzzAccountTypeSelectorCB}
+                width={250}
+                position="bottom-start"
+                withArrow
+                onOptionSubmit={(val) => {
+                  setActiveBuzzAccountType(val as BuzzAccountType);
+                }}
+              >
+                <Combobox.Target withAriaAttributes={false}>
+                  <ActionIcon onClick={() => buzzAccountTypeSelectorCB.toggleDropdown()}>
+                    <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzAccountType} size={18} />
+                  </ActionIcon>
+                </Combobox.Target>
+
+                <Combobox.Dropdown>
+                  <Combobox.Options>
+                    {SUPPORTED_BUZZ.map((buzzType) => (
+                      <Combobox.Option
+                        key={buzzType}
+                        value={buzzType}
+                        selected={buzzType === activeBuzzAccountType}
+                        onClick={() => {
+                          setActiveBuzzAccountType(buzzType);
+                          buzzAccountTypeSelectorCB.closeDropdown();
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={18} />
+                          <span className="text-sm">
+                            {capitalize(getAccountTypeLabel(buzzType))} Buzz
+                          </span>
+                        </div>
+                      </Combobox.Option>
+                    ))}
+                  </Combobox.Options>
+                </Combobox.Dropdown>
+              </Combobox>
             }
             value={toBank ? toBank : undefined}
             min={10000}
@@ -456,8 +507,12 @@ const BankBuzzCard = () => {
                       <div className="flex flex-col gap-2">
                         <p>
                           You are about to add{' '}
-                          <CurrencyBadge unitAmount={toBank} currency={Currency.BUZZ} /> to the
-                          bank.{' '}
+                          <CurrencyBadge
+                            unitAmount={toBank}
+                            currency={Currency.BUZZ}
+                            type={activeBuzzAccountType}
+                          />{' '}
+                          to the bank.{' '}
                         </p>
                         <p> Are you sure?</p>
                       </div>
@@ -553,41 +608,51 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={'user'} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
               </Table.Td>
             </Table.Tr>
-            <Table.Tr>
-              <Table.Td>Your Banked Buzz</Table.Td>
-              <Table.Td className="text-right">
-                {cap && (
-                  <Text
-                    c="blue.4"
-                    className="cursor-pointer pr-2 text-sm"
-                    td="underline"
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: CreatorProgramCapsInfoModal,
-                      });
-                    }}
-                  >
-                    {abbreviateNumber(cap)} Cap
-                  </Text>
-                )}
-              </Table.Td>
-              <Table.Td className="border-l py-1 pl-2">
-                <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={16} />
-                  <span>{numberWithCommas(banked.total)}</span>
-                  {isCapped && (
-                    <Badge color="yellow" size="sm">
-                      Capped
-                    </Badge>
-                  )}
-                </div>{' '}
-              </Table.Td>
-            </Table.Tr>
+            {SUPPORTED_BUZZ.map((buzzType) => {
+              console.log(banked);
+              const buzzBalance = banked.balances.find((b) => b.accountType === buzzType);
+              if (!buzzBalance) return null;
+
+              const amt = buzzBalance.total ?? 0;
+
+              return (
+                <Table.Tr key={buzzType}>
+                  <Table.Td>
+                    <div className="flex items-center gap-1">
+                      <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
+                      <span>Your banked {capitalize(getAccountTypeLabel(buzzType))} Buzz</span>
+                    </div>
+                  </Table.Td>
+                  <Table.Td className="text-right">
+                    {cap && (
+                      <Text
+                        c="blue.4"
+                        className="cursor-pointer pr-2 text-sm"
+                        td="underline"
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: CreatorProgramCapsInfoModal,
+                          });
+                        }}
+                      >
+                        {abbreviateNumber(cap)} Cap
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td className="border-l py-1 pl-2">
+                    <div className="flex items-center gap-2">
+                      <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
+                      {formatCurrencyForDisplay(amt, Currency.BUZZ)}
+                    </div>
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
           </Table.Tbody>
         </Table>
 
