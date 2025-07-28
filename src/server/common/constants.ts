@@ -1185,9 +1185,13 @@ type CurrencyTheme = {
   color: string;
   fill?: string | undefined;
   cssVariableName?: string;
+  css?: {
+    gradient?: string;
+  };
   classNames?: {
     btn?: string;
     gradient?: string;
+    gradientText?: string;
   };
 };
 
@@ -1199,9 +1203,14 @@ export const CurrencyConfig: Record<
     icon: IconBolt,
     color: '#f59f00',
     fill: '#f59f00',
+    css: {
+      gradient:
+        'linear-gradient(135deg, var(--mantine-color-yellow-4) 0%, var(--mantine-color-orange-5) 100%)',
+    },
     classNames: {
       btn: 'bg-gradient-to-r from-orange-500 to-yellow-400 hover:from-orange-600 hover:to-yellow-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
       gradient: 'bg-gradient-to-r from-orange-500 to-yellow-400',
+      gradientText: 'bg-gradient-to-r from-orange-500 to-yellow-400 bg-clip-text text-transparent',
     },
     themes: {
       generation: {
@@ -1211,6 +1220,11 @@ export const CurrencyConfig: Record<
         classNames: {
           btn: 'bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
           gradient: 'bg-gradient-to-r from-blue-500 to-cyan-400',
+          gradientText: 'bg-gradient-to-r from-blue-500 to-cyan-400 bg-clip-text text-transparent',
+        },
+        css: {
+          gradient:
+            'linear-gradient(135deg, var(--mantine-color-cyan-4) 0%, var(--mantine-color-blue-5) 100%)',
         },
       },
       green: {
@@ -1220,6 +1234,12 @@ export const CurrencyConfig: Record<
         classNames: {
           btn: 'bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-600 hover:to-emerald-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
           gradient: 'bg-gradient-to-r from-green-500 to-emerald-400',
+          gradientText:
+            'bg-gradient-to-r from-green-500 to-emerald-400 bg-clip-text text-transparent',
+        },
+        css: {
+          gradient:
+            'linear-gradient(135deg, var(--mantine-color-lime-4) 0%, var(--mantine-color-green-6) 100%)',
         },
       },
       red: {
@@ -1229,6 +1249,11 @@ export const CurrencyConfig: Record<
         classNames: {
           btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
           gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
+          gradientText: 'bg-gradient-to-r from-rose-500 to-pink-400 bg-clip-text text-transparent',
+        },
+        css: {
+          gradient:
+            'linear-gradient(135deg, var(--mantine-color-pink-4) 0%, var(--mantine-color-rose-5) 100%)',
         },
       },
       fakered: {
@@ -1238,6 +1263,11 @@ export const CurrencyConfig: Record<
         classNames: {
           btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
           gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
+          gradientText: 'bg-gradient-to-r from-rose-500 to-pink-400 bg-clip-text text-transparent',
+        },
+        css: {
+          gradient:
+            'linear-gradient(135deg, var(--mantine-color-pink-4) 0%, var(--mantine-color-rose-5) 100%)',
         },
       },
     },

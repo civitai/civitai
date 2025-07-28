@@ -36,7 +36,7 @@ export const PromoBanner = ({
       style={{
         // @ts-ignore
         '--buzz-color': buzzConfig.colorRgb,
-        '--buzz-gradient': buzzConfig.cssGradient,
+        '--buzz-gradient': buzzConfig.css?.gradient,
       }}
     >
       <div className={classes.promoBackground}>

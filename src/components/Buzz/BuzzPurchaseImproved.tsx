@@ -371,7 +371,7 @@ export const BuzzPurchaseImproved = ({
       style={{
         // @ts-ignore
         '--buzz-color': buzzConfig.colorRgb,
-        '--buzz-gradient': buzzConfig.cssGradient,
+        '--buzz-gradient': buzzConfig.css?.gradient,
       }}
     >
       <Grid>

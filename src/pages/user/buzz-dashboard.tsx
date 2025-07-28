@@ -21,9 +21,10 @@ import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboard
 import { EarningBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
-import { useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { useBuzz, useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
@@ -60,6 +61,7 @@ export default function UserBuzzDashboard() {
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
   const features = useFeatureFlags();
+  const blueBuzzConfig = useBuzzCurrencyConfig('generation');
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -115,7 +117,12 @@ export default function UserBuzzDashboard() {
                 {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
                   <Tooltip multiline label="Your membership makes rewards worth more!">
                     <Stack gap={0}>
-                      <Text size="md" style={{ fontSize: 20 }} className={classes.goldText}>
+                      <Text
+                        size="md"
+                        style={{ fontSize: 20 }}
+                        fw={700}
+                        className={blueBuzzConfig.classNames?.gradientText}
+                      >
                         Rewards Multiplier: {rewardsMultiplier}x
                       </Text>
                     </Stack>
