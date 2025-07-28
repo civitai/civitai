@@ -99,7 +99,7 @@ function getResources({ sui_image_params = {}, sui_models = [] }: SwarmUiMetadat
     return removeEmpty({
       name: nameWithoutExtension,
       type,
-      hash,
+      hash: hash?.replace('0x', '').slice(0, 12),
       weight:
         weight ?? (loraIndex > -1 ? Number(sui_image_params.loraweights[loraIndex]) : undefined),
     });

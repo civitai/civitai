@@ -10,14 +10,13 @@ import { Text } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { lipsum } from '~/server/common/constants';
 
-export function KontextAd({ index, className }: { index: number; className?: string }) {
+function KontextAdContent({ index, className }: { index: number; className?: string }) {
   const id = uuidv4();
   const loadedRef = useRef(false);
   const currentUser = useCurrentUser();
   const [ref, inView] = useInView();
   const { kontextReady } = useAdsContext();
   const { getMessages } = useKontextContext();
-  const features = useFeatureFlags();
 
   const messages = getMessages(index);
 
@@ -57,8 +56,6 @@ export function KontextAd({ index, className }: { index: number; className?: str
     );
   }, [kontextReady, messages?.length, inView]);
 
-  if (!features.kontextAds) return null;
-
   return (
     <TwCard className={className}>
       <Text className="pb-1 text-sm" c="dimmed">
@@ -71,4 +68,12 @@ export function KontextAd({ index, className }: { index: number; className?: str
       ></div>
     </TwCard>
   );
+}
+
+export function KontextAd(props: { index: number; className?: string }) {
+  const features = useFeatureFlags();
+  const { kontextAvailable } = useAdsContext();
+
+  if (!features.kontextAds || !kontextAvailable) return null;
+  return <KontextAdContent {...props} />;
 }
