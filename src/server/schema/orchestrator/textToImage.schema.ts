@@ -15,7 +15,7 @@ export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z.string().default(''),
-  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  negativePrompt: z.string().optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
     message: 'invalid sampler',
