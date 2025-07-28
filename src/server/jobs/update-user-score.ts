@@ -186,12 +186,12 @@ async function getUpdateTotalTasks(ctx: Context) {
       WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
       UPDATE "User" u
         SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || s.scores || jsonb_build_object('total',
-            COALESCE((s.scores->>'models')::numeric, (u.meta->>'models')::numeric, 0)
-            + COALESCE((s.scores->>'articles')::numeric, (u.meta->>'articles')::numeric, 0)
-            + COALESCE((s.scores->>'images')::numeric, (u.meta->>'images')::numeric, 0)
-            + COALESCE((s.scores->>'users')::numeric, (u.meta->>'users')::numeric, 0)
-            + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->>'reportsActioned')::numeric, 0)
-            + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->>'reportsAgainst')::numeric, 0)
+            COALESCE((s.scores->>'models')::numeric, (u.meta->'scores'->>'models')::numeric, 0)
+            + COALESCE((s.scores->>'articles')::numeric, (u.meta->'scores'->>'articles')::numeric, 0)
+            + COALESCE((s.scores->>'images')::numeric, (u.meta->'scores'->>'images')::numeric, 0)
+            + COALESCE((s.scores->>'users')::numeric, (u.meta->'scores'->>'users')::numeric, 0)
+            + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->'scores'->>'reportsActioned')::numeric, 0)
+            + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->'scores'->>'reportsAgainst')::numeric, 0)
           )
         )
       FROM scores s
