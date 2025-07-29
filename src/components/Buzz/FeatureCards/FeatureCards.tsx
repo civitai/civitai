@@ -1,5 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, List, Paper, Stack, Text, Title, Group } from '@mantine/core';
+import { Button, List, Paper, Stack, Text, Title, Group, Tooltip } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
@@ -11,6 +11,7 @@ import {
   IconMoneybag,
   IconShoppingBag,
   IconShoppingCart,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import React from 'react';
 import type { MouseEvent } from 'react';
@@ -22,6 +23,8 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationPanel } from '~/store/generation.store';
 import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { getAccountTypeLabel } from '~/utils/buzz';
+import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
+import { Currency } from '~/shared/utils/prisma/enums';
 import dynamic from 'next/dynamic';
 import classes from './FeatureCards.module.scss';
 const RedeemCodeModal = dynamic(() =>
@@ -311,5 +314,134 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
         </List.Item>
       ))}
     </List>
+  );
+};
+
+// Enhanced Rewards List Component
+type RewardItem = {
+  type: string;
+  accountType: BuzzAccountType;
+  awardAmount: number;
+  description?: string;
+  triggerDescription?: string;
+  tooltip?: string;
+  awarded: number;
+  cap?: number;
+  interval?: string;
+};
+
+type RewardsListProps = {
+  rewards: RewardItem[];
+  accountType: BuzzAccountType;
+  rewardsMultiplier: number;
+  onAccountTypeChange?: (accountType: BuzzAccountType) => void;
+};
+
+export const RewardsList = ({
+  rewards,
+  accountType,
+  onAccountTypeChange,
+}: Omit<RewardsListProps, 'rewardsMultiplier'>) => {
+  const buzzConfig = useBuzzCurrencyConfig(accountType);
+
+  // Convert hex to RGB for CSS variable
+  const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+      ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}`
+      : '245, 159, 0';
+  };
+
+  if (rewards.length === 0) {
+    return (
+      <Stack gap="md" align="center" py="xl">
+        <Text c="dimmed" size="lg" fw={500}>
+          No rewards available for {getAccountTypeLabel(accountType)} Buzz at the moment
+        </Text>
+        <Text size="sm" c="dimmed">
+          Check out the{' '}
+          <Text
+            component="button"
+            c="blue.4"
+            td="underline"
+            onClick={() => onAccountTypeChange?.('generation')}
+            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            Blue Buzz rewards
+          </Text>{' '}
+          available.
+        </Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="xs">
+      {rewards.map((reward) => {
+        const hasAwarded = reward.awarded !== -1;
+        const awardedAmountPercent = reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
+        const isCompleted = awardedAmountPercent >= 1;
+
+        return (
+          <Paper
+            key={reward.type}
+            className={`${classes.rewardCard} ${isCompleted ? classes.rewardCardCompleted : ''}`}
+            style={
+              {
+                '--buzz-color': hexToRgb(buzzConfig.color),
+                '--progress-width': `${awardedAmountPercent * 100}%`,
+              } as React.CSSProperties
+            }
+          >
+            <Group justify="space-between" align="center" wrap="nowrap">
+              {/* Main content */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Group gap="xs" align="center" wrap="nowrap">
+                  <CurrencyIcon size={16} currency={Currency.BUZZ} type={accountType} />
+                  <Text size="sm" fw={600} c={`rgb(${hexToRgb(buzzConfig.color)})`}>
+                    {reward.awardAmount.toLocaleString()}
+                  </Text>
+                  <Text fw={500} size="sm" style={{ flex: 1 }} truncate>
+                    {reward.triggerDescription ?? reward.description}
+                  </Text>
+                  {reward.tooltip && (
+                    <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
+                      <IconInfoCircle size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
+                    </Tooltip>
+                  )}
+                </Group>
+
+                {/* Progress info */}
+                {reward.cap && hasAwarded && (
+                  <Group gap="xs" align="center" mt={4}>
+                    <Text size="xs" c="dimmed">
+                      {reward.awarded.toLocaleString()} / {reward.cap.toLocaleString()}
+                    </Text>
+                    <div
+                      className={`${classes.rewardProgress} ${
+                        isCompleted ? classes.rewardProgressCompleted : ''
+                      }`}
+                      style={{ flex: 1, minWidth: 60 }}
+                    />
+                    <Text size="xs" c="dimmed" fw={500}>
+                      {Math.round(awardedAmountPercent * 100)}%
+                    </Text>
+                  </Group>
+                )}
+              </div>
+
+              {/* Watch ad button */}
+              {reward.type === 'adWatched' && (
+                <WatchAdButton
+                  size="compact-xs"
+                  disabled={isCompleted}
+                  className={classes.watchAdButton}
+                />
+              )}
+            </Group>
+          </Paper>
+        );
+      })}
+    </Stack>
   );
 };

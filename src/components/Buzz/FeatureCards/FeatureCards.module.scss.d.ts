@@ -1,3 +1,9 @@
 export declare const featureCard: string;
 export declare const iconSection: string;
 export declare const iconWrapper: string;
+export declare const rewardCard: string;
+export declare const rewardCardCompleted: string;
+export declare const rewardAmount: string;
+export declare const rewardProgress: string;
+export declare const rewardProgressCompleted: string;
+export declare const watchAdButton: string;

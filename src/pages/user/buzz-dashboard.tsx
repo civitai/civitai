@@ -19,7 +19,7 @@ import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
-import { EarningBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
+import { EarningBuzz, RewardsList } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -176,114 +176,12 @@ export default function UserBuzzDashboard() {
                   <Loader />
                 </Center>
               ) : (
-                (() => {
-                  const filteredRewards = rewards.filter(
-                    (reward) => reward.accountType === selectedAccountType
-                  );
-
-                  if (filteredRewards.length === 0) {
-                    return (
-                      <Center py="xl">
-                        <Stack gap="xs" align="center">
-                          <Text c="dimmed">
-                            No rewards available for {getAccountTypeLabel(selectedAccountType)} Buzz
-                            at the moment.
-                          </Text>
-                          <Text size="sm" c="dimmed">
-                            Check out the{' '}
-                            <Anchor
-                              component="button"
-                              onClick={() => setSelectedAccountType('generation')}
-                              c="blue.4"
-                            >
-                              Blue Buzz rewards
-                            </Anchor>{' '}
-                            available.
-                          </Text>
-                        </Stack>
-                      </Center>
-                    );
-                  }
-
-                  return filteredRewards.map((reward, i) => {
-                    const hasAwarded = reward.awarded !== -1;
-                    const last = i === filteredRewards.length - 1;
-                    const awardedAmountPercent =
-                      reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
-
-                    return (
-                      <Stack key={reward.type} gap={4}>
-                        <Group justify="space-between" mih={30}>
-                          <Group wrap="nowrap" gap="xs">
-                            <Stack gap={4} align="center">
-                              <CurrencyBadge
-                                w={100}
-                                currency={Currency.BUZZ}
-                                unitAmount={reward.awardAmount}
-                                type={reward.accountType}
-                              />
-                              {rewardsMultiplier > 1 && (
-                                <Text
-                                  size="xs"
-                                  style={{ fontSize: 10 }}
-                                  color={
-                                    reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'
-                                  }
-                                >
-                                  Originally {Math.floor(reward.awardAmount / rewardsMultiplier)}{' '}
-                                  Buzz
-                                </Text>
-                              )}
-                            </Stack>
-                            <Text>{reward.triggerDescription ?? reward.description}</Text>
-                            {reward.tooltip && (
-                              <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
-                                <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
-                              </Tooltip>
-                            )}
-                            {reward.type === 'adWatched' && (
-                              <WatchAdButton
-                                size="compact-xs"
-                                disabled={awardedAmountPercent >= 1}
-                              />
-                            )}
-                          </Group>
-                          {reward.cap && (
-                            <Group gap={4}>
-                              <CurrencyIcon size={14} type={reward.accountType} />
-                              <Text c="dimmed" size="xs">
-                                {hasAwarded
-                                  ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
-                                  : `${reward.cap.toLocaleString()} `}
-                                {' ('}
-                                {reward.interval ?? 'day'}
-                                {')'}
-                              </Text>
-                              {hasAwarded && (
-                                <RingProgress
-                                  size={30}
-                                  thickness={9}
-                                  sections={[
-                                    {
-                                      value: awardedAmountPercent * 100,
-                                      color:
-                                        awardedAmountPercent === 1
-                                          ? 'green'
-                                          : reward.accountType === 'generation'
-                                          ? 'blue.4'
-                                          : 'yellow.7',
-                                    },
-                                  ]}
-                                />
-                              )}
-                            </Group>
-                          )}
-                        </Group>
-                        {!last && <Divider mt="xs" />}
-                      </Stack>
-                    );
-                  });
-                })()
+                <RewardsList
+                  rewards={rewards.filter((reward) => reward.accountType === selectedAccountType)}
+                  accountType={selectedAccountType}
+                  rewardsMultiplier={rewardsMultiplier}
+                  onAccountTypeChange={setSelectedAccountType}
+                />
               )}
             </Stack>
           </Paper>
