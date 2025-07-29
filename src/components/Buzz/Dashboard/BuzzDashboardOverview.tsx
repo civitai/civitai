@@ -12,7 +12,6 @@ import {
   Stack,
   Text,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
@@ -29,10 +28,13 @@ import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/us
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
-import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import type { GetTransactionsReportSchema, BuzzAccountType } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
+import { capitalize, getDisplayName } from '~/utils/string-helpers';
+import { getAccountTypeLabel } from '~/utils/buzz';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
 
@@ -40,25 +42,100 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartToo
 
 const options = {
   aspectRatio: 1.4,
+  responsive: true,
   plugins: {
     title: {
       display: false,
+    },
+    legend: {
+      display: true,
+      position: 'top' as const,
+      labels: {
+        usePointStyle: true,
+        padding: 20,
+      },
+    },
+  },
+  scales: {
+    x: {
+      stacked: false, // Show bars side by side instead of stacked
+      grid: {
+        display: false,
+      },
+    },
+    y: {
+      stacked: false, // Show bars side by side instead of stacked
+      beginAtZero: true,
+      grid: {
+        color: 'rgba(0, 0, 0, 0.1)',
+      },
+    },
+  },
+  elements: {
+    bar: {
+      borderRadius: 4,
     },
   },
 };
 
 const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
-export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
-  const theme = useMantineTheme();
-  // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
-  // If this ever changes, that'd be awesome. But for now, we need to do this.
-  const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
-  const transactionData = useBuzzTransactions(accountId, transactionType);
+const getAccountTypeDescription = (accountType: BuzzAccountType): string => {
+  switch (accountType) {
+    case 'user':
+      return 'Legacy Buzz purchased via Memberships or our store. Can still be purchased via Gift-Cards.';
+    case 'generation':
+      return 'Free Buzz earned from viewing ads or completing daily challenges.';
+    case 'green':
+      return 'Green Buzz purchased with credit cards. Can only be used for safe-for-work content.';
+    case 'fakered':
+      return 'Red Buzz purchased with crypto. Can be used for NSFW content and all other site features.';
+    default:
+      return 'Buzz for various platform activities.';
+  }
+};
+
+const getAccountTypeUsages = (accountType: BuzzAccountType): string[] => {
+  switch (accountType) {
+    case 'user':
+      return ['Tips', 'Generation', 'Training', 'Creator Club', 'Bounties'];
+    case 'generation':
+      return ['Generation', 'Training'];
+    case 'green':
+      return ['Generation (SFW only)', 'Training (SFW only)', 'Tips', 'Creator Club'];
+    case 'fakered':
+      return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
+    default:
+      return [];
+  }
+};
+
+export const BuzzDashboardOverview = ({
+  accountId,
+  selectedAccountType,
+}: {
+  accountId: number;
+  selectedAccountType?: BuzzAccountType;
+}) => {
+  // Use the selected account type for transactions, defaulting to 'user'
+  const currentAccountType = selectedAccountType || 'user';
+  const currentAccountTypeLabel: string = getAccountTypeLabel(currentAccountType);
+
+  const transactionData = useBuzzTransactions(accountId, currentAccountType);
+  const buzzConfig = useBuzzCurrencyConfig(currentAccountType);
+
   const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
     window: 'day',
-    accountType: ['User', 'Generation'],
+    accountType: currentAccountType ? currentAccountType : 'user',
   });
+
+  // Update report filters when account type changes
+  React.useEffect(() => {
+    setReportFilters((prev) => ({
+      ...prev,
+      accountType: currentAccountType ? currentAccountType : 'user',
+    }));
+  }, [currentAccountType]);
 
   const { report, isLoading, isRefetching } = useTransactionsReport(reportFilters, {
     enabled: true,
@@ -77,63 +154,61 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
     });
   }, [transactionData.transactions]);
 
-  const datasets = useMemo(
-    () => [
+  const datasets = useMemo(() => {
+    const accountTypeLabel = currentAccountTypeLabel;
+    const capitalizedAccountType = capitalize(currentAccountType);
+    const buzzColor = buzzConfig.color;
+    const buzzColorRgb = hexToRgbOpenEnded(buzzColor);
+
+    // If account type is not supported for reports, return empty datasets
+    if (!capitalizedAccountType) {
+      return [
+        {
+          label: `${accountTypeLabel} Gained`,
+          data: {},
+          borderColor: buzzColor,
+          backgroundColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity
+          borderWidth: 2,
+        },
+        {
+          label: `${accountTypeLabel} Spent`,
+          data: {},
+          borderColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for border
+          backgroundColor: `rgba(${buzzColorRgb}, 0.2)`, // 20% opacity for background
+          borderWidth: 1,
+        },
+      ];
+    }
+
+    return [
       {
-        label: 'Yellow Gains',
+        label: `${accountTypeLabel} Gained`,
         data: report.reduce((acc, d) => {
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'User')?.gained ?? 0,
+              d.accounts.find((a) => a.accountType === capitalizedAccountType)?.gained ?? 0,
           };
         }, {}),
-        borderColor: theme.colors.yellow[7],
-        backgroundColor: theme.colors.yellow[7],
-        stack: 'gained',
+        borderColor: buzzColor,
+        backgroundColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for gains - more prominent
+        borderWidth: 2,
       },
       {
-        label: 'Blue Gains',
+        label: `${accountTypeLabel} Spent`,
         data: report.reduce((acc, d) => {
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'Generation')?.gained ?? 0,
+              d.accounts.find((a) => a.accountType === capitalizedAccountType)?.spent ?? 0,
           };
         }, {}),
-        borderColor: theme.colors.blue[7],
-        backgroundColor: theme.colors.blue[7],
-        stack: 'gained',
+        borderColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for border
+        backgroundColor: `rgba(${buzzColorRgb}, 0.2)`, // 20% opacity for background - less prominent
+        borderWidth: 1,
       },
-      {
-        label: 'Yellow Spent',
-        data: report.reduce((acc, d) => {
-          return {
-            ...acc,
-            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'User')?.spent ?? 0,
-          };
-        }, {}),
-        borderColor: theme.colors.red[7],
-        backgroundColor: theme.colors.red[7],
-        stack: 'spending',
-      },
-      {
-        label: 'Blue Spent',
-        data: report.reduce((acc, d) => {
-          return {
-            ...acc,
-            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'Generation')?.spent ?? 0,
-          };
-        }, {}),
-        borderColor: theme.colors.violet[7],
-        backgroundColor: theme.colors.violet[7],
-        stack: 'spending',
-      },
-    ],
-    [theme, report, viewingHourly]
-  );
+    ];
+  }, [report, viewingHourly, currentAccountType, currentAccountTypeLabel, buzzConfig]);
 
   return (
     <Grid>
@@ -148,19 +223,13 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           <Paper p="lg" radius="md" className={classes.tileCard} h="100%">
             <Stack gap="xl" h="100%">
               <Stack gap={0} mb="auto">
-                <Title order={3}>Current Buzz</Title>
+                <Title order={3}>Current {currentAccountTypeLabel} Buzz</Title>
                 <Group mb="sm">
                   <UserBuzz
                     accountId={accountId}
                     textSize="xl"
                     withAbbreviation={false}
-                    accountTypes={['user', 'fakered']}
-                  />
-                  <UserBuzz
-                    accountId={accountId}
-                    textSize="xl"
-                    withAbbreviation={false}
-                    accountTypes={['generation', 'green']}
+                    accountTypes={[currentAccountType]}
                   />
 
                   <Popover width={350} withArrow withinPortal shadow="sm">
@@ -171,41 +240,27 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                       <Stack>
                         <Group wrap="nowrap">
                           <Text>
-                            <Text component="span" fw="bold" c="yellow.7">
+                            <Text component="span" fw="bold" c={buzzConfig.color}>
                               <IconBolt
-                                color="yellow.7"
-                                style={{ fill: theme.colors.yellow[7], display: 'inline' }}
+                                color={buzzConfig.color}
+                                style={{
+                                  fill: buzzConfig.fill,
+                                  display: 'inline',
+                                }}
                                 size={16}
                               />
-                              Yellow Buzz:
+                              {currentAccountTypeLabel} Buzz:
                             </Text>{' '}
-                            Either purchased or earned from Creator Compensation systems. Can be
-                            used for:
+                            {getAccountTypeDescription(currentAccountType)}
                           </Text>
                         </Group>
-                        <List>
-                          <List.Item>Tips</List.Item>
-                          <List.Item>Generation</List.Item>
-                          <List.Item>Training</List.Item>
-                          <List.Item>Creator Club</List.Item>
-                          <List.Item>Bounties</List.Item>
-                        </List>
-                        <Text>
-                          <Text component="span" fw="bold" c="blue.4">
-                            <IconBolt
-                              color="blue.4"
-                              style={{ fill: theme.colors.blue[4], display: 'inline' }}
-                              size={16}
-                            />
-                            Blue Buzz:
-                          </Text>{' '}
-                          Free Buzz earned from viewing ads or completing daily challenges. Can be
-                          used for:
-                        </Text>
-                        <List>
-                          <List.Item>Generation</List.Item>
-                          <List.Item>Training</List.Item>
-                        </List>
+                        {getAccountTypeUsages(currentAccountType).length > 0 && (
+                          <List>
+                            {getAccountTypeUsages(currentAccountType).map((usage, index) => (
+                              <List.Item key={index}>{usage}</List.Item>
+                            ))}
+                          </List>
+                        )}
 
                         <Anchor
                           target="_blank"
@@ -220,13 +275,15 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 </Group>
 
                 {/* Top Up Card - Show when buzz is low */}
-                <BuzzTopUpCard
-                  accountId={accountId}
-                  variant="banner"
-                  message="Need more Buzz?"
-                  showBalance={false}
-                  btnLabel="Top up"
-                />
+                {currentAccountType === 'user' && (
+                  <BuzzTopUpCard
+                    accountId={accountId}
+                    variant="banner"
+                    message={`Need more ${currentAccountTypeLabel} Buzz?`}
+                    showBalance={false}
+                    btnLabel="Top up"
+                  />
+                )}
 
                 <SegmentedControl
                   value={reportFilters.window}
@@ -269,7 +326,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                       datasets,
                     }}
                   />
-                  <Text c="yellow.7" size="xs">
+                  <Text c={buzzConfig.color} size="xs">
                     All times are UTC
                   </Text>
                 </>
@@ -287,15 +344,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
       >
         <Paper p="lg" radius="md" h="100%" className={classes.tileCard} style={{ flex: 1 }}>
           <Stack gap="xs">
-            <Title order={3}>Recent Transactions</Title>
-            <SegmentedControl
-              value={transactionType}
-              onChange={(v) => setTransactionType(v as 'user' | 'generation')}
-              data={[
-                { label: 'Yellow', value: 'user' },
-                { label: 'Blue', value: 'generation' },
-              ]}
-            />
+            <Title order={3}>Recent {currentAccountTypeLabel} Transactions</Title>
             <Anchor component={Link} href="/user/transactions" size="xs">
               <Group gap={2}>
                 <IconArrowRight size={18} />
@@ -303,11 +352,10 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               </Group>
             </Anchor>
             {transactions.length ? (
-              <ScrollArea.Autosize mah={480} mt="md" key={transactionType}>
+              <ScrollArea.Autosize mah={480} mt="md" key={currentAccountType}>
                 <Stack gap={8} mr={14}>
                   {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;
-                    const isDebit = amount < 0;
 
                     return (
                       <Stack key={index + '@' + date.toISOString()} gap={4}>
@@ -325,9 +373,13 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                               <DaysFromNow date={date} />
                             </Text>
                           </Stack>
-                          <Text c={isDebit ? 'red' : 'green'}>
+                          <Text c={buzzConfig.color}>
                             <Group gap={2} wrap="nowrap">
-                              <IconBolt size={16} fill="currentColor" />
+                              <IconBolt
+                                size={16}
+                                color={buzzConfig.color}
+                                style={{ fill: buzzConfig.fill }}
+                              />
                               <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
                                 {amount.toLocaleString()}
                               </Text>

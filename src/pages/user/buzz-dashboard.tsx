@@ -8,6 +8,7 @@ import {
   Loader,
   Paper,
   RingProgress,
+  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -21,7 +22,7 @@ import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboard
 import { EarningBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
-import { useBuzz, useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -35,8 +36,10 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
+import { getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -61,7 +64,11 @@ export default function UserBuzzDashboard() {
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
   const features = useFeatureFlags();
-  const blueBuzzConfig = useBuzzCurrencyConfig('generation');
+
+  // Account type selection state
+  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzAccountType>('user');
+
+  const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -90,14 +97,34 @@ export default function UserBuzzDashboard() {
       />
       <Container size="lg">
         <Stack gap="xl">
-          <Title order={1}>My Buzz Dashboard</Title>
+          <Stack gap="md">
+            <Group justify="space-between" align="center">
+              <Title order={1}>My Buzz Dashboard</Title>
 
-          <BuzzDashboardOverview accountId={currentUser?.id as number} />
+              {/* Account Type Selector */}
+              <SegmentedControl
+                size="sm"
+                value={selectedAccountType}
+                onChange={(value) => setSelectedAccountType(value as BuzzAccountType)}
+                data={[
+                  { label: getAccountTypeLabel('user'), value: 'user' },
+                  { label: getAccountTypeLabel('generation'), value: 'generation' },
+                  { label: getAccountTypeLabel('green'), value: 'green' },
+                  { label: getAccountTypeLabel('fakered'), value: 'fakered' },
+                ]}
+              />
+            </Group>
+          </Stack>
+
+          <BuzzDashboardOverview
+            accountId={currentUser?.id as number}
+            selectedAccountType={selectedAccountType}
+          />
 
           {/* Redeem Buzz Code Section */}
           <RedeemCodeCard />
 
-          <EarningBuzz withCTA />
+          <EarningBuzz withCTA accountType={selectedAccountType} />
 
           <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
@@ -112,21 +139,36 @@ export default function UserBuzzDashboard() {
               )}
               <Group justify="space-between">
                 <Title order={3} id="rewards">
-                  Other ways you can earn Buzz
+                  Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
                 </Title>
-                {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
+                {isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
                   <Tooltip multiline label="Your membership makes rewards worth more!">
                     <Stack gap={0}>
                       <Text
                         size="md"
                         style={{ fontSize: 20 }}
                         fw={700}
-                        className={blueBuzzConfig.classNames?.gradientText}
+                        className={selectedBuzzConfig.classNames?.gradientText}
                       >
                         Rewards Multiplier: {rewardsMultiplier}x
                       </Text>
                     </Stack>
                   </Tooltip>
+                ) : (
+                  isMember &&
+                  features.membershipsV2 && (
+                    <Text size="sm" c="dimmed">
+                      Check out the{' '}
+                      <Anchor
+                        component="button"
+                        onClick={() => setSelectedAccountType('generation')}
+                        c="blue.4"
+                      >
+                        Blue Buzz rewards
+                      </Anchor>{' '}
+                      available.
+                    </Text>
+                  )
                 )}
               </Group>
               {loadingRewards || multipliersLoading ? (
@@ -134,78 +176,114 @@ export default function UserBuzzDashboard() {
                   <Loader />
                 </Center>
               ) : (
-                rewards.map((reward, i) => {
-                  const hasAwarded = reward.awarded !== -1;
-                  const last = i === rewards.length - 1;
-                  const awardedAmountPercent =
-                    reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
+                (() => {
+                  const filteredRewards = rewards.filter(
+                    (reward) => reward.accountType === selectedAccountType
+                  );
 
-                  return (
-                    <Stack key={reward.type} gap={4}>
-                      <Group justify="space-between" mih={30}>
-                        <Group wrap="nowrap" gap="xs">
-                          <Stack gap={4} align="center">
-                            <CurrencyBadge
-                              w={100}
-                              currency={Currency.BUZZ}
-                              unitAmount={reward.awardAmount}
-                              type={reward.accountType}
-                            />
-                            {rewardsMultiplier > 1 && (
-                              <Text
-                                size="xs"
-                                style={{ fontSize: 10 }}
-                                color={reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'}
-                              >
-                                Originally {Math.floor(reward.awardAmount / rewardsMultiplier)} Buzz
-                              </Text>
+                  if (filteredRewards.length === 0) {
+                    return (
+                      <Center py="xl">
+                        <Stack gap="xs" align="center">
+                          <Text c="dimmed">
+                            No rewards available for {getAccountTypeLabel(selectedAccountType)} Buzz
+                            at the moment.
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            Check out the{' '}
+                            <Anchor
+                              component="button"
+                              onClick={() => setSelectedAccountType('generation')}
+                              c="blue.4"
+                            >
+                              Blue Buzz rewards
+                            </Anchor>{' '}
+                            available.
+                          </Text>
+                        </Stack>
+                      </Center>
+                    );
+                  }
+
+                  return filteredRewards.map((reward, i) => {
+                    const hasAwarded = reward.awarded !== -1;
+                    const last = i === filteredRewards.length - 1;
+                    const awardedAmountPercent =
+                      reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
+
+                    return (
+                      <Stack key={reward.type} gap={4}>
+                        <Group justify="space-between" mih={30}>
+                          <Group wrap="nowrap" gap="xs">
+                            <Stack gap={4} align="center">
+                              <CurrencyBadge
+                                w={100}
+                                currency={Currency.BUZZ}
+                                unitAmount={reward.awardAmount}
+                                type={reward.accountType}
+                              />
+                              {rewardsMultiplier > 1 && (
+                                <Text
+                                  size="xs"
+                                  style={{ fontSize: 10 }}
+                                  color={
+                                    reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'
+                                  }
+                                >
+                                  Originally {Math.floor(reward.awardAmount / rewardsMultiplier)}{' '}
+                                  Buzz
+                                </Text>
+                              )}
+                            </Stack>
+                            <Text>{reward.triggerDescription ?? reward.description}</Text>
+                            {reward.tooltip && (
+                              <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
+                                <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
+                              </Tooltip>
                             )}
-                          </Stack>
-                          <Text>{reward.triggerDescription ?? reward.description}</Text>
-                          {reward.tooltip && (
-                            <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
-                              <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
-                            </Tooltip>
-                          )}
-                          {reward.type === 'adWatched' && (
-                            <WatchAdButton size="compact-xs" disabled={awardedAmountPercent >= 1} />
-                          )}
-                        </Group>
-                        {reward.cap && (
-                          <Group gap={4}>
-                            <CurrencyIcon size={14} type={reward.accountType} />
-                            <Text c="dimmed" size="xs">
-                              {hasAwarded
-                                ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
-                                : `${reward.cap.toLocaleString()} `}
-                              {' ('}
-                              {reward.interval ?? 'day'}
-                              {')'}
-                            </Text>
-                            {hasAwarded && (
-                              <RingProgress
-                                size={30}
-                                thickness={9}
-                                sections={[
-                                  {
-                                    value: awardedAmountPercent * 100,
-                                    color:
-                                      awardedAmountPercent === 1
-                                        ? 'green'
-                                        : reward.accountType === 'generation'
-                                        ? 'blue.4'
-                                        : 'yellow.7',
-                                  },
-                                ]}
+                            {reward.type === 'adWatched' && (
+                              <WatchAdButton
+                                size="compact-xs"
+                                disabled={awardedAmountPercent >= 1}
                               />
                             )}
                           </Group>
-                        )}
-                      </Group>
-                      {!last && <Divider mt="xs" />}
-                    </Stack>
-                  );
-                })
+                          {reward.cap && (
+                            <Group gap={4}>
+                              <CurrencyIcon size={14} type={reward.accountType} />
+                              <Text c="dimmed" size="xs">
+                                {hasAwarded
+                                  ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
+                                  : `${reward.cap.toLocaleString()} `}
+                                {' ('}
+                                {reward.interval ?? 'day'}
+                                {')'}
+                              </Text>
+                              {hasAwarded && (
+                                <RingProgress
+                                  size={30}
+                                  thickness={9}
+                                  sections={[
+                                    {
+                                      value: awardedAmountPercent * 100,
+                                      color:
+                                        awardedAmountPercent === 1
+                                          ? 'green'
+                                          : reward.accountType === 'generation'
+                                          ? 'blue.4'
+                                          : 'yellow.7',
+                                    },
+                                  ]}
+                                />
+                              )}
+                            </Group>
+                          )}
+                        </Group>
+                        {!last && <Divider mt="xs" />}
+                      </Stack>
+                    );
+                  });
+                })()
               )}
             </Stack>
           </Paper>

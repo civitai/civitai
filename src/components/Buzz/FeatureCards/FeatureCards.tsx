@@ -1,5 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Center, List, Paper, Stack, Text, Title, Group } from '@mantine/core';
+import { Button, List, Paper, Stack, Text, Title, Group } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
@@ -15,17 +15,22 @@ import {
 import React from 'react';
 import type { MouseEvent } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationPanel } from '~/store/generation.store';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { getAccountTypeLabel } from '~/utils/buzz';
 import dynamic from 'next/dynamic';
 import classes from './FeatureCards.module.scss';
 const RedeemCodeModal = dynamic(() =>
   import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
 );
 
-const getEarnings = (): (FeatureCardProps & { key: string })[] => [
+const getEarnings = (
+  buzzConfig?: ReturnType<typeof useBuzzCurrencyConfig>
+): (FeatureCardProps & { key: string })[] => [
   // {
   //   key: 'referrals',
   //   icon: <IconUsers size={32} />,
@@ -44,6 +49,7 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     btnProps: {
       href: '/bounties',
       children: 'Learn more',
+      color: buzzConfig?.color,
     },
   },
   {
@@ -54,6 +60,7 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     btnProps: {
       href: '/purchase/buzz',
       children: 'Buy now',
+      color: buzzConfig?.color,
     },
   },
   {
@@ -64,6 +71,7 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     btnProps: {
       href: '/posts/create',
       children: 'Create post',
+      color: buzzConfig?.color,
     },
   },
   {
@@ -76,20 +84,27 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
         dialogStore.trigger({ component: RedeemCodeModal });
       },
       children: 'Redeem code',
+      color: buzzConfig?.color,
     },
   },
 ];
 
-export const EarningBuzz = ({ asList, withCTA }: Props) => {
-  const earnings = getEarnings();
+export const EarningBuzz = ({ asList, withCTA, accountType = 'user' }: Props) => {
+  const buzzConfig = useBuzzCurrencyConfig(accountType);
+  const earnings = getEarnings(buzzConfig);
+  const accountTypeLabel = getAccountTypeLabel(accountType);
 
   return (
     <Stack gap={20}>
       <Stack gap={4}>
         <Group gap="xs" align="center">
-          <Title order={2}>Earn Buzz</Title>
+          <Title order={2} style={{ color: buzzConfig.color }}>
+            Earn {accountTypeLabel} Buzz
+          </Title>
         </Group>
-        <Text>Need some Buzz? Here&rsquo;s how you can earn it</Text>
+        <Text c="dimmed" size="md">
+          Multiple ways to get {accountTypeLabel} Buzz and power your creativity
+        </Text>
       </Stack>
       {asList ? (
         <FeatureList data={earnings} />
@@ -115,40 +130,23 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     btnProps: {
       href: '/models/train',
       children: 'Train now',
-      rightSection: <IconArrowRight size={14} />,
     },
   },
   {
     key: 'generate',
     icon: <IconBrush size={32} />,
     title: 'Generate',
-    description: 'Create using thousands of community resources.',
+    description: 'Generate Flux and Pony images',
     btnProps: {
-      component: 'button',
-      onClick: (e: MouseEvent<HTMLElement>) => {
-        e.preventDefault();
-        generationPanel.open();
-      },
-      children: 'Generate now',
-      rightSection: <IconArrowRight size={14} />,
+      onClick: () => generationPanel.open(),
+      children: 'Generate',
     },
   },
   {
-    key: 'tip',
-    icon: <IconCoins size={32} />,
-    title: 'Tip an artist',
-    description: 'Support an artist you love!',
-    btnProps: {
-      href: '/images',
-      children: 'View artists',
-      rightSection: <IconArrowRight size={14} />,
-    },
-  },
-  {
-    key: 'bounties',
+    key: 'bounty',
     icon: <IconMoneybag size={32} />,
-    title: 'Bounties',
-    description: 'Post a bounty and award Buzz',
+    title: 'Post a bounty',
+    description: 'Get others to help solve your problem',
     btnProps: {
       href: '/bounties/create',
       children: 'Post a bounty',
@@ -163,7 +161,9 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
     btnProps: {
       target: '_blank',
       rel: 'noreferrer nofollow',
-      href: `https://civitai.retool.com/form/cdf269fb-c9b1-4da4-8601-6367c2358a36?userId=${userId}`,
+      href: `https://civitai.retool.com/form/cdf269fb-c9b1-4da4-8601-6367c2358a36?userId=${
+        userId ?? ''
+      }`,
       children: 'Apply Now',
       rightSection: <IconArrowRight size={14} />,
     },
@@ -217,7 +217,7 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   );
 };
 
-type Props = { asList?: boolean; withCTA?: boolean };
+type Props = { asList?: boolean; withCTA?: boolean; accountType?: BuzzAccountType };
 
 type FeatureCardProps = {
   title: string;
@@ -236,17 +236,57 @@ type FeatureCardProps = {
 export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: FeatureCardProps) => {
   if (!withCTA && btnProps.disabled) return null;
 
+  const buzzColor = btnProps.color || '#f59f00'; // Default buzz orange color
+  // Convert hex to RGB for CSS variable
+  const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+      ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}`
+      : '245, 159, 0'; // Default buzz orange RGB
+  };
+
   return (
-    <Paper withBorder className={classes.featureCard} h="100%">
-      <Stack gap={4} p="md" align="center" h="100%">
-        <Center>{icon}</Center>
-        <Text fw={500} size="xl" align="center" tt="capitalize">
-          {title}
-        </Text>
-        <Text c="dimmed" align="center">
-          {description}
-        </Text>
-        {withCTA && <Button component="a" mt="auto" w="100%" {...btnProps} />}
+    <Paper
+      withBorder
+      className={classes.featureCard}
+      h="100%"
+      radius="md"
+      p={0}
+      style={
+        {
+          '--buzz-color': hexToRgb(buzzColor),
+        } as React.CSSProperties
+      }
+    >
+      <Stack gap={0} h="100%">
+        {/* Icon Section */}
+        <div className={classes.iconSection}>
+          <div className={classes.iconWrapper}>{icon}</div>
+        </div>
+
+        {/* Content Section */}
+        <Stack gap="sm" p="lg" align="center" h="100%">
+          <Text fw={600} size="lg" align="center" tt="capitalize" lh={1.3}>
+            {title}
+          </Text>
+          <Text c="dimmed" align="center" size="sm" lh={1.4}>
+            {description}
+          </Text>
+
+          {withCTA && (
+            <Button
+              component="a"
+              mt="auto"
+              w="100%"
+              variant="gradient"
+              gradient={{ from: btnProps.color || 'blue', to: btnProps.color || 'cyan', deg: 45 }}
+              radius="md"
+              size="sm"
+              fw={600}
+              {...btnProps}
+            />
+          )}
+        </Stack>
       </Stack>
     </Paper>
   );

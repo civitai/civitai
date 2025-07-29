@@ -102,7 +102,7 @@ export const useBuzzTransactions = (
 export const useTransactionsReport = (
   filters: GetTransactionsReportSchema = {
     window: 'hour',
-    accountType: ['User', 'Generation'],
+    accountType: 'user',
   },
   opts: { enabled: boolean }
 ) => {

@@ -1,3 +1,47 @@
 .featureCard {
-  background-color: light-dark( var(--mantine-color-gray-0), var(--mantine-color-dark-5));
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 
+      0 8px 25px rgba(0, 0, 0, 0.1),
+      0 4px 12px rgba(var(--buzz-color), 0.2);
+    
+    .iconWrapper {
+      transform: scale(1.1);
+    }
+  }
+}
+
+.iconSection {
+  background: linear-gradient(135deg, 
+    rgba(var(--buzz-color), 0.15) 0%, 
+    rgba(var(--buzz-color), 0.08) 50%, 
+    transparent 100%
+  );
+  padding: 1.5rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  border-bottom: 1px solid rgba(var(--buzz-color), 0.2);
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, 
+    rgba(var(--buzz-color), 0.2) 0%, 
+    rgba(var(--buzz-color), 0.1) 100%
+  );
+  backdrop-filter: blur(10px);
+  border: 2px solid rgba(var(--buzz-color), 0.3);
+  transition: transform 0.2s ease;
+  color: rgb(var(--buzz-color));
 }

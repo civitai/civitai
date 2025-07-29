@@ -49,6 +49,7 @@ import { getUserByUsername, getUsers } from './user.service';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
+import { capitalize } from '~/utils/string-helpers';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -1185,9 +1186,12 @@ export async function getTransactionsReport({
 
   const query = QS.stringify({
     ...input,
+    accountType: capitalize((input.accountType ?? 'user') as string),
     start: startDate.format('YYYY-MM-DD'),
     end: endDate.format('YYYY-MM-DD'),
   });
+
+  console.log(query);
 
   const response = await fetch(`${env.BUZZ_ENDPOINT}/user/${userId}/transactions/report?${query}`);
 
