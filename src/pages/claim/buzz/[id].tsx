@@ -17,7 +17,7 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CurrencyConfig } from '~/server/common/constants';
+import { getCurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -58,11 +58,9 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
     { id },
     { enabled: features.buzz }
   );
-  const config = CurrencyConfig[Currency.BUZZ];
-  const theme = config?.themes?.[claim?.details?.accountType ?? ''] ?? config;
+  const theme = getCurrencyConfig({ currency: Currency.BUZZ, type: claim?.details?.accountType });
   const color = theme.color;
   const Icon = theme.icon;
-  // const color = claim.accountType === 'generation' ? config.
 
   const claimMutation = trpc.buzz.claim.useMutation({
     onSuccess: (result) => {

@@ -31,6 +31,7 @@ export enum TransactionType {
   Bid = 26,
 }
 
+export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 export const buzzAccountTypes = [
   'user', // yellow
   'club',
@@ -76,10 +77,6 @@ export class BuzzTypes {
 export const bankableBuzzTypes = Object.entries(buzzConfig).filter(
   ([, config]) => config.bankable
 )[0] as BuzzSpendType[];
-
-export const purchasableBuzzAccountTypes = ['green', 'fakered', 'red', 'user'] as const;
-export type BuzzAccountType = (typeof buzzAccountTypes)[number];
-export type PurchasableBuzzType = (typeof purchasableBuzzAccountTypes)[number];
 
 export function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? (value?.toLowerCase() as BuzzAccountType) : undefined;

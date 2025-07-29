@@ -11,7 +11,7 @@ import { env } from '~/env/client';
 import { QS } from '~/utils/qs';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 
 export default function Pricing() {
   const router = useRouter();
@@ -24,7 +24,7 @@ export default function Pricing() {
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
-  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
+  const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
     features.isGreen ? 'green' : queryBuzzType
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);

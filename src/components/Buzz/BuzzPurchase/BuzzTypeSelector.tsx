@@ -2,10 +2,10 @@ import { Button, Group, Stack, Text } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import React from 'react';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 
 export interface BuzzTypeSelectorProps {
-  onSelect: (type: PurchasableBuzzType) => void;
+  onSelect: (type: BuzzSpendType) => void;
   onCancel?: () => void;
   title?: string | null;
   description?: React.ReactNode | null;
@@ -51,7 +51,7 @@ export function BuzzTypeSelector({
     ),
   },
 }: BuzzTypeSelectorProps) {
-  const { classNames: redClassNames } = useBuzzCurrencyConfig('fakered');
+  const { classNames: redClassNames } = useBuzzCurrencyConfig('red');
   const { classNames: greenClassNames } = useBuzzCurrencyConfig('green');
 
   return (
@@ -95,7 +95,7 @@ export function BuzzTypeSelector({
                   size="lg"
                   color="red"
                   radius="xl"
-                  onClick={() => onSelect('fakered')}
+                  onClick={() => onSelect('red')}
                   leftSection={<IconBolt color="#fff" stroke={1.5} />}
                   data-testid="buzz-type-red"
                   className={`w-full ${redClassNames?.btn} px-6 py-4 text-lg`}

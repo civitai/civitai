@@ -69,7 +69,7 @@ export function BuzzTransactionButton({
     (max, [key, amount]) =>
       amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,
     Object.keys(buzzTypeDistribution.amt)[0] || baseType
-  ) as BuzzAccountType;
+  ) as BuzzSpendType;
 
   const colorConfig = useBuzzCurrencyConfig(mainBuzzColor);
 

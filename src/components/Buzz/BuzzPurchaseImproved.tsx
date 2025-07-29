@@ -59,14 +59,13 @@ import classes from '~/components/Buzz/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { env } from '~/env/client';
 import { QS } from '~/utils/qs';
 import { PromoBanner } from '~/components/Buzz/PromoBanner';
-import { capitalize } from '~/utils/string-helpers';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -76,7 +75,7 @@ export type BuzzPurchaseImprovedProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   onCancel?: () => void;
-  initialBuzzType?: PurchasableBuzzType;
+  initialBuzzType?: BuzzSpendType;
 };
 
 const BuzzPurchasePaymentButton = ({
@@ -254,7 +253,7 @@ export const BuzzPurchaseImproved = ({
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
-  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
+  const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
     features.isGreen ? 'green' : initialBuzzType
   );
   const ctaEnabled = !!selectedPrice?.unitAmount || (!!customAmount && customAmount > 0);
@@ -401,7 +400,7 @@ export const BuzzPurchaseImproved = ({
                 buyNowText="Buy Now"
                 learnMoreHref="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
                 learnMoreText="Learn More"
-                buzzType="user"
+                buzzType="yellow"
               />
             )}
 
@@ -637,7 +636,7 @@ export const BuzzPurchaseImproved = ({
                                         <CurrencyIcon
                                           size={16}
                                           currency={Currency.BUZZ}
-                                          type="generation"
+                                          type="blue"
                                         />
                                         <Text size="sm" fw={600} c="blue.6">
                                           {numberWithCommas(totalAmount)}
@@ -774,7 +773,7 @@ export const BuzzPurchaseImproved = ({
                                         >
                                           <CurrencyIcon
                                             currency={Currency.BUZZ}
-                                            type="generation"
+                                            type="blue"
                                             size={16}
                                           />
                                           <div style={{ flex: 1 }}>
@@ -948,7 +947,7 @@ export const BuzzPurchaseImproved = ({
                             )}
 
                             {(features.nowpaymentPayments || features.coinbasePayments) &&
-                              selectedBuzzType === 'fakered' && (
+                              selectedBuzzType === 'red' && (
                                 <Text ta="center" size="xs" c="dimmed">
                                   New to crypto?{' '}
                                   <Anchor

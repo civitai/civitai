@@ -3,14 +3,14 @@ import { Badge, Loader, Text, Tooltip, useComputedColorScheme } from '@mantine/c
 import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
-import { CurrencyConfig } from '~/server/common/constants';
+import { getCurrencyConfig } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import classes from './CurrencyBadge.module.scss';
 import clsx from 'clsx';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import type { BuzzTypeDistribution } from '~/utils/buzz';
 import { createBuzzDistributionGradient, createBuzzDistributionLabel } from '~/utils/buzz';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 
 type Props = BadgeProps & {
   currency: Currency;
@@ -23,7 +23,7 @@ type Props = BadgeProps & {
   type?: string;
   typeDistribution?: BuzzTypeDistribution;
   asCounter?: boolean;
-};
+} & { currency: 'BUZZ'; type?: BuzzSpendType };
 
 const iconSize: Record<MantineSize, number> = {
   xs: 12,
@@ -55,7 +55,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
   ) => {
     const value = formatCurrencyForDisplay(unitAmount, currency);
     const colorScheme = useComputedColorScheme('dark');
-    const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
+    const config = getCurrencyConfig({ currency, type });
     const Icon = config.icon;
     const colorString = textColor || config.color;
 

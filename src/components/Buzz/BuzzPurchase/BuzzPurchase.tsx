@@ -58,7 +58,7 @@ import { QS } from '~/utils/qs';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { BuzzEmerchantPayButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzEmerchantPayButton';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -68,7 +68,7 @@ export type BuzzPurchaseProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   onCancel?: () => void;
-  initialBuzzType?: PurchasableBuzzType;
+  initialBuzzType?: BuzzSpendType;
 };
 
 export const BuzzPurchase = ({
@@ -90,7 +90,7 @@ export const BuzzPurchase = ({
   const [error, setError] = useState('');
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
-  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
+  const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
     features.isGreen ? 'green' : initialBuzzType
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
@@ -605,7 +605,7 @@ export const BuzzPurchase = ({
                 </Text>
               )}
               {(features.nowpaymentPayments || features.coinbasePayments) &&
-                selectedBuzzType === 'fakered' && (
+                selectedBuzzType === 'red' && (
                   <Stack align="center">
                     <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
                       Never purchased with Crypto before?{' '}

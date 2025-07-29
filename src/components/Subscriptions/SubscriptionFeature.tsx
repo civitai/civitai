@@ -7,7 +7,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -19,7 +19,7 @@ export const SubscriptionFeature = ({
 }: {
   title: string | React.ReactNode;
   subtitle: string | ((className: string) => React.ReactNode);
-  buzzType?: BuzzAccountType | 'yellow' | 'red';
+  buzzType?: BuzzSpendType;
 }) => {
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
@@ -57,7 +57,7 @@ export const BuzzPurchaseMultiplierFeature = ({
   buzzType = 'yellow',
 }: {
   buzzAmount: number;
-  buzzType?: BuzzAccountType | 'yellow' | 'red';
+  buzzType?: BuzzSpendType;
 }) => {
   const { subscription } = useActiveSubscription();
   const { multipliers, multipliersLoading } = useUserMultipliers();

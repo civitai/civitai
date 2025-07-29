@@ -1,4 +1,4 @@
-import { CurrencyConfig } from '~/server/common/constants';
+import { getCurrencyConfig } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import type {
   BuzzAccountType,
@@ -20,7 +20,7 @@ export const parseBuzzTransactionDetails = (
   }
 
   const fallbackUrl = details.user && details.user !== 'a user' ? `/user/${details.user}` : '';
-  const baseNotification = `You received a tip of ${details.amount} Buzz from ${
+  const baseNotification = `You received a tip of ${details.amount as string} Buzz from ${
     details.user ? `@${details.user}` : 'a user'
   }`;
 
@@ -90,18 +90,13 @@ export const getBuzzTransactionSupportedAccountTypes = ({
 }: {
   nsfwLevel?: NsfwLevel;
   isNsfw?: boolean;
-}): BuzzAccountType[] => {
-  const accountTypes: BuzzAccountType[] = [];
+}): BuzzSpendType[] => {
+  const accountTypes: BuzzSpendType[] = [];
   if ((typeof isNsfw !== 'undefined' && !isNsfw) || (nsfwLevel ?? 0) <= NsfwLevel.R) {
     accountTypes.push('green');
   }
 
-  accountTypes.push('user');
-
-  if ((nsfwLevel ?? 0) > NsfwLevel.R || isNsfw) {
-    accountTypes.push('fakered');
-    // accountTypes.push('red');
-  }
+  accountTypes.push('yellow', 'red');
 
   return accountTypes;
 };
@@ -161,9 +156,11 @@ export const createBuzzDistributionGradient = ({
 
   let currentPct = 0;
   const gradientStops = entries.map(([accountType, pct]) => {
-    const typeConfig =
-      CurrencyConfig[Currency.BUZZ].themes?.[accountType as BuzzSpendType] ??
-      CurrencyConfig[Currency.BUZZ];
+    const typeConfig = getCurrencyConfig({
+      currency: Currency.BUZZ,
+      type: accountType as BuzzSpendType,
+    });
+
     const startPct = currentPct;
     currentPct += (pct || 0) * 100;
     return `${typeConfig.color} ${startPct}%, ${typeConfig.color} ${currentPct}%`;

@@ -68,7 +68,7 @@ import { useUserPaymentConfiguration } from '~/components/UserPaymentConfigurati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
-import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import {
   getCreatorProgramAvailability,
   getCurrentValue,
@@ -611,7 +611,7 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={['yellow']} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={'yellow'} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
               </Table.Td>

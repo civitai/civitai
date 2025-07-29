@@ -4,7 +4,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import classes from './BuzzFeatures.module.scss';
 
 interface BuzzFeaturesProps {
@@ -20,7 +20,7 @@ interface BuzzFeaturesProps {
   /** Compact mode for smaller spaces */
   compact?: boolean;
   /** Buzz type for theming */
-  buzzType?: PurchasableBuzzType;
+  buzzType?: BuzzSpendType;
 }
 
 export const BuzzFeatures = ({

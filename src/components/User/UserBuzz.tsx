@@ -1,7 +1,7 @@
 import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip } from '@mantine/core';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
-import { CurrencyConfig } from '~/server/common/constants';
+import { getCurrencyConfig } from '~/server/common/constants';
 import { buzzTypes } from '~/server/schema/buzz.schema';
 import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import {
@@ -13,6 +13,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './UserBuzz.module.scss';
 import clsx from 'clsx';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 type Props = TextProps & {
   iconSize?: number;
@@ -38,8 +39,8 @@ export function UserBuzz({
     isLoading,
   } = useQueryBuzz(accountTypes);
   const balance = total;
-  const baseAccountType = accounts[0]?.type ?? '';
-  const config = CurrencyConfig.BUZZ.themes[baseAccountType] ?? CurrencyConfig.BUZZ;
+  const baseAccountType = accounts[0]?.type;
+  const config = getCurrencyConfig({ currency: Currency.BUZZ, type: baseAccountType });
   console.log({ baseAccountType });
   const Icon = config.icon;
   const typeDistribution = getBuzzTypeDistribution({

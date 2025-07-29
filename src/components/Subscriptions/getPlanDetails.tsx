@@ -14,7 +14,7 @@ import {
 } from '@tabler/icons-react';
 import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
 import { benefitIconSize } from '~/components/Subscriptions/PlanBenefitList';
-import { constants, CurrencyConfig, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan } from '~/server/services/subscriptions.service';

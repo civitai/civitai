@@ -64,7 +64,7 @@ import {
   useBountyEngagement,
   useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
-import { CurrencyConfig, constants } from '~/server/common/constants';
+import { CurrencyConfig, constants, getCurrencyConfig } from '~/server/common/constants';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
