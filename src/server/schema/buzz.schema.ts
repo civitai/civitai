@@ -208,6 +208,7 @@ export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensat
 export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
   date: z.coerce.date(),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;

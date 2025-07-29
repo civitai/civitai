@@ -3,11 +3,9 @@ import {
   Anchor,
   Center,
   Container,
-  Divider,
   Group,
   Loader,
   Paper,
-  RingProgress,
   SegmentedControl,
   Stack,
   Text,
@@ -70,6 +68,16 @@ export default function UserBuzzDashboard() {
 
   const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
 
+  // Account type options for SegmentedControl
+  const accountTypeOptions = React.useMemo(
+    () =>
+      (['user', 'generation', 'green', 'fakered'] as const).map((type) => ({
+        label: getAccountTypeLabel(type),
+        value: type,
+      })),
+    []
+  );
+
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
     { enabled: !!currentUser }
@@ -106,12 +114,7 @@ export default function UserBuzzDashboard() {
                 size="sm"
                 value={selectedAccountType}
                 onChange={(value) => setSelectedAccountType(value as BuzzAccountType)}
-                data={[
-                  { label: getAccountTypeLabel('user'), value: 'user' },
-                  { label: getAccountTypeLabel('generation'), value: 'generation' },
-                  { label: getAccountTypeLabel('green'), value: 'green' },
-                  { label: getAccountTypeLabel('fakered'), value: 'fakered' },
-                ]}
+                data={accountTypeOptions}
               />
             </Group>
           </Stack>
@@ -179,7 +182,6 @@ export default function UserBuzzDashboard() {
                 <RewardsList
                   rewards={rewards.filter((reward) => reward.accountType === selectedAccountType)}
                   accountType={selectedAccountType}
-                  rewardsMultiplier={rewardsMultiplier}
                   onAccountTypeChange={setSelectedAccountType}
                 />
               )}
@@ -193,8 +195,8 @@ export default function UserBuzzDashboard() {
             .
           </Text>
           <GeneratedImagesReward />
-          {features.creatorComp && <DailyCreatorCompReward />}
-          <CreatorProgramV2 />
+          {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
+          {['user', 'green'].includes(selectedAccountType) && <CreatorProgramV2 />}
         </Stack>
       </Container>
     </>
