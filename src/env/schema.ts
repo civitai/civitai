@@ -108,6 +108,7 @@ export const serverSchema = z.object({
   NEWSLETTER_KEY: z.string().optional(),
   BUZZ_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   SIGNALS_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
+  SIGNALS_ENDPOINT_ORCHESTRATOR_CALLBACK: isProd ? z.string().url() : z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
   CSAM_UPLOAD_KEY: z.string().default(''),
