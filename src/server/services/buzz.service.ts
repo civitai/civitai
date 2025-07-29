@@ -11,6 +11,7 @@ import { userMultipliersCache } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type {
   BuzzAccountType,
+  BuzzSpendType,
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
@@ -23,9 +24,7 @@ import type {
   GetEarnPotentialSchema,
   GetTransactionsReportResultSchema,
   GetTransactionsReportSchema,
-  GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
-  GetUserBuzzAccountsResponse,
   GetUserBuzzTransactionsResponse,
   GetUserBuzzTransactionsSchema,
   PreviewMultiAccountTransactionInput,
@@ -33,7 +32,12 @@ import type {
   RefundMultiAccountTransactionInput,
   RefundMultiAccountTransactionResponse,
 } from '~/server/schema/buzz.schema';
-import { getUserBuzzTransactionsResponse, TransactionType } from '~/server/schema/buzz.schema';
+import {
+  BuzzTypes,
+  buzzTypes,
+  getUserBuzzTransactionsResponse,
+  TransactionType,
+} from '~/server/schema/buzz.schema';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -53,64 +57,110 @@ import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 
 type AccountType = 'User';
 
+async function fetchBuzzAccounts(url: string) {
+  return withRetries(async () => {
+    if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+    const response = await fetch(`${env.BUZZ_ENDPOINT}/${url}`);
+    if (!response.ok) {
+      switch (response.status) {
+        case 400:
+          throw throwBadRequestError();
+        case 404:
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+        default:
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'An unexpected error ocurred, please try again later',
+          });
+      }
+    }
+
+    return await response.json();
+  });
+}
+
+type BuzzAccountResponse = {
+  id: number;
+  balance: number;
+  lifetimeBalance: number;
+};
+
+type BuzzAccountsResponse = Record<BuzzAccountType, number>;
+
+async function getUserBuzzAccountByAccountId(accountId: number): Promise<BuzzAccountResponse> {
+  return fetchBuzzAccounts(`account/${accountId}`);
+}
+
+async function getUserBuzzAccountByAccountType(
+  accountId: number,
+  accountType: BuzzAccountType
+): Promise<BuzzAccountResponse> {
+  return fetchBuzzAccounts(`account/${accountType}/${accountId}`);
+}
+
+async function getUserBuzzAccountByAccountTypes(
+  accountId: number,
+  accountTypes: BuzzAccountType[]
+): Promise<BuzzAccountsResponse> {
+  return fetchBuzzAccounts(
+    `user/${accountId}/accounts?${accountTypes.map((t) => `accountType=${t}`).join('&')}`
+  );
+}
+
+export async function getUserBuzzAccounts({ userId }: { userId: number }) {
+  // TODO - determine if this should return every available buzz account
+  const accountTypes = buzzTypes.map((type) => BuzzTypes.getConfig(type).value);
+  const data = await getUserBuzzAccountByAccountTypes(userId, accountTypes);
+
+  const balances = Object.entries(data).reduce((acc, [key, value]) => {
+    const type = BuzzTypes.getTypeFromValue(key);
+    if (!type) return acc;
+    return { ...acc, [type]: value };
+  }, {} as Record<BuzzSpendType, number>);
+  return balances;
+}
+
+async function fetchUserBuzzAccounts({
+  accountId,
+  accountType,
+  accountTypes,
+}: GetUserBuzzAccountSchema) {
+  return accountType
+    ? getUserBuzzAccountByAccountType(accountId, accountType)
+    : accountTypes
+    ? getUserBuzzAccountByAccountTypes(accountId, accountTypes)
+    : getUserBuzzAccountByAccountId(accountId);
+}
+
 export async function getUserBuzzAccount({
   accountId,
   accountType,
   accountTypes,
 }: GetUserBuzzAccountSchema) {
-  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+  const data = await fetchUserBuzzAccounts({ accountId, accountType, accountTypes });
 
-  return withRetries(
-    async () => {
-      // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
-      const fetchUrl = accountType
-        ? `${env.BUZZ_ENDPOINT}/account/${accountType}/${accountId}`
-        : accountTypes
-        ? `${env.BUZZ_ENDPOINT}/user/${accountId}/accounts?${accountTypes
-            .map((t) => `accountType=${t}`)
-            .join('&')}`
-        : `${env.BUZZ_ENDPOINT}/account/${accountId}`;
-      const response = await fetch(fetchUrl);
-      if (!response.ok) {
-        switch (response.status) {
-          case 400:
-            throw throwBadRequestError();
-          case 404:
-            throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
-          default:
-            throw new TRPCError({
-              code: 'INTERNAL_SERVER_ERROR',
-              message: 'An unexpected error ocurred, please try again later',
-            });
-        }
-      }
+  let res: (Omit<BuzzAccountResponse, 'lifetimeBalance'> & {
+    accountType: BuzzAccountType;
+    lifetimeBalance: number | null;
+  })[] = [];
 
-      let res: (GetUserBuzzAccountResponse & { accountType: BuzzAccountType })[] = [];
+  if (accountTypes) {
+    res = Object.entries(data as BuzzAccountsResponse).map(([type, balance]) => ({
+      id: accountId,
+      balance,
+      lifetimeBalance: null,
+      accountType: type as BuzzAccountType,
+    }));
+  } else {
+    res = [
+      {
+        ...(data as BuzzAccountResponse),
+        accountType: accountType ?? 'user',
+      },
+    ];
+  }
 
-      if (accountTypes) {
-        const data: GetUserBuzzAccountsResponse = await response.json();
-
-        res = Object.entries(data).map(([type, balance]) => ({
-          id: accountId,
-          balance,
-          lifetimeBalance: null,
-          accountType: type as BuzzAccountType,
-        }));
-      } else {
-        const data: GetUserBuzzAccountResponse = await response.json();
-        res = [
-          {
-            ...data,
-            accountType: accountType ?? 'user',
-          },
-        ];
-      }
-
-      return res;
-    },
-    3,
-    1500
-  );
+  return res;
 }
 
 export function getMultipliersForUserCache(userIds: number[]) {

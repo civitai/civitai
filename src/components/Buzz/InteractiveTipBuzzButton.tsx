@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -111,8 +111,10 @@ export function InteractiveTipBuzzButton({
   const theme = useMantineTheme();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
-  const { balances } = useBuzz(undefined, 'user');
-  const [{ balance = 0 } = {}] = balances ?? [{ balance: 0 }];
+  const {
+    data: { total },
+  } = useQueryBuzz(['yellow']);
+  const balance = total;
   const features = useFeatureFlags();
 
   const [buzzCounter, setBuzzCounter] = useState(0);

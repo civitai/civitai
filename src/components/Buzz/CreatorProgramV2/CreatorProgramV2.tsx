@@ -53,7 +53,7 @@ import {
   openSettlementModal,
   openWithdrawalFeeModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -68,7 +68,7 @@ import { useUserPaymentConfiguration } from '~/components/UserPaymentConfigurati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
-import { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
 import {
   getCreatorProgramAvailability,
   getCurrentValue,
@@ -155,14 +155,17 @@ export const CreatorProgramV2 = () => {
 };
 
 const JoinCreatorProgramCard = () => {
-  const buzz = useBuzz(undefined, 'user');
-  const [buzzAccount = { balance: 0 }] = buzz.balances;
+  const {
+    data: { accounts },
+    isLoading: buzzAccountsLoading,
+  } = useQueryBuzz(['yellow']);
+  const [buzzAccount = { balance: 0 }] = accounts;
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
     buzz: buzzAccount?.balance ?? 0,
   });
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
-  const isLoading = buzz.balanceLoading || isLoadingRequirements || isLoadingForecast;
+  const isLoading = buzzAccountsLoading || isLoadingRequirements || isLoadingForecast;
 
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -375,7 +378,10 @@ export const CompensationPoolCard = () => {
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
-  const buzz = useBuzz(undefined, SUPPORTED_BUZZ as unknown as BuzzAccountType[]);
+  const {
+    data: { accounts },
+    isLoading: buzzAccountsLoading,
+  } = useQueryBuzz(SUPPORTED_BUZZ);
   const buzzAccountTypeSelectorCB = useCombobox({
     onDropdownClose: () => {
       buzzAccountTypeSelectorCB.resetSelectedOption();
@@ -383,15 +389,15 @@ const BankBuzzCard = () => {
     },
   });
 
-  const [activeBuzzAccountType, setActiveBuzzAccountType] = useState<BuzzAccountType>('user');
-  const buzzAccount = buzz.balances.find((b) => b.accountType === activeBuzzAccountType) ?? {
+  const [activeBuzzAccountType, setActiveBuzzAccountType] = useState<BuzzSpendType>('yellow');
+  const buzzAccount = accounts.find((b) => b.type === activeBuzzAccountType) ?? {
     balance: 0,
   };
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
-  const isLoading = isLoadingCompensationPool || buzz.balanceLoading || isLoadingBanked;
+  const isLoading = isLoadingCompensationPool || buzzAccountsLoading || isLoadingBanked;
   const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
@@ -439,7 +445,7 @@ const BankBuzzCard = () => {
                 position="bottom-start"
                 withArrow
                 onOptionSubmit={(val) => {
-                  setActiveBuzzAccountType(val as BuzzAccountType);
+                  setActiveBuzzAccountType(val as BuzzSpendType);
                 }}
               >
                 <Combobox.Target withAriaAttributes={false}>
@@ -605,7 +611,7 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={'user'} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={['yellow']} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
               </Table.Td>
@@ -621,7 +627,7 @@ const EstimatedEarningsCard = () => {
                   <Table.Td>
                     <div className="flex items-center gap-1">
                       <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
-                      <span>Your banked {capitalize(getAccountTypeLabel(buzzType))} Buzz</span>
+                      <span>Your banked {getAccountTypeLabel(buzzType)} Buzz</span>
                     </div>
                   </Table.Td>
                   <Table.Td className="text-right">

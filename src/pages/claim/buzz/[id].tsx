@@ -58,7 +58,6 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
     { id },
     { enabled: features.buzz }
   );
-  const mantineTheme = useMantineTheme();
   const config = CurrencyConfig[Currency.BUZZ];
   const theme = config?.themes?.[claim?.details?.accountType ?? ''] ?? config;
   const color = theme.color;

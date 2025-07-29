@@ -1,11 +1,10 @@
 import { useRouter } from 'next/router';
 import type React from 'react';
 import { useState } from 'react';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { env } from '~/env/client';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
@@ -13,8 +12,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
-import { purchasableBuzzAccountTypes } from '~/server/schema/buzz.schema';
-import type { BuzzAccountType, PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -108,30 +106,26 @@ export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   performTransactionOnPurchase?: boolean;
-  accountTypes?: BuzzAccountType[];
+  accountTypes?: BuzzSpendType[];
 }) => {
   const {
     message,
     purchaseSuccessMessage,
     performTransactionOnPurchase,
-    accountTypes = ['user'],
+    accountTypes = ['green', 'yellow', 'red'],
   } = opts ?? {};
-
-  if (accountTypes.length === 0) {
-    throw new Error(
-      'useBuzzTransaction hook requires at least one account type. This is likely be a bug. Please contact support.'
-    );
-  }
 
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
-  const { balances, balanceLoading } = useBuzz(undefined, accountTypes);
-  const isMobile = useIsMobile();
+  const {
+    data: { accounts, total },
+    isLoading,
+  } = useQueryBuzz(accountTypes);
+
   const onBuyBuzz = useBuyBuzz();
-  const purchasableValue = accountTypes.find((t) =>
-    purchasableBuzzAccountTypes.some((x) => x === t)
-  ) as PurchasableBuzzType;
+  const initialBuzzType = accounts[0]?.type;
+  const purchasableValue = accounts.find((x) => x.purchasable)?.type;
 
   const { trackAction } = useTrackEvent();
 
@@ -147,26 +141,14 @@ export const useBuzzTransaction = (opts?: {
     },
   });
 
-  const getCurrentBalance = () => {
-    // Ensure we use the relevant sort:
-    return accountTypes
-      .map((t) => {
-        const record = balances.find((b) => b.accountType === t);
-        return record?.balance ?? 0;
-      })
-      .reduce((acc, b) => {
-        return acc + b;
-      }, 0);
-  };
-
-  const hasRequiredAmount = (buzzAmount: number) => getCurrentBalance() >= buzzAmount;
+  const hasRequiredAmount = (buzzAmount: number) => total >= buzzAmount;
 
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
-    if (balanceLoading) return;
+    if (isLoading) return;
 
-    const balance = getCurrentBalance();
+    const balance = total;
     const meetsRequirement = hasRequiredAmount(buzzAmount);
     if (!meetsRequirement) {
       trackAction({ type: 'NotEnoughFunds', details: { amount: buzzAmount } }).catch(
@@ -188,7 +170,7 @@ export const useBuzzTransaction = (opts?: {
         onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
         purchaseSuccessMessage,
         // At this point, because `canPurchase` is true, we can safely assume the first type is a purchasable type:
-        initialBuzzType: purchasableValue,
+        initialBuzzType,
       });
 
       return;
@@ -201,7 +183,7 @@ export const useBuzzTransaction = (opts?: {
     hasRequiredAmount,
     conditionalPerformTransaction,
     tipUserMutation,
-    isLoadingBalance: balanceLoading,
+    isLoadingBalance: isLoading,
     canPurchase: !purchasableValue,
   };
 };

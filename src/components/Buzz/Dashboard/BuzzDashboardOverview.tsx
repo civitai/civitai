@@ -35,6 +35,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
+import { buzzTypes } from '~/server/schema/buzz.schema';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -150,18 +151,14 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               <Stack gap={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
                 <Group mb="sm">
-                  <UserBuzz
-                    accountId={accountId}
-                    textSize="xl"
-                    withAbbreviation={false}
-                    accountTypes={['user', 'fakered']}
-                  />
-                  <UserBuzz
-                    accountId={accountId}
-                    textSize="xl"
-                    withAbbreviation={false}
-                    accountTypes={['generation', 'green']}
-                  />
+                  {buzzTypes.map((type) => (
+                    <UserBuzz
+                      key={type}
+                      accountTypes={[type]}
+                      textSize="xl"
+                      withAbbreviation={false}
+                    />
+                  ))}
 
                   <Popover width={350} withArrow withinPortal shadow="sm">
                     <Popover.Target>

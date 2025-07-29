@@ -32,9 +32,9 @@ export enum TransactionType {
 }
 
 export const buzzAccountTypes = [
-  'user',
+  'user', // yellow
   'club',
-  'generation',
+  'generation', // blue
   // NEW TYPES:
   'green',
   'fakered',
@@ -44,6 +44,38 @@ export const buzzAccountTypes = [
   'cashpending',
   'cashsettled',
 ] as const;
+
+export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
+type BuzzConfig = {
+  nsfw: boolean;
+  purchasable: boolean;
+  value: BuzzAccountType;
+  bankable: boolean;
+};
+const BuzzConfig = <T extends Record<BuzzSpendType, BuzzConfig>>(args: T) => args;
+const buzzConfig = BuzzConfig({
+  blue: { nsfw: false, purchasable: false, value: 'generation', bankable: false },
+  green: { nsfw: false, purchasable: true, value: 'green', bankable: true },
+  yellow: { nsfw: true, purchasable: false, value: 'user', bankable: true },
+  red: { nsfw: true, purchasable: true, value: 'fakered', bankable: false },
+});
+export const buzzTypes = Object.keys(buzzConfig) as BuzzSpendType[];
+const buzzTypesValueMap = Object.fromEntries(
+  buzzTypes.map((type) => [buzzConfig[type].value, type])
+);
+
+export class BuzzTypes {
+  static getConfig(type: BuzzSpendType) {
+    return buzzConfig[type];
+  }
+  static getTypeFromValue(value: string) {
+    return value in buzzTypesValueMap ? (buzzTypesValueMap[value] as BuzzSpendType) : undefined;
+  }
+}
+
+export const bankableBuzzTypes = Object.entries(buzzConfig).filter(
+  ([, config]) => config.bankable
+)[0] as BuzzSpendType[];
 
 export const purchasableBuzzAccountTypes = ['green', 'fakered', 'red', 'user'] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
@@ -66,17 +98,6 @@ export const getEarnPotentialSchema = z.object({
   userId: z.number().min(0).optional(),
   username: z.string().optional(),
 });
-
-export type GetUserBuzzAccountResponse = z.infer<typeof getUserBuzzAccountResponse>;
-export const getUserBuzzAccountResponse = z.object({
-  // This is the user id
-  id: z.number(),
-  balance: z.number().nullable(),
-  lifetimeBalance: z.number().nullable(),
-});
-
-export type GetUserBuzzAccountsResponse = z.infer<typeof getUserBuzzAccountsResponse>;
-export const getUserBuzzAccountsResponse = z.record(z.enum(buzzAccountTypes), z.number());
 
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
 export const getUserBuzzTransactionsSchema = z.object({

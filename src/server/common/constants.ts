@@ -1195,10 +1195,13 @@ type CurrencyTheme = {
   };
 };
 
-export const CurrencyConfig: Record<
-  Currency,
-  CurrencyTheme & { themes?: Record<string, CurrencyTheme> }
-> = {
+function createCurrencyConfig<
+  T extends Record<Currency, CurrencyTheme & { themes?: Record<string, CurrencyTheme> }>
+>(args: T) {
+  return args;
+}
+
+export const CurrencyConfig = createCurrencyConfig({
   [Currency.BUZZ]: {
     icon: IconBolt,
     color: '#f59f00',
@@ -1213,7 +1216,7 @@ export const CurrencyConfig: Record<
       gradientText: 'bg-gradient-to-r from-orange-500 to-yellow-400 bg-clip-text text-transparent',
     },
     themes: {
-      generation: {
+      blue: {
         icon: IconBolt,
         color: '#4dabf7',
         fill: '#4dabf7',
@@ -1242,21 +1245,22 @@ export const CurrencyConfig: Record<
             'linear-gradient(135deg, var(--mantine-color-lime-4) 0%, var(--mantine-color-green-6) 100%)',
         },
       },
-      red: {
+      yellow: {
         icon: IconBolt,
-        color: '#f03e3e',
-        fill: '#f03e3e',
-        classNames: {
-          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
-          gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
-          gradientText: 'bg-gradient-to-r from-rose-500 to-pink-400 bg-clip-text text-transparent',
-        },
+        color: '#f59f00',
+        fill: '#f59f00',
         css: {
           gradient:
-            'linear-gradient(135deg, var(--mantine-color-pink-4) 0%, var(--mantine-color-rose-5) 100%)',
+            'linear-gradient(135deg, var(--mantine-color-yellow-4) 0%, var(--mantine-color-orange-5) 100%)',
+        },
+        classNames: {
+          btn: 'bg-gradient-to-r from-orange-500 to-yellow-400 hover:from-orange-600 hover:to-yellow-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+          gradient: 'bg-gradient-to-r from-orange-500 to-yellow-400',
+          gradientText:
+            'bg-gradient-to-r from-orange-500 to-yellow-400 bg-clip-text text-transparent',
         },
       },
-      fakered: {
+      red: {
         icon: IconBolt,
         color: '#f03e3e',
         fill: '#f03e3e',
@@ -1282,7 +1286,7 @@ export const CurrencyConfig: Record<
     color: '#f59f00',
     fill: undefined,
   },
-};
+});
 
 export const BUZZ_FEATURE_LIST = [
   'Pay for on-site model training',

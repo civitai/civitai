@@ -159,8 +159,8 @@ export default function SendTipModal({
                 <UserBuzz
                   iconSize={16}
                   textSize="sm"
-                  accountTypes={['user', 'green', 'fakered']}
                   withTooltip
+                  accountTypes={['green', 'yellow', 'red']}
                 />
               </Group>
             </Badge>
@@ -233,7 +233,7 @@ export default function SendTipModal({
                 buzzAmount={amountToSend ?? 0}
                 disabled={(amountToSend ?? 0) === 0}
                 loading={sending}
-                accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
+                accountTypes={['green', 'yellow', 'red']}
                 type="submit"
               />
             </Group>

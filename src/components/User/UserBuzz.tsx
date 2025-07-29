@@ -1,8 +1,9 @@
 import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip } from '@mantine/core';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyConfig } from '~/server/common/constants';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { buzzTypes } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import {
   createBuzzDistributionGradient,
   createBuzzDistributionLabel,
@@ -19,7 +20,7 @@ type Props = TextProps & {
   withTooltip?: boolean;
   withAbbreviation?: boolean;
   accountId?: number;
-  accountTypes?: BuzzAccountType[] | null;
+  accountTypes?: BuzzSpendType[];
   theme?: string;
 };
 
@@ -29,17 +30,20 @@ export function UserBuzz({
   withTooltip,
   withAbbreviation = true,
   accountId,
-  accountTypes,
+  accountTypes = buzzTypes,
   ...textProps
 }: Props) {
-  const { balances, balanceLoading } = useBuzz(accountId, accountTypes);
-  const balance = (balances ?? []).reduce((acc, curr) => acc + (curr.balance ?? 0), 0);
-  const [baseAccountType] = accountTypes ?? ['user'];
-  const config = CurrencyConfig.BUZZ.themes?.[baseAccountType ?? ''] ?? CurrencyConfig.BUZZ;
+  const {
+    data: { accounts, total },
+    isLoading,
+  } = useQueryBuzz(accountTypes);
+  const balance = total;
+  const baseAccountType = accounts[0]?.type ?? '';
+  const config = CurrencyConfig.BUZZ.themes[baseAccountType] ?? CurrencyConfig.BUZZ;
+  console.log({ baseAccountType });
   const Icon = config.icon;
   const typeDistribution = getBuzzTypeDistribution({
-    balances: balances ?? [],
-    accountTypes: accountTypes ?? ['user'],
+    accounts,
     buzzAmount: balance,
   });
   const gradient = createBuzzDistributionGradient({
@@ -50,7 +54,7 @@ export function UserBuzz({
     typeDistribution,
   });
 
-  const content = balanceLoading ? (
+  const content = isLoading ? (
     <Group gap={4} wrap="nowrap">
       <Icon size={iconSize} color={config.color} fill={config.color} />
       <Loader color={config.color} type="dots" size="xs" />

@@ -1,11 +1,17 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import type { BuzzAccountType, GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import type {
+  BuzzAccountType,
+  GetTransactionsReportSchema,
+  BuzzSpendType,
+} from '~/server/schema/buzz.schema';
+import { BuzzTypes } from '~/server/schema/buzz.schema';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export const useBuzz = (
   accountId?: number,
@@ -31,6 +37,32 @@ export const useBuzz = (
     })),
   };
 };
+
+export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow', 'red']) {
+  const currentUser = useCurrentUser();
+  const { data: initialData, isLoading } = trpc.buzz.getBuzzAccount2.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+  const data = useMemo(() => {
+    if (!initialData) return { accounts: [], total: 0, nsfwTotal: 0 };
+    let total = 0;
+    let nsfwTotal = 0;
+    const accounts = buzzTypes
+      .map((type) => {
+        const config = BuzzTypes.getConfig(type);
+        if (!config) return null;
+        const balance = initialData[type];
+        total += balance;
+        if (config.nsfw) nsfwTotal += balance;
+        return { ...config, balance, type };
+      })
+      .filter(isDefined);
+
+    return { accounts, total, nsfwTotal };
+  }, [initialData]);
+
+  return { data, isLoading };
+}
 
 export const useBuzzSignalUpdate = () => {
   const queryUtils = trpc.useUtils();
