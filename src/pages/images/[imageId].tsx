@@ -34,7 +34,7 @@ export default Page(
     if (!imageId) return <NotFound />;
 
     return (
-      <ImageDetailProvider imageId={imageId} filters={filters}>
+      <ImageDetailProvider key={imageId} imageId={imageId} filters={filters}>
         <ImageDetail2 />
       </ImageDetailProvider>
     );
