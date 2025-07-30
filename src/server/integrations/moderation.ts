@@ -27,6 +27,7 @@ async function moderatePrompt(prompt: string): Promise<{ flagged: false; categor
     },
     body: JSON.stringify({
       input: preparedPrompt,
+      model: 'omni-moderation-latest',
     }),
   });
   if (!res.ok) {

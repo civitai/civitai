@@ -101,6 +101,14 @@ const formSchema = baseSchema
       });
     }
 
+    if (data.negativePrompt && data.negativePrompt.length > 1000) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Prompt cannot be longer than 1000 characters',
+        path: ['negativePrompt'],
+      });
+    }
+
     if (data.prompt.length > 0) {
       const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
       if (!success) {
