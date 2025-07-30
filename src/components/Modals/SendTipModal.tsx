@@ -19,7 +19,6 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Form, InputChipGroup, InputNumber, InputTextArea, useForm } from '~/libs/form';
-import { constants } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -30,6 +29,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import classes from './SendTipModal.module.scss';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 const schema = z
   .object({
@@ -38,8 +38,8 @@ const schema = z
     customAmount: z
       .number()
       .positive()
-      .min(constants.buzz.minTipAmount)
-      .max(constants.buzz.maxTipAmount)
+      .min(buzzConstants.minTipAmount)
+      .max(buzzConstants.maxTipAmount)
       .optional(),
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
   })
@@ -201,7 +201,7 @@ export default function SendTipModal({
                 variant="filled"
                 rightSectionWidth="10%"
                 min={1}
-                max={constants.buzz.maxTipAmount}
+                max={buzzConstants.maxTipAmount}
                 disabled={sending}
                 leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                 allowDecimal={false}

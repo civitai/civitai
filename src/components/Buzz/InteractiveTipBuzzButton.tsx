@@ -1,13 +1,5 @@
 import type { UnstyledButtonProps } from '@mantine/core';
-import {
-  ActionIcon,
-  Group,
-  Popover,
-  Stack,
-  Text,
-  UnstyledButton,
-  useMantineTheme,
-} from '@mantine/core';
+import { Group, Popover, Stack, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
@@ -21,7 +13,6 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { isTouchDevice } from '~/utils/device-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -30,6 +21,7 @@ import { useBuzzTransaction } from './buzz.utils';
 import classes from './InteractiveTipBuzzButton.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 type Props = UnstyledButtonProps &
   React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -126,7 +118,7 @@ export function InteractiveTipBuzzButton({
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
-      return Math.min(constants.buzz.maxEntityTip, Math.min(balance ?? 0, prevCounter + step));
+      return Math.min(buzzConstants.maxEntityTip, Math.min(balance ?? 0, prevCounter + step));
     });
   }, 100);
 
@@ -221,7 +213,7 @@ export function InteractiveTipBuzzButton({
   const processEnteredNumber = (value: string) => {
     let amount = Number(value);
     if (isNaN(amount) || amount < 1) amount = 1;
-    else if (amount > constants.buzz.maxEntityTip) amount = constants.buzz.maxEntityTip;
+    else if (amount > buzzConstants.maxEntityTip) amount = buzzConstants.maxEntityTip;
     else if (balance && amount > balance) amount = balance ?? 0;
     setBuzzCounter(amount);
 
@@ -290,7 +282,7 @@ export function InteractiveTipBuzzButton({
 
     if (startTimerTimeoutRef.current !== null) {
       // Was click
-      setBuzzCounter((x) => Math.min(constants.buzz.maxEntityTip, x + CLICK_AMOUNT));
+      setBuzzCounter((x) => Math.min(buzzConstants.maxEntityTip, x + CLICK_AMOUNT));
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
 

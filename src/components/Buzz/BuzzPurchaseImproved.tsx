@@ -66,6 +66,7 @@ import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironment
 import { env } from '~/env/client';
 import { QS } from '~/utils/qs';
 import { PromoBanner } from '~/components/Buzz/PromoBanner';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -290,8 +291,8 @@ export const BuzzPurchaseImproved = ({
       return false;
     }
 
-    if (unitAmount < constants.buzz.minChargeAmount) {
-      setError(`Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`);
+    if (unitAmount < buzzConstants.minChargeAmount) {
+      setError(`Minimum amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount)} USD`);
       return false;
     }
 
@@ -318,7 +319,7 @@ export const BuzzPurchaseImproved = ({
     if (minBuzzAmount) {
       setSelectedPrice(null);
       setActiveControl('customAmount');
-      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), constants.buzz.minChargeAmount));
+      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), buzzConstants.minChargeAmount));
     }
   }, [packages, minBuzzAmount]);
 
@@ -341,8 +342,8 @@ export const BuzzPurchaseImproved = ({
   }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
 
   const minBuzzAmountPrice = minBuzzAmount
-    ? Math.max(minBuzzAmount / 10, constants.buzz.minChargeAmount)
-    : constants.buzz.minChargeAmount;
+    ? Math.max(minBuzzAmount / 10, buzzConstants.minChargeAmount)
+    : buzzConstants.minChargeAmount;
 
   // If no buzz type is selected, show selection screen
   if (!selectedBuzzType) {
@@ -526,7 +527,7 @@ export const BuzzPurchaseImproved = ({
                                     value={customBuzzAmount}
                                     clampBehavior="blur"
                                     min={1000}
-                                    max={constants.buzz.maxChargeAmount * 10}
+                                    max={buzzConstants.maxChargeAmount * 10}
                                     onChange={(value) => {
                                       setError('');
                                       const newCustomBuzzAmount = value ? Number(value) : undefined;
@@ -553,7 +554,7 @@ export const BuzzPurchaseImproved = ({
                                     min={100}
                                     step={100}
                                     clampBehavior="blur"
-                                    max={constants.buzz.maxChargeAmount}
+                                    max={buzzConstants.maxChargeAmount}
                                     allowDecimal
                                     fixedDecimalScale
                                     decimalScale={2}
@@ -574,8 +575,8 @@ export const BuzzPurchaseImproved = ({
                                 </SimpleGrid>
 
                                 <Text size="xs" c="dimmed" ta="center">
-                                  Min: {numberWithCommas(constants.buzz.minChargeAmount * 10)} Buzz
-                                  or ${formatPriceForDisplay(constants.buzz.minChargeAmount)}
+                                  Min: {numberWithCommas(buzzConstants.minChargeAmount * 10)} Buzz
+                                  or ${formatPriceForDisplay(buzzConstants.minChargeAmount)}
                                 </Text>
                               </Stack>
                             </Accordion.Panel>

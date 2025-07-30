@@ -29,6 +29,7 @@ import { getOrCreateVault } from '~/server/services/vault.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -729,14 +730,14 @@ export const getPaymentIntent = async ({
     customerId = await createCustomer(user);
   }
 
-  if (unitAmount < constants.buzz.minChargeAmount) {
+  if (unitAmount < buzzConstants.minChargeAmount) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount / 100)}`
+      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount / 100)}`
     );
   }
-  if (unitAmount > constants.buzz.maxChargeAmount) {
+  if (unitAmount > buzzConstants.maxChargeAmount) {
     throw throwBadRequestError(
-      `Maximum purchase amount is $${formatPriceForDisplay(constants.buzz.maxChargeAmount / 100)}`
+      `Maximum purchase amount is $${formatPriceForDisplay(buzzConstants.maxChargeAmount / 100)}`
     );
   }
 

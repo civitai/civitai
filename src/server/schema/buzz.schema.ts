@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import { constants } from '~/server/common/constants';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export enum TransactionType {
   Tip = 0,
@@ -230,7 +230,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
     if (
       ctx.value.entityType &&
       ['Image', 'Model', 'Article'].includes(ctx.value.entityType) &&
-      ctx.value.amount > constants.buzz.maxEntityTip
+      ctx.value.amount > buzzConstants.maxEntityTip
     ) {
       ctx.issues.push({
         code: 'custom',

@@ -14,7 +14,6 @@ import {
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
-import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
@@ -31,6 +30,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -114,7 +114,7 @@ CreateBuzzWithdrawalRequestSchema & {
         userId,
         buzzWithdrawalTransactionId: transaction.transactionId,
         requestedBuzzAmount: amount,
-        platformFeeRate: constants.buzz.platformFeeRate,
+        platformFeeRate: buzzConstants.platformFeeRate,
         ...providerData,
       },
       select: buzzWithdrawalRequestDetails,
