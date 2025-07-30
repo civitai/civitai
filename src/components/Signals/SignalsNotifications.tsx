@@ -1,9 +1,8 @@
 import { Text } from '@mantine/core';
-import type { NotificationData } from '@mantine/notifications';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { showBuzzNotification } from '~/utils/notifications';
 
@@ -16,8 +15,9 @@ const baseNotificationConfig: Record<BuzzSpendType, { color: string }> = {
 
 export const SignalNotifications = () => {
   const onBalanceUpdate = useCallback((updated: BuzzUpdateSignalSchema) => {
+    const type = BuzzTypes.toClientType(updated.accountType) as BuzzSpendType;
     showBuzzNotification({
-      ...baseNotificationConfig[updated.accountType],
+      ...baseNotificationConfig[type],
       title: 'User Buzz Update',
       message:
         updated.delta > 0 ? (

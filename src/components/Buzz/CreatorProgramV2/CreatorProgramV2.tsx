@@ -68,7 +68,7 @@ import { useUserPaymentConfiguration } from '~/components/UserPaymentConfigurati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzBankTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   getCreatorProgramAvailability,
   getCurrentValue,
@@ -77,7 +77,6 @@ import {
 } from '~/server/utils/creator-program.utils';
 import {
   MIN_WITHDRAWAL_AMOUNT,
-  SUPPORTED_BUZZ,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
@@ -356,7 +355,7 @@ export const CompensationPoolCard = () => {
             <CurrencyIcon
               className="my-auto"
               currency={Currency.BUZZ}
-              type={SUPPORTED_BUZZ[0]}
+              type={buzzBankTypes[0]}
               size={20}
             />
             <span className="text-2xl font-bold">
@@ -381,7 +380,7 @@ const BankBuzzCard = () => {
   const {
     data: { accounts },
     isLoading: buzzAccountsLoading,
-  } = useQueryBuzz(SUPPORTED_BUZZ);
+  } = useQueryBuzz(buzzBankTypes);
   const buzzAccountTypeSelectorCB = useCombobox({
     onDropdownClose: () => {
       buzzAccountTypeSelectorCB.resetSelectedOption();
@@ -456,7 +455,7 @@ const BankBuzzCard = () => {
 
                 <Combobox.Dropdown>
                   <Combobox.Options>
-                    {SUPPORTED_BUZZ.map((buzzType) => (
+                    {buzzBankTypes.map((buzzType) => (
                       <Combobox.Option
                         key={buzzType}
                         value={buzzType}
@@ -616,7 +615,7 @@ const EstimatedEarningsCard = () => {
                 </div>
               </Table.Td>
             </Table.Tr>
-            {SUPPORTED_BUZZ.map((buzzType) => {
+            {buzzBankTypes.map((buzzType) => {
               const buzzBalance = banked.balances.find((b) => b.accountType === buzzType);
               if (!buzzBalance) return null;
 
@@ -1144,7 +1143,7 @@ const ExtractBuzzCard = () => {
             >
               <div className="flex w-full items-center  justify-between gap-2">
                 <div className="flex gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} size={18} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={buzzBankTypes[0]} size={18} />
                   <p className="text-sm">{numberWithCommas(banked?.total ?? 0)}</p>
                 </div>
 
@@ -1157,7 +1156,7 @@ const ExtractBuzzCard = () => {
               <span className="font-bold">Extraction Fee:</span>{' '}
               <CurrencyIcon
                 currency={Currency.BUZZ}
-                type={SUPPORTED_BUZZ[0]}
+                type={buzzBankTypes[0]}
                 size={14}
                 className="inline"
               />

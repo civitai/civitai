@@ -21,7 +21,7 @@ import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboard
 import { EarningBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
-import { useBuzz, useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';

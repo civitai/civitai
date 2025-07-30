@@ -83,7 +83,7 @@ export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[]
 export const buzzSpendTypes = buzzAccountTypes.filter(
   (type) => buzzTypeConfig[type].type === 'spend'
 ) as BuzzSpendType[];
-export const buzzBankableTypes = buzzSpendTypes.filter((type) => {
+export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
@@ -110,9 +110,9 @@ export class BuzzTypes {
   static toApiType(type: BuzzAccountType): BuzzApiAccountType {
     return getApiTypeFromClientType(type);
   }
-  static toClientType(value: BuzzApiAccountType): BuzzAccountType {
+  static toClientType(value: string): BuzzAccountType {
     if (!(value in apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
-    return apiTypesMap[value];
+    return apiTypesMap[value as BuzzApiAccountType];
   }
   static getApiTransaction<
     T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }

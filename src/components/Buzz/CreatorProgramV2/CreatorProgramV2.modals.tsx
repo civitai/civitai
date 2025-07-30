@@ -9,7 +9,6 @@ import {
   CAP_DEFINITIONS,
   EXTRACTION_FEES,
   MIN_CAP,
-  SUPPORTED_BUZZ,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
@@ -21,6 +20,7 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { buzzBankTypes } from '~/shared/constants/buzz.constants';
 
 export const openPhasesModal = () => {
   dialogStore.trigger({
@@ -313,7 +313,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                         a{' '}
                         <CurrencyIcon
                           currency={Currency.BUZZ}
-                          type={SUPPORTED_BUZZ[0]}
+                          type={buzzBankTypes[0]}
                           className="inline"
                         />
                         {abbreviateNumber(cap.limit)} cap
@@ -322,7 +322,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                       <span className="inline-flex">
                         <CurrencyIcon
                           currency={Currency.BUZZ}
-                          type={SUPPORTED_BUZZ[0]}
+                          type={buzzBankTypes[0]}
                           className="inline"
                         />
                         {abbreviateNumber(cap.limit)}
@@ -345,7 +345,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p>
               <span className="font-bold">Peak Earning Month:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} className="inline" />
+              <CurrencyIcon currency={Currency.BUZZ} type={buzzBankTypes[0]} className="inline" />
               {abbreviateNumber(banked.cap.peakEarning.earned)}{' '}
               <span className="opacity-50">
                 ({formatDate(banked.cap.peakEarning.month, 'MMM YYYY')})
@@ -353,25 +353,21 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p>
               <span className="font-bold">Tier Cap:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} className="inline" />
+              <CurrencyIcon currency={Currency.BUZZ} type={buzzBankTypes[0]} className="inline" />
               {banked.cap.definition.limit
                 ? numberWithCommas(banked.cap.definition.limit)
                 : 'No Cap'}
             </p>
             <p className="font-bold">
               Your Cap:{' '}
-              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} className="inline" />{' '}
+              <CurrencyIcon currency={Currency.BUZZ} type={buzzBankTypes[0]} className="inline" />{' '}
               {numberWithCommas(banked.cap.cap)}
             </p>
 
             {banked.cap.cap <= MIN_CAP && (
               <p className="text-sm opacity-50">
                 All members have a minimum cap of{' '}
-                <CurrencyIcon
-                  currency={Currency.BUZZ}
-                  type={SUPPORTED_BUZZ[0]}
-                  className="inline"
-                />{' '}
+                <CurrencyIcon currency={Currency.BUZZ} type={buzzBankTypes[0]} className="inline" />{' '}
                 {abbreviateNumber(MIN_CAP)}
               </p>
             )}
@@ -380,7 +376,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
           {nextCap && (
             <p>
               You could increase your cap to{' '}
-              <CurrencyIcon currency={Currency.BUZZ} type={SUPPORTED_BUZZ[0]} className="inline" />{' '}
+              <CurrencyIcon currency={Currency.BUZZ} type={buzzBankTypes[0]} className="inline" />{' '}
               {numberWithCommas(Math.floor(potentialEarnings as number))} by upgrading to a{' '}
               {capitalize(nextCap.tier)} Membership.{' '}
               <Anchor className="text-nowrap" href="/pricing" onClick={onUpgrade}>

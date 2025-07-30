@@ -11,7 +11,12 @@ import {
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
+import {
+  BuzzType,
+  BuzzTypes,
+  TransactionType,
+  buzzBankTypes,
+} from '~/shared/constants/buzz.constants';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
@@ -49,7 +54,6 @@ import {
   MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,
   PEAK_EARNING_WINDOW,
-  SUPPORTED_BUZZ,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
@@ -59,6 +63,7 @@ import { signalClient } from '~/utils/signal-client';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
+import { toKebabCase } from '~/utils/string-helpers';
 
 type UserCapCacheItem = {
   id: number;
@@ -66,6 +71,10 @@ type UserCapCacheItem = {
   peakEarning: { month: Date; earned: number };
   cap: number;
 };
+
+const bankableBuzzTypesString = buzzBankTypes
+  .map((type) => `'${toKebabCase(BuzzTypes.toApiType(type))}'`)
+  .join(',');
 
 export const userCapCache = createCachedObject<UserCapCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
@@ -98,7 +107,7 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
         OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
+      AND toAccountType IN (${bankableBuzzTypesString})
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
       AND toStartOfMonth(date) < toStartOfMonth(now())
@@ -147,7 +156,7 @@ export async function getBanked(userId: number) {
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
     async () => {
       const supportedBalances = await Promise.all(
-        SUPPORTED_BUZZ.map((type) =>
+        buzzBankTypes.map((type) =>
           getCounterPartyBuzzTransactions({
             accountId: monthAccount,
             accountType: 'creatorprogrambank',
@@ -248,7 +257,7 @@ async function getPoolValue(month?: Date) {
     SELECT
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
+    WHERE toAccountType IN (${bankableBuzzTypesString})
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
@@ -282,7 +291,7 @@ async function getPoolForecast(month?: Date) {
     SELECT
       SUM(amount) AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
+    WHERE toAccountType IN (${bankableBuzzTypesString})
     AND (
       (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -438,7 +447,7 @@ export async function extractBuzz(userId: number) {
     await createMultiAccountBuzzTransaction({
       amount: fee,
       fromAccountId: userId,
-      fromAccountTypes: SUPPORTED_BUZZ as BuzzAccountType[],
+      fromAccountTypes: buzzBankTypes,
       toAccountId: 0,
       toAccountType: 'yellow',
       type: TransactionType.Fee,
@@ -777,12 +786,12 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
       -- Banks
       toAccountType = 'creator-program-bank'
       AND toAccountId = ${monthAccount}
-      AND fromAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
+      AND fromAccountType IN (${bankableBuzzTypesString})
     ) OR (
       -- Extracts
       fromAccountType = 'creator-program-bank'
       AND fromAccountId = ${monthAccount}
-      AND toAccountType IN (${SUPPORTED_BUZZ.map((t) => `'${t}'`).join(',')})
+      AND toAccountType IN (${bankableBuzzTypesString})
     )
     GROUP BY userId
     ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};

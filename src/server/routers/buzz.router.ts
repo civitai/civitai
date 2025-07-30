@@ -41,8 +41,8 @@ const buzzProcedure = protectedProcedure.use(isFlagProtected('buzz'));
 
 export const buzzRouter = router({
   getUserAccount: buzzProcedure.query(getUserAccountHandler),
-  getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
-  getBuzzAccount2: buzzProcedure.query(({ ctx }) => getUserBuzzAccounts({ userId: ctx.user.id })),
+  // getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
+  getBuzzAccount: buzzProcedure.query(({ ctx }) => getUserBuzzAccounts({ userId: ctx.user.id })),
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure
     .input(getUserBuzzTransactionsSchema)
