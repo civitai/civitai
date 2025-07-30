@@ -18,23 +18,20 @@ import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { EarningBuzz, RewardsList } from '~/components/Buzz/FeatureCards/FeatureCards';
+import { GetPaid } from '~/components/Buzz/GetPaid/GetPaid';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
@@ -198,6 +195,7 @@ export default function UserBuzzDashboard() {
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
           {['yellow', 'green'].includes(selectedAccountType) && <CreatorProgramV2 />}
+          {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>
     </>
