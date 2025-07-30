@@ -135,6 +135,7 @@ import {
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzSpendTypes } from '~/server/schema/buzz.schema';
 
 let total = 0;
 const tips = {
@@ -233,7 +234,7 @@ export function GenerationFormContent() {
   // #endregion
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    accountTypes: ['generation', 'user'],
+    accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance

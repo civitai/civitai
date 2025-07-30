@@ -18,9 +18,12 @@ const schema = clubTransactionSchema.omit({ clubId: true });
 export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { balances: userBalances, balanceLoading: userBalanceLoading } = useBuzz(undefined, 'user');
+  const { balances: userBalances, balanceLoading: userBalanceLoading } = useBuzz(
+    undefined,
+    'yellow'
+  );
   const [{ balance: userBalance } = { balance: 0 }] = userBalances;
-  const { balances, balanceLoading } = useBuzz(clubId, 'club');
+  const { balances, balanceLoading } = useBuzz(clubId, 'yellow');
   const [{ balance = 0 } = {}] = balances;
   const { club, loading } = useQueryClub({ id: clubId });
   const { depositClubFunds, depositingClubFunds } = useMutateClub();

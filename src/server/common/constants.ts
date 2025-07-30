@@ -1202,7 +1202,13 @@ function createCurrencyConfig<
   return args;
 }
 
-export const CurrencyConfig = createCurrencyConfig({
+type CurrencyConfig = {
+  USD: CurrencyTheme;
+  USDC: CurrencyTheme;
+  BUZZ: CurrencyTheme & { themes: Record<BuzzSpendType, CurrencyTheme> };
+};
+
+export const CurrencyConfig: CurrencyConfig = {
   [Currency.BUZZ]: {
     icon: IconBolt,
     color: '#f59f00',
@@ -1287,10 +1293,14 @@ export const CurrencyConfig = createCurrencyConfig({
     color: '#f59f00',
     fill: undefined,
   },
-});
+};
+
+export function getBuzzCurrencyConfig(type: BuzzSpendType = 'yellow') {
+  return CurrencyConfig.BUZZ.themes[type];
+}
 
 export function getCurrencyConfig(
-  args: { currency: Currency } & { currency: 'BUZZ'; type?: BuzzSpendType }
+  args: { currency: 'USD' | 'USDC' } | { currency: 'BUZZ'; type?: BuzzSpendType }
 ) {
   if (args.currency === Currency.BUZZ) return CurrencyConfig.BUZZ.themes[args.type ?? 'yellow'];
   else return CurrencyConfig[args.currency];

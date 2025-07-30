@@ -76,7 +76,7 @@ CreateBuzzWithdrawalRequestSchema & {
 
   const userBuzzAccount = await getUserBuzzAccount({
     accountId: userId,
-    accountType: 'user',
+    accountType: 'yellow',
   });
 
   if ((userBuzzAccount[0]?.balance ?? 0) < amount) throw throwInsufficientFundsError();
@@ -168,8 +168,8 @@ export const getPaginatedBuzzWithdrawalRequests = async (
   if (username && !userId) {
     // The list here is much shorter:
     const userIds = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr 
-      JOIN "User" u ON bwr."userId" = u.id 
+      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr
+      JOIN "User" u ON bwr."userId" = u.id
       WHERE u.username ILIKE ${username + '%'}
     `;
 

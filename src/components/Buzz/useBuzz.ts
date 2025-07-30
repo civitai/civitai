@@ -50,7 +50,7 @@ export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow', 'r
     const accounts = buzzTypes
       .map((type) => {
         const config = BuzzTypes.getConfig(type);
-        if (!config) return null;
+        if (!config || config.type !== 'spend') return null;
         const balance = initialData[type];
         total += balance;
         if (config.nsfw) nsfwTotal += balance;
@@ -134,7 +134,7 @@ export const useBuzzTransactions = (
 export const useTransactionsReport = (
   filters: GetTransactionsReportSchema = {
     window: 'hour',
-    accountType: ['User', 'Generation'],
+    accountType: ['blue', 'yellow'],
   },
   opts: { enabled: boolean }
 ) => {

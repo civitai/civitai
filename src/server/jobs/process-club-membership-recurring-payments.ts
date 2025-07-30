@@ -115,16 +115,16 @@ export const processClubMembershipRecurringPayments = createJob(
                     },
                   });
 
-                  await createBuzzTransaction({
-                    fromAccountId: clubMembership.userId,
-                    toAccountId: clubMembership.clubId,
-                    toAccountType: 'club',
-                    amount: chargedAmount,
-                    type: TransactionType.ClubMembership,
-                    details: {
-                      clubMembershipId: clubMembership.id,
-                    },
-                  });
+                  // await createBuzzTransaction({
+                  //   fromAccountId: clubMembership.userId,
+                  //   toAccountId: clubMembership.clubId,
+                  //   toAccountType: 'club',
+                  //   amount: chargedAmount,
+                  //   type: TransactionType.ClubMembership,
+                  //   details: {
+                  //     clubMembershipId: clubMembership.id,
+                  //   },
+                  // });
                 } catch (e) {
                   logger({
                     data: {

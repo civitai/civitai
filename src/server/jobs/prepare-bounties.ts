@@ -10,7 +10,8 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
+import { TransactionType, buzzSpendTypes } from '~/server/schema/buzz.schema';
 import { Tracker } from '../clickhouse/client';
 import { handleLogError } from '../utils/errorHandling';
 import {
@@ -319,18 +320,19 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
         AND bf."awardedToId" IS NULL;
     `;
 
-    const awardedAmounts: Partial<Record<BuzzAccountType, number>> = {};
+    const awardedAmounts: Partial<Record<BuzzSpendType, number>> = {};
     await Promise.all(
       benefactors.map(async ({ unitAmount, transactionId }) => {
         if (transactionId && isBountyTransactionPrefix(transactionId)) {
           // If transactionId is a prefix, we need to refund all transactions with this prefix
           const data = await getMultiAccountTransactionsByPrefix(transactionId);
           data.forEach((d) => {
+            const accountType = d.accountType as BuzzSpendType;
             // Makes it so we can pay exact amounts.
-            awardedAmounts[d.accountType] = (awardedAmounts[d.accountType] || 0) + d.amount;
+            awardedAmounts[accountType] = (awardedAmounts[accountType] || 0) + d.amount;
           });
         } else {
-          awardedAmounts['user'] = (awardedAmounts['user'] || 0) + unitAmount;
+          awardedAmounts['yellow'] = (awardedAmounts['yellow'] || 0) + unitAmount;
         }
       })
     );
@@ -366,7 +368,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
                   fromAccountId: 0,
                   toAccountId: winnerUserId,
                   toAccountType: accountType as BuzzAccountType,
-                  amount: awardedAmounts[accountType as BuzzAccountType] || 0,
+                  amount: awardedAmounts[accountType as BuzzSpendType] || 0,
                   type: TransactionType.Bounty,
                   description: 'Reason: Bounty entry has been awarded!',
                   details: {

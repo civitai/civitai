@@ -61,7 +61,7 @@ export default function UserBuzzDashboard() {
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
   const features = useFeatureFlags();
-  const blueBuzzConfig = useBuzzCurrencyConfig('generation');
+  const blueBuzzConfig = useBuzzCurrencyConfig('blue');
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -155,7 +155,7 @@ export default function UserBuzzDashboard() {
                               <Text
                                 size="xs"
                                 style={{ fontSize: 10 }}
-                                color={reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'}
+                                color={reward.accountType === 'blue' ? 'blue.4' : 'yellow.7'}
                               >
                                 Originally {Math.floor(reward.awardAmount / rewardsMultiplier)} Buzz
                               </Text>
@@ -173,7 +173,11 @@ export default function UserBuzzDashboard() {
                         </Group>
                         {reward.cap && (
                           <Group gap={4}>
-                            <CurrencyIcon size={14} type={reward.accountType} />
+                            <CurrencyIcon
+                              size={14}
+                              currency={Currency.BUZZ}
+                              type={reward.accountType}
+                            />
                             <Text c="dimmed" size="xs">
                               {hasAwarded
                                 ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
@@ -192,7 +196,7 @@ export default function UserBuzzDashboard() {
                                     color:
                                       awardedAmountPercent === 1
                                         ? 'green'
-                                        : reward.accountType === 'generation'
+                                        : reward.accountType === 'blue'
                                         ? 'blue.4'
                                         : 'yellow.7',
                                   },

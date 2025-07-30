@@ -64,7 +64,7 @@ import {
   useBountyEngagement,
   useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
-import { CurrencyConfig, constants, getCurrencyConfig } from '~/server/common/constants';
+import { constants, getCurrencyConfig } from '~/server/common/constants';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -518,6 +518,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     },
   ];
 
+  const config = getCurrencyConfig({ currency });
+
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
       <Group gap={4} justify="space-between">
@@ -525,11 +527,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           user={b.user}
           badge={
             isMainBenefactor(bounty, b.user) ? (
-              <IconStar
-                color={CurrencyConfig[currency].color}
-                fill={CurrencyConfig[currency].color}
-                size={18}
-              />
+              <IconStar color={config.color} fill={config.color} size={18} />
             ) : null
           }
           withUsername
@@ -537,11 +535,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         />
         {b.awardedToId && (
           <Tooltip label="This supporter has already awarded an entry" color="dark" withinPortal>
-            <IconTrophy
-              color={CurrencyConfig[currency].color}
-              fill={CurrencyConfig[currency].color}
-              size={18}
-            />
+            <IconTrophy color={config.color} fill={config.color} size={18} />
           </Tooltip>
         )}
       </Group>
@@ -643,8 +637,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     type="submit"
                     label="Continue"
                     buzzAmount={addToBountyAmount}
-                    // color="yellow.7"
-                    accountTypes={[features.isGreen ? 'green' : 'fakered', 'user']}
                     onPerformTransaction={() => {
                       if (addToBountyAmount < minUnitAmount) {
                         return;

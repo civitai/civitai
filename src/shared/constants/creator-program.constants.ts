@@ -1,4 +1,4 @@
-import { bankableBuzzTypes } from '~/server/schema/buzz.schema';
+import { buzzBankableTypes } from '~/server/schema/buzz.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
@@ -77,4 +77,4 @@ export const FIRST_CREATOR_PROGRAM_MONTH = new Date('2025-03-01');
 export const CAPPED_BUZZ_VALUE = (1 / 1000) * 100; // $0.001 per Buzz (*100 to convert to cents)
 
 // Order matters, the first one is the default color we'll show.
-export const SUPPORTED_BUZZ = bankableBuzzTypes;
+export const SUPPORTED_BUZZ = buzzBankableTypes;

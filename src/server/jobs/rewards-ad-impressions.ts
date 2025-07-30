@@ -54,7 +54,7 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
           return {
             fromAccountId: 0,
             toAccountId: userId,
-            toAccountType: 'generation',
+            toAccountType: 'blue',
             amount,
             deviceId,
             type: TransactionType.Reward,

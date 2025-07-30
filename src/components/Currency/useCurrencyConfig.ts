@@ -1,4 +1,4 @@
-import { getCurrencyConfig } from '~/server/common/constants';
+import { getBuzzCurrencyConfig } from '~/server/common/constants';
 import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
@@ -10,7 +10,7 @@ import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 // }
 
 export function useBuzzCurrencyConfig(type: BuzzSpendType = 'yellow') {
-  const config = getCurrencyConfig({ currency: Currency.BUZZ, type });
+  const config = getBuzzCurrencyConfig(type);
 
   return {
     icon: config.icon,

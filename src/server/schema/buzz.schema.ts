@@ -31,8 +31,8 @@ export enum TransactionType {
   Bid = 26,
 }
 
-export type BuzzAccountType = (typeof buzzAccountTypes)[number];
-export const buzzAccountTypes = [
+export type BuzzApiAccountType = (typeof buzzApiAccountTypes)[number];
+export const buzzApiAccountTypes = [
   'user', // yellow
   'club',
   'generation', // blue
@@ -47,39 +47,76 @@ export const buzzAccountTypes = [
 ] as const;
 
 export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
-type BuzzConfig = {
-  nsfw: boolean;
-  purchasable: boolean;
-  value: BuzzAccountType;
-  bankable: boolean;
+export type BuzzCreatorProgramType = 'creatorprogrambank';
+export type BuzzCashType = 'cashpending' | 'cashsettled';
+export type BuzzAccountType = BuzzSpendType | BuzzCreatorProgramType | BuzzCashType;
+type BuzzConfig =
+  | {
+      type: 'spend';
+      value: BuzzApiAccountType;
+      purchasable?: boolean;
+      bankable?: boolean;
+      nsfw?: boolean;
+    }
+  | { type: 'bank' }
+  | { type: 'cash' };
+// const BuzzConfig = <T extends Record<BuzzSpendType, BuzzConfig>>(args: T) => args;
+const buzzConfig: Record<BuzzAccountType, BuzzConfig> = {
+  blue: { type: 'spend', value: 'generation' },
+  green: { type: 'spend', value: 'green', bankable: true, purchasable: true },
+  yellow: { type: 'spend', value: 'user', nsfw: true, bankable: true },
+  red: { type: 'spend', value: 'fakered', nsfw: true, purchasable: true },
+  creatorprogrambank: { type: 'bank' },
+  cashpending: { type: 'cash' },
+  cashsettled: { type: 'cash' },
 };
-const BuzzConfig = <T extends Record<BuzzSpendType, BuzzConfig>>(args: T) => args;
-const buzzConfig = BuzzConfig({
-  blue: { nsfw: false, purchasable: false, value: 'generation', bankable: false },
-  green: { nsfw: false, purchasable: true, value: 'green', bankable: true },
-  yellow: { nsfw: true, purchasable: false, value: 'user', bankable: true },
-  red: { nsfw: true, purchasable: true, value: 'fakered', bankable: false },
-});
-export const buzzTypes = Object.keys(buzzConfig) as BuzzSpendType[];
-const buzzTypesValueMap = Object.fromEntries(
-  buzzTypes.map((type) => [buzzConfig[type].value, type])
-);
+
+export const buzzAccountTypes = Object.keys(buzzConfig) as BuzzAccountType[];
+export const buzzSpendTypes = buzzAccountTypes.filter(
+  (type) => buzzConfig[type].type === 'spend'
+) as BuzzSpendType[];
+export const buzzBankableTypes = buzzSpendTypes.filter((type) => {
+  const config = buzzConfig[type];
+  return config.type === 'spend' && config.bankable;
+}) as BuzzSpendType[];
 
 export class BuzzTypes {
+  private static apiTypesMap = Object.fromEntries(
+    buzzAccountTypes.map((type) => [this.getApiValue(type), type])
+  );
   static getConfig(type: BuzzSpendType) {
     return buzzConfig[type];
   }
-  static getTypeFromValue(value: string) {
-    return value in buzzTypesValueMap ? (buzzTypesValueMap[value] as BuzzSpendType) : undefined;
+  static getApiValue(type: BuzzAccountType): BuzzApiAccountType {
+    if (buzzApiAccountTypes.includes(type as BuzzApiAccountType)) return type as BuzzApiAccountType;
+    const config = buzzConfig[type];
+    return config.type === 'spend' ? config.value : (type as BuzzApiAccountType);
+  }
+  static getApiTransaction<
+    T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }
+  >(transaction: T) {
+    return {
+      ...transaction,
+      fromAccountType: transaction.fromAccountType
+        ? this.getApiValue(transaction.fromAccountType)
+        : undefined,
+      toAccountType: transaction.toAccountType
+        ? this.getApiValue(transaction.toAccountType)
+        : undefined,
+    };
+  }
+  static getTypeFromApiValue(value: BuzzApiAccountType): BuzzAccountType {
+    if (!(value in this.apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
+    return this.apiTypesMap[value];
   }
 }
 
-export const bankableBuzzTypes = Object.entries(buzzConfig).filter(
-  ([, config]) => config.bankable
-)[0] as BuzzSpendType[];
+const buzzAccountTypeFromApiValueSchema = z
+  .enum(buzzApiAccountTypes)
+  .transform(BuzzTypes.getTypeFromApiValue);
 
 export function preprocessAccountType(value: unknown) {
-  return typeof value === 'string' ? (value?.toLowerCase() as BuzzAccountType) : undefined;
+  return typeof value === 'string' ? value?.toLowerCase() : undefined;
 }
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
@@ -119,7 +156,7 @@ export const buzzTransactionDetails = z
 
 export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 
-export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
+// export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
 export const getBuzzTransactionResponse = z.object({
   date: z.coerce.date(),
   type: z
@@ -129,8 +166,8 @@ export const getBuzzTransactionResponse = z.object({
     ),
   fromAccountId: z.coerce.number(),
   toAccountId: z.coerce.number(),
-  fromAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
-  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
+  fromAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
+  toAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
   amount: z.coerce.number(),
   description: z.coerce.string().nullish(),
   details: buzzTransactionDetails.nullish(),
@@ -233,7 +270,7 @@ export const claimWatchedAdRewardSchema = z.object({ key: z.string() });
 
 export type GetTransactionsReportSchema = z.infer<typeof getTransactionsReportSchema>;
 export const getTransactionsReportSchema = z.object({
-  accountType: z.array(z.enum(['User', 'Generation'])).optional(),
+  accountType: z.array(z.enum(buzzSpendTypes)).optional(),
   window: z.enum(['hour', 'day', 'week', 'month']).default('hour'),
 });
 
@@ -243,7 +280,7 @@ export const getTransactionsReportResultSchema = z.array(
     date: z.date(),
     accounts: z.array(
       z.object({
-        accountType: z.enum(['User', 'Generation']),
+        accountType: buzzAccountTypeFromApiValueSchema,
         spent: z.number(),
         gained: z.number(),
       })
@@ -289,14 +326,14 @@ export const createMultiAccountBuzzTransactionInput = z.object({
   description: z.string().trim().max(100).nonempty().nullish(),
 });
 
-export type CreateMultiAccountBuzzTransactionResponse = z.infer<
-  typeof createMultiAccountBuzzTransactionResponse
->;
+// export type CreateMultiAccountBuzzTransactionResponse = z.infer<
+//   typeof createMultiAccountBuzzTransactionResponse
+// >;
 export const createMultiAccountBuzzTransactionResponse = z.object({
   transactionIds: z.array(
     z.object({
       transactionId: z.string(),
-      accountType: z.string(),
+      accountType: buzzAccountTypeFromApiValueSchema,
       amount: z.number(),
     })
   ),
@@ -311,15 +348,15 @@ export const refundMultiAccountTransactionInput = z.object({
   details: z.object({}).passthrough().optional(),
 });
 
-export type RefundMultiAccountTransactionResponse = z.infer<
-  typeof refundMultiAccountTransactionResponse
->;
+// export type RefundMultiAccountTransactionResponse = z.infer<
+//   typeof refundMultiAccountTransactionResponse
+// >;
 export const refundMultiAccountTransactionResponse = z.object({
   refundedTransactions: z.array(
     z.object({
       originalTransactionId: z.string(),
       refundTransactionId: z.string(),
-      accountType: z.string(),
+      accountType: buzzAccountTypeFromApiValueSchema,
       amount: z.number(),
       originalExternalTransactionId: z.string(),
     })
@@ -337,16 +374,16 @@ export const previewMultiAccountTransactionInput = z.object({
   amount: z.number().min(1),
 });
 
-export type PreviewMultiAccountTransactionResponse = z.infer<
-  typeof previewMultiAccountTransactionResponse
->;
+// export type PreviewMultiAccountTransactionResponse = z.infer<
+//   typeof previewMultiAccountTransactionResponse
+// >;
 export const previewMultiAccountTransactionResponse = z.object({
   isPossible: z.boolean(),
   totalAvailableBalance: z.number(),
   requestedAmount: z.number(),
   accountCharges: z.array(
     z.object({
-      accountType: z.string(),
+      accountType: buzzAccountTypeFromApiValueSchema,
       availableBalance: z.number(),
       chargeAmount: z.number(),
       remainingBalance: z.number(),

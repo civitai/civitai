@@ -76,61 +76,62 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function Revenue({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { club, loading } = useQueryClub({ id });
-  const { balances } = useBuzz(id, 'club');
-  const [{ balance = 0 } = {}] = balances;
-  const { isOwner, permissions } = useClubContributorStatus({
-    clubId: id,
-  });
-  const hasBalance = (balance ?? 0) > 0;
-  const canWithdraw =
-    hasBalance && (isOwner || permissions.includes(ClubAdminPermission.WithdrawRevenue));
-  const canDeposit = isOwner;
+  return null;
+  // const { club, loading } = useQueryClub({ id });
+  // const { balances } = useBuzz(id, 'club');
+  // const [{ balance = 0 } = {}] = balances;
+  // const { isOwner, permissions } = useClubContributorStatus({
+  //   clubId: id,
+  // });
+  // const hasBalance = (balance ?? 0) > 0;
+  // const canWithdraw =
+  //   hasBalance && (isOwner || permissions.includes(ClubAdminPermission.WithdrawRevenue));
+  // const canDeposit = isOwner;
 
-  if (loading) return <PageLoader />;
-  if (!club) return <NotFound />;
+  // if (loading) return <PageLoader />;
+  // if (!club) return <NotFound />;
 
-  return (
-    <Stack gap="md">
-      <Group justify="space-between">
-        <Title order={2}>Club Revenue</Title>
+  // return (
+  //   <Stack gap="md">
+  //     <Group justify="space-between">
+  //       <Title order={2}>Club Revenue</Title>
 
-        <Group>
-          {canWithdraw && (
-            <Button
-              size="sm"
-              onClick={() => {
-                dialogStore.trigger({
-                  component: ClubWithdrawFunds,
-                  props: { clubId: id },
-                });
-              }}
-            >
-              Withdraw funds
-            </Button>
-          )}
-          {canDeposit && (
-            <Button
-              size="sm"
-              onClick={() => {
-                dialogStore.trigger({
-                  component: ClubDepositFunds,
-                  props: { clubId: id },
-                });
-              }}
-            >
-              Deposit funds
-            </Button>
-          )}
-        </Group>
-      </Group>
-      <Anchor size="sm" target="_blank" href="/content/buzz/terms">
-        Buzz Agreement
-      </Anchor>
-      {/* TODO: If we ever bring back clubs, do something similar to the buzz dashboard there.  */}
-      {/* <BuzzDashboardOverview accountId={club.id} accountTypes={'club'} /> */}
-    </Stack>
-  );
+  //       <Group>
+  //         {canWithdraw && (
+  //           <Button
+  //             size="sm"
+  //             onClick={() => {
+  //               dialogStore.trigger({
+  //                 component: ClubWithdrawFunds,
+  //                 props: { clubId: id },
+  //               });
+  //             }}
+  //           >
+  //             Withdraw funds
+  //           </Button>
+  //         )}
+  //         {canDeposit && (
+  //           <Button
+  //             size="sm"
+  //             onClick={() => {
+  //               dialogStore.trigger({
+  //                 component: ClubDepositFunds,
+  //                 props: { clubId: id },
+  //               });
+  //             }}
+  //           >
+  //             Deposit funds
+  //           </Button>
+  //         )}
+  //       </Group>
+  //     </Group>
+  //     <Anchor size="sm" target="_blank" href="/content/buzz/terms">
+  //       Buzz Agreement
+  //     </Anchor>
+  //     {/* TODO: If we ever bring back clubs, do something similar to the buzz dashboard there.  */}
+  //     {/* <BuzzDashboardOverview accountId={club.id} accountTypes={'club'} /> */}
+  //   </Stack>
+  // );
 }
 
 Revenue.getLayout = function getLayout(page: React.ReactNode) {

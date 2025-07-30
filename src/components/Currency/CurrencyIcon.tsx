@@ -4,12 +4,12 @@ import { getCurrencyConfig } from '~/server/common/constants';
 import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 
-type Props = IconProps & {
-  currency?: Currency;
-} & { currency?: 'BUZZ'; type?: BuzzSpendType };
+type Props = IconProps &
+  ({ currency: 'USD' | 'USDC' } | { currency: 'BUZZ'; type?: BuzzSpendType });
 
-export function CurrencyIcon({ currency = Currency.BUZZ, type, ...iconProps }: Props) {
-  const config = getCurrencyConfig({ currency, type });
+export function CurrencyIcon(props: Props) {
+  const { currency, type, ...iconProps } = props;
+  const config = getCurrencyConfig(props);
   const Icon = config.icon;
 
   // TODO: Add tooltip: this action will cost <CURRENCY>

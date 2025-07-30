@@ -6,7 +6,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import type { Fingerprint } from '~/server/utils/fingerprint';
@@ -60,7 +60,7 @@ export function createBuzzEvent<T>({
       // clickhouse query to determine the awarded amount. For the time being, this won't be
       // done.
       awarded: -1,
-      accountType: buzzEvent.toAccountType ?? 'generation',
+      accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
     // Apply multipliers
@@ -132,7 +132,7 @@ export function createBuzzEvent<T>({
                 event.type === 'userReferred' || event.type === 'refereeCreated'
                   ? `${event.type}:${event.forId}-${event.ip}`
                   : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`,
-              toAccountType: buzzEvent.toAccountType ?? 'user',
+              toAccountType: buzzEvent.toAccountType ?? 'yellow',
             };
           })
       )
@@ -413,7 +413,7 @@ type BuzzEventDefinitionBase<T> = {
   visible?: boolean;
   getKey: (input: T, ctx: GetKeyContext) => Promise<GetKeyOutput | false>;
   getTransactionDetails?: (input: T, ctx: GetKeyContext) => Promise<MixedObject | undefined>;
-  toAccountType?: BuzzAccountType;
+  toAccountType?: BuzzSpendType;
 };
 
 type CapInterval = 'day' | 'week' | 'month';

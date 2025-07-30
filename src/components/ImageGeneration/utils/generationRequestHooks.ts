@@ -12,6 +12,7 @@ import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
+import { buzzSpendTypes } from '~/server/schema/buzz.schema';
 import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -239,7 +240,7 @@ export function useGenerateWithCost(cost = 0) {
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
-    accountTypes: ['generation', 'user'],
+    accountTypes: buzzSpendTypes,
   });
 
   const generate = useGenerate();

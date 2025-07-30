@@ -22,6 +22,7 @@ import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { showErrorNotification } from '~/utils/notifications';
 import { IconX } from '@tabler/icons-react';
 import { GenForm } from '~/components/Generation/Form/GenForm';
+import { buzzSpendTypes } from '~/server/schema/buzz.schema';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -133,7 +134,7 @@ function UpscalImageForm({
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
-    accountTypes: ['generation', 'user'],
+    accountTypes: buzzSpendTypes,
   });
 
   function handleSubmit(formData: z.infer<typeof schema>) {

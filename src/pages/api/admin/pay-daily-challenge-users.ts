@@ -45,7 +45,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           amount: challenge.entryPrize.buzz,
           description: `Challenge Entry Prize: ${dateStr}`,
           externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
-          toAccountType: 'generation',
+          toAccountType: 'blue',
         }))
       )
     );

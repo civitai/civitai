@@ -19,7 +19,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       fromAccountId: monthAccount,
       fromAccountType: 'creatorprogrambank',
       toAccountId: userId ?? -1,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       amount,
       type: TransactionType.Withdrawal,
       description: `ADMIN WITHDRAWAL FROM BANK.`,

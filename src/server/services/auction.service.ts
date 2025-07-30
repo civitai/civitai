@@ -12,12 +12,11 @@ import type {
   GetAuctionBySlugInput,
   TogglePauseRecurringBidInput,
 } from '~/server/schema/auction.schema';
-import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
-  createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,

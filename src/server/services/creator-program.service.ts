@@ -362,7 +362,7 @@ export async function bankBuzz(
     amount,
     fromAccountId: userId,
     // TODO.red-split: Need a way to specify multiple account types.
-    fromAccountType: BuzzTypes.getConfig(accountType).value,
+    fromAccountType: accountType,
     toAccountId: monthAccount,
     toAccountType: 'creatorprogrambank',
     type: TransactionType.Bank,
@@ -417,7 +417,7 @@ export async function extractBuzz(userId: number) {
         // TODO.red-split: Need a way to specify multiple account types.
         toAccountType: balance.accountType,
         type: TransactionType.Extract,
-        externalTransactionId: `extraction-${monthAccount}-${userId}-${balance.accountType}`,
+        externalTransactionId: `extraction-${monthAccount}-${userId}-${balance.accountType ?? ''}`,
         description: `Extracted from Bank`,
       });
     })
@@ -428,9 +428,9 @@ export async function extractBuzz(userId: number) {
     await createMultiAccountBuzzTransaction({
       amount: fee,
       fromAccountId: userId,
-      fromAccountTypes: SUPPORTED_BUZZ as unknown as BuzzAccountType[],
+      fromAccountTypes: SUPPORTED_BUZZ as BuzzAccountType[],
       toAccountId: 0,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       type: TransactionType.Fee,
       externalTransactionIdPrefix: `extraction-fee-${monthAccount}-${userId}`,
       description: 'Extraction fee',
@@ -640,7 +640,7 @@ export async function withdrawCash(userId: number, amount: number) {
       fromAccountId: userId,
       fromAccountType: 'cashsettled',
       toAccountId: 0,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       type: TransactionType.Withdrawal,
       description: 'Withdrawal request',
     });

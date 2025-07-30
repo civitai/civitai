@@ -2,7 +2,7 @@ import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip } from '@mantine/core';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { getCurrencyConfig } from '~/server/common/constants';
-import { buzzTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/server/schema/buzz.schema';
 import type { BuzzSpendType } from '~/server/schema/buzz.schema';
 import {
   createBuzzDistributionGradient,
@@ -31,7 +31,7 @@ export function UserBuzz({
   withTooltip,
   withAbbreviation = true,
   accountId,
-  accountTypes = buzzTypes,
+  accountTypes = buzzSpendTypes,
   ...textProps
 }: Props) {
   const {

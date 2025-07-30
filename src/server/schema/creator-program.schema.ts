@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import { preprocessAccountType, bankableBuzzTypes } from '~/server/schema/buzz.schema';
+import { preprocessAccountType, buzzBankableTypes } from '~/server/schema/buzz.schema';
 import {
   MIN_BANK_AMOUNT,
   MIN_WITHDRAWAL_AMOUNT,
@@ -9,7 +9,7 @@ import { CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 export type BankBuzzInput = z.infer<typeof bankBuzzSchema>;
 export const bankBuzzSchema = z.object({
   amount: z.number().min(MIN_BANK_AMOUNT),
-  accountType: z.preprocess(preprocessAccountType, z.enum(bankableBuzzTypes).default('yellow')),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzBankableTypes).default('yellow')),
 });
 
 export type WithdrawCashInput = z.infer<typeof withdrawCashSchema>;
