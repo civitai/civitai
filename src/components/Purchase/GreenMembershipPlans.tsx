@@ -37,7 +37,7 @@ import { joinRedirectReasons } from '~/utils/join-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from '~/pages/pricing/index.module.scss';
 import type { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 interface MembershipPlansProps {

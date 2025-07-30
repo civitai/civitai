@@ -22,7 +22,7 @@ import type {
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
-import { TransactionType } from '../schema/buzz.schema';
+
 import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
@@ -30,7 +30,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,

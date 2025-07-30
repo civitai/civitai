@@ -6,7 +6,7 @@ import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchaseImproved';
 
 export type BuyBuzzModalProps = {

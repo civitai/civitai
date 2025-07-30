@@ -1,6 +1,7 @@
 import { getCurrencyConfig } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import type { BuzzSpendType, BuzzTransactionDetails } from '~/server/schema/buzz.schema';
+import type { BuzzTransactionDetails } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { capitalize } from '~/utils/string-helpers';
 

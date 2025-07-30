@@ -1,10 +1,9 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
-import { TransactionType } from '../schema/buzz.schema';
 import type { PaypalPurchaseBuzzSchema } from '../schema/paypal.schema';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { createBuzzTransaction } from './buzz.service';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
 const Authorization = `Basic ${Buffer.from(`${env.PAYPAL_CLIENT_ID}:${env.PAYPAL_SECRET}`).toString(
   'base64'

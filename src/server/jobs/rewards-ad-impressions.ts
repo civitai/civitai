@@ -4,7 +4,7 @@ import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { BuzzEventsCache } from '~/server/rewards/buzz-events-cache';
 import type { CreateBuzzTransactionInput } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 

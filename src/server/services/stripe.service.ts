@@ -17,7 +17,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { TransactionType } from '../schema/buzz.schema';
+
 import * as Schema from '../schema/stripe.schema';
 import type { PaymentMethodDeleteInput } from '../schema/stripe.schema';
 import {
@@ -29,7 +29,7 @@ import { getOrCreateVault } from '~/server/services/vault.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');

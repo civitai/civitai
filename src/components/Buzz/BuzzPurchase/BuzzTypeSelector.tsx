@@ -2,7 +2,7 @@ import { Button, Group, Stack, Text } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import React from 'react';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export interface BuzzTypeSelectorProps {
   onSelect: (type: BuzzSpendType) => void;

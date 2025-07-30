@@ -7,7 +7,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
-import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { getBuzzTypeDistribution } from '~/utils/buzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';

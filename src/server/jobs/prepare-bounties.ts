@@ -10,8 +10,8 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
-import { TransactionType, buzzSpendTypes } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Tracker } from '../clickhouse/client';
 import { handleLogError } from '../utils/errorHandling';
 import {

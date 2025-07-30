@@ -3,7 +3,7 @@ import type { NotificationData } from '@mantine/notifications';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { showBuzzNotification } from '~/utils/notifications';
 

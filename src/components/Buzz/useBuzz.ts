@@ -3,15 +3,12 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import type {
-  BuzzAccountType,
-  GetTransactionsReportSchema,
-  BuzzSpendType,
-} from '~/server/schema/buzz.schema';
-import { BuzzTypes } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
 export const useBuzz = (
   accountId?: number,

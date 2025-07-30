@@ -10,7 +10,7 @@ import classes from './CurrencyBadge.module.scss';
 import clsx from 'clsx';
 import type { BuzzTypeDistribution } from '~/utils/buzz';
 import { createBuzzDistributionGradient, createBuzzDistributionLabel } from '~/utils/buzz';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 type Props = BadgeProps & {
   // currency: Currency;

@@ -6,7 +6,7 @@ import * as z from 'zod/v4';
 import { getChallengeDetails } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { withRetries } from '~/utils/errorHandling';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { numericString } from '~/utils/zod-helpers';
 import dayjs from 'dayjs';
 

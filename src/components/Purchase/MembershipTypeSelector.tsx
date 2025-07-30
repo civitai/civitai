@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { Meta } from '~/components/Meta/Meta';
 import classes from '~/pages/pricing/index.module.scss';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 interface MembershipTypeSelectorProps {
   onSelect: (type: BuzzSpendType) => void;

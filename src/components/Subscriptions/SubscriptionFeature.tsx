@@ -7,7 +7,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BuzzSpendType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';

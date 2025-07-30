@@ -29,13 +29,14 @@ import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/us
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
-import type { BuzzSpendType, GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName, capitalize } from '~/utils/string-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 

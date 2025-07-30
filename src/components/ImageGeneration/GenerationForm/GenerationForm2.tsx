@@ -135,7 +135,7 @@ import {
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 let total = 0;
 const tips = {

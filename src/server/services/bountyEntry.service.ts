@@ -4,7 +4,7 @@ import type {
   BountyEntryFileMeta,
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
   createBuzzTransactionMany,

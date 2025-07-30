@@ -1,4 +1,4 @@
-import { buzzBankableTypes } from '~/server/schema/buzz.schema';
+import { buzzBankableTypes } from '~/shared/constants/buzz.constants';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 

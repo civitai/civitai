@@ -5,7 +5,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 export function GenerateButton({
   cost = 0,

@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
-import { preprocessAccountType, buzzBankableTypes } from '~/server/schema/buzz.schema';
+import { preprocessAccountType } from '~/server/schema/buzz.schema';
+import { buzzBankableTypes } from '~/shared/constants/buzz.constants';
 import {
   MIN_BANK_AMOUNT,
   MIN_WITHDRAWAL_AMOUNT,

@@ -4,7 +4,7 @@ import React from 'react';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import classes from './BuzzTopUpCard.module.scss';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 interface BuzzTopUpCardProps {
   /**

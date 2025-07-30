@@ -12,7 +12,7 @@ import type {
 } from '~/server/schema/clubMembership.schema';
 import { ClubMembershipSort } from '~/server/common/enums';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import {
   throwAuthorizationError,

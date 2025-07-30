@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { constants } from '../common/constants';

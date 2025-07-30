@@ -75,7 +75,7 @@ import {
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const maxRuns = 5;
 

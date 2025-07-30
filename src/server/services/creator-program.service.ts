@@ -10,8 +10,8 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type { BuzzAccountType, BuzzSpendType } from '~/server/schema/buzz.schema';
-import { BuzzTypes, TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,

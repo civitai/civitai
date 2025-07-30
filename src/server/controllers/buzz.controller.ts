@@ -16,7 +16,7 @@ import type {
   PreviewMultiAccountTransactionInput,
   UserBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,

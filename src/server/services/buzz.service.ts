@@ -12,6 +12,8 @@ import type {
   BuzzAccountType,
   BuzzApiAccountType,
   BuzzSpendType,
+} from '~/shared/constants/buzz.constants';
+import type {
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
@@ -33,16 +35,14 @@ import type {
   // RefundMultiAccountTransactionResponse,
 } from '~/server/schema/buzz.schema';
 import {
-  BuzzTypes,
-  buzzSpendTypes,
   getUserBuzzTransactionsResponse,
-  TransactionType,
   createMultiAccountBuzzTransactionResponse,
   refundMultiAccountTransactionResponse,
   previewMultiAccountTransactionResponse,
   getBuzzTransactionResponse,
   getTransactionsReportResultSchema,
 } from '~/server/schema/buzz.schema';
+import { BuzzTypes, buzzSpendTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -58,7 +58,7 @@ import { getUserByUsername, getUsers } from './user.service';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
-import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
+// import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';

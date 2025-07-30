@@ -1,7 +1,7 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import {
   createMultiAccountBuzzTransaction,

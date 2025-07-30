@@ -12,7 +12,7 @@ import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,

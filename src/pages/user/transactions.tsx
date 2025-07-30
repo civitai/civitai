@@ -20,12 +20,8 @@ import { useMemo, useState } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type {
-  BuzzSpendType,
-  BuzzTransactionDetails,
-  GetUserBuzzTransactionsSchema,
-} from '~/server/schema/buzz.schema';
-import { TransactionType, buzzSpendTypes } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -33,6 +29,10 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { capitalize } from '~/utils/string-helpers';
+import type {
+  BuzzTransactionDetails,
+  GetUserBuzzTransactionsSchema,
+} from '~/server/schema/buzz.schema';
 
 const transactionTypes = [
   TransactionType[TransactionType.Tip],

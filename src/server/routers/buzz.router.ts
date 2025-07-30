@@ -18,7 +18,6 @@ import {
   claimWatchedAdRewardSchema,
   clubTransactionSchema,
   completeStripeBuzzPurchaseTransactionInput,
-  createMultiAccountBuzzTransactionInput,
   getBuzzAccountSchema,
   getBuzzAccountTransactionsSchema,
   getDailyBuzzCompensationInput,
@@ -26,7 +25,6 @@ import {
   getTransactionsReportSchema,
   getUserBuzzTransactionsSchema,
   previewMultiAccountTransactionInput,
-  refundMultiAccountTransactionInput,
   userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
 import {

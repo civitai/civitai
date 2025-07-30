@@ -7,7 +7,7 @@ import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import type { NotificationSingleRow } from '~/server/jobs/send-notifications';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   GetClubTiersInput,
   GetInfiniteClubSchema,

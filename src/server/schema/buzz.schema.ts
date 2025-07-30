@@ -1,115 +1,12 @@
 import * as z from 'zod/v4';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
-
-export enum TransactionType {
-  Tip = 0,
-  Dues = 1,
-  Generation = 2,
-  Boost = 3,
-  Incentive = 4,
-  Reward = 5,
-  Purchase = 6,
-  Refund = 7,
-  Bounty = 8,
-  BountyEntry = 9,
-  Training = 10,
-  ChargeBack = 11,
-  Donation = 12,
-  ClubMembership = 13,
-  ClubMembershipRefund = 14,
-  ClubWithdrawal = 15,
-  ClubDeposit = 16,
-  Withdrawal = 17,
-  Redeemable = 18,
-  Sell = 19,
-  AuthorizedPurchase = 20,
-  Compensation = 21,
-  Appeal = 22,
-  Bank = 23,
-  Extract = 24,
-  Fee = 25,
-  Bid = 26,
-}
-
-export type BuzzApiAccountType = (typeof buzzApiAccountTypes)[number];
-export const buzzApiAccountTypes = [
-  'user', // yellow
-  'club',
-  'generation', // blue
-  // NEW TYPES:
-  'green',
-  'fakered',
-  'red',
-  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
-  'creatorprogrambank',
-  'cashpending',
-  'cashsettled',
-] as const;
-
-export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
-export type BuzzCreatorProgramType = 'creatorprogrambank';
-export type BuzzCashType = 'cashpending' | 'cashsettled';
-export type BuzzAccountType = BuzzSpendType | BuzzCreatorProgramType | BuzzCashType;
-type BuzzConfig =
-  | {
-      type: 'spend';
-      value: BuzzApiAccountType;
-      purchasable?: boolean;
-      bankable?: boolean;
-      nsfw?: boolean;
-    }
-  | { type: 'bank' }
-  | { type: 'cash' };
-// const BuzzConfig = <T extends Record<BuzzSpendType, BuzzConfig>>(args: T) => args;
-const buzzConfig: Record<BuzzAccountType, BuzzConfig> = {
-  blue: { type: 'spend', value: 'generation' },
-  green: { type: 'spend', value: 'green', bankable: true, purchasable: true },
-  yellow: { type: 'spend', value: 'user', nsfw: true, bankable: true },
-  red: { type: 'spend', value: 'fakered', nsfw: true, purchasable: true },
-  creatorprogrambank: { type: 'bank' },
-  cashpending: { type: 'cash' },
-  cashsettled: { type: 'cash' },
-};
-
-export const buzzAccountTypes = Object.keys(buzzConfig) as BuzzAccountType[];
-export const buzzSpendTypes = buzzAccountTypes.filter(
-  (type) => buzzConfig[type].type === 'spend'
-) as BuzzSpendType[];
-export const buzzBankableTypes = buzzSpendTypes.filter((type) => {
-  const config = buzzConfig[type];
-  return config.type === 'spend' && config.bankable;
-}) as BuzzSpendType[];
-
-export class BuzzTypes {
-  private static apiTypesMap = Object.fromEntries(
-    buzzAccountTypes.map((type) => [this.toApiType(type), type])
-  );
-  static getConfig(type: BuzzSpendType) {
-    return buzzConfig[type];
-  }
-  static toApiType(type: BuzzAccountType): BuzzApiAccountType {
-    if (buzzApiAccountTypes.includes(type as BuzzApiAccountType)) return type as BuzzApiAccountType;
-    const config = buzzConfig[type];
-    return config.type === 'spend' ? config.value : (type as BuzzApiAccountType);
-  }
-  static getApiTransaction<
-    T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }
-  >(transaction: T) {
-    return {
-      ...transaction,
-      fromAccountType: transaction.fromAccountType
-        ? this.toApiType(transaction.fromAccountType)
-        : undefined,
-      toAccountType: transaction.toAccountType
-        ? this.toApiType(transaction.toAccountType)
-        : undefined,
-    };
-  }
-  static toClientType(value: BuzzApiAccountType): BuzzAccountType {
-    if (!(value in this.apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
-    return this.apiTypesMap[value];
-  }
-}
+import {
+  BuzzTypes,
+  TransactionType,
+  buzzAccountTypes,
+  buzzApiAccountTypes,
+  buzzConstants,
+  buzzSpendTypes,
+} from '~/shared/constants/buzz.constants';
 
 const buzzAccountTypeFromApiValueSchema = z
   .enum(buzzApiAccountTypes)

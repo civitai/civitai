@@ -22,7 +22,7 @@ import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { showErrorNotification } from '~/utils/notifications';
 import { IconX } from '@tabler/icons-react';
 import { GenForm } from '~/components/Generation/Form/GenForm';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,

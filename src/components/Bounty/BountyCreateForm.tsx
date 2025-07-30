@@ -64,7 +64,6 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -75,7 +74,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { buzzSpendTypes } from '~/server/schema/buzz.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

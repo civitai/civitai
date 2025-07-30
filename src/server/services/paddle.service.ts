@@ -27,7 +27,7 @@ import {
   updatePaddleSubscription,
   createAnnualSubscriptionDiscount,
 } from '~/server/paddle/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
