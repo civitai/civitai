@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod/v4';
+import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { reviewTypeToBlockedReasonKeys } from '~/server/services/image.service';
 import { dbRead } from '~/server/db/client';
@@ -18,43 +19,55 @@ const schema = z.object({
   reason: z.enum(reviewTypeToBlockedReasonKeys).optional(),
 });
 
+// Process imageIds in chunks of 1000
+const BATCH_SIZE = 1000;
+
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { imageIds, userId, reason } = schema.parse(req.body);
 
-    const images = await dbRead.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { nsfwLevel: true, userId: true, id: true },
-    });
-
+    // Respond immediately with the total count
     res.status(200).json({
       images: imageIds.length,
     });
 
-    // Get Additional Data
-    const imageTags = await getTagNamesForImages(imageIds);
-    const imageResources = await getResourceIdsForImages(imageIds);
-
-    await moderateImages({
-      ids: imageIds,
-      needsReview: undefined,
-      reviewAction: 'delete',
-      reviewType: 'blocked',
-      userId,
-    });
-
     const tracker = new Tracker(req, res);
-    for (const image of images) {
-      tracker.image({
-        type: 'DeleteTOS',
-        imageId: image.id,
-        ownerId: image.userId,
-        nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-        tags: imageTags[image.id] ?? [],
-        resources: imageResources[image.id] ?? [],
-        tosReason: reason,
+    const imageIdChunks = chunk(imageIds, BATCH_SIZE);
+
+    // Process each chunk
+    for (const chunk of imageIdChunks) {
+      // Get images data
+      const images = await dbRead.image.findMany({
+        where: { id: { in: chunk } },
+        select: { nsfwLevel: true, userId: true, id: true },
       });
+
+      // Get additional data for this chunk
+      const imageTags = await getTagNamesForImages(chunk);
+      const imageResources = await getResourceIdsForImages(chunk);
+
+      // Moderate images for this chunk
+      await moderateImages({
+        ids: chunk,
+        needsReview: undefined,
+        reviewAction: 'delete',
+        reviewType: 'blocked',
+        userId,
+      });
+
+      // Track images for this chunk
+      for (const image of images) {
+        tracker.image({
+          type: 'DeleteTOS',
+          imageId: image.id,
+          ownerId: image.userId,
+          nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+          tags: imageTags[image.id] ?? [],
+          resources: imageResources[image.id] ?? [],
+          tosReason: reason,
+        });
+      }
     }
   } catch (e) {
     const err = e as Error;
