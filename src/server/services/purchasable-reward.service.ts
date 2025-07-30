@@ -5,7 +5,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type {
   GetPaginatedPurchasableRewardsModeratorSchema,

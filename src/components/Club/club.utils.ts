@@ -33,7 +33,6 @@ import type {
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 import type {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
@@ -44,6 +43,7 @@ import type {
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
 import { isDefined, isNumber } from '../../utils/type-guards';
+import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });

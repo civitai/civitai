@@ -2,7 +2,7 @@ import { Anchor, Card, Group, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import React from 'react';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import classes from './PromoBanner.module.scss';
 
 export interface PromoBannerProps {
@@ -13,7 +13,7 @@ export interface PromoBannerProps {
   buyNowText?: string;
   learnMoreHref?: string;
   learnMoreText?: string;
-  buzzType?: PurchasableBuzzType;
+  buzzType?: BuzzSpendType;
 }
 
 export const PromoBanner = ({

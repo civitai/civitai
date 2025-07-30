@@ -37,6 +37,8 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 

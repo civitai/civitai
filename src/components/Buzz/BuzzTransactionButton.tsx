@@ -1,12 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
-import {
-  Badge,
-  Button,
-  Text,
-  Tooltip,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Badge, Button, Text, Tooltip, useComputedColorScheme } from '@mantine/core';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';
@@ -14,10 +7,10 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { getBuzzTypeDistribution } from '~/utils/buzz';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 
 type Props = ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>> & {
@@ -30,7 +23,7 @@ type Props = ButtonProps &
     performTransactionOnPurchase?: boolean;
     showPurchaseModal?: boolean;
     error?: string;
-    accountTypes?: BuzzAccountType[];
+    accountTypes?: BuzzSpendType[];
     showTypePct?: boolean;
     priceReplacement?: React.ReactNode;
   };
@@ -52,11 +45,12 @@ export function BuzzTransactionButton({
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
-  accountTypes ??= [features.isGreen ? 'green' : 'fakered', 'user']; // Default to user account type if not provided
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { balances } = useBuzz(undefined, accountTypes);
-  const [baseType] = accountTypes;
+  const {
+    data: { accounts, total },
+    isLoading,
+  } = useQueryBuzz(accountTypes);
+  const baseType = accounts[0]?.type;
   const { conditionalPerformTransaction, hasRequiredAmount, isLoadingBalance } = useBuzzTransaction(
     {
       message,
@@ -67,25 +61,19 @@ export function BuzzTransactionButton({
   );
 
   const buzzTypeDistribution = getBuzzTypeDistribution({
-    balances,
+    accounts,
     buzzAmount,
-    accountTypes,
   });
 
   const mainBuzzColor = Object.entries(buzzTypeDistribution.amt).reduce(
     (max, [key, amount]) =>
-      amount > (buzzTypeDistribution.amt[max as BuzzAccountType] || 0) ? key : max,
+      amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,
     Object.keys(buzzTypeDistribution.amt)[0] || baseType
-  ) as BuzzAccountType;
+  ) as BuzzSpendType;
 
   const colorConfig = useBuzzCurrencyConfig(mainBuzzColor);
 
   if (!features.buzz) return null;
-  if (accountTypes.length === 0) {
-    throw new Error(
-      'BuzzTransactionButton requires at least one account type. This is likely be a bug. Please contact support.'
-    );
-  }
 
   const onClick = () => {
     if (!showPurchaseModal) return;

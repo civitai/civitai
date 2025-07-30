@@ -13,7 +13,7 @@ import type {
   DetailsWonAuction,
 } from '~/server/notifications/auction.notifications';
 import { modelVersionResourceCache } from '~/server/redis/caches';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   auctionBaseSelect,
@@ -575,7 +575,7 @@ const createRecurringBids = async (now: Dayjs) => {
         const { transactionId } = await withRetries(() =>
           createBuzzTransaction({
             type: TransactionType.Bid,
-            fromAccountType: BuzzAccountType.user,
+            fromAccountType: 'yellow',
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,

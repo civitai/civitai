@@ -2,7 +2,7 @@ import { createBuzzEvent } from '../base.reward';
 
 export const generatorFeedbackReward = createBuzzEvent({
   type: 'generation-feedback',
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   description: 'For giving feedback to images created on the generator',
   triggerDescription: 'For feedback given on the generator',
   awardAmount: 4,

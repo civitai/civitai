@@ -3,7 +3,7 @@ import { createBuzzEvent } from '../base.reward';
 const type = 'reportAccepted' as const;
 export const reportAcceptedReward = createBuzzEvent({
   type,
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   description: 'For each report you make that is accepted',
   awardAmount: 50,
   caps: [{ amount: 1500, interval: 'month', keyParts: ['toUserId'] }],

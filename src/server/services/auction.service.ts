@@ -12,12 +12,11 @@ import type {
   GetAuctionBySlugInput,
   TogglePauseRecurringBidInput,
 } from '~/server/schema/auction.schema';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
-  createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,
@@ -390,7 +389,7 @@ export const createBid = async ({
   }
 
   // - Check if entityId is valid for this auction type
-  let accountTypes: BuzzAccountType[] = ['user'];
+  let accountTypes: BuzzSpendType[] = ['yellow'];
   if (auctionData.auctionBase.type === AuctionType.Model) {
     // TODO switch back to dbRead
     const mv = await dbWrite.modelVersion.findFirst({

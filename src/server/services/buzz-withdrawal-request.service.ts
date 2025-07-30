@@ -14,7 +14,6 @@ import {
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
-import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
@@ -23,7 +22,7 @@ import type {
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
-import { TransactionType } from '../schema/buzz.schema';
+
 import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
@@ -31,6 +30,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -76,7 +76,7 @@ CreateBuzzWithdrawalRequestSchema & {
 
   const userBuzzAccount = await getUserBuzzAccount({
     accountId: userId,
-    accountType: 'user',
+    accountType: 'yellow',
   });
 
   if ((userBuzzAccount[0]?.balance ?? 0) < amount) throw throwInsufficientFundsError();
@@ -114,7 +114,7 @@ CreateBuzzWithdrawalRequestSchema & {
         userId,
         buzzWithdrawalTransactionId: transaction.transactionId,
         requestedBuzzAmount: amount,
-        platformFeeRate: constants.buzz.platformFeeRate,
+        platformFeeRate: buzzConstants.platformFeeRate,
         ...providerData,
       },
       select: buzzWithdrawalRequestDetails,
@@ -168,8 +168,8 @@ export const getPaginatedBuzzWithdrawalRequests = async (
   if (username && !userId) {
     // The list here is much shorter:
     const userIds = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr 
-      JOIN "User" u ON bwr."userId" = u.id 
+      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr
+      JOIN "User" u ON bwr."userId" = u.id
       WHERE u.username ILIKE ${username + '%'}
     `;
 

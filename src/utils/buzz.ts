@@ -1,8 +1,9 @@
-import { CurrencyConfig } from '~/server/common/constants';
+import { getCurrencyConfig } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import type { BuzzAccountType, BuzzTransactionDetails } from '~/server/schema/buzz.schema';
-import { GetUserBuzzTransactionsResponse } from '~/server/schema/buzz.schema';
+import type { BuzzTransactionDetails } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { capitalize } from '~/utils/string-helpers';
 
 export const parseBuzzTransactionDetails = (
   details?: BuzzTransactionDetails
@@ -16,7 +17,7 @@ export const parseBuzzTransactionDetails = (
   }
 
   const fallbackUrl = details.user && details.user !== 'a user' ? `/user/${details.user}` : '';
-  const baseNotification = `You received a tip of ${details.amount} Buzz from ${
+  const baseNotification = `You received a tip of ${details.amount as string} Buzz from ${
     details.user ? `@${details.user}` : 'a user'
   }`;
 
@@ -86,40 +87,32 @@ export const getBuzzTransactionSupportedAccountTypes = ({
 }: {
   nsfwLevel?: NsfwLevel;
   isNsfw?: boolean;
-}): BuzzAccountType[] => {
-  const accountTypes: BuzzAccountType[] = [];
+}): BuzzSpendType[] => {
+  const accountTypes: BuzzSpendType[] = [];
   if ((typeof isNsfw !== 'undefined' && !isNsfw) || (nsfwLevel ?? 0) <= NsfwLevel.R) {
     accountTypes.push('green');
   }
 
-  accountTypes.push('user');
-
-  if ((nsfwLevel ?? 0) > NsfwLevel.R || isNsfw) {
-    accountTypes.push('fakered');
-    // accountTypes.push('red');
-  }
+  accountTypes.push('yellow', 'red');
 
   return accountTypes;
 };
 
 export type BuzzTypeDistribution = {
-  pct: Partial<Record<BuzzAccountType, number>>;
-  amt: Partial<Record<BuzzAccountType, number>>;
+  pct: Partial<Record<BuzzSpendType, number>>;
+  amt: Partial<Record<BuzzSpendType, number>>;
 };
 
-export type BuzzBalance = {
-  balance?: number | null;
-  lifetimeBalance?: number | null;
-  accountType: BuzzAccountType;
+type BuzzBalance = {
+  balance: number;
+  type: BuzzSpendType;
 };
 
 export const getBuzzTypeDistribution = ({
-  balances,
-  accountTypes,
+  accounts,
   buzzAmount = 0,
 }: {
-  balances: BuzzBalance[];
-  accountTypes: BuzzAccountType[];
+  accounts: BuzzBalance[];
   buzzAmount: number;
 }): BuzzTypeDistribution => {
   const data: BuzzTypeDistribution = {
@@ -130,18 +123,17 @@ export const getBuzzTypeDistribution = ({
 
   let current = buzzAmount;
 
-  accountTypes.forEach((accountType: BuzzAccountType) => {
-    data.amt[accountType] = 0;
-    data.pct[accountType] = 0;
+  for (const { balance, type } of accounts) {
+    data.amt[type] = 0;
+    data.pct[type] = 0;
 
-    const accountBalance = balances.find((b) => b.accountType === accountType)?.balance ?? 0;
-    if (current <= 0 || accountBalance <= 0) return;
+    if (current <= 0 || balance <= 0) continue;
 
-    const taken = Math.min(accountBalance, current);
-    data.amt[accountType] = taken;
-    data.pct[accountType] = taken / buzzAmount;
+    const taken = Math.min(balance, current);
+    data.amt[type] = taken;
+    data.pct[type] = taken / buzzAmount;
     current -= taken;
-  });
+  }
 
   return data;
 };
@@ -161,9 +153,11 @@ export const createBuzzDistributionGradient = ({
 
   let currentPct = 0;
   const gradientStops = entries.map(([accountType, pct]) => {
-    const typeConfig =
-      CurrencyConfig[Currency.BUZZ].themes?.[accountType as BuzzAccountType] ??
-      CurrencyConfig[Currency.BUZZ];
+    const typeConfig = getCurrencyConfig({
+      currency: Currency.BUZZ,
+      type: accountType as BuzzSpendType,
+    });
+
     const startPct = currentPct;
     currentPct += (pct || 0) * 100;
     return `${typeConfig.color} ${startPct}%, ${typeConfig.color} ${currentPct}%`;
@@ -172,19 +166,8 @@ export const createBuzzDistributionGradient = ({
   return `linear-gradient(to ${direction}, ${gradientStops.join(', ')})`;
 };
 
-export const getAccountTypeLabel = (accountType: BuzzAccountType): string => {
-  switch (accountType) {
-    case 'user':
-      return 'Yellow';
-    case 'green':
-      return 'Green';
-    case 'fakered':
-      return 'Red';
-    case 'generation':
-      return 'Blue';
-    default:
-      return accountType.charAt(0).toUpperCase() + accountType.slice(1);
-  }
+export const getAccountTypeLabel = (accountType: BuzzSpendType): string => {
+  return capitalize(accountType);
 };
 
 // Create tooltip label for distribution
@@ -198,7 +181,7 @@ export const createBuzzDistributionLabel = ({
   const entries = Object.entries(typeDistribution.amt).filter(([, amount]) => (amount || 0) > 0);
   return entries
     .map(([accountType, amount]) => {
-      const typeName = getAccountTypeLabel(accountType as BuzzAccountType);
+      const typeName = getAccountTypeLabel(accountType as BuzzSpendType);
       return `${typeName}: ${(amount || 0).toLocaleString()}`;
     })
     .join(' | ');

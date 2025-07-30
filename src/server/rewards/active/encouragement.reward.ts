@@ -3,7 +3,7 @@ import { createBuzzEvent } from '../base.reward';
 
 export const encouragementReward = createBuzzEvent({
   type: 'encouragement',
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   description: 'For encouraging others to post content',
   triggerDescription: 'For each unique reaction you give',
   tooltip: 'If you react to the same thing multiple times, you will not get more rewards.',

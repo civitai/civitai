@@ -18,6 +18,7 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -271,20 +272,6 @@ export const constants = {
       silver: 6,
       bronze: 4,
     },
-  },
-  buzz: {
-    minChargeAmount: 500, // $5.00
-    maxChargeAmount: 99999999, // $999,999.99
-    cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
-    referralBonusAmount: 500,
-    maxTipAmount: 100000000,
-    minTipAmount: 50,
-    maxEntityTip: 2000,
-    buzzDollarRatio: 1000,
-    platformFeeRate: 3000, // 30.00%. Divide by 10000
-    minBuzzWithdrawal: 100000,
-    maxBuzzWithdrawal: 100000000,
-    generationBuzzChargingStartDate: new Date('2024-04-04T00:00:00.000Z'),
   },
   profile: {
     coverImageAspectRatio: 1 / 4,
@@ -1195,10 +1182,13 @@ type CurrencyTheme = {
   };
 };
 
-export const CurrencyConfig: Record<
-  Currency,
-  CurrencyTheme & { themes?: Record<string, CurrencyTheme> }
-> = {
+type CurrencyConfig = {
+  USD: CurrencyTheme;
+  USDC: CurrencyTheme;
+  BUZZ: CurrencyTheme & { themes: Record<BuzzSpendType, CurrencyTheme> };
+};
+
+export const CurrencyConfig: CurrencyConfig = {
   [Currency.BUZZ]: {
     icon: IconBolt,
     color: '#f59f00',
@@ -1213,7 +1203,7 @@ export const CurrencyConfig: Record<
       gradientText: 'bg-gradient-to-r from-orange-500 to-yellow-400 bg-clip-text text-transparent',
     },
     themes: {
-      generation: {
+      blue: {
         icon: IconBolt,
         color: '#4dabf7',
         fill: '#4dabf7',
@@ -1242,21 +1232,22 @@ export const CurrencyConfig: Record<
             'linear-gradient(135deg, var(--mantine-color-lime-4) 0%, var(--mantine-color-green-6) 100%)',
         },
       },
-      red: {
+      yellow: {
         icon: IconBolt,
-        color: '#f03e3e',
-        fill: '#f03e3e',
-        classNames: {
-          btn: 'bg-gradient-to-r from-rose-500 to-pink-400 hover:from-rose-600 hover:to-pink-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white dark:border-rose-600',
-          gradient: 'bg-gradient-to-r from-rose-500 to-pink-400',
-          gradientText: 'bg-gradient-to-r from-rose-500 to-pink-400 bg-clip-text text-transparent',
-        },
+        color: '#f59f00',
+        fill: '#f59f00',
         css: {
           gradient:
-            'linear-gradient(135deg, var(--mantine-color-pink-4) 0%, var(--mantine-color-rose-5) 100%)',
+            'linear-gradient(135deg, var(--mantine-color-yellow-4) 0%, var(--mantine-color-orange-5) 100%)',
+        },
+        classNames: {
+          btn: 'bg-gradient-to-r from-orange-500 to-yellow-400 hover:from-orange-600 hover:to-yellow-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 shadow min-w-[140px] font-bold transition-all duration-150 border-none text-white',
+          gradient: 'bg-gradient-to-r from-orange-500 to-yellow-400',
+          gradientText:
+            'bg-gradient-to-r from-orange-500 to-yellow-400 bg-clip-text text-transparent',
         },
       },
-      fakered: {
+      red: {
         icon: IconBolt,
         color: '#f03e3e',
         fill: '#f03e3e',
@@ -1283,6 +1274,17 @@ export const CurrencyConfig: Record<
     fill: undefined,
   },
 };
+
+export function getBuzzCurrencyConfig(type: BuzzSpendType = 'yellow') {
+  return CurrencyConfig.BUZZ.themes[type];
+}
+
+export function getCurrencyConfig(
+  args: { currency: 'USD' | 'USDC' } | { currency: 'BUZZ'; type?: BuzzSpendType }
+) {
+  if (args.currency === Currency.BUZZ) return CurrencyConfig.BUZZ.themes[args.type ?? 'yellow'];
+  else return CurrencyConfig[args.currency];
+}
 
 export const BUZZ_FEATURE_LIST = [
   'Pay for on-site model training',
