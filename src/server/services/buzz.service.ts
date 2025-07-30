@@ -106,7 +106,7 @@ async function getUserBuzzAccountByAccountType(
   accountId: number,
   accountType: BuzzAccountType
 ): Promise<BuzzAccountResponse> {
-  return buzzApiFetch(`/account/${BuzzTypes.getApiValue(accountType)}/${accountId}`);
+  return buzzApiFetch(`/account/${BuzzTypes.toApiType(accountType)}/${accountId}`);
 }
 
 export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType>(
@@ -115,11 +115,11 @@ export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType
 ): Promise<BuzzAccountsResponse<T>> {
   const data: Record<string, number> = await buzzApiFetch(
     `/user/${accountId}/accounts?${accountTypes
-      .map((t) => `accountType=${BuzzTypes.getApiValue(t)}`)
+      .map((t) => `accountType=${BuzzTypes.toApiType(t)}`)
       .join('&')}`
   );
   return Object.entries(data).reduce((acc, [key, value]) => {
-    const type = BuzzTypes.getTypeFromApiValue(key as BuzzApiAccountType);
+    const type = BuzzTypes.toClientType(key as BuzzApiAccountType);
     if (!type) return acc;
     return { ...acc, [type]: value };
   }, {} as BuzzAccountsResponse<T>);
@@ -203,7 +203,7 @@ export async function getUserBuzzTransactions({
   // Parse incoming data
   const data: GetUserBuzzTransactionsResponse = await buzzApiFetch(
     `/account/${
-      accountType ? `${BuzzTypes.getApiValue(accountType)}/` : ''
+      accountType ? `${BuzzTypes.toApiType(accountType)}/` : ''
     }${accountId}/transactions?${queryString}`
   );
   const { cursor, transactions } = getUserBuzzTransactionsResponse.parse(data);
@@ -584,7 +584,7 @@ export async function previewMultiAccountTransaction(input: PreviewMultiAccountT
 
   // Add multiple fromAccountTypes parameters
   fromAccountTypes.forEach((accountType) => {
-    queryParams.append('fromAccountTypes', BuzzTypes.getApiValue(accountType));
+    queryParams.append('fromAccountTypes', BuzzTypes.toApiType(accountType));
   });
 
   const data = await buzzApiFetch(`/multi-transactions/preview?${queryParams.toString()}`);
@@ -621,7 +621,7 @@ export async function getAccountSummary({
 
   const dataRaw: Record<string, { data: AccountSummaryRecord[]; cursor: null }> =
     await buzzApiFetch(
-      `/account/${BuzzTypes.getApiValue(accountType)}/summary?${new URLSearchParams(
+      `/account/${BuzzTypes.toApiType(accountType)}/summary?${new URLSearchParams(
         queryParams
       ).toString()}`
     );
@@ -657,7 +657,7 @@ export async function getTopContributors({
     string,
     { accountType: BuzzApiAccountType; accountId: number; contributedBalance: number }[]
   > = await buzzApiFetch(
-    `/account/${BuzzTypes.getApiValue(accountType)}/contributors?${new URLSearchParams(
+    `/account/${BuzzTypes.toApiType(accountType)}/contributors?${new URLSearchParams(
       queryParams
     ).toString()}`
   );
@@ -724,7 +724,7 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
     title: claimable?.title ?? 'Unknown',
     description: claimable?.description ?? 'Unknown',
     amount: claimable?.amount ?? 0,
-    accountType: BuzzTypes.getTypeFromApiValue(claimable?.accountType ?? 'user') as BuzzSpendType,
+    accountType: BuzzTypes.toClientType(claimable?.accountType ?? 'user') as BuzzSpendType,
     useMultiplier: claimable?.useMultiplier ?? false,
   } as BuzzClaimDetails;
 
@@ -1119,12 +1119,12 @@ export async function getCounterPartyBuzzTransactions({
 
       const queryString = QS.stringify({
         accountId: counterPartyAccountId,
-        accountType: BuzzTypes.getApiValue(counterPartyAccountType ?? 'yellow'),
+        accountType: BuzzTypes.toApiType(counterPartyAccountType ?? 'yellow'),
       });
 
       const data: GetBuzzMovementsBetweenAccountsResponse = await buzzApiFetch(
         `/account/${
-          accountType ? `${BuzzTypes.getApiValue(accountType)}/` : ''
+          accountType ? `${BuzzTypes.toApiType(accountType)}/` : ''
         }${accountId}/counterparties?${queryString}`,
         {}
       );
@@ -1222,6 +1222,6 @@ export async function getMultiAccountTransactionsByPrefix(externalTransactionIdP
 
   return data.map((item) => ({
     ...item,
-    accountType: BuzzTypes.getTypeFromApiValue(item.accountType),
+    accountType: BuzzTypes.toClientType(item.accountType),
   }));
 }

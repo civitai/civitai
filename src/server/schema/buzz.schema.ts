@@ -82,12 +82,12 @@ export const buzzBankableTypes = buzzSpendTypes.filter((type) => {
 
 export class BuzzTypes {
   private static apiTypesMap = Object.fromEntries(
-    buzzAccountTypes.map((type) => [this.getApiValue(type), type])
+    buzzAccountTypes.map((type) => [this.toApiType(type), type])
   );
   static getConfig(type: BuzzSpendType) {
     return buzzConfig[type];
   }
-  static getApiValue(type: BuzzAccountType): BuzzApiAccountType {
+  static toApiType(type: BuzzAccountType): BuzzApiAccountType {
     if (buzzApiAccountTypes.includes(type as BuzzApiAccountType)) return type as BuzzApiAccountType;
     const config = buzzConfig[type];
     return config.type === 'spend' ? config.value : (type as BuzzApiAccountType);
@@ -98,14 +98,14 @@ export class BuzzTypes {
     return {
       ...transaction,
       fromAccountType: transaction.fromAccountType
-        ? this.getApiValue(transaction.fromAccountType)
+        ? this.toApiType(transaction.fromAccountType)
         : undefined,
       toAccountType: transaction.toAccountType
-        ? this.getApiValue(transaction.toAccountType)
+        ? this.toApiType(transaction.toAccountType)
         : undefined,
     };
   }
-  static getTypeFromApiValue(value: BuzzApiAccountType): BuzzAccountType {
+  static toClientType(value: BuzzApiAccountType): BuzzAccountType {
     if (!(value in this.apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
     return this.apiTypesMap[value];
   }
@@ -113,7 +113,7 @@ export class BuzzTypes {
 
 const buzzAccountTypeFromApiValueSchema = z
   .enum(buzzApiAccountTypes)
-  .transform(BuzzTypes.getTypeFromApiValue);
+  .transform(BuzzTypes.toClientType);
 
 export function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? value?.toLowerCase() : undefined;
