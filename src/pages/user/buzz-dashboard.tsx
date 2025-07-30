@@ -34,11 +34,12 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -64,14 +65,14 @@ export default function UserBuzzDashboard() {
   const features = useFeatureFlags();
 
   // Account type selection state
-  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzAccountType>('user');
+  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzSpendType>('yellow');
 
   const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
 
   // Account type options for SegmentedControl
   const accountTypeOptions = React.useMemo(
     () =>
-      (['user', 'generation', 'green', 'fakered'] as const).map((type) => ({
+      buzzSpendTypes.map((type) => ({
         label: getAccountTypeLabel(type),
         value: type,
       })),
@@ -113,7 +114,7 @@ export default function UserBuzzDashboard() {
               <SegmentedControl
                 size="sm"
                 value={selectedAccountType}
-                onChange={(value) => setSelectedAccountType(value as BuzzAccountType)}
+                onChange={(value) => setSelectedAccountType(value as BuzzSpendType)}
                 data={accountTypeOptions}
               />
             </Group>
@@ -164,7 +165,7 @@ export default function UserBuzzDashboard() {
                       Check out the{' '}
                       <Anchor
                         component="button"
-                        onClick={() => setSelectedAccountType('generation')}
+                        onClick={() => setSelectedAccountType('blue')}
                         c="blue.4"
                       >
                         Blue Buzz rewards
@@ -196,7 +197,7 @@ export default function UserBuzzDashboard() {
           </Text>
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
-          {['user', 'green'].includes(selectedAccountType) && <CreatorProgramV2 />}
+          {['yellow', 'green'].includes(selectedAccountType) && <CreatorProgramV2 />}
         </Stack>
       </Container>
     </>

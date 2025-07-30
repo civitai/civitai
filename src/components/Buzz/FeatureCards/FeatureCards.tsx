@@ -21,12 +21,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationPanel } from '~/store/generation.store';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { Currency } from '~/shared/utils/prisma/enums';
 import dynamic from 'next/dynamic';
 import classes from './FeatureCards.module.scss';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 const RedeemCodeModal = dynamic(() =>
   import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
 );
@@ -92,7 +92,7 @@ const getEarnings = (
   },
 ];
 
-export const EarningBuzz = ({ asList, withCTA, accountType = 'user' }: Props) => {
+export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow' }: Props) => {
   const buzzConfig = useBuzzCurrencyConfig(accountType);
   const earnings = getEarnings(buzzConfig);
   const accountTypeLabel = getAccountTypeLabel(accountType);
@@ -220,7 +220,7 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   );
 };
 
-type Props = { asList?: boolean; withCTA?: boolean; accountType?: BuzzAccountType };
+type Props = { asList?: boolean; withCTA?: boolean; accountType?: BuzzSpendType };
 
 type FeatureCardProps = {
   title: string;
@@ -320,7 +320,7 @@ export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
 // Enhanced Rewards List Component
 type RewardItem = {
   type: string;
-  accountType: BuzzAccountType;
+  accountType: BuzzSpendType;
   awardAmount: number;
   description?: string;
   triggerDescription?: string;
@@ -332,9 +332,9 @@ type RewardItem = {
 
 type RewardsListProps = {
   rewards: RewardItem[];
-  accountType: BuzzAccountType;
+  accountType: BuzzSpendType;
   rewardsMultiplier: number;
-  onAccountTypeChange?: (accountType: BuzzAccountType) => void;
+  onAccountTypeChange?: (accountType: BuzzSpendType) => void;
 };
 
 export const RewardsList = ({
@@ -364,7 +364,7 @@ export const RewardsList = ({
             component="button"
             c="blue.4"
             td="underline"
-            onClick={() => onAccountTypeChange?.('generation')}
+            onClick={() => onAccountTypeChange?.('blue')}
             style={{ background: 'none', border: 'none', cursor: 'pointer' }}
           >
             Blue Buzz rewards

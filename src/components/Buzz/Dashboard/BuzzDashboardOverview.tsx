@@ -28,8 +28,6 @@ import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/us
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
-import type { GetTransactionsReportSchema, BuzzAccountType } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { capitalize, getDisplayName } from '~/utils/string-helpers';
 import { getAccountTypeLabel } from '~/utils/buzz';
@@ -37,7 +35,8 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
@@ -82,30 +81,30 @@ const options = {
 
 const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
-const getAccountTypeDescription = (accountType: BuzzAccountType): string => {
+const getAccountTypeDescription = (accountType: BuzzSpendType): string => {
   switch (accountType) {
-    case 'user':
+    case 'yellow':
       return 'Legacy Buzz purchased via Memberships or our store. Can still be purchased via Gift-Cards.';
-    case 'generation':
+    case 'blue':
       return 'Free Buzz earned from viewing ads or completing daily challenges.';
     case 'green':
       return 'Green Buzz purchased with credit cards. Can only be used for safe-for-work content.';
-    case 'fakered':
+    case 'red':
       return 'Red Buzz purchased with crypto. Can be used for NSFW content and all other site features.';
     default:
       return 'Buzz for various platform activities.';
   }
 };
 
-const getAccountTypeUsages = (accountType: BuzzAccountType): string[] => {
+const getAccountTypeUsages = (accountType: BuzzSpendType): string[] => {
   switch (accountType) {
-    case 'user':
+    case 'yellow':
       return ['Tips', 'Generation', 'Training', 'Creator Club', 'Bounties'];
-    case 'generation':
+    case 'blue':
       return ['Generation', 'Training'];
     case 'green':
       return ['Generation (SFW only)', 'Training (SFW only)', 'Tips', 'Creator Club'];
-    case 'fakered':
+    case 'red':
       return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
     default:
       return [];
@@ -117,10 +116,10 @@ export const BuzzDashboardOverview = ({
   selectedAccountType,
 }: {
   accountId: number;
-  selectedAccountType?: BuzzAccountType;
+  selectedAccountType?: BuzzSpendType;
 }) => {
   // Use the selected account type for transactions, defaulting to 'user'
-  const currentAccountType = selectedAccountType || 'user';
+  const currentAccountType = selectedAccountType || 'yellow';
   const currentAccountTypeLabel: string = getAccountTypeLabel(currentAccountType);
 
   const transactionData = useBuzzTransactions(accountId, currentAccountType);
@@ -128,14 +127,14 @@ export const BuzzDashboardOverview = ({
 
   const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
     window: 'day',
-    accountType: currentAccountType ? currentAccountType : 'user',
+    accountType: currentAccountType ? currentAccountType : 'yellow',
   });
 
   // Update report filters when account type changes
   React.useEffect(() => {
     setReportFilters((prev) => ({
       ...prev,
-      accountType: currentAccountType ? currentAccountType : 'user',
+      accountType: currentAccountType ? currentAccountType : 'yellow',
     }));
   }, [currentAccountType]);
 
@@ -277,7 +276,7 @@ export const BuzzDashboardOverview = ({
                 </Group>
 
                 {/* Top Up Card - Show when buzz is low */}
-                {currentAccountType === 'user' && (
+                {currentAccountType === 'yellow' && (
                   <BuzzTopUpCard
                     accountId={accountId}
                     variant="banner"

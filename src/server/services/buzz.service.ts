@@ -1102,7 +1102,7 @@ export async function getTransactionsReport({
 
   const query = QS.stringify({
     ...input,
-    accountType: input.accountType.map(BuzzTypes.toApiType),
+    accountType: BuzzTypes.toApiType(input.accountType ?? 'yellow'),
     start: startDate.format('YYYY-MM-DD'),
     end: endDate.format('YYYY-MM-DD'),
   });
