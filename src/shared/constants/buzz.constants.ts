@@ -86,17 +86,24 @@ export const buzzBankableTypes = buzzSpendTypes.filter((type) => {
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
 
+function getApiTypeFromClientType(type: BuzzAccountType) {
+  const config = buzzTypeConfig[type];
+  if (!config) return type as BuzzApiAccountType;
+  return config.type === 'spend' ? config.value : (type as BuzzApiAccountType);
+}
+
+const apiTypesMap = Object.fromEntries(
+  buzzAccountTypes.map((type) => {
+    return [getApiTypeFromClientType(type as BuzzAccountType), type];
+  })
+);
+
 export class BuzzTypes {
-  private static apiTypesMap = Object.fromEntries(
-    buzzAccountTypes.map((type) => [this.toApiType(type), type])
-  );
   static getConfig(type: BuzzSpendType) {
     return buzzTypeConfig[type];
   }
   static toApiType(type: BuzzAccountType): BuzzApiAccountType {
-    if (buzzApiAccountTypes.includes(type as BuzzApiAccountType)) return type as BuzzApiAccountType;
-    const config = buzzTypeConfig[type];
-    return config.type === 'spend' ? config.value : (type as BuzzApiAccountType);
+    return getApiTypeFromClientType(type);
   }
   static getApiTransaction<
     T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }
@@ -112,8 +119,8 @@ export class BuzzTypes {
     };
   }
   static toClientType(value: BuzzApiAccountType): BuzzAccountType {
-    if (!(value in this.apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
-    return this.apiTypesMap[value];
+    if (!(value in apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
+    return apiTypesMap[value];
   }
 }
 

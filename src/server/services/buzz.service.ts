@@ -58,20 +58,23 @@ import { getUserByUsername, getUsers } from './user.service';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
+import { isDev } from '~/env/other';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
-
-type AccountType = 'User';
 
 function baseEndpoint() {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
   return env.BUZZ_ENDPOINT;
 }
 
-async function buzzApiFetch(url: string, init?: RequestInit | undefined) {
+async function buzzApiFetch(urlPart: string, init?: RequestInit | undefined) {
   return withRetries(async () => {
-    const response = await fetch(`${baseEndpoint()}${url}`, init);
+    const url = `${baseEndpoint()}${urlPart}`;
+    const response = await fetch(url, init);
     if (!response.ok) {
+      if (isDev) {
+        console.log({ url, status: response.status, statusText: response.statusText });
+      }
       switch (response.status) {
         case 400:
           throw throwBadRequestError();
@@ -1095,12 +1098,21 @@ export async function getTransactionsReport({
 
   const query = QS.stringify({
     ...input,
+    accountType: input.accountType.map(BuzzTypes.toApiType),
     start: startDate.format('YYYY-MM-DD'),
     end: endDate.format('YYYY-MM-DD'),
   });
 
+  console.log('---------------');
+  console.log('hit me');
+  console.log(`/user/${userId}/transactions/report?${query}`);
+  console.log('---------------');
+
   const data = await buzzApiFetch(`/user/${userId}/transactions/report?${query}`);
 
+  console.log('---------------');
+  console.log('firfirea');
+  console.log('---------------');
   return getTransactionsReportResultSchema.parse(data).map((record) => ({
     ...record,
     date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),

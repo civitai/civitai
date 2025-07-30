@@ -167,7 +167,7 @@ export const claimWatchedAdRewardSchema = z.object({ key: z.string() });
 
 export type GetTransactionsReportSchema = z.infer<typeof getTransactionsReportSchema>;
 export const getTransactionsReportSchema = z.object({
-  accountType: z.array(z.enum(buzzSpendTypes)).optional(),
+  accountType: z.array(z.enum(buzzSpendTypes)).default(buzzSpendTypes),
   window: z.enum(['hour', 'day', 'week', 'month']).default('hour'),
 });
 
