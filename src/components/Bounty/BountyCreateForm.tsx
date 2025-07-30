@@ -75,6 +75,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { buzzSpendTypes } from '~/server/schema/buzz.schema';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -605,7 +606,7 @@ export function BountyCreateForm() {
               disabled={hasPoiInNsfw}
               label="Save"
               buzzAmount={unitAmount}
-              accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
+              accountTypes={buzzSpendTypes}
             />
           ) : (
             <Button loading={creatingBounty} type="submit" disabled={hasPoiInNsfw}>

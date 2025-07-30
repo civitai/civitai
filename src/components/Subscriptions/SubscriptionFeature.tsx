@@ -12,6 +12,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import styles from './SubscriptionFeature.module.css';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 export const SubscriptionFeature = ({
   title,
@@ -78,7 +79,7 @@ export const BuzzPurchaseMultiplierFeature = ({
       buzzType={buzzType}
       title={
         <Group wrap="nowrap" gap={2}>
-          <CurrencyIcon type={buzzType} size={20} />
+          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={20} />
           <span>
             {numberWithCommas(Math.floor(mainBuzzAdded + blueBuzzAdded))} Bonus Buzz Free!
           </span>

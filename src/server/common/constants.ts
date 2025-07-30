@@ -1196,12 +1196,6 @@ type CurrencyTheme = {
   };
 };
 
-function createCurrencyConfig<
-  T extends Record<Currency, CurrencyTheme & { themes?: Record<string, CurrencyTheme> }>
->(args: T) {
-  return args;
-}
-
 type CurrencyConfig = {
   USD: CurrencyTheme;
   USDC: CurrencyTheme;

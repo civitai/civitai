@@ -41,7 +41,6 @@ export function UserBuzz({
   const balance = total;
   const baseAccountType = accounts[0]?.type;
   const config = getCurrencyConfig({ currency: Currency.BUZZ, type: baseAccountType });
-  console.log({ baseAccountType });
   const Icon = config.icon;
   const typeDistribution = getBuzzTypeDistribution({
     accounts,
