@@ -36,12 +36,13 @@ export const buzzApiAccountTypes = [
   'Event',
   'Generation',
   'Blue',
-  'CashPending',
-  'CashSettled',
-  'CreatorProgramBank',
   'Green',
   'FakeRed',
   'Other',
+  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
+  'CashPending',
+  'CashSettled',
+  'CreatorProgramBank',
 ] as const;
 
 export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
@@ -90,7 +91,7 @@ export const buzzBankableTypes = buzzSpendTypes.filter((type) => {
 function getApiTypeFromClientType(type: BuzzAccountType) {
   const config = buzzTypeConfig[type];
   if (!config) return type as BuzzApiAccountType;
-  return config.type === 'spend' ? config.value : (type as BuzzApiAccountType);
+  return config.value;
 }
 
 const apiTypesMap = Object.fromEntries(

@@ -727,7 +727,9 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
     title: claimable?.title ?? 'Unknown',
     description: claimable?.description ?? 'Unknown',
     amount: claimable?.amount ?? 0,
-    accountType: BuzzTypes.toClientType(claimable?.accountType ?? 'user') as BuzzSpendType,
+    accountType: BuzzTypes.toClientType(
+      (claimable?.accountType ?? 'User') as BuzzApiAccountType
+    ) as BuzzSpendType,
     useMultiplier: claimable?.useMultiplier ?? false,
   } as BuzzClaimDetails;
 
