@@ -30,7 +30,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
-import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzBankTypes, buzzConstants } from '~/shared/constants/buzz.constants';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -76,7 +76,8 @@ CreateBuzzWithdrawalRequestSchema & {
 
   const userBuzzAccount = await getUserBuzzAccount({
     accountId: userId,
-    accountType: 'yellow',
+    // accountType: 'yellow',
+    accountTypes: buzzBankTypes,
   });
 
   if ((userBuzzAccount[0]?.balance ?? 0) < amount) throw throwInsufficientFundsError();
