@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import type { BuzzApiAccountType } from '~/shared/constants/buzz.constants';
 import {
   BuzzTypes,
   TransactionType,
@@ -7,10 +8,11 @@ import {
   buzzConstants,
   buzzSpendTypes,
 } from '~/shared/constants/buzz.constants';
+import { formatDate } from '~/utils/date-helpers';
 
 const buzzAccountTypeFromApiValueSchema = z
-  .enum(buzzApiAccountTypes)
-  .transform(BuzzTypes.toClientType);
+  .enum([...buzzApiAccountTypes, ...buzzApiAccountTypes.map((type) => type.toLowerCase())])
+  .transform((type) => BuzzTypes.toClientType(type as BuzzApiAccountType));
 
 export function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? value?.toLowerCase() : undefined;
@@ -174,7 +176,7 @@ export const getTransactionsReportSchema = z.object({
 export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsReportResultSchema>;
 export const getTransactionsReportResultSchema = z.array(
   z.object({
-    date: z.date(),
+    date: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
     accounts: z.array(
       z.object({
         accountType: buzzAccountTypeFromApiValueSchema,

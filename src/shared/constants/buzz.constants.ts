@@ -30,17 +30,18 @@ export enum TransactionType {
 
 export type BuzzApiAccountType = (typeof buzzApiAccountTypes)[number];
 export const buzzApiAccountTypes = [
-  'user', // yellow
-  'club',
-  'generation', // blue
-  // NEW TYPES:
-  'green',
-  'fakered',
-  'red',
-  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
-  'creatorprogrambank',
-  'cashpending',
-  'cashsettled',
+  'User',
+  'Yellow',
+  'Club',
+  'Event',
+  'Generation',
+  'Blue',
+  'CashPending',
+  'CashSettled',
+  'CreatorProgramBank',
+  'Green',
+  'FakeRed',
+  'Other',
 ] as const;
 
 export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
@@ -55,8 +56,8 @@ type BuzzTypeConfig =
       bankable?: boolean;
       nsfw?: boolean;
     }
-  | { type: 'bank' }
-  | { type: 'cash' };
+  | { type: 'bank'; value: BuzzApiAccountType }
+  | { type: 'cash'; value: BuzzApiAccountType };
 
 const createBuzzTypes = <T extends Record<BuzzSpendType, BuzzSpendType>>(args: T) => args;
 // acts as an enum for easy code tracking
@@ -68,13 +69,13 @@ export const BuzzType = createBuzzTypes({
 });
 
 const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
-  blue: { type: 'spend', value: 'generation' },
-  green: { type: 'spend', value: 'green', bankable: true, purchasable: true },
-  yellow: { type: 'spend', value: 'user', nsfw: true, bankable: true },
-  red: { type: 'spend', value: 'fakered', nsfw: true, purchasable: true },
-  creatorprogrambank: { type: 'bank' },
-  cashpending: { type: 'cash' },
-  cashsettled: { type: 'cash' },
+  blue: { type: 'spend', value: 'Generation' },
+  green: { type: 'spend', value: 'Green', bankable: true, purchasable: true },
+  yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true },
+  red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true },
+  creatorprogrambank: { type: 'bank', value: 'CreatorProgramBank' },
+  cashpending: { type: 'cash', value: 'CashPending' },
+  cashsettled: { type: 'cash', value: 'CashSettled' },
 };
 
 export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[];
@@ -93,8 +94,11 @@ function getApiTypeFromClientType(type: BuzzAccountType) {
 }
 
 const apiTypesMap = Object.fromEntries(
-  buzzAccountTypes.map((type) => {
-    return [getApiTypeFromClientType(type as BuzzAccountType), type];
+  buzzAccountTypes.flatMap((type) => {
+    return [
+      [getApiTypeFromClientType(type as BuzzAccountType), type],
+      [getApiTypeFromClientType(type as BuzzAccountType).toLowerCase(), type],
+    ];
   })
 );
 
@@ -104,6 +108,10 @@ export class BuzzTypes {
   }
   static toApiType(type: BuzzAccountType): BuzzApiAccountType {
     return getApiTypeFromClientType(type);
+  }
+  static toClientType(value: BuzzApiAccountType): BuzzAccountType {
+    if (!(value in apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
+    return apiTypesMap[value];
   }
   static getApiTransaction<
     T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }
@@ -117,10 +125,6 @@ export class BuzzTypes {
         ? this.toApiType(transaction.toAccountType)
         : undefined,
     };
-  }
-  static toClientType(value: BuzzApiAccountType): BuzzAccountType {
-    if (!(value in apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
-    return apiTypesMap[value];
   }
 }
 

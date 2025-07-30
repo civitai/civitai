@@ -1105,10 +1105,7 @@ export async function getTransactionsReport({
 
   const data = await buzzApiFetch(`/user/${userId}/transactions/report?${query}`);
 
-  return getTransactionsReportResultSchema.parse(data).map((record) => ({
-    ...record,
-    date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),
-  }));
+  return getTransactionsReportResultSchema.parse(data);
 }
 
 export async function getCounterPartyBuzzTransactions({
