@@ -1,6 +1,6 @@
 import type { CurrencyCode } from '@paddle/paddle-js';
 import * as z from 'zod/v4';
-import { constants } from '~/server/common/constants';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 const buzzPurchaseMetadataSchema = z
   .object({
@@ -21,7 +21,7 @@ export const transactionMetadataSchema = z.discriminatedUnion('type', [buzzPurch
 
 export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;
 export const transactionCreateSchema = z.object({
-  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
+  unitAmount: z.number().min(buzzConstants.minChargeAmount).max(buzzConstants.maxChargeAmount),
   currency: z
     .string()
     .default('USD')

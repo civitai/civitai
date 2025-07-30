@@ -1,5 +1,5 @@
 import { Button, Card, Text, Title } from '@mantine/core';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import { useMarketplaceContext } from '~/components/Marketplace/MarketplaceProvider';
 import { Form, InputNumber, useForm } from '~/libs/form';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';

@@ -8,28 +8,24 @@ import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import type {
   ClubTransactionSchema,
   CompleteStripeBuzzPurchaseTransactionInput,
-  CreateMultiAccountBuzzTransactionInput,
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetDailyBuzzCompensationInput,
   GetTransactionsReportSchema,
   GetUserBuzzTransactionsSchema,
-  RefundMultiAccountTransactionInput,
   PreviewMultiAccountTransactionInput,
   UserBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
   createBuzzTransactionMany,
-  createMultiAccountBuzzTransaction,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
   getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
-  refundMultiAccountTransaction,
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
@@ -65,34 +61,7 @@ export async function getBuzzAccountHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    const { accountId, accountType } = input;
-
-    switch (accountType) {
-      case 'club':
-        const [userClub] = await userContributingClubs({
-          userId: ctx.user.id,
-          clubIds: [accountId],
-        });
-        if (!userClub) throw throwBadRequestError("You cannot view this club's transactions");
-
-        if (
-          userClub.userId !== ctx.user.id &&
-          !ctx.user.isModerator &&
-          !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.ViewRevenue)
-        )
-          throw throwBadRequestError("You cannot view this club's transactions");
-        break;
-      case 'user':
-      case 'generation':
-      case 'fakered':
-      case 'green':
-        if (accountId !== ctx.user.id)
-          throw throwBadRequestError("You cannot view this user's transactions");
-        break;
-      default:
-    }
-
-    console.log(input);
+    input.accountId = ctx.user.id;
 
     return getUserBuzzAccount({ ...input });
   } catch (error) {
@@ -221,12 +190,15 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('Could not split the amount between users');
     }
     // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId, accountType: 'user' });
+    const userAccount = await getUserBuzzAccount({
+      accountId: fromAccountId,
+      accountType: 'yellow',
+    });
     if ((userAccount[0]?.balance ?? 0) < finalAmount) {
       throw throwInsufficientFundsError();
     }
 
-    const sharedId = `tip-${uuid()}-${entityType}-${entityId}-by-${ctx.user.id}`;
+    const sharedId = `tip-${uuid()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
       ...input,
       fromAccountId: ctx.user.id,
@@ -304,32 +276,7 @@ export async function getBuzzAccountTransactionsHandler({
 }) {
   try {
     input.limit ??= DEFAULT_PAGE_SIZE;
-
-    const { accountId, accountType } = input;
-
-    switch (accountType) {
-      case 'club':
-        const [userClub] = await userContributingClubs({
-          userId: ctx.user.id,
-          clubIds: [accountId],
-        });
-
-        if (!userClub) throw throwBadRequestError("You cannot view this club's transactions");
-
-        if (
-          userClub.userId !== ctx.user.id &&
-          !ctx.user.isModerator &&
-          !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.ViewRevenue)
-        )
-          throw throwBadRequestError("You cannot view this club's transactions");
-        break;
-      case 'user':
-      case 'generation':
-        if (accountId !== ctx.user.id)
-          throw throwBadRequestError("You cannot view this user's transactions");
-        break;
-      default:
-    }
+    input.accountId = ctx.user.id;
 
     const result = await getUserBuzzTransactions({ ...input });
     return result;
@@ -364,9 +311,9 @@ export async function withdrawClubFundsHandler({
 
     return createBuzzTransaction({
       toAccountId: id,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       fromAccountId: input.clubId,
-      fromAccountType: 'club',
+      // fromAccountType: 'club',
       amount: input.amount,
       type: TransactionType.ClubWithdrawal,
       description: `Club withdrawal from ${club.name}`,
@@ -400,9 +347,9 @@ export async function depositClubFundsHandler({
 
     return createBuzzTransaction({
       fromAccountId: id,
-      fromAccountType: 'user',
+      fromAccountType: 'yellow',
       toAccountId: input.clubId,
-      toAccountType: 'club',
+      // toAccountType: 'club',
       amount: input.amount,
       type: TransactionType.ClubDeposit,
       description: `Club deposit on ${club.name}`,

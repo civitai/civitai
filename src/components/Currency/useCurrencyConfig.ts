@@ -1,17 +1,16 @@
-import { useMantineTheme, rgba } from '@mantine/core';
-import { CurrencyConfig } from '~/server/common/constants';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { getBuzzCurrencyConfig } from '~/server/common/constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 
-export function useCurrencyConfig(currency?: Currency, type?: string) {
-  currency = currency ?? Currency.BUZZ; // Default to USD if no currency is provided
-  const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
-  return config;
-}
+// export function useCurrencyConfig(currency?: Currency, type?: string) {
+//   currency = currency ?? Currency.BUZZ; // Default to USD if no currency is provided
+//   const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
+//   return config;
+// }
 
-export function useBuzzCurrencyConfig(type?: BuzzAccountType | 'red' | undefined) {
-  const config = useCurrencyConfig(Currency.BUZZ, type);
+export function useBuzzCurrencyConfig(type: BuzzSpendType = 'yellow') {
+  const config = getBuzzCurrencyConfig(type);
 
   return {
     icon: config.icon,

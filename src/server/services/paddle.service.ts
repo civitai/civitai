@@ -27,7 +27,7 @@ import {
   updatePaddleSubscription,
   createAnnualSubscriptionDiscount,
 } from '~/server/paddle/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
@@ -214,7 +214,7 @@ export const processCompleteBuzzTransaction = async (
       amount: blueBuzzAdded,
       fromAccountId: 0,
       toAccountId: userId,
-      toAccountType: 'generation',
+      toAccountType: 'blue',
       externalTransactionId: `${transaction.id}-bulk-reward`,
       type: TransactionType.Purchase,
       description: `A total of ${numberWithCommas(
@@ -673,7 +673,7 @@ export const manageSubscriptionTransactionComplete = async (
               externalTransactionId: `christmas-2024:${externalTransactionId}`,
               amount: Math.floor((meta.monthlyBuzz ?? 3000) * HOLIDAY_PROMO_VALUE), // assume a min of 3000.
               description: `20% additional Blue Buzz for being a member! Happy Holidays from Civitai`,
-              toAccountType: 'generation',
+              toAccountType: 'blue',
               details: {
                 paddleTransactionId: transactionNotification.id,
                 productId: p.id,

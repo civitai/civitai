@@ -33,6 +33,7 @@ import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { useDebouncer } from '~/utils/debouncer';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -49,7 +50,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   const [error, setError] = useState<string>();
   const [isLoadingDebounced, setIsLoadingDebounced] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    accountTypes: ['generation', 'user'],
+    accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance

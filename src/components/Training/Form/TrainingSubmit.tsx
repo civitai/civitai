@@ -75,6 +75,7 @@ import {
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const maxRuns = 5;
 
@@ -128,7 +129,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
-    accountTypes: ['generation', 'user'],
+    accountTypes: ['blue', 'yellow'],
   });
 
   const thisStep = 3;
@@ -832,7 +833,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={totalBuzzCost}
-          accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
+          accountTypes={buzzSpendTypes}
           onPerformTransaction={handleSubmit}
           error={hasIssue ? 'Error computing cost' : undefined}
           showTypePct

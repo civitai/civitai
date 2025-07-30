@@ -1,7 +1,6 @@
 import * as z from 'zod/v4';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { constants } from '~/server/common/constants';
-import { booleanString } from '~/utils/zod-helpers';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
@@ -16,7 +15,7 @@ export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
 export const createBuzzSessionSchema = z.object({
   priceId: z.string(),
   returnUrl: z.string(),
-  customAmount: z.number().min(constants.buzz.minChargeAmount).optional(),
+  customAmount: z.number().min(buzzConstants.minChargeAmount).optional(),
 });
 
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
@@ -43,7 +42,7 @@ export const paymentIntentMetadataSchema = z.discriminatedUnion('type', [
 
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
-  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
+  unitAmount: z.number().min(buzzConstants.minChargeAmount).max(buzzConstants.maxChargeAmount),
   currency: z.nativeEnum(Currency),
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
@@ -54,8 +53,8 @@ export const paymentIntentCreationSchema = z.object({
 export type GetPaymentIntentsForBuzzSchema = z.infer<typeof getPaymentIntentsForBuzzSchema>;
 export const getPaymentIntentsForBuzzSchema = z.object({
   userId: z.coerce.number().optional(),
-  startingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
-  endingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
+  startingAt: z.coerce.date().min(buzzConstants.cutoffDate).optional(),
+  endingAt: z.coerce.date().min(buzzConstants.cutoffDate).optional(),
 });
 
 export type SetupIntentCreateSchema = z.infer<typeof setupIntentCreateSchema>;

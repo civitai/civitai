@@ -1,16 +1,15 @@
 import { Anchor, Button, Card, Paper, Text, Title } from '@mantine/core';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import { useMarketplaceContext } from '~/components/Marketplace/MarketplaceProvider';
 import { Form, InputNumber, InputSelect, useForm } from '~/libs/form';
 import { MarketplacePaymentMethod } from '~/server/common/enums';
-import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 
 const minBuzzAmount = 1000; // Minimum amount of Buzz to list for sale
 const availablePaymentMethods = Object.values(MarketplacePaymentMethod);
 
 const schema = z.object({
   amount: z.number().min(minBuzzAmount, 'Minimum amount is 1000 Buzz'),
-  paymentMethod: z.nativeEnum(MarketplacePaymentMethod),
+  paymentMethod: z.enum(MarketplacePaymentMethod),
   currency: z.enum(['USD', 'EUR', 'GBP']),
 });
 

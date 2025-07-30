@@ -873,7 +873,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               disabled={poi || hasPoiInNsfw || !features.canWrite}
               label="Save"
               buzzAmount={unitAmount}
-              accountTypes={['generation', features.isGreen ? 'green' : 'fakered', 'user']}
             />
           ) : (
             <Button

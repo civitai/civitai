@@ -7,11 +7,12 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import styles from './SubscriptionFeature.module.css';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 export const SubscriptionFeature = ({
   title,
@@ -19,7 +20,7 @@ export const SubscriptionFeature = ({
 }: {
   title: string | React.ReactNode;
   subtitle: string | ((className: string) => React.ReactNode);
-  buzzType?: BuzzAccountType | 'yellow' | 'red';
+  buzzType?: BuzzSpendType;
 }) => {
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
@@ -57,7 +58,7 @@ export const BuzzPurchaseMultiplierFeature = ({
   buzzType = 'yellow',
 }: {
   buzzAmount: number;
-  buzzType?: BuzzAccountType | 'yellow' | 'red';
+  buzzType?: BuzzSpendType;
 }) => {
   const { subscription } = useActiveSubscription();
   const { multipliers, multipliersLoading } = useUserMultipliers();
@@ -78,7 +79,7 @@ export const BuzzPurchaseMultiplierFeature = ({
       buzzType={buzzType}
       title={
         <Group wrap="nowrap" gap={2}>
-          <CurrencyIcon type={buzzType} size={20} />
+          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={20} />
           <span>
             {numberWithCommas(Math.floor(mainBuzzAdded + blueBuzzAdded))} Bonus Buzz Free!
           </span>

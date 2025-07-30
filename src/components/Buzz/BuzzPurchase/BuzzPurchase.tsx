@@ -37,7 +37,7 @@ import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/Subscr
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
+import { buzzBulkBonusMultipliers } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { Price } from '~/shared/utils/prisma/models';
 import {
@@ -53,12 +53,12 @@ import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 import { env } from '~/env/client';
-import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { BuzzEmerchantPayButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzEmerchantPayButton';
-import type { PurchasableBuzzType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -68,7 +68,7 @@ export type BuzzPurchaseProps = {
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
   onCancel?: () => void;
-  initialBuzzType?: PurchasableBuzzType;
+  initialBuzzType?: BuzzSpendType;
 };
 
 export const BuzzPurchase = ({
@@ -80,7 +80,6 @@ export const BuzzPurchase = ({
   initialBuzzType,
   ...props
 }: BuzzPurchaseProps) => {
-  const router = useRouter();
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
@@ -90,7 +89,7 @@ export const BuzzPurchase = ({
   const [error, setError] = useState('');
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
-  const [selectedBuzzType, setSelectedBuzzType] = useState<PurchasableBuzzType | undefined>(
+  const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
     features.isGreen ? 'green' : initialBuzzType
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
@@ -108,8 +107,8 @@ export const BuzzPurchase = ({
       return false;
     }
 
-    if (unitAmount < constants.buzz.minChargeAmount) {
-      setError(`Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`);
+    if (unitAmount < buzzConstants.minChargeAmount) {
+      setError(`Minimum amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount)} USD`);
 
       return false;
     }
@@ -163,7 +162,7 @@ export const BuzzPurchase = ({
       setSelectedPrice(null);
       setActiveControl('customAmount');
       // Need to round to avoid sending decimal values to stripe
-      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), constants.buzz.minChargeAmount));
+      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), buzzConstants.minChargeAmount));
     }
   }, [packages, minBuzzAmount]);
 
@@ -184,8 +183,8 @@ export const BuzzPurchase = ({
   }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
 
   const minBuzzAmountPrice = minBuzzAmount
-    ? Math.max(minBuzzAmount / 10, constants.buzz.minChargeAmount)
-    : constants.buzz.minChargeAmount;
+    ? Math.max(minBuzzAmount / 10, buzzConstants.minChargeAmount)
+    : buzzConstants.minChargeAmount;
 
   // If no buzz type is selected, show selection screen
   if (!selectedBuzzType) {
@@ -363,7 +362,7 @@ export const BuzzPurchase = ({
                             }
                             value={customAmount ? customAmount * 10 : undefined}
                             min={1000}
-                            max={constants.buzz.maxChargeAmount * 10}
+                            max={buzzConstants.maxChargeAmount * 10}
                             onChange={(value) => {
                               setError('');
                               setCustomAmount(Math.ceil(Number(value ?? 0) / 10));
@@ -385,7 +384,7 @@ export const BuzzPurchase = ({
                             value={customAmount}
                             min={100}
                             step={100}
-                            max={constants.buzz.maxChargeAmount}
+                            max={buzzConstants.maxChargeAmount}
                             allowDecimal
                             fixedDecimalScale
                             decimalScale={2}
@@ -403,9 +402,9 @@ export const BuzzPurchase = ({
                         </Group>
                         <Text size="xs" c="dimmed" mt="xs">
                           {`Minimum amount ${Number(
-                            constants.buzz.minChargeAmount * 10
+                            buzzConstants.minChargeAmount * 10
                           ).toLocaleString()} Buzz or $${formatPriceForDisplay(
-                            constants.buzz.minChargeAmount
+                            buzzConstants.minChargeAmount
                           )} USD`}
                         </Text>
                       </Accordion.Panel>
@@ -605,7 +604,7 @@ export const BuzzPurchase = ({
                 </Text>
               )}
               {(features.nowpaymentPayments || features.coinbasePayments) &&
-                selectedBuzzType === 'fakered' && (
+                selectedBuzzType === 'red' && (
                   <Stack align="center">
                     <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">
                       Never purchased with Crypto before?{' '}

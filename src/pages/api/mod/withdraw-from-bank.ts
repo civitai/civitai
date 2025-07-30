@@ -3,7 +3,7 @@ import * as z from 'zod/v4';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getMonthAccount } from '~/server/services/creator-program.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 const schema = z.object({
   amount: z.coerce.number(),
@@ -19,7 +19,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       fromAccountId: monthAccount,
       fromAccountType: 'creatorprogrambank',
       toAccountId: userId ?? -1,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       amount,
       type: TransactionType.Withdrawal,
       description: `ADMIN WITHDRAWAL FROM BANK.`,

@@ -187,7 +187,6 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
                     radius="xl"
                     onPerformTransaction={handlePurchaseShopItem}
                     label="Purchase"
-                    accountTypes={['green', 'user', 'fakered']}
                   />
                 ) : (
                   <Stack gap={4}>

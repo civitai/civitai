@@ -2,7 +2,7 @@ import { createBuzzEvent } from '../base.reward';
 
 export const adWatchedReward = createBuzzEvent({
   type: 'adWatched',
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   description: 'For watching ads',
   triggerDescription: 'By watching short ads',
   awardAmount: 1,

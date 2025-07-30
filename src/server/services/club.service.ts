@@ -7,7 +7,7 @@ import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import type { NotificationSingleRow } from '~/server/jobs/send-notifications';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   GetClubTiersInput,
   GetInfiniteClubSchema,
@@ -952,14 +952,14 @@ export const getPaginatedClubResources = async ({
   }
 
   const fromQuery = Prisma.sql`
-  FROM "EntityAccess" ea 
-    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}  
+  FROM "EntityAccess" ea
+    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
     LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id AND c."id" = ${clubId}
     LEFT JOIN "ModelVersion" mv ON mv."id" = ea."accessToId" AND ea."accessToType" = 'ModelVersion'
     LEFT JOIN "Model" m ON m."id" = mv."modelId"
     LEFT JOIN "Article" a ON a."id" = ea."accessToId" AND ea."accessToType" = 'Article'
     LEFT JOIN "Post" p ON p."id" = ea."accessToId" AND ea."accessToType" = 'Post'
-    
+
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -969,15 +969,15 @@ export const getPaginatedClubResources = async ({
   `;
 
   const items = await dbRead.$queryRaw<PaginatedClubResource[]>`
-    SELECT 
-      ea."accessToId" as "entityId", 
+    SELECT
+      ea."accessToId" as "entityId",
       ea."accessToType" as "entityType",
       ${clubId}::INT as "clubId",
       COALESCE(
         json_agg(ct."id") FILTER (WHERE ct."id" IS NOT NULL),
         '[]'
       ) as "clubTierIds",
-      CASE 
+      CASE
         WHEN ea."accessToType" = 'ModelVersion' THEN jsonb_build_object(
           'id', m."id",
           'name', m."name",
@@ -985,7 +985,7 @@ export const getPaginatedClubResources = async ({
             'id', mv."id",
             'name', mv."name"
           )
-        ) 
+        )
         WHEN ea."accessToType" = 'Article' THEN jsonb_build_object(
           'id', a."id",
           'title', a."title"
@@ -997,7 +997,7 @@ export const getPaginatedClubResources = async ({
         ELSE '{}'::jsonb
       END
       as "data"
-    
+
     ${fromQuery}
     GROUP BY "entityId", "entityType", m."id", mv."id", a."id", p."id"
     ORDER BY ea."accessToId" DESC
@@ -1176,21 +1176,21 @@ export const deleteClub = async ({
     throw throwBadRequestError('Only club owners can delete clubs');
   }
 
-  const buzzAccount = await getUserBuzzAccount({ accountId: club.id, accountType: 'club' });
+  // const buzzAccount = await getUserBuzzAccount({ accountId: club.id, accountType: 'club' });
 
-  if ((buzzAccount[0]?.balance ?? 0) > 0) {
-    await createBuzzTransaction({
-      toAccountId: club.userId,
-      fromAccountId: club.id,
-      fromAccountType: 'club',
-      type: TransactionType.Tip,
-      amount: buzzAccount[0].balance as number,
-    });
-  }
+  // if ((buzzAccount[0]?.balance ?? 0) > 0) {
+  //   await createBuzzTransaction({
+  //     toAccountId: club.userId,
+  //     fromAccountId: club.id,
+  //     fromAccountType: 'club',
+  //     type: TransactionType.Tip,
+  //     amount: buzzAccount[0].balance as number,
+  //   });
+  // }
 
-  return dbWrite.club.delete({
-    where: {
-      id,
-    },
-  });
+  // return dbWrite.club.delete({
+  //   where: {
+  //     id,
+  //   },
+  // });
 };

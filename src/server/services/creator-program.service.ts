@@ -10,7 +10,8 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
@@ -343,7 +344,11 @@ async function getFlippedPhaseStatus() {
   return await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES);
 }
 
-export async function bankBuzz(userId: number, amount: number, accountType?: BuzzAccountType) {
+export async function bankBuzz(
+  userId: number,
+  amount: number,
+  accountType: BuzzSpendType = 'yellow'
+) {
   // Check that we're in the banking phase
   const user = await dbWrite.user.findFirstOrThrow({
     where: { id: userId },
@@ -367,7 +372,7 @@ export async function bankBuzz(userId: number, amount: number, accountType?: Buz
     amount,
     fromAccountId: userId,
     // TODO.red-split: Need a way to specify multiple account types.
-    fromAccountType: accountType ?? 'user',
+    fromAccountType: accountType,
     toAccountId: monthAccount,
     toAccountType: 'creatorprogrambank',
     type: TransactionType.Bank,
@@ -422,7 +427,7 @@ export async function extractBuzz(userId: number) {
         // TODO.red-split: Need a way to specify multiple account types.
         toAccountType: balance.accountType,
         type: TransactionType.Extract,
-        externalTransactionId: `extraction-${monthAccount}-${userId}-${balance.accountType}`,
+        externalTransactionId: `extraction-${monthAccount}-${userId}-${balance.accountType ?? ''}`,
         description: `Extracted from Bank`,
       });
     })
@@ -433,9 +438,9 @@ export async function extractBuzz(userId: number) {
     await createMultiAccountBuzzTransaction({
       amount: fee,
       fromAccountId: userId,
-      fromAccountTypes: SUPPORTED_BUZZ as unknown as BuzzAccountType[],
+      fromAccountTypes: SUPPORTED_BUZZ as BuzzAccountType[],
       toAccountId: 0,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       type: TransactionType.Fee,
       externalTransactionIdPrefix: `extraction-fee-${monthAccount}-${userId}`,
       description: 'Extraction fee',
@@ -645,7 +650,7 @@ export async function withdrawCash(userId: number, amount: number) {
       fromAccountId: userId,
       fromAccountType: 'cashsettled',
       toAccountId: 0,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       type: TransactionType.Withdrawal,
       description: 'Withdrawal request',
     });

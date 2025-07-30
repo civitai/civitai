@@ -10,7 +10,7 @@ import type { ManipulateType } from 'dayjs';
 import dayjs from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,

@@ -29,12 +29,14 @@ import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/us
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
-import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { formatDate } from '~/utils/date-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, capitalize } from '~/utils/string-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -53,11 +55,11 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   const theme = useMantineTheme();
   // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
   // If this ever changes, that'd be awesome. But for now, we need to do this.
-  const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
+  const [transactionType, setTransactionType] = React.useState<BuzzSpendType>('yellow');
   const transactionData = useBuzzTransactions(accountId, transactionType);
   const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
     window: 'day',
-    accountType: ['User', 'Generation'],
+    accountType: ['blue', 'yellow'],
   });
 
   const { report, isLoading, isRefetching } = useTransactionsReport(reportFilters, {
@@ -85,7 +87,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'User')?.gained ?? 0,
+              d.accounts.find((a) => a.accountType === 'yellow')?.gained ?? 0,
           };
         }, {}),
         borderColor: theme.colors.yellow[7],
@@ -98,7 +100,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'Generation')?.gained ?? 0,
+              d.accounts.find((a) => a.accountType === 'blue')?.gained ?? 0,
           };
         }, {}),
         borderColor: theme.colors.blue[7],
@@ -111,7 +113,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'User')?.spent ?? 0,
+              d.accounts.find((a) => a.accountType === 'yellow')?.spent ?? 0,
           };
         }, {}),
         borderColor: theme.colors.red[7],
@@ -124,7 +126,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === 'Generation')?.spent ?? 0,
+              d.accounts.find((a) => a.accountType === 'blue')?.spent ?? 0,
           };
         }, {}),
         borderColor: theme.colors.violet[7],
@@ -150,18 +152,14 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               <Stack gap={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
                 <Group mb="sm">
-                  <UserBuzz
-                    accountId={accountId}
-                    textSize="xl"
-                    withAbbreviation={false}
-                    accountTypes={['user', 'fakered']}
-                  />
-                  <UserBuzz
-                    accountId={accountId}
-                    textSize="xl"
-                    withAbbreviation={false}
-                    accountTypes={['generation', 'green']}
-                  />
+                  {buzzSpendTypes.map((type) => (
+                    <UserBuzz
+                      key={type}
+                      accountTypes={[type]}
+                      textSize="xl"
+                      withAbbreviation={false}
+                    />
+                  ))}
 
                   <Popover width={350} withArrow withinPortal shadow="sm">
                     <Popover.Target>
@@ -290,11 +288,8 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
             <Title order={3}>Recent Transactions</Title>
             <SegmentedControl
               value={transactionType}
-              onChange={(v) => setTransactionType(v as 'user' | 'generation')}
-              data={[
-                { label: 'Yellow', value: 'user' },
-                { label: 'Blue', value: 'generation' },
-              ]}
+              onChange={(v) => setTransactionType(v as BuzzSpendType)}
+              data={buzzSpendTypes.map((type) => ({ label: capitalize(type), value: type }))}
             />
             <Anchor component={Link} href="/user/transactions" size="xs">
               <Group gap={2}>

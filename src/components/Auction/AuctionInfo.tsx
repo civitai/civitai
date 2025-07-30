@@ -61,6 +61,7 @@ import { constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -703,7 +704,7 @@ export const AuctionInfo = () => {
                     leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     value={bidPrice}
                     min={1}
-                    max={constants.buzz.maxChargeAmount}
+                    max={buzzConstants.maxChargeAmount}
                     onChange={(value) => {
                       setBidPrice(value ? Number(value) : undefined);
                     }}

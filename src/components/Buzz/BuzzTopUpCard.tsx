@@ -4,6 +4,7 @@ import React from 'react';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import classes from './BuzzTopUpCard.module.scss';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 interface BuzzTopUpCardProps {
   /**
@@ -156,18 +157,14 @@ export function BuzzTopUpCard({
                 Current Balance:
               </Text>
               <Group gap="sm">
-                <UserBuzz
-                  accountId={accountId}
-                  accountTypes={['user']}
-                  textSize="sm"
-                  withAbbreviation={false}
-                />
-                <UserBuzz
-                  accountId={accountId}
-                  accountTypes={['generation']}
-                  textSize="sm"
-                  withAbbreviation={false}
-                />
+                {buzzSpendTypes.map((type) => (
+                  <UserBuzz
+                    key={type}
+                    accountTypes={[type]}
+                    textSize="sm"
+                    withAbbreviation={false}
+                  />
+                ))}
               </Group>
             </Group>
           </Card>
