@@ -157,29 +157,8 @@ export const BuzzDashboardOverview = ({
 
   const datasets = useMemo(() => {
     const accountTypeLabel = currentAccountTypeLabel;
-    const capitalizedAccountType = capitalize(currentAccountType);
     const buzzColor = buzzConfig.color;
     const buzzColorRgb = hexToRgbOpenEnded(buzzColor);
-
-    // If account type is not supported for reports, return empty datasets
-    if (!capitalizedAccountType) {
-      return [
-        {
-          label: `${accountTypeLabel} Gained`,
-          data: {},
-          borderColor: buzzColor,
-          backgroundColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity
-          borderWidth: 2,
-        },
-        {
-          label: `${accountTypeLabel} Spent`,
-          data: {},
-          borderColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for border
-          backgroundColor: `rgba(${buzzColorRgb}, 0.2)`, // 20% opacity for background
-          borderWidth: 1,
-        },
-      ];
-    }
 
     return [
       {
@@ -188,7 +167,7 @@ export const BuzzDashboardOverview = ({
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === capitalizedAccountType)?.gained ?? 0,
+              d.accounts.find((a) => a.accountType === currentAccountType)?.gained ?? 0,
           };
         }, {}),
         borderColor: buzzColor,
@@ -201,7 +180,7 @@ export const BuzzDashboardOverview = ({
           return {
             ...acc,
             [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === capitalizedAccountType)?.spent ?? 0,
+              d.accounts.find((a) => a.accountType === currentAccountType)?.spent ?? 0,
           };
         }, {}),
         borderColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for border
@@ -227,6 +206,7 @@ export const BuzzDashboardOverview = ({
                 <Title order={3}>Current {currentAccountTypeLabel} Buzz</Title>
                 <Group mb="sm">
                   <UserBuzz
+                    key={currentAccountType}
                     accountId={accountId}
                     textSize="xl"
                     withAbbreviation={false}

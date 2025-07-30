@@ -209,6 +209,7 @@ export async function getUserBuzzTransactions({
       accountType ? `${BuzzTypes.toApiType(accountType)}/` : ''
     }${accountId}/transactions?${queryString}`
   );
+
   const { cursor, transactions } = getUserBuzzTransactionsResponse.parse(data);
 
   // Return early if no transactions
@@ -1109,7 +1110,9 @@ export async function getTransactionsReport({
 
   const data = await buzzApiFetch(`/user/${userId}/transactions/report?${query}`);
 
-  return getTransactionsReportResultSchema.parse(data);
+  const x = getTransactionsReportResultSchema.parse(data);
+
+  return x;
 }
 
 export async function getCounterPartyBuzzTransactions({

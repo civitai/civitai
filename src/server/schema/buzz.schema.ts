@@ -178,6 +178,8 @@ export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsRe
 export const getTransactionsReportResultSchema = z.array(
   z.object({
     date: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    start: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    end: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
     accounts: z.array(
       z.object({
         accountType: buzzAccountTypeFromApiValueSchema,
