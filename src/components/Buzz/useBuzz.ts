@@ -48,7 +48,7 @@ export const useBuzzSignalUpdate = () => {
         let balance = old?.[type];
         if (!balance) balance = updated.balance;
         else balance += updated.delta;
-        return { ...old, [type]: balance! };
+        return { ...old, [type]: balance } as typeof old;
       });
     },
     [queryUtils, currentUser]
