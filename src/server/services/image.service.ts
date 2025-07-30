@@ -2774,6 +2774,15 @@ export const getImagesForPosts = async ({
   const imageWhere: Prisma.Sql[] = [
     Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
     Prisma.sql`i."needsReview" IS NULL`,
+    Prisma.sql`
+      NOT EXISTS (
+        SELECT 1 FROM "ImageResourceNew" irn
+        JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
+        WHERE irn."imageId" = i.id
+          AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
+          AND mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels)})
+      )
+    `,
   ];
 
   //   if (!!excludedIds?.length)
@@ -2880,13 +2889,7 @@ export const getImagesForPosts = async ({
       i.minor,
       i.poi
     FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     WHERE ${Prisma.join(imageWhere, ' AND ')}
-      AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" = ANY(ARRAY[${Prisma.join(
-    nsfwRestrictedBaseModels,
-    ','
-  )}]::text[]))
     ORDER BY i.index ASC
   `;
   const imageIds = images.map((i) => i.id);
@@ -3457,7 +3460,7 @@ export const getEntityCoverImage = async ({
 	          0 "order3"
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
-          JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
+          LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
             AND p."publishedAt" IS NOT NULL
