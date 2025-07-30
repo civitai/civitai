@@ -1103,16 +1103,8 @@ export async function getTransactionsReport({
     end: endDate.format('YYYY-MM-DD'),
   });
 
-  console.log('---------------');
-  console.log('hit me');
-  console.log(`/user/${userId}/transactions/report?${query}`);
-  console.log('---------------');
-
   const data = await buzzApiFetch(`/user/${userId}/transactions/report?${query}`);
 
-  console.log('---------------');
-  console.log('firfirea');
-  console.log('---------------');
   return getTransactionsReportResultSchema.parse(data).map((record) => ({
     ...record,
     date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),
