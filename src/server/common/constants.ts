@@ -616,6 +616,7 @@ type LicenseDetails = {
   name: string;
   notice?: string;
   poweredBy?: string;
+  restrictedNsfwLevels?: NsfwLevel[];
 };
 export const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
@@ -635,12 +636,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Stability AI Non-Commercial Research Community License',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   svd: {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
     name: 'Stable Video Diffusion Non-Commercial Research Community License',
     notice:
       'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'playground v2': {
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
@@ -655,6 +658,7 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     name: 'SAI NC RC',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'SAI CLA': {
     url: '',
@@ -662,6 +666,7 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
+    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
   },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
@@ -776,6 +781,27 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
+
+// Base models that use licenses with NSFW restrictions
+export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
+  .filter(
+    ([, license]) =>
+      license && license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0
+  )
+  .map(([baseModel]) => baseModel as BaseModel);
+
+export function getRestrictedNsfwLevelsForBaseModel(baseModel: string): NsfwLevel[] {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  return license?.restrictedNsfwLevels || [];
+}
+
+export function isNsfwLevelRestrictedForBaseModel(
+  baseModel: string,
+  nsfwLevel: NsfwLevel
+): boolean {
+  const restrictedLevels = getRestrictedNsfwLevelsForBaseModel(baseModel);
+  return restrictedLevels.includes(nsfwLevel);
+}
 
 export const samplerMap = new Map<Sampler, string[]>([
   ['Euler a', ['euler_ancestral']],
@@ -995,44 +1021,44 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
-  SD3: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 983309,
-      name: 'Large',
-      trainedWords: [],
-      baseModel: 'SD 3.5',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 878387,
-        name: 'Stable Diffusion 3.5 Large',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  SD3_5M: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 1003708,
-      name: 'Medium',
-      trainedWords: [],
-      baseModel: 'SD 3.5 Medium',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 896953,
-        name: 'Stable Diffusion 3.5 Medium',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
+  // SD3: {
+  //   aspectRatios: commonAspectRatios,
+  //   checkpoint: {
+  //     id: 983309,
+  //     name: 'Large',
+  //     trainedWords: [],
+  //     baseModel: 'SD 3.5',
+  //     strength: 1,
+  //     minStrength: -1,
+  //     maxStrength: 2,
+  //     canGenerate: true,
+  //     hasAccess: true,
+  //     model: {
+  //       id: 878387,
+  //       name: 'Stable Diffusion 3.5 Large',
+  //       type: 'Checkpoint',
+  //     },
+  //   } as GenerationResource,
+  // },
+  // SD3_5M: {
+  //   aspectRatios: commonAspectRatios,
+  //   checkpoint: {
+  //     id: 1003708,
+  //     name: 'Medium',
+  //     trainedWords: [],
+  //     baseModel: 'SD 3.5 Medium',
+  //     strength: 1,
+  //     minStrength: -1,
+  //     maxStrength: 2,
+  //     canGenerate: true,
+  //     hasAccess: true,
+  //     model: {
+  //       id: 896953,
+  //       name: 'Stable Diffusion 3.5 Medium',
+  //       type: 'Checkpoint',
+  //     },
+  //   } as GenerationResource,
+  // },
   OpenAI: {
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
@@ -1147,8 +1173,10 @@ export const minDownscaleSize = 320;
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
 export function getGenerationConfig(baseModel = 'SD1') {
-  if (!(baseModel in generationConfig))
-    throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
+  if (!(baseModel in generationConfig)) {
+    return getGenerationConfig(); // fallback to default config
+    // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
+  }
   return generationConfig[baseModel as keyof typeof generationConfig];
 }
 

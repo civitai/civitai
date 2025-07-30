@@ -1,4 +1,4 @@
-import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
+import { Stack, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
@@ -27,6 +27,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 export default function ModelsSearch() {
   return (
@@ -45,12 +47,19 @@ const RenderFilters = () => {
 
   const filters = [
     browsingSettingsAddons.settings.disablePoi
-      ? `poi != true OR user.id = ${currentUser?.id}`
+      ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
       : null,
     browsingSettingsAddons.settings.disableMinor
-      ? `minor != true OR user.id = ${currentUser?.id}`
+      ? `minor != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
       : null,
-    `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`,
+    `availability != ${Availability.Private}${
+      currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
+    }`,
+    `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
+      ', '
+    )}] AND version.baseModel IN [${nsfwRestrictedBaseModels
+      .map((model) => `'${model}'`)
+      .join(', ')}])`,
   ].filter(isDefined);
 
   return (

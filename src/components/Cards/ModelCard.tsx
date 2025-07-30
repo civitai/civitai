@@ -90,7 +90,7 @@ export function ModelCard({ data }: Props) {
       isRemix={!!data.images[0]?.remixOfId}
       header={
         <div className="flex w-full items-start justify-between">
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {currentUser?.isModerator && isPOI && (
               <Badge
                 className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
