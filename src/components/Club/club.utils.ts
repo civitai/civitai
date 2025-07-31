@@ -417,10 +417,7 @@ export const useMutateClub = () => {
 
   const withdrawClubFundsMutation = trpc.buzz.withdrawClubFunds.useMutation({
     async onSuccess(_, { clubId }) {
-      await queryUtils.buzz.getBuzzAccount.invalidate({
-        accountId: clubId,
-        accountType: 'club',
-      });
+      await queryUtils.buzz.getBuzzAccount.invalidate();
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
     onError(error) {
@@ -443,10 +440,7 @@ export const useMutateClub = () => {
 
   const depositClubFundsMutation = trpc.buzz.depositClubFunds.useMutation({
     async onSuccess(_, { clubId }) {
-      await queryUtils.buzz.getBuzzAccount.invalidate({
-        accountId: clubId,
-        accountType: 'club',
-      });
+      await queryUtils.buzz.getBuzzAccount.invalidate();
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
     onError(error) {

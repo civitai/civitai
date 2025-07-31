@@ -10,34 +10,9 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
-export const useBuzz = (
-  accountId?: number,
-  accountType?: BuzzAccountType[] | BuzzAccountType | null
-) => {
-  const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
-  const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
-    {
-      accountId: accountId ?? (currentUser?.id as number),
-      accountType: Array.isArray(accountType) ? undefined : accountType,
-      accountTypes: Array.isArray(accountType) ? accountType : undefined,
-    },
-    { enabled: !!currentUser && features.buzz }
-  );
-
-  return {
-    balanceLoading: isLoading,
-    balances: (data ?? []).map((item) => ({
-      balance: item.balance,
-      lifetimeBalance: item.lifetimeBalance,
-      accountType: item.accountType,
-    })),
-  };
-};
-
 export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow', 'red']) {
   const currentUser = useCurrentUser();
-  const { data: initialData, isLoading } = trpc.buzz.getBuzzAccount2.useQuery(undefined, {
+  const { data: initialData, isLoading } = trpc.buzz.getBuzzAccount.useQuery(undefined, {
     enabled: !!currentUser,
   });
   const data = useMemo(() => {
@@ -68,22 +43,13 @@ export const useBuzzSignalUpdate = () => {
   const onBalanceUpdate = useCallback(
     (updated: BuzzUpdateSignalSchema) => {
       if (!currentUser) return;
-
-      queryUtils.buzz.getBuzzAccount.setData(
-        { accountId: currentUser.id as number, accountType: updated.accountType },
-        (old) => {
-          if (!old || !old[0]) return old;
-          return [{ ...old[0], balance: updated.balance }];
-        }
-      );
-
-      queryUtils.buzz.getBuzzAccount.setData(
-        { accountId: currentUser.id as number, accountType: null },
-        (old) => {
-          if (!old || !old[0] || !old[0].balance) return old;
-          return [{ ...old[0], balance: (old[0].balance ?? 0) + updated.delta }];
-        }
-      );
+      const type = BuzzTypes.toClientType(updated.accountType) as BuzzSpendType;
+      queryUtils.buzz.getBuzzAccount.setData(undefined, (old) => {
+        let balance = old?.[type];
+        if (!balance) balance = updated.balance;
+        else balance += updated.delta;
+        return { ...old, [type]: balance! };
+      });
     },
     [queryUtils, currentUser]
   );

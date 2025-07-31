@@ -56,7 +56,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { SUPPORTED_BUZZ } from '~/shared/constants/creator-program.constants';
+import { buzzBankTypes } from '~/shared/constants/buzz.constants';
 
 const sizing = {
   header: {
@@ -81,7 +81,7 @@ function CreatorsClubV1() {
   const applyFormUrl = `/user/buzz-dashboard`;
   const availability = getCreatorProgramAvailability();
   const { classNames: greenClassNames, colorRgb: greenColorRgb } = useBuzzCurrencyConfig(
-    SUPPORTED_BUZZ[0]
+    buzzBankTypes[0]
   );
 
   return (
@@ -161,7 +161,7 @@ const HowItWorks: { text: string; icon: React.ReactNode }[] = [
 ];
 
 const HowItWorksSection = () => {
-  const { colorRgb: greenColorRgb } = useBuzzCurrencyConfig(SUPPORTED_BUZZ[0]);
+  const { colorRgb: greenColorRgb } = useBuzzCurrencyConfig(buzzBankTypes[0]);
   return (
     <Stack className={classes.section}>
       <Stack gap={0} mb="sm">

@@ -1,88 +1,89 @@
-import { useState } from 'react';
-import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '../Dialog/DialogProvider';
-import { useMutateClub, useQueryClub } from './club.utils';
-import { useBuzz } from '../Buzz/useBuzz';
-import { clubTransactionSchema } from '~/server/schema/buzz.schema';
-import { showSuccessNotification } from '~/utils/notifications';
-import { CurrencyBadge } from '../Currency/CurrencyBadge';
-import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import * as z from 'zod/v4';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { NumberInputWrapper } from '../../libs/form/components/NumberInputWrapper';
-import { BuzzTransactionButton } from '../Buzz/BuzzTransactionButton';
-import { isDefined } from '../../utils/type-guards';
+// import { useState } from 'react';
+// import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
+// import { useDialogContext } from '../Dialog/DialogProvider';
+// import { useMutateClub, useQueryClub } from './club.utils';
+// import { useBuzz } from '../Buzz/useBuzz';
+// import { clubTransactionSchema } from '~/server/schema/buzz.schema';
+// import { showSuccessNotification } from '~/utils/notifications';
+// import { CurrencyBadge } from '../Currency/CurrencyBadge';
+// import { CurrencyIcon } from '../Currency/CurrencyIcon';
+// import * as z from 'zod/v4';
+// import { Currency } from '~/shared/utils/prisma/enums';
+// import { NumberInputWrapper } from '../../libs/form/components/NumberInputWrapper';
+// import { BuzzTransactionButton } from '../Buzz/BuzzTransactionButton';
+// import { isDefined } from '../../utils/type-guards';
 
-const schema = clubTransactionSchema.omit({ clubId: true });
+// const schema = clubTransactionSchema.omit({ clubId: true });
 
 export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
-  const dialog = useDialogContext();
-  const handleClose = dialog.onClose;
-  const { balances: userBalances, balanceLoading: userBalanceLoading } = useBuzz(
-    undefined,
-    'yellow'
-  );
-  const [{ balance: userBalance } = { balance: 0 }] = userBalances;
-  const { balances, balanceLoading } = useBuzz(clubId, 'yellow');
-  const [{ balance = 0 } = {}] = balances;
-  const { club, loading } = useQueryClub({ id: clubId });
-  const { depositClubFunds, depositingClubFunds } = useMutateClub();
-  const isLoading = loading || balanceLoading || userBalanceLoading;
-  const [amount, setAmount] = useState(5000);
+  return null;
+  // const dialog = useDialogContext();
+  // const handleClose = dialog.onClose;
+  // const { balances: userBalances, balanceLoading: userBalanceLoading } = useBuzz(
+  //   undefined,
+  //   'yellow'
+  // );
+  // const [{ balance: userBalance } = { balance: 0 }] = userBalances;
+  // const { balances, balanceLoading } = useBuzz(clubId, 'yellow');
+  // const [{ balance = 0 } = {}] = balances;
+  // const { club, loading } = useQueryClub({ id: clubId });
+  // const { depositClubFunds, depositingClubFunds } = useMutateClub();
+  // const isLoading = loading || balanceLoading || userBalanceLoading;
+  // const [amount, setAmount] = useState(5000);
 
-  const handleSubmit = async () => {
-    await depositClubFunds({ amount, clubId });
-    showSuccessNotification({
-      title: 'Funds have been deposited',
-      message: 'Your funds have been deposited correctly.',
-    });
-    handleClose();
-  };
+  // const handleSubmit = async () => {
+  //   await depositClubFunds({ amount, clubId });
+  //   showSuccessNotification({
+  //     title: 'Funds have been deposited',
+  //     message: 'Your funds have been deposited correctly.',
+  //   });
+  //   handleClose();
+  // };
 
-  return (
-    <Modal {...dialog} title="Deposit your funds into your club" size="sm" withCloseButton>
-      <Stack>
-        <Divider mx="-lg" mb="md" />
-        {isLoading || !club || !isDefined(balance) || !isDefined(userBalance) ? (
-          <Center>
-            <Loader />
-          </Center>
-        ) : (
-          <Stack>
-            <Text>You are about to deposit funds from {club.name}</Text>
-            <Text size="sm">Your current balance:</Text>
-            <CurrencyBadge size="lg" unitAmount={userBalance ?? 0} currency={Currency.BUZZ} />
-            <Text size="sm">Current Club balance:</Text>
-            <CurrencyBadge size="lg" unitAmount={balance ?? 0} currency={Currency.BUZZ} />
+  // return (
+  //   <Modal {...dialog} title="Deposit your funds into your club" size="sm" withCloseButton>
+  //     <Stack>
+  //       <Divider mx="-lg" mb="md" />
+  //       {isLoading || !club || !isDefined(balance) || !isDefined(userBalance) ? (
+  //         <Center>
+  //           <Loader />
+  //         </Center>
+  //       ) : (
+  //         <Stack>
+  //           <Text>You are about to deposit funds from {club.name}</Text>
+  //           <Text size="sm">Your current balance:</Text>
+  //           <CurrencyBadge size="lg" unitAmount={userBalance ?? 0} currency={Currency.BUZZ} />
+  //           <Text size="sm">Current Club balance:</Text>
+  //           <CurrencyBadge size="lg" unitAmount={balance ?? 0} currency={Currency.BUZZ} />
 
-            <Stack>
-              <NumberInputWrapper
-                value={amount}
-                onChange={(value) => setAmount(Number(value ?? 0))}
-                variant="filled"
-                label="Amount to deposit"
-                rightSectionWidth="10%"
-                min={5000}
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                allowDecimal={false}
-                allowNegative={false}
-                hideControls
-              />
+  //           <Stack>
+  //             <NumberInputWrapper
+  //               value={amount}
+  //               onChange={(value) => setAmount(Number(value ?? 0))}
+  //               variant="filled"
+  //               label="Amount to deposit"
+  //               rightSectionWidth="10%"
+  //               min={5000}
+  //               leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+  //               allowDecimal={false}
+  //               allowNegative={false}
+  //               hideControls
+  //             />
 
-              <BuzzTransactionButton
-                loading={depositingClubFunds}
-                type="submit"
-                label="Deposit funds"
-                buzzAmount={amount}
-                color="yellow.7"
-                onPerformTransaction={() => {
-                  handleSubmit();
-                }}
-              />
-            </Stack>
-          </Stack>
-        )}
-      </Stack>
-    </Modal>
-  );
+  //             <BuzzTransactionButton
+  //               loading={depositingClubFunds}
+  //               type="submit"
+  //               label="Deposit funds"
+  //               buzzAmount={amount}
+  //               color="yellow.7"
+  //               onPerformTransaction={() => {
+  //                 handleSubmit();
+  //               }}
+  //             />
+  //           </Stack>
+  //         </Stack>
+  //       )}
+  //     </Stack>
+  //   </Modal>
+  // );
 };
