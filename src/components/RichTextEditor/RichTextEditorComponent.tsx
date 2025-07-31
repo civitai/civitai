@@ -32,6 +32,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { hideNotification, showNotification } from '@mantine/notifications';
+import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -214,15 +215,7 @@ export function RichTextEditor({
     }
     if (addMedia) {
       arr.push(
-        YoutubeNode.extend({
-          // @ts-ignore
-          renderHTML(input) {
-            const { HTMLAttributes } = input;
-            // @ts-ignore
-            if (!HTMLAttributes.src || !this.parent) return ['div', { 'data-youtube-video': '' }];
-            // @ts-ignore
-            return this.parent(input);
-          },
+        CustomYoutubeNode.extend({
           addPasteRules() {
             return [
               nodePasteRule({
