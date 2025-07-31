@@ -59,7 +59,6 @@ export default function Pricing() {
     return (
       <MembershipPageWrapper
         title="Choose Your Membership Type"
-        showIntroText={true}
         introText="Before selecting a membership plan, please choose which type of Buzz you'd like to receive with your membership benefits."
         reason={reason}
         containerSize="md"
@@ -104,12 +103,7 @@ export default function Pricing() {
 
   // Main membership plans view
   return (
-    <MembershipPageWrapper
-      title="Green Memberships"
-      reason={reason}
-      showBuzzTopUp={true}
-      showIntroText={true}
-    >
+    <MembershipPageWrapper title="Green Memberships" reason={reason} showBuzzTopUp={true}>
       <div
         style={{
           // @ts-ignore

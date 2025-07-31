@@ -55,7 +55,7 @@ import { BuzzEmerchantPayButton } from '~/components/Buzz/BuzzPurchase/Buttons/B
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
-import classes from '~/components/Buzz/BuzzPurchaseImproved.module.scss';
+import classes from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
@@ -86,17 +86,18 @@ const BuzzPurchasePaymentButton = ({
   onPurchaseSuccess,
   purchaseSuccessMessage,
   disabled,
-  buzzConfig,
+  buzzType,
 }: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
   onValidate: () => boolean;
-  buzzConfig: ReturnType<typeof useBuzzCurrencyConfig>;
+  buzzType?: BuzzSpendType;
 }) => {
   const features = useFeatureFlags();
   const paymentProvider = usePaymentProvider();
   const currentUser = useCurrentUser();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   const successMessage = useMemo(
     () =>
@@ -321,7 +322,7 @@ export const BuzzPurchaseImproved = ({
       setActiveControl('customAmount');
       setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), buzzConstants.minChargeAmount));
     }
-  }, [packages, minBuzzAmount]);
+  }, [packages, minBuzzAmount, selectedPrice]);
 
   useEffect(() => {
     if (selectedBuzzType === 'green' && !features.isGreen) {
@@ -857,6 +858,7 @@ export const BuzzPurchaseImproved = ({
                                   unitAmount={unitAmount}
                                   buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
                                   disabled={!ctaEnabled}
+                                  buzzType={selectedBuzzType}
                                 />
                               )}
                               <BuzzPurchasePaymentButton
@@ -866,7 +868,7 @@ export const BuzzPurchaseImproved = ({
                                 onValidate={onValidate}
                                 disabled={!ctaEnabled}
                                 purchaseSuccessMessage={purchaseSuccessMessage}
-                                buzzConfig={buzzConfig}
+                                buzzType={selectedBuzzType}
                               />
                             </>
                           ) : (
@@ -876,6 +878,7 @@ export const BuzzPurchaseImproved = ({
                                   unitAmount={unitAmount}
                                   buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
                                   disabled={!ctaEnabled}
+                                  buzzType={selectedBuzzType}
                                 />
                               )}
                               {features.coinbasePayments && (
@@ -891,6 +894,7 @@ export const BuzzPurchaseImproved = ({
                                           disabled={!ctaEnabled}
                                           purchaseSuccessMessage={purchaseSuccessMessage}
                                           type={type as 'default' | 'international'}
+                                          buzzType={selectedBuzzType}
                                         />
                                       ))}
                                     </>
@@ -901,6 +905,7 @@ export const BuzzPurchaseImproved = ({
                                     onPurchaseSuccess={onPurchaseSuccess}
                                     disabled={!ctaEnabled}
                                     purchaseSuccessMessage={purchaseSuccessMessage}
+                                    buzzType={selectedBuzzType}
                                   />
                                 </>
                               )}
@@ -912,6 +917,7 @@ export const BuzzPurchaseImproved = ({
                                   onPurchaseSuccess={onPurchaseSuccess}
                                   disabled={!ctaEnabled}
                                   purchaseSuccessMessage={purchaseSuccessMessage}
+                                  buzzType={selectedBuzzType}
                                 />
                               )}
                             </>

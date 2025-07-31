@@ -4,12 +4,15 @@ import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 interface BuzzStripePaymentButtonProps {
   disabled: boolean;
   unitAmount: number;
   onValidate: () => boolean;
   buzzAmount: number;
+  buzzType?: BuzzSpendType;
 }
 
 export function BuzzStripePaymentButton({
@@ -17,9 +20,11 @@ export function BuzzStripePaymentButton({
   unitAmount,
   onValidate,
   buzzAmount,
+  buzzType,
 }: BuzzStripePaymentButtonProps) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   const handleStripeSubmit = async () => {
     if (!onValidate()) {
@@ -70,6 +75,7 @@ export function BuzzStripePaymentButton({
       disabled={disabled || features.disablePayments}
       onClick={handleStripeSubmit}
       radius="xl"
+      color={buzzConfig.color}
     >
       {features.disablePayments ? (
         <Group gap="xs" wrap="nowrap">

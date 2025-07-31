@@ -9,6 +9,8 @@ import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useCallback } from 'react';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 interface BuzzPaddlePaymentButtonProps {
   disabled: boolean;
@@ -16,6 +18,7 @@ interface BuzzPaddlePaymentButtonProps {
   buzzAmount: number;
   onPurchaseSuccess?: () => void;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
+  buzzType?: BuzzSpendType;
 }
 
 export function BuzzPaddlePaymentButton({
@@ -24,10 +27,12 @@ export function BuzzPaddlePaymentButton({
   buzzAmount,
   onPurchaseSuccess,
   purchaseSuccessMessage,
+  buzzType,
 }: BuzzPaddlePaymentButtonProps) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { processCompleteBuzzTransaction } = useMutatePaddle();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   const handlePaddleSubmit = useCallback(async () => {
     if (!currentUser) return;
@@ -73,6 +78,7 @@ export function BuzzPaddlePaymentButton({
       disabled={disabled || features.disablePayments}
       onClick={handlePaddleSubmit}
       radius="xl"
+      color={buzzConfig.color}
     >
       {features.disablePayments ? (
         <Group gap="xs" wrap="nowrap">

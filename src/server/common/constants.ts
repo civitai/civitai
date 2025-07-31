@@ -1286,7 +1286,7 @@ export const CurrencyConfig: CurrencyConfig = {
         },
         css: {
           gradient:
-            'linear-gradient(135deg, var(--mantine-color-pink-4) 0%, var(--mantine-color-rose-5) 100%)',
+            'linear-gradient(135deg, var(--mantine-color-red-5) 0%, var(--mantine-color-pink-6) 100%)',
         },
       },
     },

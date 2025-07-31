@@ -45,10 +45,11 @@ export const useBuzzSignalUpdate = () => {
       if (!currentUser) return;
       const type = BuzzTypes.toClientType(updated.accountType) as BuzzSpendType;
       queryUtils.buzz.getBuzzAccount.setData(undefined, (old) => {
-        let balance = old?.[type];
-        if (!balance) balance = updated.balance;
+        if (!old) return undefined;
+        let balance = old[type];
+        if (typeof balance !== 'number') balance = updated.balance;
         else balance += updated.delta;
-        return { ...old, [type]: balance! };
+        return { ...old, [type]: balance };
       });
     },
     [queryUtils, currentUser]

@@ -519,6 +519,7 @@ export const BuzzPurchase = ({
                         unitAmount={unitAmount}
                         buzzAmount={buzzAmount}
                         disabled={!ctaEnabled}
+                        buzzType={selectedBuzzType}
                       />
                     )}
                     <BuzzPurchasePaymentButton
@@ -528,6 +529,7 @@ export const BuzzPurchase = ({
                       onValidate={onValidate}
                       disabled={!ctaEnabled}
                       purchaseSuccessMessage={purchaseSuccessMessage}
+                      buzzType={selectedBuzzType}
                     />
                   </>
                 ) : (
@@ -537,6 +539,7 @@ export const BuzzPurchase = ({
                         unitAmount={unitAmount}
                         buzzAmount={buzzAmount}
                         disabled={!ctaEnabled}
+                        buzzType={selectedBuzzType}
                       />
                     )}
                     {features.coinbasePayments && (
@@ -549,6 +552,7 @@ export const BuzzPurchase = ({
                               onPurchaseSuccess={onPurchaseSuccess}
                               disabled={!ctaEnabled}
                               purchaseSuccessMessage={purchaseSuccessMessage}
+                              buzzType={selectedBuzzType}
                             />
 
                             <BuzzCoinbaseOnrampButton
@@ -558,6 +562,7 @@ export const BuzzPurchase = ({
                               disabled={!ctaEnabled}
                               purchaseSuccessMessage={purchaseSuccessMessage}
                               type="international"
+                              buzzType={selectedBuzzType}
                             />
                           </>
                         )}
@@ -567,6 +572,7 @@ export const BuzzPurchase = ({
                           onPurchaseSuccess={onPurchaseSuccess}
                           disabled={!ctaEnabled}
                           purchaseSuccessMessage={purchaseSuccessMessage}
+                          buzzType={selectedBuzzType}
                         />
                       </>
                     )}
@@ -577,6 +583,7 @@ export const BuzzPurchase = ({
                         onPurchaseSuccess={onPurchaseSuccess}
                         disabled={!ctaEnabled}
                         purchaseSuccessMessage={purchaseSuccessMessage}
+                        buzzType={selectedBuzzType}
                       />
                     )}
 

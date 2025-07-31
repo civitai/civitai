@@ -7,7 +7,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchaseImproved';
+import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 
 export type BuyBuzzModalProps = {
   message?: string;

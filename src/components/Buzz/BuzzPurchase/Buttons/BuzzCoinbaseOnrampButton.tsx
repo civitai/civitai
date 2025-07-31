@@ -5,20 +5,25 @@ import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurch
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const BuzzCoinbaseOnrampButton = ({
   unitAmount,
   buzzAmount,
   disabled,
   type = 'default',
+  buzzType,
 }: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
   type?: 'default' | 'international';
+  buzzType?: BuzzSpendType;
 }) => {
   const { createBuzzOrderOnramp, creatingBuzzOrderOnramp } = useMutateCoinbase();
   const { isLoading: checkingHealth, healthy } = useCoinbaseStatus();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   if (!checkingHealth && !healthy) {
     return null;
@@ -95,13 +100,13 @@ export const BuzzCoinbaseOnrampButton = ({
         disabled={disabled || checkingHealth}
         loading={creatingBuzzOrderOnramp}
         onClick={handleClick}
+        leftSection={
+          type === 'default' ? <IconCreditCardFilled size={18} /> : <IconCreditCard size={18} />
+        }
         size="md"
         radius="md"
         variant="light"
-        color="yellow"
-        leftSection={
-          type === 'default' ? <IconCreditCardFilled size={16} /> : <IconCreditCard size={16} />
-        }
+        color={buzzConfig.color}
         fw={500}
         fullWidth
       >
