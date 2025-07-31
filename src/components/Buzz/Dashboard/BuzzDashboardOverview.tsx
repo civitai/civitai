@@ -118,7 +118,7 @@ export const BuzzDashboardOverview = ({
   accountId: number;
   selectedAccountType?: BuzzSpendType;
 }) => {
-  // Use the selected account type for transactions, defaulting to 'user'
+  // Use the selected account type for transactions, defaulting to 'yellow'
   const currentAccountType = selectedAccountType || 'yellow';
   const currentAccountTypeLabel: string = getAccountTypeLabel(currentAccountType);
 
