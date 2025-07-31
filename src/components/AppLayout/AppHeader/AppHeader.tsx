@@ -15,12 +15,16 @@ import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { AutocompleteSearch } from '~/components/AutocompleteSearch/AutocompleteSearch';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import dynamic from 'next/dynamic';
+
+const AutocompleteSearch = dynamic(() =>
+  import('~/components/AutocompleteSearch/AutocompleteSearch').then((x) => x.AutocompleteSearch)
+);
 
 const HEADER_HEIGHT = 60;
 
