@@ -127,14 +127,14 @@ export const BuzzDashboardOverview = ({
 
   const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
     window: 'day',
-    accountType: currentAccountType ? currentAccountType : 'yellow',
+    accountType: currentAccountType,
   });
 
   // Update report filters when account type changes
   React.useEffect(() => {
     setReportFilters((prev) => ({
       ...prev,
-      accountType: currentAccountType ? currentAccountType : 'yellow',
+      accountType: currentAccountType,
     }));
   }, [currentAccountType]);
 
