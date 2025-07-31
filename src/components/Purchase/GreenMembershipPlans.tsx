@@ -96,110 +96,13 @@ export function GreenMembershipPlans({
         title="Memberships | Civitai"
         description="As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks."
       />
-      <Container size="sm" mb="lg">
+      <Container size="xl">
         <Stack>
-          {!!redirectReason && (
-            <Alert color="yellow">
-              <Group gap="xs" wrap="nowrap" align="flex-start">
-                <ThemeIcon color="yellow">
-                  <IconExclamationMark />
-                </ThemeIcon>
-                <Text size="md">{redirectReason}</Text>
-              </Group>
-            </Alert>
-          )}
-          {isHolidays && !redirectReason && (
-            <Alert color="blue">
-              <div className="flex flex-col items-center gap-4 md:flex-row">
-                <Image
-                  src="/images/holiday/happy-holidays-robot.png"
-                  alt="happy-holidays"
-                  width={150}
-                  height={150}
-                  className="hidden rounded-md md:block"
-                />
-
-                <Stack gap="xs">
-                  <Text size="md">
-                    To celebrate the holidays and our amazing community, new subscribers and current
-                    members alike will receive 20% additional Blue Buzz along with their standard
-                    Buzz disbursement!
-                  </Text>
-                  <Text size="md">
-                    This bonus applies when a new membership is purchased or an active membership
-                    renews.
-                  </Text>
-                  <Text size="md">Happy Holidays from Civitai!</Text>
-                </Stack>
-              </div>
-            </Alert>
-          )}
-          <Title className={clsx(classes.title, 'text-center')}>Green Memberships</Title>
-          <Text align="center" className={classes.introText} style={{ lineHeight: 1.25 }}>
-            As the leading generative AI community, we&rsquo;re adding new features every week. Help
-            us keep the community thriving by becoming a Supporter and get exclusive perks.
-          </Text>
           {!features.isGreen && selectedBuzzType === 'green' && onChangeBuzzType && (
             <Center>
               <Button variant="subtle" size="sm" onClick={onChangeBuzzType}>
                 Change Buzz Type
               </Button>
-            </Center>
-          )}
-        </Stack>
-      </Container>
-      <Container size="xl">
-        <Stack>
-          {features.disablePayments && !features.prepaidMemberships && (
-            <Center>
-              <AlertWithIcon
-                color="red"
-                iconColor="red"
-                icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
-                iconSize={28}
-                py={11}
-                maw="calc(50% - 8px)"
-              >
-                <Stack gap={0}>
-                  <Text size="xs" lh={1.2}>
-                    Purchasing or updating memberships is currently disabled. We are working hard to
-                    resolve this and will notify you when it is back up. You can still manage your
-                    active membership, and your benefits will be active until your
-                    membership&rsquo;s expiration date.{' '}
-                    <Anchor href="https://civitai.com/articles/14945" c="red.3">
-                      Learn more
-                    </Anchor>
-                  </Text>
-                </Stack>
-              </AlertWithIcon>
-            </Center>
-          )}
-          {features.disablePayments && features.prepaidMemberships && (
-            <Center>
-              <AlertWithIcon
-                color="blue"
-                iconColor="blue"
-                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
-                iconSize={28}
-                py={11}
-                maw="calc(50% - 8px)"
-              >
-                <Stack gap={0}>
-                  <Text size="xs" lh={1.2}>
-                    Regular membership purchases are temporarily disabled, but you can still
-                    purchase prepaid memberships! Prepaid memberships give you all the same benefits
-                    and will automatically activate when your current membership expires.{' '}
-                    <Anchor
-                      target="_blank"
-                      href="https://buybuzz.io/collections/memberships"
-                      rel="noopener noreferrer"
-                      c="blue.3"
-                    >
-                      Purchase prepaid membership
-                    </Anchor>
-                  </Text>
-                </Stack>
-              </AlertWithIcon>
             </Center>
           )}
           {subscription?.isBadState && (
@@ -252,27 +155,25 @@ export function GreenMembershipPlans({
               </Stack>
             </AlertWithIcon>
           )}
-          <Group>
-            {currentMembershipUnavailable && (
-              <AlertWithIcon
-                color="yellow"
-                iconColor="yellow"
-                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
-                iconSize={28}
-                py={11}
-                maw="calc(50% - 8px)"
-                mx="auto"
-              >
-                <Text lh={1.2}>
-                  The Supporter plan can no longer be purchased. You can stay on your{' '}
-                  <Text component={Link} td="underline" href="/user/membership">
-                    current plan
-                  </Text>{' '}
-                  or level up your support here.
-                </Text>
-              </AlertWithIcon>
-            )}
-          </Group>
+          {currentMembershipUnavailable && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+              maw="calc(50% - 8px)"
+              mx="auto"
+            >
+              <Text lh={1.2}>
+                The Supporter plan can no longer be purchased. You can stay on your{' '}
+                <Text component={Link} td="underline" href="/user/membership">
+                  current plan
+                </Text>{' '}
+                or level up your support here.
+              </Text>
+            </AlertWithIcon>
+          )}
           {(features.annualMemberships || interval === 'year') && (
             <Center>
               <SegmentedControl

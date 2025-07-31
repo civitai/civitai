@@ -1,0 +1,11 @@
+.title {
+  @container (max-width: theme('screens.sm')) {
+    font-size: 24px;
+  }
+}
+
+.introText {
+  @container (max-width: theme('screens.sm')) {
+    font-size: 14px;
+  }
+}
