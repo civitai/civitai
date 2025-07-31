@@ -8,14 +8,12 @@ import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import type { NotificationCategoryCount } from '~/server/notifications/notification-cache';
 import { notificationCache } from '~/server/notifications/notification-cache';
-import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import type {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { isDefined } from '~/utils/type-guards';
 
 type NotificationsRaw = {
   id: number;

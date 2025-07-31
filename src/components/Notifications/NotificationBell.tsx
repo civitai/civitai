@@ -1,5 +1,4 @@
-import { ActionIcon, Indicator } from '@mantine/core';
-
+import { Indicator } from '@mantine/core';
 import { IconBell } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';

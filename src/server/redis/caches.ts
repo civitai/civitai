@@ -388,6 +388,7 @@ type ModelVersionDetails = {
   status: ModelStatus;
   covered: boolean;
   availability: Availability;
+  nsfwLevel: NsfwLevel;
 };
 type ModelDataCache = {
   modelId: number;

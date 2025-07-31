@@ -126,8 +126,8 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
   }
 
   if (!anim) type = 'image';
-
-  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
+  const shouldOptimize = options?.width && options.width <= 450;
+  const optimized = shouldOptimize || currentUser?.filePreferences?.imageFormat === 'optimized';
 
   return {
     url: getEdgeUrl(src, {

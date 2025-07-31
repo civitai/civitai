@@ -18,7 +18,6 @@ const fontFamilies = [
 module.exports = {
   content: ['./src/**/*.{ts,tsx}'],
   darkMode: ['selector', '[data-mantine-color-scheme="dark"]'],
-  important: 'body',
   experimental: {
     optimizeUniversalDefaults: true,
   },

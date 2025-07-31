@@ -12,7 +12,7 @@ import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
 import { MentionNode } from '~/components/TipTap/MentionNode';
 import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
-import { YoutubeNode } from '~/components/TipTap/YoutubeNode';
+import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -20,7 +20,7 @@ const extensions = [
   TextStyleKit,
   EdgeMediaNode,
   ImageExtension.configure({ inline: true }),
-  YoutubeNode,
+  CustomYoutubeNode,
   InstagramNode,
   MentionNode,
   StrawPollNode,

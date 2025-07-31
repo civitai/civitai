@@ -28,7 +28,11 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
   }, [images]);
   const missingResources = images.some((x) => !x.resourceHelper.length);
 
-  const { data = [], refetch } = trpc.post.getResources.useQuery({ id }, { enabled: false });
+  const {
+    data = [],
+    refetch,
+    isRefetching,
+  } = trpc.post.getResources.useQuery({ id }, { enabled: false });
   const isMuted = currentUser?.muted ?? false;
 
   const reviews = useMemo(() => {
@@ -67,8 +71,8 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
 
   useEffect(() => {
     const shouldRefetch = imageResources.length !== data.length && !isMuted;
-    if (shouldRefetch) refetch();
-  }, [imageResources, isMuted, refetch]); //eslint-disable-line
+    if (shouldRefetch && !isRefetching) refetch();
+  }, [imageResources, isMuted, refetch, isRefetching]); //eslint-disable-line
 
   if (!reviews.pending.length && !reviews.previous.length) return null;
 

@@ -5,10 +5,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
-import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { removeEmpty } from '../../../utils/object-helpers';
+import type { ImageGetInfinite } from '~/types/router';
 
 export default function ImageDetailModal({
   imageId,
@@ -19,7 +19,10 @@ export default function ImageDetailModal({
 }: {
   imageId: number;
   filters?: Record<string, unknown>;
-} & ImagesContextState) {
+  images?: ImageGetInfinite;
+  hideReactionCount?: boolean;
+  collectionId?: number;
+}) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
   const queryFilters = useMemo(

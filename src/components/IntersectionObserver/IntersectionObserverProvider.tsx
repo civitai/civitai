@@ -150,7 +150,7 @@ export function IntersectionObserverProvider({
         },
         {
           root: node?.current,
-          rootMargin: '200% 0px',
+          rootMargin: '100% 0px',
           ...options,
         }
       );

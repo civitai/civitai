@@ -1,16 +1,16 @@
 import { useMemo } from 'react';
-import { useNotificationSettings } from '~/components/Notifications/notifications.utils';
-import type { notificationTypes } from '~/server/notifications/utils.notifications';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import { showSuccessNotification } from '~/utils/notifications';
+import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 
 import { trpc } from '~/utils/trpc';
 
+// could this be lazy loaded?
 export function NotificationToggle({
   type,
   children,
 }: {
-  type: (typeof notificationTypes)[number];
+  type: string;
   children: (props: {
     onToggle: () => void;
     isLoading: boolean;

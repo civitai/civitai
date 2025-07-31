@@ -136,6 +136,7 @@ import {
 import classes from './GenerationForm2.module.scss';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
 let total = 0;
 const tips = {
@@ -513,7 +514,14 @@ export function GenerationFormContent() {
           const disableSafetyTolerance = !isFluxKontext;
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
-          if (!resourceTypes) return <></>;
+          if (!resourceTypes)
+            return (
+              <ResetGenerationPanel
+                onResetClick={() => {
+                  form.reset();
+                }}
+              />
+            );
 
           return (
             <>

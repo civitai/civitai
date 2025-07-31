@@ -1,13 +1,5 @@
 import type { MantineSize } from '@mantine/core';
-import {
-  Center,
-  Group,
-  Paper,
-  SimpleGrid,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import { Center, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertOctagon, IconAward, IconBell } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
@@ -20,6 +12,39 @@ import type { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
 import classes from './NotificationList.module.css';
+import { match } from 'path-to-regexp';
+
+type RouteMatch = {
+  pathname: string;
+  query: Record<string, string>;
+};
+
+// this make it so that clicking on images in your notifications can user router.replace when appropriate.
+const ROUTES = ['/images/[imageId]'];
+
+function matchRoute(inputUrl: string): RouteMatch | null {
+  const url = new URL(inputUrl, 'http://localhost'); // base doesn't matter
+  const path = url.pathname;
+
+  for (const route of ROUTES) {
+    const pattern = route.replace(/\[([^\]]+)\]/g, ':$1');
+    const matcher = match(pattern, { decode: decodeURIComponent });
+    const matched = matcher(path);
+
+    if (matched) {
+      const query = Object.fromEntries(url.searchParams.entries());
+      return {
+        pathname: route,
+        query: {
+          ...query,
+          ...Object.fromEntries(Object.entries(matched.params).map(([k, v]) => [k, String(v)])),
+        },
+      };
+    }
+  }
+
+  return null;
+}
 
 export function NotificationList({
   items,
@@ -87,7 +112,9 @@ export function NotificationList({
               router.push(details.url);
             }
           } else {
-            router.push(details.url);
+            const match = matchRoute(details.url);
+            if (match?.pathname === router.pathname) router.replace(details.url);
+            else router.push(details.url);
           }
         };
 

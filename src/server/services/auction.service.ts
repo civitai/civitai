@@ -669,7 +669,10 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
 
   if (!model) throw throwNotFoundError('Model not found.');
   const versionIds = model.modelVersions.map((mv) => mv.id);
-  if (!versionIds.length) throw throwBadRequestError('Model has no versions.');
+  if (!versionIds.length) {
+    // early return if no versions
+    return { bidsDeleted: [], recurringBidsDeleted: [] };
+  }
 
   const aData = await dbWrite.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
