@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import {
   Alert,
   Anchor,
@@ -26,7 +26,7 @@ import classes from './MembershipPageWrapper.module.scss';
 
 interface MembershipPageWrapperProps {
   title: string;
-  showIntroText?: boolean;
+  introText?: string;
   showBuzzTopUp?: boolean;
   containerSize?: 'sm' | 'md' | 'lg' | 'xl';
   reason?: JoinRedirectReason;
@@ -35,7 +35,7 @@ interface MembershipPageWrapperProps {
 
 export function MembershipPageWrapper({
   title,
-  showIntroText = false,
+  introText = "As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks.",
   showBuzzTopUp = false,
   containerSize = 'xl',
   reason,
@@ -95,10 +95,9 @@ export function MembershipPageWrapper({
 
           {/* Title and intro text */}
           <Title className={clsx(classes.title, 'text-center')}>{title}</Title>
-          {showIntroText && (
+          {introText && (
             <Text align="center" className={classes.introText} style={{ lineHeight: 1.25 }}>
-              As the leading generative AI community, we&rsquo;re adding new features every week.
-              Help us keep the community thriving by becoming a Supporter and get exclusive perks.
+              {introText}
             </Text>
           )}
 

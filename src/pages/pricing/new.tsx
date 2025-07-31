@@ -58,10 +58,11 @@ export default function Pricing() {
   if (!features.isGreen && !selectedBuzzType) {
     return (
       <MembershipPageWrapper
-        title="Civitai Memberships"
+        title="Choose Your Membership Type"
         showIntroText={true}
+        introText="Before selecting a membership plan, please choose which type of Buzz you'd like to receive with your membership benefits."
         reason={reason}
-        containerSize="sm"
+        containerSize="md"
       >
         <MembershipTypeSelector onSelect={setSelectedBuzzType} />
       </MembershipPageWrapper>
