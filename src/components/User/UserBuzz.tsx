@@ -38,6 +38,7 @@ export function UserBuzz({
     data: { accounts, total },
     isLoading,
   } = useQueryBuzz(accountTypes);
+
   const balance = total;
   const baseAccountType = accounts[0]?.type;
   const config = getCurrencyConfig({ currency: Currency.BUZZ, type: baseAccountType });

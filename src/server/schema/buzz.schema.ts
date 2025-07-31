@@ -162,6 +162,7 @@ export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensat
 export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
   date: z.coerce.date(),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;
@@ -169,7 +170,7 @@ export const claimWatchedAdRewardSchema = z.object({ key: z.string() });
 
 export type GetTransactionsReportSchema = z.infer<typeof getTransactionsReportSchema>;
 export const getTransactionsReportSchema = z.object({
-  accountType: z.array(z.enum(buzzSpendTypes)).default(buzzSpendTypes),
+  accountType: z.enum(buzzSpendTypes).default('yellow'),
   window: z.enum(['hour', 'day', 'week', 'month']).default('hour'),
 });
 
@@ -177,6 +178,8 @@ export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsRe
 export const getTransactionsReportResultSchema = z.array(
   z.object({
     date: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    start: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    end: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
     accounts: z.array(
       z.object({
         accountType: buzzAccountTypeFromApiValueSchema,
