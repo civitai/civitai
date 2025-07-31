@@ -1110,9 +1110,7 @@ export async function getTransactionsReport({
 
   const data = await buzzApiFetch(`/user/${userId}/transactions/report?${query}`);
 
-  const x = getTransactionsReportResultSchema.parse(data);
-
-  return x;
+  return getTransactionsReportResultSchema.parse(data);
 }
 
 export async function getCounterPartyBuzzTransactions({
