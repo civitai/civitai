@@ -157,13 +157,7 @@ export const getTransactionStatusByKey = async ({
   return updatedTransaction.status;
 };
 
-export const completeCryptoTransaction = async ({
-  userId,
-  key,
-}: {
-  userId: number;
-  key: string;
-}) => {
+const completeCryptoTransaction = async ({ userId, key }: { userId: number; key: string }) => {
   const transaction = await dbWrite.cryptoTransaction.findFirst({
     where: {
       userId,

@@ -15,7 +15,7 @@ const log = (data: MixedObject) => {
 
 // Initialize the CDP client, which automatically loads
 // the API Key and Wallet Secret from the environment
-export const cdp = new CdpClient({
+const cdp = new CdpClient({
   apiKeyId: env.CDP_API_KEY_ID,
   apiKeySecret: env.CDP_API_KEY_SECRET,
   walletSecret: env.CDP_WALLET_SECRET,
@@ -135,7 +135,7 @@ export async function getWalletForUser(userId: number) {
   return new EasyWallet({ userId, account, smartAccount });
 }
 
-export class EasyWallet {
+class EasyWallet {
   userId: number;
   account: EvmServerAccount;
   smartAccount: EvmSmartAccount;

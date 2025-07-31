@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
-import { importJWK, JWTPayload, SignJWT } from 'jose';
+import type { JWTPayload } from 'jose';
+import { importJWK, SignJWT } from 'jose';
 import { env } from '~/env/server';
 
 const BASE_URL = 'api.developer.coinbase.com';
