@@ -1,6 +1,6 @@
 import { Button, Stack } from '@mantine/core';
 import { IconCoinBitcoin } from '@tabler/icons-react';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
+import type { BuzzPurchaseImprovedProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -10,7 +10,7 @@ export const BuzzCoinbaseButton = ({
   buzzAmount,
   disabled,
   buzzType,
-}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+}: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;

@@ -1,7 +1,7 @@
 import { Button, Stack } from '@mantine/core';
 import { IconCreditCard, IconCreditCardFilled, IconMoodSad } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
+import type { BuzzPurchaseImprovedProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -14,7 +14,7 @@ export const BuzzCoinbaseOnrampButton = ({
   disabled,
   type = 'default',
   buzzType,
-}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+}: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
