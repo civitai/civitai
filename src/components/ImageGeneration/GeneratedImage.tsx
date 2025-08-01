@@ -88,6 +88,7 @@ import {
   getIsFluxContextFromEngine,
   getIsFluxKontext,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -832,14 +833,9 @@ function WithMemberMenuItem({
   return memberOnly && !currentUser?.isPaidMember ? (
     <Tooltip label="Member only">
       <RequireMembership>
-        <Menu.Item {...props} className="relative pr-10">
-          <span>{children}</span>
-          <div className="absolute inset-y-0 right-1 flex items-center">
-            <ThemeIcon variant="filled" color="grape" size="md">
-              <IconDiamond stroke={2} />
-            </ThemeIcon>
-          </div>
-        </Menu.Item>
+        <SupportButtonPolymorphic component={Menu.Item} icon={IconDiamond} position="right">
+          {children}
+        </SupportButtonPolymorphic>
       </RequireMembership>
     </Tooltip>
   ) : (
