@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -83,17 +83,6 @@ function VirtualColumn<TData>({
   const ref = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useScrollAreaRef();
 
-  //  console.log({
-  //   ref: ref.current?.getBoundingClientRect(),
-  //   scrollArea: scrollAreaRef?.current?.getBoundingClientRect(),
-  // });
-
-  // const refTop = ref.current?.getBoundingClientRect().top ?? 0;
-  // const scrollAreaTop = scrollAreaRef?.current?.getBoundingClientRect().top ?? 0;
-  // const scrollMargin = refTop - scrollAreaTop;
-
-  // console.log({ scrollMargin });
-
   const getItemKey = useCallback(
     (i: number) => {
       const { data } = items[i];
@@ -103,21 +92,32 @@ function VirtualColumn<TData>({
     [items]
   );
 
+  const offset =
+    ref.current && scrollAreaRef?.current
+      ? getOffsetTopRelativeToAncestor(ref.current, scrollAreaRef.current)
+      : 0;
+
   const rowVirtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollAreaRef?.current ?? null,
     estimateSize: (i) => items[i].height,
     overscan: 5,
-    // scrollMargin: ref.current?.parentElement?.offsetTop ?? 0,
     getItemKey,
     gap: 16,
+    scrollMargin: offset,
+    initialOffset: offset,
   });
 
   return (
     <div
       ref={ref}
       className={className}
-      style={{ ...style, height: rowVirtualizer.getTotalSize(), position: 'relative' }}
+      style={{
+        ...style,
+        height: rowVirtualizer.getTotalSize(),
+        width: '100%',
+        position: 'relative',
+      }}
     >
       {rowVirtualizer.getVirtualItems().map((item) => (
         <div
@@ -127,7 +127,8 @@ function VirtualColumn<TData>({
             top: 0,
             left: 0,
             width: '100%',
-            transform: `translateY(${item.start}px)`,
+            height: items[item.index].height,
+            transform: `translateY(${item.start - rowVirtualizer.options.scrollMargin}px)`,
           }}
         >
           <VirtualItem index={item.index} item={items[item.index]} {...rest} />
@@ -172,4 +173,20 @@ function VirtualItem<TData>({
     default:
       return null;
   }
+}
+
+function getOffsetTopRelativeToAncestor(descendant: HTMLElement, ancestor: HTMLElement): number {
+  let offset = 0;
+  let current: HTMLElement | null = descendant;
+
+  while (current && current !== ancestor) {
+    offset += current.offsetTop;
+    current = current.offsetParent as HTMLElement;
+  }
+
+  if (current !== ancestor) {
+    throw new Error('Ancestor is not an offsetParent of the descendant');
+  }
+
+  return offset;
 }

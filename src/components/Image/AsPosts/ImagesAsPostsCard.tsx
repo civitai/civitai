@@ -44,7 +44,6 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
@@ -86,9 +85,6 @@ export function ImagesAsPostsCard({
     data.images.some((i) => i.modelVersionIdsManual?.includes(currentModelVersionId));
 
   const image = data.images[0];
-
-  // const [embla, setEmbla] = useState<Embla | null>(null);
-  // const [slidesInView, setSlidesInView] = useState<number[]>([0]);
 
   const { gallerySettings, toggle } = useGallerySettings({ modelId: model.id });
 
@@ -151,16 +147,6 @@ export function ImagesAsPostsCard({
     },
     []
   );
-
-  // useEffect(() => {
-  //   if (!embla) return;
-  //   setSlidesInView(embla.slidesInView());
-  //   const onSelect = () => setSlidesInView([embla.selectedScrollSnap(), ...embla.slidesInView()]);
-  //   embla.on('select', onSelect);
-  //   return () => {
-  //     embla.off('select', onSelect);
-  //   };
-  // }, [embla]);
 
   const moderationOptions = (image: (typeof data.images)[number]) => {
     if (!showModerationOptions) return null;
@@ -246,8 +232,6 @@ export function ImagesAsPostsCard({
         }
       : undefined;
 
-  const { ref, inView } = useInView({ key: cosmeticData ? 1 : 0 });
-
   return (
     <TwCosmeticWrapper
       className="w-full"
@@ -266,7 +250,6 @@ export function ImagesAsPostsCard({
         <TwCard
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
-          ref={ref}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
           {data.user.id !== -1 && (
@@ -275,291 +258,285 @@ export function ImagesAsPostsCard({
               radius={0}
               className={clsx('z-[2] h-[58px]', cosmetic && 'rounded-t-lg ')}
             >
-              {inView && (
-                <Group gap={8} align="flex-start" justify="space-between" wrap="nowrap">
-                  <UserAvatar
-                    user={data.user}
-                    subText={
-                      <Group gap="xs" wrap="nowrap">
-                        {data.publishedAt || data.sortAt ? (
-                          <DaysFromNow date={data.publishedAt || data.sortAt} />
-                        ) : (
-                          <Text>Not published</Text>
-                        )}
-                        {(fromAutoResource || fromManualResource) && (
-                          <Group ml={6} gap={4}>
-                            {fromAutoResource && (
-                              <Tooltip label="Auto-detected resource" withArrow>
-                                <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
-                                  <IconAutomaticGearbox size={16} />
-                                </ThemeIcon>
-                              </Tooltip>
-                            )}
-                            {fromManualResource && (
-                              <Tooltip label="Manually-added resource" withArrow>
-                                <ThemeIcon color="cyan" variant="light" radius="xl" size={18}>
-                                  <IconUserPlus size={16} />
-                                </ThemeIcon>
-                              </Tooltip>
-                            )}
-                          </Group>
-                        )}
-                      </Group>
-                    }
-                    subTextForce
-                    size="md"
-                    spacing="xs"
-                    badge={
-                      isOP ? (
-                        <Badge size="xs" color="violet" radius="xl">
-                          OP
-                        </Badge>
-                      ) : null
-                    }
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group gap={8} justify="flex-end" wrap="nowrap">
-                    {!data.publishedAt && (
-                      <Tooltip label="Post not Published" withArrow>
-                        <Link href={`/posts/${data.postId}/edit`}>
-                          <LegacyActionIcon color="red" variant="outline">
-                            <IconExclamationMark />
-                          </LegacyActionIcon>
-                        </Link>
-                      </Tooltip>
-                    )}
-                    {data.review ? (
-                      <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
-                        <Badge
-                          variant="light"
-                          radius="md"
-                          size="lg"
-                          style={{
-                            userSelect: 'none',
-                            padding: 4,
-                            height: 'auto',
-                            cursor: 'pointer',
-                          }}
-                          color={isThumbsUp ? 'success.5' : 'red'}
-                        >
-                          <Group gap={4} wrap="nowrap">
-                            {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
-                            {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
-                          </Group>
-                        </Badge>
-                      </RoutedDialogLink>
-                    ) : null}
-                  </Group>
+              <Group gap={8} align="flex-start" justify="space-between" wrap="nowrap">
+                <UserAvatar
+                  user={data.user}
+                  subText={
+                    <Group gap="xs" wrap="nowrap">
+                      {data.publishedAt || data.sortAt ? (
+                        <DaysFromNow date={data.publishedAt || data.sortAt} />
+                      ) : (
+                        <Text>Not published</Text>
+                      )}
+                      {(fromAutoResource || fromManualResource) && (
+                        <Group ml={6} gap={4}>
+                          {fromAutoResource && (
+                            <Tooltip label="Auto-detected resource" withArrow>
+                              <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
+                                <IconAutomaticGearbox size={16} />
+                              </ThemeIcon>
+                            </Tooltip>
+                          )}
+                          {fromManualResource && (
+                            <Tooltip label="Manually-added resource" withArrow>
+                              <ThemeIcon color="cyan" variant="light" radius="xl" size={18}>
+                                <IconUserPlus size={16} />
+                              </ThemeIcon>
+                            </Tooltip>
+                          )}
+                        </Group>
+                      )}
+                    </Group>
+                  }
+                  subTextForce
+                  size="md"
+                  spacing="xs"
+                  badge={
+                    isOP ? (
+                      <Badge size="xs" color="violet" radius="xl">
+                        OP
+                      </Badge>
+                    ) : null
+                  }
+                  withUsername
+                  linkToProfile
+                />
+                <Group gap={8} justify="flex-end" wrap="nowrap">
+                  {!data.publishedAt && (
+                    <Tooltip label="Post not Published" withArrow>
+                      <Link href={`/posts/${data.postId}/edit`}>
+                        <LegacyActionIcon color="red" variant="outline">
+                          <IconExclamationMark />
+                        </LegacyActionIcon>
+                      </Link>
+                    </Tooltip>
+                  )}
+                  {data.review ? (
+                    <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
+                      <Badge
+                        variant="light"
+                        radius="md"
+                        size="lg"
+                        style={{
+                          userSelect: 'none',
+                          padding: 4,
+                          height: 'auto',
+                          cursor: 'pointer',
+                        }}
+                        color={isThumbsUp ? 'success.5' : 'red'}
+                      >
+                        <Group gap={4} wrap="nowrap">
+                          {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                          {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
+                        </Group>
+                      </Badge>
+                    </RoutedDialogLink>
+                  ) : null}
                 </Group>
-              )}
+              </Group>
             </Paper>
           )}
 
-          <div
-            className="relative flex-1 overflow-hidden opacity-0 transition-opacity"
-            style={{ opacity: inView ? 1 : 0 }}
-          >
-            {inView &&
-              (data.images.length === 1 ? (
-                <ImageGuard2 image={image}>
-                  {(safe) => (
-                    <>
-                      {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                      {safe && (
-                        <Stack gap="xs" className="absolute right-2 top-2 z-10">
-                          <ImageContextMenu
-                            image={image}
-                            additionalMenuItems={moderationOptions(image)}
+          <div className="relative flex-1 overflow-hidden">
+            {data.images.length === 1 ? (
+              <ImageGuard2 image={image}>
+                {(safe) => (
+                  <>
+                    {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
+                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                    {safe && (
+                      <Stack gap="xs" className="absolute right-2 top-2 z-10">
+                        <ImageContextMenu
+                          image={image}
+                          additionalMenuItems={moderationOptions(image)}
+                        />
+                        {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
+                          <HoverActionButton
+                            label="Remix"
+                            size={30}
+                            color="white"
+                            variant="filled"
+                            data-activity="remix:model-gallery"
+                            onClick={handleRemixClick(image)}
+                          >
+                            <IconBrush stroke={2.5} size={16} />
+                          </HoverActionButton>
+                        )}
+                      </Stack>
+                    )}
+                    <RoutedDialogLink
+                      name="imageDetail"
+                      state={{ imageId: image.id, images: [image] }}
+                      className={classes.link}
+                    >
+                      <>
+                        {safe && (
+                          <EdgeMedia2
+                            metadata={image.metadata}
+                            src={image.url}
+                            thumbnailUrl={image.thumbnailUrl}
+                            name={image.name ?? image.id.toString()}
+                            alt={image.name ?? undefined}
+                            type={image.type}
+                            width={450}
+                            placeholder="empty"
+                            wrapperProps={{ style: { zIndex: 1 } }}
+                            skip={getSkipValue(image)}
+                            // fadeIn
+                            className="z-[1] object-cover"
                           />
-                          {features.imageGeneration &&
-                            (image.hasPositivePrompt ?? image.hasMeta) && (
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:model-gallery"
-                                onClick={handleRemixClick(image)}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
-                        </Stack>
-                      )}
-                      <RoutedDialogLink
-                        name="imageDetail"
-                        state={{ imageId: image.id, images: [image] }}
-                        className={classes.link}
-                      >
-                        <>
-                          {safe && (
-                            <EdgeMedia2
-                              metadata={image.metadata}
-                              src={image.url}
-                              thumbnailUrl={image.thumbnailUrl}
-                              name={image.name ?? image.id.toString()}
-                              alt={image.name ?? undefined}
-                              type={image.type}
-                              width={450}
-                              placeholder="empty"
-                              wrapperProps={{ style: { zIndex: 1 } }}
-                              skip={getSkipValue(image)}
-                              // fadeIn
-                              className="z-[1] object-cover"
+                        )}
+                      </>
+                    </RoutedDialogLink>
+
+                    <Reactions
+                      entityId={image.id}
+                      entityType="image"
+                      reactions={image.reactions}
+                      metrics={{
+                        likeCount: image.stats?.likeCountAllTime,
+                        dislikeCount: image.stats?.dislikeCountAllTime,
+                        heartCount: image.stats?.heartCountAllTime,
+                        laughCount: image.stats?.laughCountAllTime,
+                        cryCount: image.stats?.cryCountAllTime,
+                        tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                      }}
+                      readonly={!safe}
+                      className={classes.reactions}
+                      targetUserId={image.user.id}
+                      disableBuzzTip={image.poi}
+                    />
+                    {image.hasMeta && (
+                      <div className="absolute bottom-0.5 right-0.5 z-10">
+                        <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                          <LegacyActionIcon component="div" variant="transparent" size="lg">
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
                             />
-                          )}
-                        </>
-                      </RoutedDialogLink>
-
-                      <Reactions
-                        entityId={image.id}
-                        entityType="image"
-                        reactions={image.reactions}
-                        metrics={{
-                          likeCount: image.stats?.likeCountAllTime,
-                          dislikeCount: image.stats?.dislikeCountAllTime,
-                          heartCount: image.stats?.heartCountAllTime,
-                          laughCount: image.stats?.laughCountAllTime,
-                          cryCount: image.stats?.cryCountAllTime,
-                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                        }}
-                        readonly={!safe}
-                        className={classes.reactions}
-                        targetUserId={image.user.id}
-                        disableBuzzTip={image.poi}
-                      />
-                      {image.hasMeta && (
-                        <div className="absolute bottom-0.5 right-0.5 z-10">
-                          <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                            <LegacyActionIcon component="div" variant="transparent" size="lg">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </LegacyActionIcon>
-                          </ImageMetaPopover2>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </ImageGuard2>
-              ) : (
-                <Embla loop duration={0} className="flex h-full flex-col">
-                  <Embla.Viewport className="flex-1">
-                    <Embla.Container className="flex h-full">
-                      {data.images.map((image, index) => (
-                        <Embla.Slide
-                          key={image.id}
-                          index={index}
-                          className="relative flex-[0_0_100%]"
-                        >
-                          <ImageGuard2 image={image} connectType="post" connectId={postId}>
-                            {(safe) => (
-                              <>
-                                {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                                {safe && (
-                                  <Stack gap="xs" className="absolute right-2 top-2 z-10">
-                                    <ImageContextMenu
-                                      image={image}
-                                      additionalMenuItems={moderationOptions(image)}
-                                    />
-                                    {features.imageGeneration &&
-                                      (image.hasPositivePrompt ?? image.hasMeta) && (
-                                        <HoverActionButton
-                                          label="Remix"
-                                          size={30}
-                                          color="white"
-                                          variant="filled"
-                                          data-activity="remix:model-gallery"
-                                          onClick={handleRemixClick(image)}
-                                        >
-                                          <IconBrush stroke={2.5} size={16} />
-                                        </HoverActionButton>
-                                      )}
-                                  </Stack>
-                                )}
-                                <RoutedDialogLink
-                                  name="imageDetail"
-                                  state={{ imageId: image.id, images: data.images }}
-                                  className={classes.link}
-                                >
-                                  <>
-                                    <MediaHash {...image} className="opacity-70" />
-
-                                    {safe && (
-                                      <EdgeMedia2
-                                        metadata={image.metadata}
-                                        src={image.url}
-                                        thumbnailUrl={image.thumbnailUrl}
-                                        name={image.name ?? image.id.toString()}
-                                        alt={image.name ?? undefined}
-                                        type={image.type}
-                                        width={450}
-                                        placeholder="empty"
-                                        wrapperProps={{ style: { zIndex: 1 } }}
-                                        skip={getSkipValue(image)}
-                                        // fadeIn
-                                        className="z-[1] object-cover"
-                                      />
-                                    )}
-                                  </>
-                                </RoutedDialogLink>
-                                <Reactions
-                                  entityId={image.id}
-                                  entityType="image"
-                                  reactions={image.reactions}
-                                  metrics={{
-                                    likeCount: image.stats?.likeCountAllTime,
-                                    dislikeCount: image.stats?.dislikeCountAllTime,
-                                    heartCount: image.stats?.heartCountAllTime,
-                                    laughCount: image.stats?.laughCountAllTime,
-                                    cryCount: image.stats?.cryCountAllTime,
-                                    tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                  }}
-                                  readonly={!safe}
-                                  className={classes.reactions}
-                                  targetUserId={image.user.id}
-                                  disableBuzzTip={image.poi}
-                                />
-                                {image.hasMeta && (
-                                  <div className="absolute bottom-0.5 right-0.5 z-10">
-                                    <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                                      <LegacyActionIcon
-                                        component="div"
-                                        variant="transparent"
-                                        size="lg"
+                          </LegacyActionIcon>
+                        </ImageMetaPopover2>
+                      </div>
+                    )}
+                  </>
+                )}
+              </ImageGuard2>
+            ) : (
+              <Embla
+                loop
+                duration={0}
+                className="flex h-full flex-col"
+                // key={data.images.map((x) => x.id).join('_')}
+              >
+                <Embla.Viewport className="flex-1">
+                  <Embla.Container className="flex h-full">
+                    {data.images.map((image, index) => (
+                      <Embla.Slide key={index} index={index} className="relative flex-[0_0_100%]">
+                        <ImageGuard2 image={image} connectType="post" connectId={postId}>
+                          {(safe) => (
+                            <>
+                              {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
+                              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                              {safe && (
+                                <Stack gap="xs" className="absolute right-2 top-2 z-10">
+                                  <ImageContextMenu
+                                    image={image}
+                                    additionalMenuItems={moderationOptions(image)}
+                                  />
+                                  {features.imageGeneration &&
+                                    (image.hasPositivePrompt ?? image.hasMeta) && (
+                                      <HoverActionButton
+                                        label="Remix"
+                                        size={30}
+                                        color="white"
+                                        variant="filled"
+                                        data-activity="remix:model-gallery"
+                                        onClick={handleRemixClick(image)}
                                       >
-                                        <IconInfoCircle
-                                          color="white"
-                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                          opacity={0.8}
-                                          strokeWidth={2.5}
-                                          size={26}
-                                        />
-                                      </LegacyActionIcon>
-                                    </ImageMetaPopover2>
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </ImageGuard2>
-                        </Embla.Slide>
-                      ))}
-                    </Embla.Container>
-                  </Embla.Viewport>
-                  <Embla.Controls />
-                  <Embla.Indicators
-                    className="flex w-full gap-px"
-                    indicatorClassName="h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100"
-                  />
-                </Embla>
-              ))}
+                                        <IconBrush stroke={2.5} size={16} />
+                                      </HoverActionButton>
+                                    )}
+                                </Stack>
+                              )}
+                              <RoutedDialogLink
+                                name="imageDetail"
+                                state={{ imageId: image.id, images: data.images }}
+                                className={classes.link}
+                              >
+                                <>
+                                  <MediaHash {...image} className="opacity-70" />
+
+                                  {safe && (
+                                    <EdgeMedia2
+                                      metadata={image.metadata}
+                                      src={image.url}
+                                      thumbnailUrl={image.thumbnailUrl}
+                                      name={image.name ?? image.id.toString()}
+                                      alt={image.name ?? undefined}
+                                      type={image.type}
+                                      width={450}
+                                      placeholder="empty"
+                                      wrapperProps={{ style: { zIndex: 1 } }}
+                                      skip={getSkipValue(image)}
+                                      // fadeIn
+                                      className="z-[1] object-cover"
+                                    />
+                                  )}
+                                </>
+                              </RoutedDialogLink>
+                              <Reactions
+                                entityId={image.id}
+                                entityType="image"
+                                reactions={image.reactions}
+                                metrics={{
+                                  likeCount: image.stats?.likeCountAllTime,
+                                  dislikeCount: image.stats?.dislikeCountAllTime,
+                                  heartCount: image.stats?.heartCountAllTime,
+                                  laughCount: image.stats?.laughCountAllTime,
+                                  cryCount: image.stats?.cryCountAllTime,
+                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                }}
+                                readonly={!safe}
+                                className={classes.reactions}
+                                targetUserId={image.user.id}
+                                disableBuzzTip={image.poi}
+                              />
+                              {image.hasMeta && (
+                                <div className="absolute bottom-0.5 right-0.5 z-10">
+                                  <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                                    <LegacyActionIcon
+                                      component="div"
+                                      variant="transparent"
+                                      size="lg"
+                                    >
+                                      <IconInfoCircle
+                                        color="white"
+                                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                        opacity={0.8}
+                                        strokeWidth={2.5}
+                                        size={26}
+                                      />
+                                    </LegacyActionIcon>
+                                  </ImageMetaPopover2>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </ImageGuard2>
+                      </Embla.Slide>
+                    ))}
+                  </Embla.Container>
+                </Embla.Viewport>
+                <Embla.Controls />
+                <Embla.Indicators
+                  className="flex w-full gap-px"
+                  indicatorClassName="h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100"
+                />
+              </Embla>
+            )}
           </div>
         </TwCard>
       </>

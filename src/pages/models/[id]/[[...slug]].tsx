@@ -117,13 +117,8 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import {
-  Availability,
-  CollectionType,
-  ModelModifier,
-  ModelStatus,
-  ModelType,
-} from '~/shared/utils/prisma/enums';
+import { ModelModifier } from '~/shared/utils/prisma/enums';
+import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -1319,4 +1314,21 @@ export default function ModelDetailsV2({
       </SensitiveShield>
     </>
   );
+
+  // return (
+  //   <Box ref={gallerySectionRef} id="gallery" mt="md">
+  //     <ImagesAsPostsInfinite
+  //       model={model}
+  //       selectedVersionId={selectedVersion?.id}
+  //       modelVersions={model.modelVersions}
+  //       showModerationOptions={isOwner}
+  //       showPOIWarning={model.poi}
+  //       generationOptions={{
+  //         generationModelId: selectedVersion?.meta.picFinderModelId,
+  //         includeEditingActions: isOwner,
+  //       }}
+  //       canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
+  //     />
+  //   </Box>
+  // );
 }
