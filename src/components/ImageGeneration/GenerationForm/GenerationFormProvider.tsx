@@ -17,6 +17,7 @@ import type {
 } from '~/server/services/generation/generation.service';
 import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
+  fluxKreaAir,
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
@@ -74,7 +75,12 @@ const formSchema = baseSchema
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
-    if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
+    if (
+      data.model.id === fluxModelId &&
+      data.fluxMode !== fluxStandardAir &&
+      data.fluxMode !== fluxKreaAir
+    )
+      data.priority = 'low';
 
     return removeEmpty({
       ...data,
@@ -435,7 +441,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (
         watchedValues.baseModel === 'Flux1' &&
         !!watchedValues.resources?.length &&
-        watchedValues.fluxMode !== fluxStandardAir
+        watchedValues.fluxMode !== fluxStandardAir &&
+        watchedValues.fluxMode !== fluxKreaAir
       ) {
         form.setValue('fluxMode', fluxStandardAir);
       }

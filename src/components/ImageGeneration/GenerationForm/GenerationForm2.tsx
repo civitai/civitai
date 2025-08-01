@@ -106,6 +106,7 @@ import {
   sanitizeParamsByWorkflowDefinition,
   getImageGenerationBaseModels,
   fluxDraftAir,
+  fluxKreaAir,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -364,7 +365,9 @@ export function GenerationFormContent() {
         );
       }
 
-      setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
+      setRunsOnFalAI(
+        model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir
+      );
     });
     return () => {
       subscription.unsubscribe();
