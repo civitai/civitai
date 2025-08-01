@@ -4,7 +4,8 @@ import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
+import { constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
 import {
   BlockedReason,
   ImageScanType,
@@ -13,7 +14,7 @@ import {
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -804,6 +805,16 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   }));
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
 
+  const imageBaseModels = await dbRead.$queryRaw<{ baseModel: BaseModel | null }[]>`
+    SELECT mv."baseModel" as "baseModel"
+    FROM "ImageResourceNew" ir
+    JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+    WHERE ir."imageId" = ${image.id}
+  `;
+  const hasRestrictedBaseModel =
+    imageBaseModels.length > 0 &&
+    imageBaseModels.some((x) => x.baseModel && nsfwRestrictedBaseModels.includes(x.baseModel));
+
   let reviewKey: string | null = null;
   const flags = {
     hasAdultTag: false,
@@ -988,6 +999,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   if (flags.nsfw && !validAiGeneration) {
     data.ingestion = ImageIngestionStatus.Blocked;
     data.blockedFor = BlockedReason.AiNotVerified;
+  }
+
+  if (flags.nsfw && hasRestrictedBaseModel) {
+    data.ingestion = ImageIngestionStatus.Blocked;
+    data.blockedFor = BlockedReason.TOS;
   }
 
   if (flags.nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {

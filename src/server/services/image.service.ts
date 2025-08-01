@@ -2881,12 +2881,9 @@ export const getImagesForPosts = async ({
       i.minor,
       i.poi
     FROM "Image" i
-    LEFT JOIN (
-      SELECT DISTINCT irn."imageId"
-      FROM "ImageResourceNew" irn
-      JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" 
-      WHERE mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels)})
-    ) blocked_images ON blocked_images."imageId" = i.id AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
+    LEFT JOIN "RestrictedImagesByBaseModel" ribm
+      ON ribm."imageId" = i.id
+      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
   `;
