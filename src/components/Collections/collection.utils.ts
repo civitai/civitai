@@ -129,6 +129,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
       throw new Error('unsupported collection type');
   }
 };
+
 export const useQueryCollections = (
   filters?: Partial<GetAllCollectionsInfiniteSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }

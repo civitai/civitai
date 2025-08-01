@@ -1,7 +1,6 @@
 import { ArticleEngagementType } from '~/shared/utils/prisma/enums';
 import produce from 'immer';
 import { useMemo } from 'react';
-import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
