@@ -6,11 +6,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import {
-  wanAspectRatios,
-  wanDuration,
-  wanBaseModelMap,
-} from '~/server/orchestrator/wan/wan.schema';
+import { wanDuration, wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { getBaseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
@@ -38,7 +34,6 @@ export function WanFormInput() {
   );
 
   useEffect(() => {
-    console.log({ availableBaseModels, baseModel });
     if (!availableBaseModels.find((x) => x.value === baseModel)) {
       const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
       if (defaultModel) {
@@ -88,7 +83,7 @@ export function WanFormInput() {
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"
-          options={wanAspectRatios}
+          options={config.aspectRatios}
         />
       )}
       {availableBaseModels.length > 1 && (
