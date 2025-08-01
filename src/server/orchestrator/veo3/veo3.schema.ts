@@ -128,6 +128,14 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
         path: ['images'],
       });
     }
+
+    if (!data.prompt.length) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
   },
   inputFn: ({ images, ...args }): Veo3VideoGenInput => {
     const fastMode = !!args.resources?.find((x) => x.id === veo3Models[0].id);

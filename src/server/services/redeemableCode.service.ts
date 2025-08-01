@@ -23,6 +23,8 @@ import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
 import { Prisma } from '@prisma/client';
+import { setVaultFromSubscription } from '~/server/services/vault.service';
+import { updateServiceTier } from '~/server/integrations/freshdesk';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -103,7 +105,7 @@ export async function consumeRedeemableCode({
     throw new Error('Cannot redeem codes for non-Civitai products');
   }
 
-  return await dbWrite.$transaction(
+  const consumedCode = await dbWrite.$transaction(
     async (tx) => {
       const consumedCode = await tx.redeemableCode
         .update({
@@ -373,12 +375,11 @@ export async function consumeRedeemableCode({
 
           await deliverMonthlyCosmetics({
             userIds: [userId],
+            tx,
           });
         });
       }
 
-      await invalidateSession(userId);
-      await getMultipliersForUser(userId, true);
       return consumedCode;
     },
     {
@@ -386,4 +387,24 @@ export async function consumeRedeemableCode({
       timeout: 10000, // 10 seconds timeout for the transaction
     }
   );
+
+  if (consumedCode.type === RedeemableCodeType.Membership) {
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
+    await setVaultFromSubscription({
+      userId,
+    });
+
+    const consumedProductMetadata = consumedCode.price?.product
+      .metadata as SubscriptionProductMetadata;
+
+    if (consumedProductMetadata) {
+      await updateServiceTier({
+        userId,
+        serviceTier: consumedProductMetadata.tier ?? null,
+      });
+    }
+  }
+
+  return consumedCode;
 }

@@ -14,6 +14,8 @@ let isMobile: boolean | undefined;
 export function isMobileDevice() {
   if (isMobile === undefined)
     isMobile =
-      typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+      typeof window !== 'undefined' &&
+      // Before we were using touchpoints which broke laptops or PC with touchscreens / touchpads.
+      ('ontouchstart' in window || /Mobi|Android/i.test(navigator.userAgent));
   return isMobile;
 }

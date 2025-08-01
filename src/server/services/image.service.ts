@@ -12,7 +12,12 @@ import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
-import { CacheTTL, constants, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  METRICS_IMAGES_SEARCH_INDEX,
+  nsfwRestrictedBaseModels,
+} from '~/server/common/constants';
 import {
   BlockedReason,
   ImageScanType,
@@ -120,6 +125,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
@@ -347,6 +353,7 @@ export const moderateImages = async ({
       data: {
         needsReview: null,
         ingestion: 'Scanned',
+        blockedFor: null,
         poi: reviewType === 'poi' ? false : undefined,
         minor: reviewType === 'minor' ? false : undefined,
       },
@@ -1171,6 +1178,20 @@ export const getAllImages = async (
     )`);
   }
 
+  // Filter out images with X/XXX NSFW level that are linked to license-restricted base models
+  // Images with nsfwLevel X (8) or XXX (16) cannot use base models with restricted licenses
+  if (nsfwRestrictedBaseModels.length > 0) {
+    AND.push(Prisma.sql`
+      NOT EXISTS (
+        SELECT 1 FROM "ImageResourceNew" irn
+        JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" 
+        WHERE irn."imageId" = i.id 
+          AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
+          AND mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels)})
+      )
+    `);
+  }
+
   if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1669,6 +1690,7 @@ type ImageSearchInput = GetAllImagesInput & {
   isModerator?: boolean;
   offset?: number;
   entry?: number;
+  blockedFor?: string[];
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -1676,7 +1698,7 @@ type ImageSearchInput = GetAllImagesInput & {
   //reviewId?: number;
 };
 
-async function getImagesFromSearch(input: ImageSearchInput) {
+export async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
@@ -1705,7 +1727,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     offset,
     entry,
     postId,
-    //
     reviewId,
     modelId,
     prioritizedUserIds,
@@ -1719,6 +1740,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     requiringMeta,
     poiOnly,
     minorOnly,
+    blockedFor,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1759,6 +1781,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
     if (minorOnly) {
       filters.push(`minor = true`);
+    }
+    if (blockedFor?.length) {
+      filters.push(`blockedFor IN [${strArray(blockedFor)}]`);
     }
   }
 
@@ -1829,6 +1854,19 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
   filters.push(`(${nsfwFilters.join(' OR ')})`);
+
+  // NSFW License Restrictions Filter
+  // Filter out images with R/X/XXX NSFW levels that use restricted base models
+  if (nsfwRestrictedBaseModels.length > 0) {
+    const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
+
+    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
+    filters.push(
+      `NOT (${nsfwLevelField} IN [${nsfwBrowsingLevelsArray.join(
+        ','
+      )}] AND baseModel IN [${restrictedBaseModelsQuoted.join(',')}])`
+    );
+  }
 
   if (modelVersionId) {
     const versionFilters = [makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)];
@@ -2572,6 +2610,10 @@ export const getImagesForModelVersion = async ({
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
           AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
+          AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" = ANY(ARRAY[${Prisma.join(
+    nsfwRestrictedBaseModels,
+    ','
+  )}]::text[]))
         ORDER BY i."postId", i.index
         LIMIT ${imagesPerVersion}
       ) i
@@ -2838,6 +2880,12 @@ export const getImagesForPosts = async ({
       i.minor,
       i.poi
     FROM "Image" i
+    LEFT JOIN (
+      SELECT DISTINCT irn."imageId"
+      FROM "ImageResourceNew" irn
+      JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" 
+      WHERE mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels)})
+    ) blocked_images ON blocked_images."imageId" = i.id AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
   `;
@@ -3333,6 +3381,9 @@ export const getEntityCoverImage = async ({
           AND m.status = 'Published'
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" IN (${Prisma.join(
+    nsfwRestrictedBaseModels
+  )}))
           ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
 
@@ -3355,6 +3406,9 @@ export const getEntityCoverImage = async ({
           AND mv.status = 'Published'
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" IN (${Prisma.join(
+    nsfwRestrictedBaseModels
+  )}))
           ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
 
@@ -3401,11 +3455,15 @@ export const getEntityCoverImage = async ({
 	          0 "order3"
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
+          LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
             AND p."publishedAt" IS NOT NULL
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" IN (${Prisma.join(
+    nsfwRestrictedBaseModels
+  )}))
           ORDER BY e."entityId", i."postId", i.index
         ) t
 
@@ -4091,7 +4149,8 @@ async function removeNameReference(images: number[]) {
         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
           "needsReview" = null,
           poi = false,
-          ingestion = 'Scanned'::"ImageIngestionStatus"
+          ingestion = 'Scanned'::"ImageIngestionStatus",
+          "blockedFor" = null
       FROM updates t
       WHERE t.id = i.id;
     `;

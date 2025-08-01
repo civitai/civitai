@@ -17,6 +17,7 @@ import {
   getUserEngagedModelVersionsHandler,
   getUserFeatureFlagsHandler,
   getUserFollowingListHandler,
+  getUserListHandler,
   getUserListsHandler,
   getUsernameAvailableHandler,
   getUserPaymentMethodsHandler,
@@ -49,6 +50,7 @@ import {
   getByUsernameSchema,
   getUserByUsernameSchema,
   getUserCosmeticsSchema,
+  getUserListSchema,
   getUserTagsSchema,
   reportProhibitedRequestSchema,
   setLeaderboardEligbilitySchema,
@@ -107,6 +109,7 @@ export const userRouter = router({
   getCreators: publicProcedure.input(getAllQuerySchema.partial()).query(getCreatorsHandler),
   getNotificationSettings: protectedProcedure.query(getNotificationSettingsHandler),
   getLists: publicProcedure.input(getByUsernameSchema).query(getUserListsHandler),
+  getList: publicProcedure.input(getUserListSchema).query(getUserListHandler),
   getLeaderboard: publicProcedure.input(getAllQuerySchema).query(getLeaderboardHandler),
   getCosmetics: protectedProcedure
     .input(getUserCosmeticsSchema.optional())

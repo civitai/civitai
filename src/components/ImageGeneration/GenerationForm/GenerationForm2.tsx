@@ -136,6 +136,7 @@ import {
 import classes from './GenerationForm2.module.scss';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
 let total = 0;
 const tips = {
@@ -219,7 +220,8 @@ export function GenerationFormContent() {
     const metadata = parsePromptMetadata(prompt ?? '');
     const result = imageGenerationSchema.safeParse(metadata);
     if (result.success) {
-      form.setValues(result.data);
+      const { resources, ...data } = result.data;
+      form.setValues(data);
       setShowFillForm(false);
     } else {
       console.error(result.error);
@@ -517,7 +519,14 @@ export function GenerationFormContent() {
             const disableSafetyTolerance = !isFluxKontext;
 
             const resourceTypes = getBaseModelResourceTypes(baseModel);
-            if (!resourceTypes) return <></>;
+            if (!resourceTypes)
+              return (
+                <ResetGenerationPanel
+                  onResetClick={() => {
+                    form.reset();
+                  }}
+                />
+              );
 
             return (
               <>

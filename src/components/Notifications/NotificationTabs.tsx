@@ -1,8 +1,7 @@
 import type { TabsProps } from '@mantine/core';
-import { Badge, Group, Tabs, Text } from '@mantine/core';
+import { Badge, Tabs } from '@mantine/core';
 import {
   getCategoryDisplayName,
-  useNotificationSettings,
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
@@ -10,6 +9,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 
 const categoryTabs: string[] = Object.values(NotificationCategory);
 const tabs = ['all', 'announcements', ...categoryTabs];

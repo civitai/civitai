@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -25,6 +25,7 @@ const AdsContext = createContext<{
   username?: string;
   isMember: boolean;
   kontextReady: boolean;
+  kontextAvailable: boolean;
 } | null>(null);
 
 export function useAdsContext() {
@@ -33,13 +34,17 @@ export function useAdsContext() {
   return context;
 }
 
-const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean; kontextReady: boolean }>(
-  () => ({
-    ready: false,
-    adsBlocked: true,
-    kontextReady: false,
-  })
-);
+const useAdProviderStore = create<{
+  ready: boolean;
+  adsBlocked: boolean;
+  kontextReady: boolean;
+  kontextAvailable: boolean;
+}>(() => ({
+  ready: false,
+  adsBlocked: true,
+  kontextReady: false,
+  kontextAvailable: false,
+}));
 
 const blockedUrls: string[] = [
   '/collections/6503138',
@@ -53,6 +58,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const kontextReady = useAdProviderStore((state) => state.kontextReady);
+  const kontextAvailable = useAdProviderStore((state) => state.kontextAvailable);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -114,6 +120,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const kontextAvailableCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!kontextAvailableCheckedRef.current) {
+      kontextAvailableCheckedRef.current = true;
+      kontextPrecheck().then((kontextAvailable) =>
+        useAdProviderStore.setState({ kontextAvailable })
+      );
+    }
+  }, []);
+
   return (
     <AdsContext.Provider
       value={{
@@ -123,6 +139,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         username: currentUser?.username,
         isMember,
         kontextReady,
+        kontextAvailable,
       }}
     >
       {children}
@@ -239,4 +256,19 @@ function ImpressionTracker() {
   }, [fingerprint, worker, currentUser]);
 
   return null;
+}
+
+type KontextPrecheckResponse = {
+  canShowAds: boolean;
+};
+async function kontextPrecheck() {
+  if (isDev) return true;
+  const response = await fetch('https://server.megabrain.co/api/v1/precheck', {
+    method: 'POST',
+    body: JSON.stringify({ publisherToken: isDev ? 'civitai-dev' : 'civitai-b9c3s0xx6u' }),
+  });
+
+  if (!response.ok) return false;
+  const json: KontextPrecheckResponse = await response.json();
+  return json.canShowAds;
 }

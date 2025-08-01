@@ -137,6 +137,16 @@ const membershipDowngradeSchema = z.object({
     .optional(),
 });
 
+const csamHelpTriggeredSchema = z.object({
+  type: z.literal('CSAM_Help_Triggered'),
+  details: z
+    .object({
+      query: z.string().optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -153,4 +163,5 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   loginRedirectSchema,
   membershipCancelSchema,
   membershipDowngradeSchema,
+  csamHelpTriggeredSchema,
 ]);

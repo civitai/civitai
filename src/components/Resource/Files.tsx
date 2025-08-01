@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Button,
   Card,
   Divider,
@@ -12,7 +11,6 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
-  Anchor,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { useViewportSize } from '@mantine/hooks';
@@ -31,7 +29,6 @@ import { isEqual, startCase } from 'lodash-es';
 import { MasonryScroller, useContainerPosition, usePositioner, useResizeObserver } from 'masonic';
 import { useRef, useState } from 'react';
 
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
@@ -50,8 +47,6 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
-  const theme = useMantineTheme();
-
   const { files, onDrop, startUpload, hasPending, fileExtensions, maxFiles } = useFilesContext();
 
   const masonryRef = useRef(null);
@@ -109,7 +104,7 @@ export function Files() {
           </Dropzone.Idle> */}
 
           <IconFileUpload size={50} stroke={1.5} />
-          <Stack gap={8}>
+          <Stack gap={8} align="center" justify="center">
             <Text size="xl" inline>
               Drop your files here or click to select
             </Text>
@@ -119,7 +114,7 @@ export function Files() {
           </Stack>
         </Group>
       </Dropzone>
-    <UploadNotice className="-mt-2" />
+      <UploadNotice className="-mt-2" />
       {files.length > 0 ? (
         <Button
           onClick={async () => {

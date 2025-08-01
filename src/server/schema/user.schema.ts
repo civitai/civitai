@@ -1,7 +1,7 @@
 import * as z from 'zod/v4';
 import { constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 // import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
@@ -149,6 +149,12 @@ export type BatchBlockTagsSchema = z.infer<typeof batchBlockTagsSchema>;
 
 export const getByUsernameSchema = z.object({ username: usernameSchema });
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
+
+export const getUserListSchema = paginationSchema.extend({
+  username: usernameSchema,
+  type: z.enum(['following', 'followers', 'hidden', 'blocked']),
+});
+export type GetUserListSchema = z.infer<typeof getUserListSchema>;
 
 export type DeleteUserInput = z.infer<typeof deleteUserSchema>;
 export const deleteUserSchema = z.object({

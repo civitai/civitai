@@ -1,0 +1,12 @@
+export declare const card: string;
+export declare const cardTitle: string;
+export declare const image: string;
+export declare const introText: string;
+export declare const prepaidButton: string;
+export declare const prepaidCard: string;
+export declare const prepaidContent: string;
+export declare const prepaidDescription: string;
+export declare const prepaidIconWrapper: string;
+export declare const prepaidTitle: string;
+export declare const price: string;
+export declare const title: string;

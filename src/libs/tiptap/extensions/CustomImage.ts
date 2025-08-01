@@ -3,6 +3,7 @@ import ImageExtension from '@tiptap/extension-image';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { constants } from '~/server/common/constants';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 
 type CustomImageOptions = ImageOptions & {
@@ -13,13 +14,15 @@ type CustomImageOptions = ImageOptions & {
   onUploadEnd?: () => void;
 };
 
-export const CustomImage = ImageExtension.extend<CustomImageOptions>({
+export const CustomImage = ImageExtension.configure({ inline: true }).extend<CustomImageOptions>({
   draggable: true,
+
   addOptions() {
     return {
       ...this.parent?.(),
       ...constants.richTextEditor,
-    };
+      accept: IMAGE_MIME_TYPE,
+    } as CustomImageOptions;
   },
   addProseMirrorPlugins() {
     return [

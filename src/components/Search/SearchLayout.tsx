@@ -100,7 +100,7 @@ export function SearchLayout({
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   const router = useRouter();
-  const { trackSearch } = useTrackEvent();
+  const { trackSearch, trackAction } = useTrackEvent();
 
   useEffect(() => {
     const result = searchQuerySchema.safeParse(router.query);
@@ -119,7 +119,19 @@ export function SearchLayout({
 
     if (query) {
       const illegalSearch = includesInappropriate({ prompt: query });
-      return illegalSearch === 'minor';
+      const isIllegal = illegalSearch === 'minor';
+
+      if (isIllegal) {
+        trackAction({
+          type: 'CSAM_Help_Triggered',
+          details: {
+            query,
+            index,
+          },
+        }).catch(() => undefined);
+      }
+
+      return isIllegal;
     }
 
     return false;
@@ -190,7 +202,7 @@ export function SearchLayout({
                           Online Support (global)
                         </Text>{' '}
                         <Anchor
-                          href="https://get-help.stopitnow.org.uk"
+                          href="https://www.stopitnow.org.uk/self-help/concerned-about-your-own-thoughts-or-behaviour/?utm_source=civitai&utm_medium=warning_message&utm_campaign=civitai_warning"
                           target="_blank"
                           rel="noopener noreferrer"
                         >

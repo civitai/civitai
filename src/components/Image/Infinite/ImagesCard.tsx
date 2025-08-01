@@ -42,7 +42,7 @@ import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  const { images, ...contextProps } = useImagesContext();
+  const { getImages, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
@@ -122,7 +122,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     name="imageDetail"
                     state={{
                       imageId: image.id,
-                      images: getDialogState(image.id, images),
+                      images: getDialogState(image.id, getImages()),
                       ...contextProps,
                     }}
                     className="absolute inset-0"
@@ -141,6 +141,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         width={450}
                         placeholder="empty"
                         contain
+                        loading="lazy"
                         // fadeIn
                       />
                     ) : (

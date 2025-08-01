@@ -14,25 +14,19 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
-import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
-import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
+import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
-import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
+import { EarningBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
-import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
-import { OwnedBuzzWithdrawalRequestsPaged } from '~/components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
+import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
@@ -43,10 +37,6 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
-
-const RedeemCodeModal = dynamic(() =>
-  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
-);
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -69,18 +59,7 @@ export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
-  const { query } = useRouter();
   const features = useFeatureFlags();
-
-  // Handle direct redemption
-  useEffect(() => {
-    if (!query?.redeem || typeof window === 'undefined') return;
-    dialogStore.trigger({
-      id: 'redeem-code',
-      component: RedeemCodeModal,
-      props: { code: query.redeem as string },
-    });
-  }, [query.redeem]);
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -112,6 +91,9 @@ export default function UserBuzzDashboard() {
           <Title order={1}>My Buzz Dashboard</Title>
 
           <BuzzDashboardOverview accountId={currentUser?.id as number} />
+
+          {/* Redeem Buzz Code Section */}
+          <RedeemCodeCard />
 
           <EarningBuzz withCTA />
 

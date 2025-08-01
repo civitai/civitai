@@ -114,31 +114,15 @@ async function getArticleScore(ctx: Context) {
 
 async function getImageScore(ctx: Context) {
   const affected = await ctx.ch.$query<{ userId: number; score: number }>`
-    WITH affected AS (
-      SELECT DISTINCT ic.userId as userId
-      FROM entityMetricEvents em
-      JOIN images_created ic ON ic.id = em.entityId
-      WHERE entityType = 'Image'
-      AND metricType IN ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry', 'Comment')
-      AND em.createdAt > ${ctx.lastUpdate}
-    )
     SELECT
-      ic.userId as userId,
+      userId,
       (
-        sumIf(em.metricValue, em.metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) * ${ctx.scoreMultipliers.images.reactions}
-        + sumIf(em.metricValue, em.metricType = 'Comment') * ${ctx.scoreMultipliers.images.comments}
+        sumMerge(reactions) * ${ctx.scoreMultipliers.images.reactions}
+        + sumMerge(comments) * ${ctx.scoreMultipliers.images.comments}
       ) as score
-    FROM entityMetricEvents em
-    JOIN images_created ic ON ic.id = em.entityId
-    WHERE entityType = 'Image'
-    AND metricType IN ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry', 'Comment')
-    AND ic.id NOT IN (
-      SELECT imageId
-      FROM images i
-      WHERE i.type IN ('Delete', 'DeleteTOS')
-    )
-    AND ic.userId IN (SELECT userId FROM affected)
-    GROUP BY 1
+    FROM   image_metrics_user
+    GROUP  BY userId
+    HAVING maxMerge(updatedAt) >= ${ctx.lastUpdate}
   `;
 
   for (const { userId, score } of affected) {
@@ -202,12 +186,12 @@ async function getUpdateTotalTasks(ctx: Context) {
       WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
       UPDATE "User" u
         SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || s.scores || jsonb_build_object('total',
-            COALESCE((s.scores->>'models')::numeric, (u.meta->>'models')::numeric, 0)
-            + COALESCE((s.scores->>'articles')::numeric, (u.meta->>'articles')::numeric, 0)
-            + COALESCE((s.scores->>'images')::numeric, (u.meta->>'images')::numeric, 0)
-            + COALESCE((s.scores->>'users')::numeric, (u.meta->>'users')::numeric, 0)
-            + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->>'reportsActioned')::numeric, 0)
-            + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->>'reportsAgainst')::numeric, 0)
+            COALESCE((s.scores->>'models')::numeric, (u.meta->'scores'->>'models')::numeric, 0)
+            + COALESCE((s.scores->>'articles')::numeric, (u.meta->'scores'->>'articles')::numeric, 0)
+            + COALESCE((s.scores->>'images')::numeric, (u.meta->'scores'->>'images')::numeric, 0)
+            + COALESCE((s.scores->>'users')::numeric, (u.meta->'scores'->>'users')::numeric, 0)
+            + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->'scores'->>'reportsActioned')::numeric, 0)
+            + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->'scores'->>'reportsAgainst')::numeric, 0)
           )
         )
       FROM scores s
@@ -245,7 +229,7 @@ type ScoreMultipliers = {
 };
 type ScoreCategory = keyof ScoreMultipliers | 'total';
 
-async function getScoreMultipliers() {
+export async function getScoreMultipliers() {
   const data = await sysRedis.packed.get<ScoreMultipliers>(
     REDIS_SYS_KEYS.SYSTEM.USER_SCORE_MULTIPLIERS
   );

@@ -23,6 +23,7 @@ export const DEFAULT_ALLOWED_TAGS = [
   'h2',
   'h3',
   'hr',
+  'edge-media',
 ];
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
@@ -47,6 +48,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   div: ['data-youtube-video', 'data-type'],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
   '*': ['id'],
+  'edge-media': ['url', 'type', 'filename', 'className'],
 };
 
 export const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [

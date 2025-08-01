@@ -396,9 +396,9 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  const metadata = step.metadata as Record<string, any>;
+  const metadata = (step.metadata as Record<string, any>) ?? {};
   const resources: { id: number; strength?: number | null; epochNumber?: number | undefined }[] =
-    metadata.resources ?? metadata.params.resources ?? [];
+    metadata.resources ?? metadata.params?.resources ?? [];
 
   return resources;
 }

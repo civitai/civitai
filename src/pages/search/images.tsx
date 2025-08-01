@@ -26,6 +26,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 export default function ImageSearch() {
   return (
@@ -58,9 +60,13 @@ function RenderFilters() {
 
   const filters = [
     browsingSettingsAddons.settings.disablePoi
-      ? `poi != true OR user.username = ${currentUser?.username}`
+      ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser.username}` : ''}`
       : null,
     browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    // Filter out images from NSFW models with restricted base models
+    `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
+      ', '
+    )}] AND baseModel IN [${nsfwRestrictedBaseModels.map((model) => `'${model}'`).join(', ')}])`,
   ].filter(isDefined);
 
   return (

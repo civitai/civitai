@@ -264,8 +264,8 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
     return 'Illustrious';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3')) return 'SD3';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3_5M')) return 'SD3_5M';
+  // else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3')) return 'SD3';
+  // else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3_5M')) return 'SD3_5M';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'OpenAI')) return 'OpenAI';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Imagen4')) return 'Imagen4';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
@@ -518,14 +518,14 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.Flux1.baseModels },
   ],
   Flux1Kontext: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1Kontext.baseModels }],
-  SD3: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
-    { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
-  ],
-  SD3_5M: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
-    { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
-  ],
+  // SD3: [
+  //   { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
+  //   { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
+  // ],
+  // SD3_5M: [
+  //   { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
+  //   { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
+  // ],
   HiDream: [
     { type: ModelType.Checkpoint, baseModels: baseModelSets.HiDream.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.HiDream.baseModels },

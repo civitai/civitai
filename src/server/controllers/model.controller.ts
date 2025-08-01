@@ -470,7 +470,7 @@ export const upsertModelHandler = async ({
         level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model) throw throwNotFoundError(`No model with id ${input.id as number}`);
 
     await ctx.track.modelEvent({
       type: input.id ? 'Update' : 'Create',

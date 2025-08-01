@@ -3,7 +3,7 @@ import { CdpClient } from '@coinbase/cdp-sdk';
 import { createPublicClient, erc20Abi, http, parseUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { checkOnrampStatus, getOnrampUrl } from './onramp';
-import type { SendUserOperationReturnType } from '@coinbase/cdp-sdk/_types/actions/evm/sendUserOperation';
+
 import { dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
@@ -15,11 +15,13 @@ const log = (data: MixedObject) => {
 
 // Initialize the CDP client, which automatically loads
 // the API Key and Wallet Secret from the environment
-export const cdp = new CdpClient({
+const cdp = new CdpClient({
   apiKeyId: env.CDP_API_KEY_ID,
   apiKeySecret: env.CDP_API_KEY_SECRET,
   walletSecret: env.CDP_WALLET_SECRET,
 });
+
+type SendUserOperationReturnType = AsyncReturnType<typeof cdp.evm.sendUserOperation>;
 
 // Initialize the public client
 // This is used to wait for the transaction receipt
@@ -133,7 +135,7 @@ export async function getWalletForUser(userId: number) {
   return new EasyWallet({ userId, account, smartAccount });
 }
 
-export class EasyWallet {
+class EasyWallet {
   userId: number;
   account: EvmServerAccount;
   smartAccount: EvmSmartAccount;
