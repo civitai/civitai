@@ -16,6 +16,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { IsClient } from '~/components/IsClient/IsClient';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -85,7 +86,7 @@ export function ImagesInfiniteContent({
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
           <ImagesProvider images={images} {...imageProviderProps}>
-            <MasonryColumns
+            <MasonryColumnsVirtual
               data={images}
               imageDimensions={(data) => {
                 const width = data?.width ? data.width : 450;
