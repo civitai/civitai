@@ -1,5 +1,15 @@
-import { Button, HoverCard, Text, Group, Stack, Badge } from '@mantine/core';
+import type { ButtonProps, FloatingPosition } from '@mantine/core';
+import {
+  Button,
+  HoverCard,
+  Text,
+  Group,
+  Stack,
+  Badge,
+  createPolymorphicComponent,
+} from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import type { IconProps, Icon } from '@tabler/icons-react';
 import {
   IconSparkles,
   IconHeart,
@@ -15,10 +25,12 @@ import { useAppContext } from '~/providers/AppProvider';
 import { Random } from '~/utils/random';
 import { isHolidaysTime } from '~/utils/date-helpers';
 import classes from './SupportButton.module.scss';
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
+import React, { forwardRef } from 'react';
 
 type SupportButtonOption = {
   text: string;
-  icon: React.ElementType;
+  icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
   variant: 'primary' | 'gift' | 'heart' | 'sparkle' | 'royal' | 'premium';
   href: string;
 };
@@ -95,21 +107,17 @@ export const SupportButton = () => {
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>
       <HoverCard.Target>
-        <Button
+        <SupportButtonPolymorphic
           component={Link}
           href={selectedOption.href}
           className={`${classes.supportButton} ${getVariantStyles(selectedOption.variant)}`}
           variant="filled"
           size="xs"
           px="xs"
+          icon={selectedOption.icon}
         >
-          <Group gap={4} wrap="nowrap">
-            <Text size="xs" fw={700} className={classes.supportButtonText}>
-              {selectedOption.text}
-            </Text>
-            <selectedOption.icon size={16} className={classes.supportButtonIcon} />
-          </Group>
-        </Button>
+          {selectedOption.text}
+        </SupportButtonPolymorphic>
       </HoverCard.Target>
       <HoverCard.Dropdown className={classes.supportHoverCard}>
         <Stack gap="xs">
@@ -128,3 +136,53 @@ export const SupportButton = () => {
     </HoverCard>
   );
 };
+
+interface SupportButtonBaseProps
+  extends ButtonProps,
+    Omit<React.ComponentPropsWithoutRef<'button'>, keyof ButtonProps> {
+  icon?: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+  position?: FloatingPosition;
+}
+
+const SupportButtonBase = forwardRef<HTMLButtonElement, SupportButtonBaseProps>(
+  ({ position, icon: Icon, children, ...props }, ref) => {
+    return (
+      <HoverCard withArrow openDelay={400} closeDelay={100} position={position}>
+        <HoverCard.Target>
+          <Button
+            ref={ref}
+            className={`${classes.supportButton} ${classes.supportButtonPrimary}`}
+            {...props}
+            classNames={{ label: 'flex gap-1' }}
+          >
+            {children && (
+              <Text size="xs" fw={700} className={classes.supportButtonText}>
+                {children}
+              </Text>
+            )}
+            {Icon && <Icon size={16} className={classes.supportButtonIcon} />}
+          </Button>
+        </HoverCard.Target>
+        <HoverCard.Dropdown className={classes.supportHoverCard}>
+          <Stack gap="xs">
+            <Group gap="xs">
+              <IconSparkles size={18} color="var(--mantine-color-yellow-6)" />
+              <Text fw={600} size="sm" c="yellow.6">
+                Unlock Premium Benefits!
+              </Text>
+            </Group>
+            <Text size="xs" c="dimmed">
+              Join thousands of creators with exclusive perks, priority support, and advanced
+              features.
+            </Text>
+          </Stack>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    );
+  }
+);
+SupportButtonBase.displayName = 'SupportButtonBase';
+export const SupportButtonPolymorphic = createPolymorphicComponent<
+  'button',
+  SupportButtonBaseProps
+>(SupportButtonBase);
