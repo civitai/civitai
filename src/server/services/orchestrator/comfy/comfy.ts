@@ -135,7 +135,7 @@ export async function createComfy(
       experimental,
       callbacks: [
         {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
+          url: `${env.SIGNALS_ENDPOINT_ORCHESTRATOR_CALLBACK}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
           type: ['job:*', 'workflow:*'],
         },
       ],
