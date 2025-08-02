@@ -1663,6 +1663,10 @@ function strArray(arr: (string | number)[]) {
   return arr.map((x) => `'${x}'`).join(',');
 }
 
+function snapToInterval(unixTimestamp: number, intervalMillisec = 60000): number {
+  return Math.floor(unixTimestamp / intervalMillisec) * intervalMillisec;
+}
+
 type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
 export const makeMeiliImageSearchFilter = (
   field: MetricsImageFilterableAttribute,
@@ -1932,7 +1936,10 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     }
   } else {
     // Users should only see published stuff or things they own
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+    // convert to minutes for better caching
+    const publishedFilters = [
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snapToInterval(Math.round(Date.now()))}`),
+    ];
     if (currentUserId) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
@@ -1969,7 +1976,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     const now = dayjs();
     afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
   }
-  if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
+  if (afterDate) {
+    // convert to minutes for better caching
+    filters.push(
+      makeMeiliImageSearchFilter(
+        'sortAtUnix',
+        `> ${snapToInterval(Math.round(afterDate.getTime()))}`
+      )
+    );
+  }
 
   // nb: this is for dev 08-19
   // if (!isProd) {
@@ -2005,7 +2020,10 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
     // - to avoid dupes (for any ascending query), we need to filter on that attribute
     if (entry) {
-      filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
+      // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
+      filters.push(
+        makeMeiliImageSearchFilter('sortAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
+      );
     }
   }
   sorts.push(searchSort);
