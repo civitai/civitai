@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import type { BuzzTransactionDetails } from '~/server/schema/buzz.schema';
 import { GetUserBuzzTransactionsResponse } from '~/server/schema/buzz.schema';
 
@@ -66,4 +67,19 @@ export const parseBuzzTransactionDetails = (
   };
 
   return map[entityType] ?? map.default;
+};
+
+export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: number) => {
+  if (!platformFeeRate) {
+    platformFeeRate = constants.buzz.platformFeeRate;
+  }
+  const dollarAmount = Math.round((buzzAmount / constants.buzz.buzzDollarRatio) * 100);
+  const platformFee = Math.round(dollarAmount * (platformFeeRate / 10000));
+  const payoutAmount = dollarAmount - platformFee;
+
+  return {
+    dollarAmount,
+    platformFee,
+    payoutAmount,
+  };
 };

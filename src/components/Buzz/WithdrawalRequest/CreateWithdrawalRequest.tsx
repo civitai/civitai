@@ -25,13 +25,10 @@ import { constants } from '~/server/common/constants';
 import { createBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
-import {
-  formatCurrencyForDisplay,
-  getBuzzWithdrawalDetails,
-  numberWithCommas,
-} from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 const schema = createBuzzWithdrawalRequestSchema;
 

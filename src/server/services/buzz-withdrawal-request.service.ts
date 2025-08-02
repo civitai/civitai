@@ -13,7 +13,6 @@ import {
   BuzzWithdrawalRequestStatus,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
-import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import type {
@@ -31,6 +30,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -168,8 +168,8 @@ export const getPaginatedBuzzWithdrawalRequests = async (
   if (username && !userId) {
     // The list here is much shorter:
     const userIds = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr 
-      JOIN "User" u ON bwr."userId" = u.id 
+      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr
+      JOIN "User" u ON bwr."userId" = u.id
       WHERE u.username ILIKE ${username + '%'}
     `;
 

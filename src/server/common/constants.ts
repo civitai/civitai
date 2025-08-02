@@ -1289,64 +1289,6 @@ export const milestoneNotificationFix = '2025-05-28';
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
-export const colorDomains = {
-  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-};
-export type ColorDomain = keyof typeof colorDomains;
-
-export type BrowsingSettingsAddon = {
-  type: 'all' | 'some' | 'none';
-  nsfwLevels: NsfwLevel[];
-  disablePoi?: boolean;
-  disableMinor?: boolean;
-  excludedTagIds?: number[];
-  generationDefaultValues?: { denoise?: number };
-  generationMinValues?: { denoise?: number };
-  excludedFooterLinks?: string[];
-};
-
-export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
-  {
-    type: 'none',
-    nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['2257'],
-  },
-  {
-    type: 'some',
-    nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: [],
-    disableMinor: true,
-    disablePoi: true,
-    excludedTagIds: [
-      415792, // Clavata Celebrity
-      426772, // Clavata Celebrity
-      5351, //child
-      5161, //actor
-      5162, //actress
-      5188, //celebrity
-      5249, //real person
-      306619, //child present
-      5351, //child
-      154326, //toddler
-      161829, //male child
-      163032, //female child
-      130818, //porn actress
-      130820, //adult actress
-      133182, //porn star
-    ],
-  },
-] as const;
-
-export function getRequestDomainColor(req: { headers: { host?: string } }) {
-  const { host } = req.headers;
-  if (!host) return undefined;
-  for (const [color, domain] of Object.entries(colorDomains)) {
-    if (host === domain) return color as ColorDomain;
-  }
-}
-
 export const banReasonDetails: Record<
   BanReasonCode,
   {

@@ -128,18 +128,13 @@ import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import {
-  getBaseModelEcosystemName,
-  getDisplayName,
-  removeTags,
-  slugit,
-  splitUppercase,
-} from '~/utils/string-helpers';
+import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getBaseModelEcosystemName } from '~/shared/utils/base-model';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

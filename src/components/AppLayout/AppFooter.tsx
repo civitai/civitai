@@ -10,7 +10,7 @@ import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ColorDomain } from '~/server/common/constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
