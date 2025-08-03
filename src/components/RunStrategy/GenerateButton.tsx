@@ -34,7 +34,7 @@ export function GenerateButton({
 
   const vId = versionId ?? version?.id;
 
-  const opened = useGenerationPanelStore((state) => state.open);
+  const opened = useGenerationPanelStore((state) => state.opened);
   const onClickHandler = () => {
     if (generationPrice) {
       onPurchase?.();
