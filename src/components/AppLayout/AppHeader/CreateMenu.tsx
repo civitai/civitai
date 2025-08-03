@@ -4,7 +4,7 @@ import { useGetActionMenuItems } from '~/components/AppLayout/AppHeader/hooks';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { GenerateButtonBasic } from '~/components/RunStrategy/GenerateButtonBasic';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -25,15 +25,13 @@ export function CreateMenu() {
     >
       <Menu.Target>
         <div className="flex items-center">
-          <GenerateButton
-            canGenerate
+          <GenerateButtonBasic
             variant="light"
             py={8}
             pl={12}
             pr={4}
             h="auto"
             radius="sm"
-            mode="toggle"
             // Quick hack to avoid svg from going over the button. cc: Justin 👀
             size="compact-sm"
             data-activity="create:navbar"

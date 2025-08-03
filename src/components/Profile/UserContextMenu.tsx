@@ -30,7 +30,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
-import { impersonateEndpoint } from '~/server/schema/civToken.schema';
+import { impersonateEndpoint } from '~/shared/constants/auth.constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';

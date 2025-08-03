@@ -56,7 +56,10 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
+import {
+  BidModelButton,
+  getEntityDataForBidModelButton,
+} from '~/components/Auction/BidModelButton';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,

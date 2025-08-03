@@ -42,7 +42,7 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
-import { BidModelButton } from '~/components/Auction/AuctionUtils';
+import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
