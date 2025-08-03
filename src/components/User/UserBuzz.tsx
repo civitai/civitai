@@ -1,7 +1,7 @@
 import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { useBuzz } from '~/components/Buzz/useBuzz';
-import { CurrencyConfig } from '~/server/common/constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { abbreviateNumber } from '~/utils/number-helpers';
 

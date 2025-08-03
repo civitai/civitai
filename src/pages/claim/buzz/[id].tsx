@@ -17,7 +17,7 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CurrencyConfig } from '~/server/common/constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';

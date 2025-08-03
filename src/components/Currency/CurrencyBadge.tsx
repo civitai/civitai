@@ -11,7 +11,7 @@ import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 import type { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
-import { CurrencyConfig } from '~/server/common/constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import classes from './CurrencyBadge.module.scss';

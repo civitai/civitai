@@ -6,7 +6,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { constants } from '~/server/common/constants';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function CreateMenu() {
@@ -18,7 +18,7 @@ export function CreateMenu() {
       offset={5}
       trigger="hover"
       openDelay={400}
-      zIndex={constants.imageGeneration.drawerZIndex + 2}
+      zIndex={imageGenerationDrawerZIndex + 2}
       disabled={isMobile}
       withinPortal
       withArrow
