@@ -1179,20 +1179,6 @@ export const getAllImages = async (
     )`);
   }
 
-  // Filter out images with X/XXX NSFW level that are linked to license-restricted base models
-  // Images with nsfwLevel X (8) or XXX (16) cannot use base models with restricted licenses
-  if (nsfwRestrictedBaseModels.length > 0) {
-    AND.push(Prisma.sql`
-      NOT EXISTS (
-        SELECT 1 FROM "ImageResourceNew" irn
-        JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" 
-        WHERE irn."imageId" = i.id 
-          AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
-          AND mv."baseModel" IN (${Prisma.join(nsfwRestrictedBaseModels)})
-      )
-    `);
-  }
-
   if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1219,8 +1205,14 @@ export const getAllImages = async (
     ${Prisma.raw(joins.join('\n'))}
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
+    -- Filter out images with NSFW level that are linked to license-restricted base models
+    -- Images with nsfwLevel >= 4 (R-XXX) cannot use base models with restricted licenses
+    LEFT JOIN "RestrictedImagesByBaseModel" ribm
+      ON ribm."imageId" = i.id
+      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
+      AND ribm."imageId" IS NULL
   `;
 
   const engines = Object.keys(videoGenerationConfig2);
@@ -2608,13 +2600,13 @@ export const getImagesForModelVersion = async ({
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
+        LEFT JOIN "RestrictedImagesByBaseModel" ribm
+          ON ribm."imageId" = i.id
+          AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
           AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
-          AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" = ANY(ARRAY[${Prisma.join(
-    nsfwRestrictedBaseModels,
-    ','
-  )}]::text[]))
+          AND ribm."imageId" IS NULL
         ORDER BY i."postId", i.index
         LIMIT ${imagesPerVersion}
       ) i
@@ -2885,6 +2877,7 @@ export const getImagesForPosts = async ({
       ON ribm."imageId" = i.id
       AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
     WHERE ${Prisma.join(imageWhere, ' AND ')}
+      AND ribm."imageId" IS NULL
     ORDER BY i.index ASC
   `;
   const imageIds = images.map((i) => i.id);
@@ -3375,13 +3368,14 @@ export const getEntityCoverImage = async ({
           JOIN "ModelVersion" mv ON m.id = mv."modelId"
           JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
+          LEFT JOIN "RestrictedImagesByBaseModel" ribm
+            ON ribm."imageId" = i.id
+            AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
           WHERE e."entityType" = 'Model'
           AND m.status = 'Published'
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
-          AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" IN (${Prisma.join(
-    nsfwRestrictedBaseModels
-  )}))
+          AND ribm."imageId" IS NULL
           ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
 
@@ -3400,13 +3394,14 @@ export const getEntityCoverImage = async ({
           JOIN "ModelVersion" mv ON e."entityId" = mv."id"
           JOIN "Post" p ON mv.id = p."modelVersionId"
           JOIN "Image" i ON p.id = i."postId"
+          LEFT JOIN "RestrictedImagesByBaseModel" ribm
+            ON ribm."imageId" = i.id
+            AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
           WHERE e."entityType" = 'ModelVersion'
           AND mv.status = 'Published'
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
-          AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" IN (${Prisma.join(
-    nsfwRestrictedBaseModels
-  )}))
+          AND ribm."imageId" IS NULL
           ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
 
@@ -3455,13 +3450,14 @@ export const getEntityCoverImage = async ({
           JOIN "Post" p ON p.id = e."entityId"
           LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
           JOIN "Image" i ON i."postId" = p.id
+          LEFT JOIN "RestrictedImagesByBaseModel" ribm
+            ON ribm."imageId" = i.id
+            AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
           WHERE e."entityType" = 'Post'
             AND p."publishedAt" IS NOT NULL
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
-            AND NOT ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND mv."baseModel" IN (${Prisma.join(
-    nsfwRestrictedBaseModels
-  )}))
+            AND ribm."imageId" IS NULL
           ORDER BY e."entityId", i."postId", i.index
         ) t
 

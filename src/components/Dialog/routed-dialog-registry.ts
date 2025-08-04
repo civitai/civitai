@@ -10,10 +10,12 @@ const ResourceReviewModal = dynamic(
 );
 const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModal'));
 const CommentEditModal = dynamic(
-  () => import('~/components/Model/ModelDiscussion/CommentEditModal')
+  () => import('~/components/Model/ModelDiscussion/CommentEditModal'),
+  { ssr: false }
 );
 const CommentThreadModal = dynamic(
-  () => import('~/components/Model/Discussion/CommentThreadModal')
+  () => import('~/components/Model/Discussion/CommentThreadModal'),
+  { ssr: false }
 );
 const SupportModal = dynamic(() => import('~/components/Support/SupportModal'), { ssr: false });
 

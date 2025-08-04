@@ -805,6 +805,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   }));
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
 
+  // Check if images has restricted base models
   const imageBaseModels = await dbRead.$queryRaw<{ baseModel: BaseModel | null }[]>`
     SELECT mv."baseModel" as "baseModel"
     FROM "ImageResourceNew" ir
