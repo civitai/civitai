@@ -15,7 +15,7 @@ import {
 import { numberEnum, zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 export const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
-const wanFalAspectRatios = ['4:3', '16:9', '9:16'] as const;
+const wanFalAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const wanDuration = [3, 5] as const;
 export const wanResolution = [480, 720] as const;
 
