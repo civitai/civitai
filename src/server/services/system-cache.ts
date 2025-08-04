@@ -8,8 +8,10 @@ import { TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
-import type { BrowsingSettingsAddon, LiveFeatureFlags } from '../common/constants';
-import { DEFAULT_BROWSING_SETTINGS_ADDONS, DEFAULT_LIVE_FEATURE_FLAGS } from '../common/constants';
+import type { LiveFeatureFlags } from '../common/constants';
+import { DEFAULT_LIVE_FEATURE_FLAGS } from '../common/constants';
+import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
+import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 
 const log = createLogger('system-cache', 'green');
 

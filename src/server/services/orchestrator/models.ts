@@ -9,7 +9,7 @@ import {
   internalOrchestratorClient,
 } from '~/server/services/orchestrator/common';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 
 export async function getModelClient({
   token,

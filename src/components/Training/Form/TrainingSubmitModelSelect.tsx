@@ -42,7 +42,7 @@ import {
   getDefaultTrainingParams,
   trainingStore,
 } from '~/store/training.store';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
 
 const ModelSelector = ({

@@ -55,14 +55,11 @@ import {
   Currency,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
-import {
-  formatCurrencyForDisplay,
-  getBuzzWithdrawalDetails,
-  numberWithCommas,
-} from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 

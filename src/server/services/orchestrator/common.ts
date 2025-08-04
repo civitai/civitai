@@ -68,7 +68,7 @@ import { hiDreamModelId } from '~/shared/orchestrator/hidream.config';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
@@ -582,7 +582,11 @@ function formatVideoGenStep({
   if (sourceImage) {
     width = sourceImage?.width;
     height = sourceImage?.height;
-    aspectRatio = width && height ? width / height : 16 / 9;
+    if (!('aspectRatio' in params)) aspectRatio = width && height ? width / height : 16 / 9;
+    else {
+      const [rw, rh] = (params.aspectRatio as string).split(':').map(Number);
+      aspectRatio = rw / rh;
+    }
   } else {
     switch (params.engine) {
       case 'minimax':
@@ -600,6 +604,11 @@ function formatVideoGenStep({
         break;
       }
     }
+  }
+
+  if (typeof aspectRatio === 'string') {
+    const [rw, rh] = (aspectRatio as string).split(':').map(Number);
+    aspectRatio = rw / rh;
   }
 
   const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
@@ -644,11 +653,13 @@ function formatVideoGenStep({
 
   const combinedResources = combineResourcesWithInputResource(resources, stepResources);
 
-  let baseModel = combinedResources.length
-    ? getBaseModelFromResources(
-        combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-      )
-    : undefined;
+  let baseModel =
+    metadata.params?.baseModel ??
+    (combinedResources.length
+      ? getBaseModelFromResources(
+          combinedResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+        )
+      : undefined);
 
   // TODO - come up with a better way to handle jsonb data type mismatches
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
