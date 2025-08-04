@@ -1,34 +1,24 @@
-import {
-  Group,
-  Text,
-  Stack,
-  Popover,
-  ActionIcon,
-  Checkbox,
-  Button,
-  Tooltip,
-  Anchor,
-} from '@mantine/core';
+import { Group, Text, Stack, Popover, Checkbox, Button, Tooltip, Anchor } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { constants } from '~/server/common/constants';
+// import { constants } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
-    <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
+    <Popover zIndex={301 + 1} withArrow withinPortal>
       <Popover.Target>
         <LegacyActionIcon variant="subtle" color="gray">
           <IconEyeExclamation {...iconProps} />
         </LegacyActionIcon>
       </Popover.Target>
-      <Popover.Dropdown p="md">
+      <Popover.Dropdown p="md" style={{ zIndex: 'calc(var(--dialog-z-index) + 2)' }}>
         <BrowsingModeMenu />
       </Popover.Dropdown>
     </Popover>
