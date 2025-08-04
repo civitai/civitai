@@ -27,17 +27,14 @@ import { BuzzWithdrawalRequestStatus, Currency } from '~/shared/utils/prisma/enu
 import { showSuccessNotification } from '~/utils/notifications';
 import type { GetPaginatedOwnedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
 import { formatDate } from '../../../utils/date-helpers';
-import {
-  formatCurrencyForDisplay,
-  getBuzzWithdrawalDetails,
-  numberWithCommas,
-} from '../../../utils/number-helpers';
+import { formatCurrencyForDisplay, numberWithCommas } from '../../../utils/number-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import { WithdrawalRequestBadgeColor } from '../buzz.styles';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryOwnedBuzzWithdrawalRequests,
 } from '../WithdrawalRequest/buzzWithdrawalRequest.util';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();

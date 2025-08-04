@@ -37,7 +37,6 @@ import {
   useCancelTextToImageRequest,
   useDeleteTextToImageRequest,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { constants } from '~/server/common/constants';
 
 import type { WorkflowStatus } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
@@ -62,6 +61,7 @@ import classes from './QueueItem.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -439,7 +439,7 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
   color: 'dark',
-  zIndex: constants.imageGeneration.drawerZIndex + 1,
+  zIndex: imageGenerationDrawerZIndex + 1,
 };
 
 function CancelOrDeleteWorkflow({

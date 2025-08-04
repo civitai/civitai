@@ -6,14 +6,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
-import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
 const RESIZE_STORE_NAME = 'generation-sidebar';
 const DEFAULT_WIDTH = 400;
 
 export function GenerationSidebar() {
-  const _opened = useGenerationStore((state) => state.opened);
+  const _opened = useGenerationPanelStore((state) => state.opened);
   const router = useRouter();
   // TODO - see if we can elevate this to `BaseLayout` and set visibility hidden to content behind sidebar
   const [fullScreen, setFullScreen] = useState(false);
@@ -26,7 +26,7 @@ export function GenerationSidebar() {
   }, []);
 
   useEffect(() => {
-    if (isGeneratePage) generationPanel.open();
+    if (isGeneratePage) useGenerationPanelStore.setState({ opened: true });
   }, [isGeneratePage]);
 
   useEffect(() => {

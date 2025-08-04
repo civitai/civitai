@@ -15,7 +15,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { Availability, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 
 const schema = z.object({ id: z.coerce.number(), epoch: z.number().optional() });
 
