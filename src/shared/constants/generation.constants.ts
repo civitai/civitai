@@ -639,6 +639,10 @@ export function getIsFluxUltra({ modelId, fluxMode }: { modelId?: number; fluxMo
   return modelId === fluxModelId && fluxMode === fluxUltraAir;
 }
 
+export function getIsFluxKrea({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
+  return modelId === fluxModelId && fluxMode === fluxKreaAir;
+}
+
 export function getSizeFromFluxUltraAspectRatio(value: number) {
   return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
 }

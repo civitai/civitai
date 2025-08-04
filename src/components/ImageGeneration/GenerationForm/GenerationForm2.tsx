@@ -107,6 +107,7 @@ import {
   getImageGenerationBaseModels,
   fluxDraftAir,
   fluxKreaAir,
+  getIsFluxKrea,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -493,6 +494,7 @@ export function GenerationFormContent() {
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
+            const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
             const disableAdditionalResources =
               runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext;
             const disableAdvanced = isFluxUltra || isOpenAI || isImagen4 || isHiDream;
@@ -865,13 +867,7 @@ export function GenerationFormContent() {
                     <Watch {...form} fields={['resources']}>
                       {({ resources }) => (
                         <div className="flex flex-col gap-0.5">
-                          <Input.Label className="flex items-center gap-1">
-                            Model Mode{' '}
-                            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                              {`Flux comes with 3 model variants: Schnell, Dev, and Pro. We've
-                       choosen names that we believe best align with their purpose.`}
-                            </InfoPopover>
-                          </Input.Label>
+                          <Input.Label className="flex items-center gap-1">Model Mode</Input.Label>
                           <InputSegmentedControl
                             name="fluxMode"
                             data={fluxModeOptions}
@@ -880,6 +876,10 @@ export function GenerationFormContent() {
                         </div>
                       )}
                     </Watch>
+                  )}
+
+                  {isFluxKrea && (
+                    <Alert>Note: FLUX Krea is experimental. Pricing is subject to change.</Alert>
                   )}
 
                   <div className="flex flex-col">
