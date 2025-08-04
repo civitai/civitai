@@ -1,21 +1,12 @@
-import { Anchor, Group, Input, Radio } from '@mantine/core';
+import { Anchor, Input, SegmentedControl } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import {
-  InputNumberSlider,
-  InputRadioGroup,
-  InputSegmentedControl,
-  InputTextArea,
-} from '~/libs/form';
-import {
-  wanAspectRatios,
-  wanDuration,
-  wanBaseModelMap,
-} from '~/server/orchestrator/wan/wan.schema';
+import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
+import { wanDuration, wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { getBaseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
@@ -26,34 +17,51 @@ export function WanFormInput() {
   const process = form.watch('process');
   const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
+  const config = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap];
+  const canPickDuration = config?.provider !== 'fal';
 
   const availableBaseModels = useMemo(
     () =>
       Object.entries(wanBaseModelMap)
         .filter(([key, value]) => value.process === process)
-        .map(([key, value]) => ({ value: key, label: value.label, default: value.default })),
+        .map(([key, value]) => ({
+          value: key,
+          label: value.label,
+          default: value.default,
+          provider: value.provider,
+        })),
     [process]
   );
 
   useEffect(() => {
     if (!availableBaseModels.find((x) => x.value === baseModel)) {
       const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
-      if (defaultModel) form.setValue('baseModel', defaultModel.value);
+      if (defaultModel) {
+        form.setValue('baseModel', defaultModel.value);
+      }
     }
   }, [availableBaseModels, baseModel]);
+
+  useEffect(() => {
+    if (config?.provider === 'fal') form.setValue('duration', 5);
+  }, [config?.provider]);
 
   const resources = getBaseModelResourceTypes(baseModel) ?? [];
 
   return (
     <>
       <InputVideoProcess name="process" />
-      <InputRadioGroup label="Model" name="baseModel">
-        <Group gap="lg">
-          {availableBaseModels.map(({ label, value }) => (
-            <Radio key={value} label={label} value={value} />
-          ))}
-        </Group>
-      </InputRadioGroup>
+
+      {/* {availableBaseModels.length > 1 && (
+        <InputRadioGroup label="Resolution" name="baseModel">
+          <Group gap="lg">
+            {availableBaseModels.map(({ label, value }) => (
+              <Radio key={value} label={label} value={value} />
+            ))}
+          </Group>
+        </InputRadioGroup>
+      )} */}
+
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
       )}
@@ -75,12 +83,23 @@ export function WanFormInput() {
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"
-          options={wanAspectRatios}
+          options={config.aspectRatios}
         />
       )}
+      {availableBaseModels.length > 1 && (
+        <div className="flex flex-col gap-0.5">
+          <Input.Label>Resolution</Input.Label>
+          <InputSegmentedControl
+            name="baseModel"
+            data={availableBaseModels.map(({ label, value }) => ({ label, value }))}
+          />
+        </div>
+      )}
+
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
+          disabled={!canPickDuration}
           name="duration"
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
