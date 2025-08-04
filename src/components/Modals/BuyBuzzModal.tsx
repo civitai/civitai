@@ -21,6 +21,7 @@ export default function BuyBuzzModal({
   purchaseSuccessMessage,
   onPurchaseSuccess,
   minBuzzAmount,
+  initialBuzzType,
 }: BuyBuzzModalProps) {
   const dialog = useDialogContext();
   const { trackAction } = useTrackEvent();
@@ -75,6 +76,7 @@ export default function BuyBuzzModal({
             minBuzzAmount={minBuzzAmount}
             purchaseSuccessMessage={purchaseSuccessMessage}
             onCancel={handleClose}
+            initialBuzzType={initialBuzzType}
           />
         </Group>
       </Stack>
