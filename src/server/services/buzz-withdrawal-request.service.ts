@@ -13,7 +13,6 @@ import {
   BuzzWithdrawalRequestStatus,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
-import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { dbRead, dbWrite } from '../db/client';
 import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
@@ -22,7 +21,6 @@ import type {
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
-
 import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
@@ -31,6 +29,7 @@ import { throwBadRequestError, throwInsufficientFundsError } from '../utils/erro
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,

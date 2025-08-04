@@ -5,7 +5,6 @@ import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
-import type { NotificationSingleRow } from '~/server/jobs/send-notifications';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
@@ -35,6 +34,7 @@ import { ClubSort } from '../common/enums';
 import { clubMetrics } from '../metrics';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { bustCacheTag } from '../utils/cache-helpers';
+import type { NotificationSingleRow } from '~/server/schema/notification.schema';
 
 export const userContributingClubs = async ({
   userId,

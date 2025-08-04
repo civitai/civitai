@@ -106,7 +106,7 @@ type CustomAppProps = {
   settings: UserSettingsSchema;
   canIndex: boolean;
   hasAuthCookie: boolean;
-  region?: RegionInfo;
+  region: RegionInfo;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -149,7 +149,7 @@ function MyApp(props: CustomAppProps) {
   );
 
   return (
-    <AppProvider seed={seed} canIndex={canIndex} settings={settings}>
+    <AppProvider seed={seed} canIndex={canIndex} settings={settings} region={region}>
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
@@ -169,7 +169,7 @@ function MyApp(props: CustomAppProps) {
               <FeatureFlagsProvider flags={flags}>
                 <GoogleAnalytics />
                 <AccountProvider>
-                  <CivitaiSessionProvider disableHidden={cookies.disableHidden} region={region}>
+                  <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
                     <ErrorBoundary>
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>

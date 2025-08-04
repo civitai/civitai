@@ -55,7 +55,7 @@ import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/e
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { removeNulls } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 type GenerationResourceSimple = {

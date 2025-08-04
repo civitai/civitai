@@ -1,8 +1,7 @@
 import type { IconProps } from '@tabler/icons-react';
 import React from 'react';
-import { getCurrencyConfig } from '~/server/common/constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 type Props = IconProps &
   ({ currency: 'USD' | 'USDC' } | { currency: 'BUZZ'; type?: BuzzSpendType });

@@ -25,6 +25,7 @@ import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -35,7 +36,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
-  const view = useGenerationStore((state) => state.view);
+  const view = useGenerationPanelStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
   const remixOfId = useRemixStore((state) => state.remixOfId);
   useEffect(() => {

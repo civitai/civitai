@@ -298,7 +298,8 @@ export const moderateImages = async ({
   reviewType,
   reviewAction,
   userId,
-}: ImageModerationSchema & { userId?: number }) => {
+  force,
+}: ImageModerationSchema & { userId?: number; force?: boolean }) => {
   if (reviewAction === 'delete') {
     const affected = await dbWrite.$queryRaw<AffectedImage[]>`
       SELECT id, "userId", "nsfwLevel", "pHash", "postId"
@@ -406,7 +407,7 @@ export const moderateImages = async ({
         WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
       `;
 
-    if (toUpdate.length) {
+    if (toUpdate.length && !force) {
       await upsertTagsOnImageNew(
         toUpdate.map(({ imageId, tagId }) => ({
           imageId,

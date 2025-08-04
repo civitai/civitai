@@ -1,6 +1,6 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
-import { generationPanel } from '~/store/generation.store';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
@@ -66,7 +66,7 @@ export const contentGenerationTour: StepWithData[] = [
           query: { collectionId: 107 },
         });
         // if window width is mobile size, the sidebar will be hidden
-        if (window.innerWidth < 768) generationPanel.close();
+        if (window.innerWidth < 768) useGenerationPanelStore.setState({ opened: false });
         await waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
       },
     },
@@ -106,7 +106,7 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onPrev: async () => {
-        if (window.innerWidth < 768) generationPanel.close();
+        if (window.innerWidth < 768) useGenerationPanelStore.setState({ opened: false });
         await waitForElement({ selector: '[data-tour="gen:remix"]' }).catch(() => null);
       },
     },
@@ -130,7 +130,7 @@ export const contentGenerationTour: StepWithData[] = [
     title: 'Your Generation Queue',
     content: 'This is where your generated media is stored, along with all the generation details.',
     data: {
-      onPrev: async () => generationPanel.setView('generate'),
+      onPrev: async () => useGenerationPanelStore.setState({ view: 'generate' }),
     },
     disableBeacon: true,
   },
@@ -141,7 +141,7 @@ export const contentGenerationTour: StepWithData[] = [
     content: 'View all your generated media here in a single scrollable view.',
     data: {
       onNext: async () => {
-        generationPanel.setView('feed');
+        useGenerationPanelStore.setState({ view: 'feed' });
         await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
       },
     },
@@ -171,8 +171,7 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightPadding: 10,
     data: {
       onBeforeStart: async () => {
-        generationPanel.setView('feed');
-        generationPanel.open();
+        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
       },
     },
     styles: {
@@ -192,8 +191,7 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onBeforeStart: async () => {
-        generationPanel.setView('feed');
-        generationPanel.open();
+        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
       },
     },
     styles: {
@@ -274,7 +272,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     title: 'Your Generation Queue',
     content: 'This is where your generated media is stored, along with all the generation details.',
     data: {
-      onPrev: async () => generationPanel.setView('generate'),
+      onPrev: async () => useGenerationPanelStore.setState({ view: 'generate' }),
     },
     disableBeacon: true,
   },
@@ -285,7 +283,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     content: 'View all your generated media here in a single scrollable view.',
     data: {
       onNext: async () => {
-        generationPanel.setView('feed');
+        useGenerationPanelStore.setState({ view: 'feed' });
         await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
       },
     },
@@ -315,8 +313,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     spotlightPadding: 10,
     data: {
       onBeforeStart: async () => {
-        generationPanel.setView('feed');
-        generationPanel.open();
+        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
       },
     },
     styles: {
@@ -336,8 +333,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onBeforeStart: async () => {
-        generationPanel.setView('feed');
-        generationPanel.open();
+        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
       },
     },
     styles: {

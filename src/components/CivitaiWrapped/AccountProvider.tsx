@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect } from 'react';
 import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
-import { civTokenEndpoint } from '~/server/schema/civToken.schema';
+import { civTokenEndpoint } from '~/shared/constants/auth.constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
 
 export type CivitaiAccount = {

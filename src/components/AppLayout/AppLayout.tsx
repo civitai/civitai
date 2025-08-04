@@ -10,7 +10,6 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { RegionWarningModal } from '~/components/RegionBlock/RegionWarningModal';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -18,6 +17,7 @@ import { openReadOnlyModal } from '~/components/Dialog/dialog-registry';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
+import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 
 let shownReadonly = false;
 const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
@@ -48,6 +48,7 @@ export function AppLayout({
 }) {
   const isMounted = useIsMounted();
   const features = useFeatureFlags();
+  useRegionWarning();
 
   useEffect(() => {
     if (isMounted() && !features.canWrite && !shownReadonly) {
@@ -87,7 +88,6 @@ export function AppLayout({
       )}
       <ChatPortal showFooter={false} />
       <AdhesiveFooter />
-      <RegionWarningModal />
     </div>
   );
 }

@@ -1,7 +1,6 @@
 import type { MantineSize, TextProps } from '@mantine/core';
 import { Group, Loader, Text, Tooltip } from '@mantine/core';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
-import { getCurrencyConfig } from '~/server/common/constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
@@ -14,6 +13,7 @@ import classes from './UserBuzz.module.scss';
 import clsx from 'clsx';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 type Props = TextProps & {
   iconSize?: number;

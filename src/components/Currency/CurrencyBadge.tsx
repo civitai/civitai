@@ -3,13 +3,13 @@ import { Badge, Loader, Text, Tooltip, useComputedColorScheme } from '@mantine/c
 import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
-import { getCurrencyConfig } from '~/server/common/constants';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import classes from './CurrencyBadge.module.scss';
 import clsx from 'clsx';
-import type { BuzzTypeDistribution } from '~/utils/buzz';
 import { createBuzzDistributionGradient, createBuzzDistributionLabel } from '~/utils/buzz';
+import type { BuzzTypeDistribution } from '~/utils/buzz';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 type Props = BadgeProps & {

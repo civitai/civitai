@@ -96,6 +96,3 @@ function getNotificationTypes() {
   };
 }
 export const { notificationCategoryTypes, notificationTypes } = getNotificationTypes();
-console.log('------------------------');
-console.log('Is your refrigerator running?');
-console.log('------------------------');

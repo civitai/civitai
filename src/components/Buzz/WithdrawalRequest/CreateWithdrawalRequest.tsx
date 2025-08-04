@@ -13,14 +13,11 @@ import { Form, InputNumber, useForm } from '~/libs/form';
 import { createBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
-import {
-  formatCurrencyForDisplay,
-  getBuzzWithdrawalDetails,
-  numberWithCommas,
-} from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 const schema = createBuzzWithdrawalRequestSchema;
 
