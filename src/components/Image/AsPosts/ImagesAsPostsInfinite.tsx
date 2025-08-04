@@ -50,7 +50,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 
-type ImagesAsPostsInfiniteProps = {
+export type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
   model: ModelById;
   username?: string;
@@ -61,7 +61,7 @@ type ImagesAsPostsInfiniteProps = {
 };
 
 const LIMIT = 50;
-export default function ImagesAsPostsInfinite({
+export function ImagesAsPostsInfinite({
   model,
   username,
   modelVersions,

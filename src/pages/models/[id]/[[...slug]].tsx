@@ -78,7 +78,6 @@ import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
@@ -133,6 +132,8 @@ import { isNumber } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { getBaseModelEcosystemName } from '~/shared/utils/base-model';
+import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
+import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -1237,65 +1238,19 @@ export default function ModelDetailsV2({
             ownerId={model.user.id}
           />
         )}
-        {canLoadBelowTheFold &&
-          (!model.locked && !model.meta?.commentsLocked ? (
-            <Container size="xl" my="xl">
-              <Stack gap="md">
-                <Group ref={discussionSectionRef} justify="space-between">
-                  <Group gap="xs">
-                    <Title order={2} data-tour="model:discussion">
-                      Discussion
-                    </Title>
-                    {canDiscuss ? (
-                      <>
-                        <LoginRedirect reason="create-comment">
-                          <Button
-                            leftSection={<IconMessage size={16} />}
-                            variant="outline"
-                            onClick={() => triggerRoutedDialog({ name: 'commentEdit', state: {} })}
-                            size="xs"
-                          >
-                            Add Comment
-                          </Button>
-                        </LoginRedirect>
-                      </>
-                    ) : (
-                      !isMuted &&
-                      onlyEarlyAccess && (
-                        <JoinPopover message="You must be a Civitai Member to join this discussion">
-                          <Button
-                            leftSection={<IconClock size={16} />}
-                            variant="outline"
-                            size="xs"
-                            color="green"
-                          >
-                            Early Access
-                          </Button>
-                        </JoinPopover>
-                      )
-                    )}
-                  </Group>
-                </Group>
-                <ModelDiscussionV2 modelId={model.id} />
-              </Stack>
-            </Container>
-          ) : (
-            <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>
-              <Center>
-                <Group gap="xs">
-                  <ThemeIcon color="gray" size="xl" radius="xl">
-                    <IconMessageCircleOff />
-                  </ThemeIcon>
-                  <Text size="lg" c="dimmed">
-                    Discussion is turned off for this model.
-                  </Text>
-                </Group>
-              </Center>
-            </Paper>
-          ))}
+        {canLoadBelowTheFold && (
+          <Container size="xl" my="xl">
+            <ModelDiscussion
+              canDiscuss={canDiscuss}
+              onlyEarlyAccess={onlyEarlyAccess}
+              modelId={model.id}
+              locked={model.locked || model.meta?.commentsLocked}
+            />
+          </Container>
+        )}
         {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
           <Box ref={gallerySectionRef} id="gallery" mt="md">
-            <ImagesAsPostsInfinite
+            <ModelGallery
               model={model}
               selectedVersionId={selectedVersion?.id}
               modelVersions={model.modelVersions}
