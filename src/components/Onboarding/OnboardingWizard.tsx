@@ -8,10 +8,8 @@ import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
 import { OnboardingRedTos } from '~/components/Onboarding/OnboardingRedTos';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import { OnboardingProvider } from '~/components/Onboarding/OnboardingProvider';
-import { ColorDomain } from '~/server/common/constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import classes from './OnboardingWizard.module.scss';
 

@@ -1,10 +1,10 @@
-import { ActionIcon, Menu } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 
 export function ModerationNav() {
   const features = useFeatureFlags();
@@ -54,7 +54,7 @@ export function ModerationNav() {
   );
 
   return (
-    <Menu zIndex={constants.imageGeneration.drawerZIndex + 1} withinPortal>
+    <Menu zIndex={imageGenerationDrawerZIndex + 1} withinPortal>
       <Menu.Target>
         <LegacyActionIcon color="yellow" variant="transparent">
           <IconBadge />

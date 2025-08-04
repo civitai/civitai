@@ -5,7 +5,7 @@
  */
 import * as dotenv from 'dotenv';
 import { env as clientEnv, formatErrors } from './client';
-import { serverSchema } from './schema';
+import { serverSchema } from './server-schema';
 
 if (process.env.NODE_ENV === 'development') {
   dotenv.config({

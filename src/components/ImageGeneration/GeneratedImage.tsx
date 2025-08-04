@@ -47,7 +47,6 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { constants } from '~/server/common/constants';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   NormalizedGeneratedImage,
@@ -89,6 +88,7 @@ import {
   getIsFluxKontext,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -401,7 +401,7 @@ export function GeneratedImage({
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
                 meta={step.params as any}
-                zIndex={constants.imageGeneration.drawerZIndex + 1}
+                zIndex={imageGenerationDrawerZIndex + 1}
                 hideSoftware
               >
                 <LegacyActionIcon variant="transparent" size="md">
@@ -727,7 +727,7 @@ function GeneratedImageWorkflowMenuItems({
         ]);
         handleCloseImageLightbox();
       },
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      zIndex: imageGenerationDrawerZIndex + 2,
       centered: true,
     });
   }

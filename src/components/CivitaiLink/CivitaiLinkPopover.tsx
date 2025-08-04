@@ -47,19 +47,19 @@ import {
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-registry';
 import classes from './CivitaiLinkPopover.module.scss';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 
 export function CivitaiLinkPopover() {
   return (
     <Popover
       position="bottom-end"
       width={400}
-      zIndex={constants.imageGeneration.drawerZIndex + 1}
+      zIndex={imageGenerationDrawerZIndex + 1}
       withinPortal
     >
       <Popover.Target>

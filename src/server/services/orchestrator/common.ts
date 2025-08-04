@@ -68,7 +68,7 @@ import { hiDreamModelId } from '~/shared/orchestrator/hidream.config';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {

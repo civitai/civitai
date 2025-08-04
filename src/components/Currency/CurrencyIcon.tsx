@@ -1,7 +1,7 @@
 import { useMantineTheme } from '@mantine/core';
 import type { IconProps } from '@tabler/icons-react';
 import React from 'react';
-import { CurrencyConfig } from '~/server/common/constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 type Props = IconProps & {
