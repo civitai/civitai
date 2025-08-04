@@ -47,8 +47,7 @@ export function BuzzTransactionButton({
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const {
-    data: { accounts, total },
-    isLoading,
+    data: { accounts },
   } = useQueryBuzz(accountTypes);
   const baseType = accounts[0]?.type;
   const { conditionalPerformTransaction, hasRequiredAmount, isLoadingBalance } = useBuzzTransaction(
@@ -64,7 +63,6 @@ export function BuzzTransactionButton({
     accounts,
     buzzAmount,
   });
-
   const mainBuzzColor = Object.entries(buzzTypeDistribution.amt).reduce(
     (max, [key, amount]) =>
       amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,

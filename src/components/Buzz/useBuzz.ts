@@ -31,7 +31,7 @@ export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow', 'r
       .filter(isDefined);
 
     return { accounts, total, nsfwTotal };
-  }, [initialData]);
+  }, [initialData, buzzTypes]);
 
   return { data, isLoading };
 }

@@ -80,6 +80,7 @@ export const getUserBuzzTransactionsResponse = z.object({
 
 export const buzzTransactionSchema = z.object({
   // To user id (0 is central bank)
+  fromAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountId: z.number().optional(),
   type: z.nativeEnum(TransactionType),

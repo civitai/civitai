@@ -94,6 +94,10 @@ export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
+export const buzzPurchaseTypes = buzzSpendTypes.filter((type) => {
+  const config = buzzTypeConfig[type];
+  return config.type === 'spend' && config.purchasable;
+});
 
 function getApiTypeFromClientType(type: BuzzAccountType) {
   const config = buzzTypeConfig[type];
