@@ -31,7 +31,8 @@ import { IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
-import { isDefined } from '~/utils/type-guards';
+
+type AspectRatio = `${number}:${number}`;
 
 type SourceImageUploadProps = {
   value?: SourceImageProps[] | null;
@@ -41,6 +42,7 @@ type SourceImageUploadProps = {
   warnOnMissingAiMetadata?: boolean;
   aspect?: 'square' | 'video';
   cropToFirstImage?: boolean;
+  aspectRatios?: AspectRatio[];
   error?: string;
   id?: string;
 };
@@ -71,6 +73,7 @@ type SourceImageUploadContext = {
   removeItem: (index: number) => void;
   aspect: 'square' | 'video';
   cropToFirstImage: boolean;
+  aspectRatios?: AspectRatio[];
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -87,6 +90,7 @@ export function SourceImageUploadMultiple({
   warnOnMissingAiMetadata = false,
   aspect = 'square',
   cropToFirstImage = false,
+  aspectRatios,
   error: initialError,
   id,
 }: SourceImageUploadProps) {
@@ -177,6 +181,7 @@ export function SourceImageUploadMultiple({
         removeItem,
         aspect,
         cropToFirstImage,
+        aspectRatios,
       }}
     >
       <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
@@ -203,7 +208,8 @@ export function SourceImageUploadMultiple({
 SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { previewItems, setError, setUploads, max, aspect, cropToFirstImage } = useContext();
+  const { previewItems, setError, setUploads, max, aspect, cropToFirstImage, aspectRatios } =
+    useContext();
   const canAddFiles = previewItems.length < max;
 
   async function handleUpload(src: string | Blob | File, originUrl?: string) {
@@ -258,8 +264,18 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
         return { url, width, height, aspectRatio };
       })
     );
+
+    const ratios = aspectRatios?.map((ratio) => {
+      const [w, h] = ratio.split(':').map(Number);
+      return w / h;
+    });
+
     if (
-      !withAspectRatio.every(({ aspectRatio }) => aspectRatio === withAspectRatio[0].aspectRatio)
+      !withAspectRatio.every(({ aspectRatio }) => {
+        if (cropToFirstImage) return aspectRatio === withAspectRatio[0].aspectRatio;
+        else if (ratios) return ratios.includes(aspectRatio);
+        return false;
+      })
     ) {
       dialogStore.trigger({
         component: ImageCropModal,
@@ -269,7 +285,8 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
             const toUpload = output.filter(({ cropped }) => !!cropped);
             await Promise.all(toUpload.map(({ cropped, src }) => handleUpload(cropped!, src)));
           },
-          onCancel: () => undefined,
+          onCancel: () => setUploads([]),
+          aspectRatios,
         },
       });
     } else {
@@ -278,7 +295,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
   }
 
   async function handleChange(value: (string | File)[]) {
-    if (cropToFirstImage) await handleCrop(value);
+    if (cropToFirstImage || !!aspectRatios?.length) await handleCrop(value);
     else await Promise.all(value.map((src) => handleUpload(src)));
   }
 

@@ -48,7 +48,7 @@ export function Veo3FormInput() {
 
   return (
     <>
-      {/* <InputVideoProcess name="process" />
+      <InputVideoProcess name="process" />
       {process === 'img2vid' && (
         <div className="-mx-2">
           <InputSourceImageUploadMultiple
@@ -56,6 +56,7 @@ export function Veo3FormInput() {
             max={1}
             warnOnMissingAiMetadata
             aspect="video"
+            aspectRatios={['16:9']}
           >
             {(previewItems) => (
               <div className="mx-auto w-full max-w-80">
@@ -67,7 +68,7 @@ export function Veo3FormInput() {
             )}
           </InputSourceImageUploadMultiple>
         </div>
-      )} */}
+      )}
       <div className="flex flex-col gap-2">
         <Input.Label>Model</Input.Label>
         <SegmentedControl
