@@ -105,7 +105,7 @@ function VirtualColumn<TData>({
     getItemKey,
     gap: 16,
     scrollMargin: offset,
-    initialOffset: offset,
+    initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
   });
 
   return (

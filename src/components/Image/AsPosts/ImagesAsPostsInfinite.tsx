@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Button,
   Center,
@@ -56,7 +55,6 @@ type ImagesAsPostsInfiniteProps = {
   model: ModelById;
   username?: string;
   modelVersions?: ModelVersionsProps[];
-  generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
   showModerationOptions?: boolean;
   showPOIWarning?: boolean;
   canReview?: boolean;
@@ -68,7 +66,6 @@ export default function ImagesAsPostsInfinite({
   username,
   modelVersions,
   selectedVersionId,
-  generationOptions,
   showModerationOptions,
   showPOIWarning,
   canReview,

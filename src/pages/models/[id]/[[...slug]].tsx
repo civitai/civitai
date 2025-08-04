@@ -1301,10 +1301,6 @@ export default function ModelDetailsV2({
               modelVersions={model.modelVersions}
               showModerationOptions={isOwner}
               showPOIWarning={model.poi}
-              generationOptions={{
-                generationModelId: selectedVersion?.meta.picFinderModelId,
-                includeEditingActions: isOwner,
-              }}
               canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
             />
           </Box>
