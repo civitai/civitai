@@ -30,15 +30,15 @@ export function Veo3FormInput() {
   const isTxt2Vid = process === 'txt2vid';
   const resources = form.watch('resources') as ResourceInput[] | null;
   const checkpoint = getVeo3Checkpoint(resources);
-  const isFastMode = getVeo3IsFastMode(checkpoint.id);
+  // const isFastMode = getVeo3IsFastMode(checkpoint.id);
 
-  useEffect(() => {
-    if (isFastMode) form.setValue('process', 'txt2vid');
-  }, [isFastMode]);
+  // useEffect(() => {
+  //   if (isFastMode) form.setValue('process', 'txt2vid');
+  // }, [isFastMode]);
 
-  useEffect(() => {
-    if (process === 'img2vid' && isFastMode) setCheckpoint(veo3StandardId);
-  }, [process]);
+  // useEffect(() => {
+  //   if (process === 'img2vid' && isFastMode) setCheckpoint(veo3StandardId);
+  // }, [process]);
 
   function setCheckpoint(modelVersionId: number) {
     const resourcesWithoutModel = removeVeo3CheckpointFromResources(resources);
