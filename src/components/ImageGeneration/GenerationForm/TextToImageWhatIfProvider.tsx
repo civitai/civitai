@@ -6,6 +6,7 @@ import { generationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   fluxStandardAir,
+  fluxKreaAir,
   fluxUltraAir,
   getBaseModelSetType,
   getIsFlux,
@@ -120,7 +121,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       if (isFlux && params.fluxMode && isFluxStandard) {
         const { version } = parseAIR(params.fluxMode);
         modelVersionId = version;
-        if (params.fluxMode !== fluxStandardAir) params.priority = 'low';
+        if (params.fluxMode !== fluxStandardAir && params.fluxMode !== fluxKreaAir)
+          params.priority = 'low';
       }
 
       // if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
