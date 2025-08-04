@@ -10,7 +10,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { generationPanel } from '~/store/generation.store';
 import type { ModelById } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
