@@ -406,7 +406,7 @@ export async function createBuzzTransactionMany(
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions
-    .map(BuzzTypes.getApiTransaction)
+    .map((t) => BuzzTypes.getApiTransaction(t))
     .filter(
       (t) =>
         t.toAccountId !== undefined &&
