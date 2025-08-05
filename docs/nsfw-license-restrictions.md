@@ -6,7 +6,7 @@ Implements license-based NSFW content restrictions for Civitai. Filters out R/X/
 
 ## Affected Base Models
 
-The following base models currently restrict X and XXX content:
+The following base models currently restrict NSFW content:
 
 - **SDXL Turbo**, **SVD/SVD XT**, **Stable Cascade**, **SD 3.x** models
 
@@ -45,38 +45,26 @@ Content is excluded when:
 
 ### Backend Implementation
 
-**Materialized View for Performance**: The system uses a `RestrictedImagesByBaseModel` materialized view to efficiently identify images linked to restricted base models:
+**Dual Configuration System**: The system uses both database and code-based configuration for maximum flexibility:
 
-**Automated Refresh Triggers**: The materialized view is automatically refreshed using PostgreSQL triggers that monitor changes to relevant tables:
+- **Database Table**: `RestrictedBaseModels` table stores the actual restricted base models for efficient querying
+- **Constants Array**: `nsfwRestrictedBaseModels` array in `constants.ts` dynamically derives restricted models from license definitions
+
+**Materialized View for Performance**: The `RestrictedImagesByBaseModel` materialized view efficiently identifies images linked to restricted base models by joining image resources with model versions and the restricted base models table.
+
+**Automated Refresh Triggers**: The materialized view is automatically refreshed using optimized PostgreSQL triggers that monitor changes to relevant tables:
 
 - **ImageResourceNew Changes**: Triggers on INSERT/DELETE operations, only refreshing when changes involve restricted base models
-- **ModelVersion Changes**: Triggers on INSERT/UPDATE/DELETE operations when `baseModel` field changes to/from restricted values
+- **ModelVersion Changes**: Triggers on INSERT/UPDATE OF "baseModel"/DELETE operations when `baseModel` field changes to/from restricted values
+- **RestrictedBaseModels Changes**: Triggers on INSERT/UPDATE/DELETE operations to immediately refresh when the restricted models list changes
 
-**Model Service**: Filters NSFW models with restricted base models using `getNsfwRestrictedBaseModelSqlFilter()`:
+**Model Service**: Filters NSFW models with restricted base models using validation during model creation and publishing to prevent NSFW models with restricted base models.
 
-```sql
-NOT (m."nsfw" = true AND EXISTS (
-  SELECT 1 FROM "ModelVersion" mv
-  WHERE mv."modelId" = m."id"
-    AND mv."baseModel" IN (restricted_base_models)
-))
-```
+**Model Version Service**: Validates during version creation and publishing through `upsertModelVersion()`, `publishModelVersionById()`, and `publishModelVersionsWithEarlyAccess()` functions.
 
-- Validates during model creation/publishing to prevent NSFW models with restricted base models
+**Image Service**: Uses the materialized view for high-performance filtering in `getAllImages()` and related queries with LEFT JOIN + IS NULL pattern for optimal performance.
 
-**Model Version Service**: Validates during version creation and publishing:
-
-- `upsertModelVersion()`: Checks if creating/updating a version with restricted base model for NSFW model
-- `publishModelVersionById()`: Validates before publishing individual versions
-- `publishModelVersionsWithEarlyAccess()`: Validates before publishing versions with early access
-
-**Image Service**: Uses the materialized view for high-performance filtering in `getAllImages()` and related queries:
-
-```sql
--- Efficient filtering using materialized view with LEFT JOIN + IS NULL pattern
-LEFT JOIN "RestrictedImagesByBaseModel" ribm ON ribm."imageId" = i.id
-WHERE (${nsfwBrowsingLevelsFlag} & 28) = 0 OR ribm."imageId" IS NULL
-```
+**Image Scan Processing**: The `auditImageScanResults` function uses the materialized view to efficiently check for restricted base models and blocks NSFW images with restricted base models.
 
 The materialized view approach provides significant performance improvements over complex subqueries, reducing query execution time for image filtering operations.
 
@@ -96,17 +84,15 @@ The materialized view approach provides significant performance improvements ove
 - `isNsfwLevelRestrictedForBaseModel(baseModel, nsfwLevel)`: Checks if a specific level is restricted
 - `hasImageLicenseViolation(image)`: Utility for detecting violations in frontend components
 
-## Key Features
-
-- **High Performance**: Materialized view implementation reduces image filtering query time by ~60%
-- **Automatic Compliance**: License terms respected without manual intervention
-- **Intelligent Refresh**: Triggers only refresh materialized view when changes affect restricted base models
-- **User Education**: Clear alerts help users understand restrictions
-- **Comprehensive Coverage**: Applies across search, feeds, and all platform features
-- **Granular Control**: Image-level filtering with precise restriction enforcement
-- **Concurrent Refresh**: Uses `REFRESH MATERIALIZED VIEW CONCURRENTLY` to avoid blocking operations
-
 ## Technical Architecture
+
+### Centralized Configuration Management
+
+- **Dual Configuration**: Both database table (`RestrictedBaseModels`) and constants array (`nsfwRestrictedBaseModels`) work together
+- **License-Driven**: The constants array automatically derives restricted models from license definitions in code
+- **Database Efficiency**: The `RestrictedBaseModels` table enables fast querying and materialized view joins
+- **Single Source of Truth**: License definitions in `constants.ts` remain the authoritative configuration
+- **Easy Maintenance**: Adding/removing restrictions only requires updating license definitions
 
 ### Performance Optimization
 
@@ -114,3 +100,8 @@ The materialized view approach provides significant performance improvements ove
 - **Selective Refresh**: Trigger logic ensures materialized view only refreshes when relevant data changes
 - **Indexed Access**: Materialized view includes proper indexing for optimal query performance
 - **Concurrent Operations**: Non-blocking refresh strategy maintains system availability
+
+### Intelligent Trigger System
+
+- **Conditional Logic**: Triggers only fire when changes involve restricted base models
+- **Multi-Table Monitoring**: Automatically handles changes to images, model versions, and restriction configuration

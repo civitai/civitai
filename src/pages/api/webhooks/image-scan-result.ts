@@ -4,8 +4,7 @@ import * as z from 'zod/v4';
 import { env } from '~/env/server';
 import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
-import type { BaseModel } from '~/server/common/constants';
-import { constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import {
   BlockedReason,
   ImageScanType,
@@ -805,16 +804,15 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   }));
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
 
-  // Check if images has restricted base models
-  const imageBaseModels = await dbRead.$queryRaw<{ baseModel: BaseModel | null }[]>`
-    SELECT mv."baseModel" as "baseModel"
-    FROM "ImageResourceNew" ir
-    JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-    WHERE ir."imageId" = ${image.id}
+  // Check if image has restricted base models using materialized view
+  const [{ hasRestrictedBaseModel }] = await dbRead.$queryRaw<
+    { hasRestrictedBaseModel: boolean }[]
+  >`
+    SELECT EXISTS (
+      SELECT 1 FROM "RestrictedImagesByBaseModel" ribm 
+      WHERE ribm."imageId" = ${image.id}
+    ) as "hasRestrictedBaseModel"
   `;
-  const hasRestrictedBaseModel =
-    imageBaseModels.length > 0 &&
-    imageBaseModels.some((x) => x.baseModel && nsfwRestrictedBaseModels.includes(x.baseModel));
 
   let reviewKey: string | null = null;
   const flags = {

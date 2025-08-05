@@ -2,34 +2,38 @@
 CREATE OR REPLACE FUNCTION refresh_restricted_images_on_resource_change()
 RETURNS TRIGGER AS $$
 DECLARE
-    affected_count INTEGER;
-    restricted_models TEXT[] := ARRAY['SDXL Turbo', 'SVD', 'Stable Cascade', 'SD 3', 'SD 3.5', 'SD 3.5 Medium', 'SD 3.5 Large', 'SD 3.5 Large Turbo'];
+    model_version_id INTEGER;
+    is_restricted BOOLEAN := FALSE;
 BEGIN
-    -- Check if any of the affected model versions have restricted base models
+    -- Get the modelVersionId based on operation
     IF TG_OP = 'INSERT' THEN
-        SELECT COUNT(*)
-        INTO affected_count
-        FROM "ModelVersion" mv
-        WHERE mv.id = NEW."modelVersionId"
-          AND mv."baseModel" = ANY(restricted_models);
+        model_version_id := NEW."modelVersionId";
     ELSIF TG_OP = 'DELETE' THEN
-        SELECT COUNT(*)
-        INTO affected_count
-        FROM "ModelVersion" mv
-        WHERE mv.id = OLD."modelVersionId"
-          AND mv."baseModel" = ANY(restricted_models);
+        model_version_id := OLD."modelVersionId";
+    ELSE
+        -- Should not happen, but defensive programming
+        RETURN COALESCE(NEW, OLD);
     END IF;
 
-    -- Only refresh if we found restricted model versions
-    IF affected_count > 0 THEN
+    -- Skip if no model version ID
+    IF model_version_id IS NULL THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+
+    -- Check if the model version has a restricted base model
+    SELECT EXISTS (
+        SELECT 1 
+        FROM "ModelVersion" mv
+        JOIN "RestrictedBaseModels" rbm ON rbm."baseModel" = mv."baseModel"
+        WHERE mv.id = model_version_id
+    ) INTO is_restricted;
+
+    -- Refresh materialized view if needed
+    IF is_restricted THEN
         REFRESH MATERIALIZED VIEW CONCURRENTLY "RestrictedImagesByBaseModel";
     END IF;
 
-    IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
-    ELSE
-        RETURN NEW;
-    END IF;
+    RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
 
@@ -42,29 +46,44 @@ CREATE OR REPLACE TRIGGER refresh_restricted_images_resource
 CREATE OR REPLACE FUNCTION refresh_restricted_images_on_version_change()
 RETURNS TRIGGER AS $$
 DECLARE
-    restricted_models TEXT[] := ARRAY['SDXL Turbo', 'SVD', 'Stable Cascade', 'SD 3', 'SD 3.5', 'SD 3.5 Medium', 'SD 3.5 Large', 'SD 3.5 Large Turbo'];
+    should_refresh BOOLEAN := FALSE;
 BEGIN
-    -- Check if baseModel changed and involves restricted models
-    IF TG_OP = 'UPDATE' AND OLD."baseModel" IS DISTINCT FROM NEW."baseModel" THEN
-        -- Refresh if old or new baseModel is in restricted list
-        IF OLD."baseModel" = ANY(restricted_models) OR NEW."baseModel" = ANY(restricted_models) THEN
-            REFRESH MATERIALIZED VIEW CONCURRENTLY "RestrictedImagesByBaseModel";
-        END IF;
-    ELSIF TG_OP = 'INSERT' AND NEW."baseModel" = ANY(restricted_models) THEN
-        REFRESH MATERIALIZED VIEW CONCURRENTLY "RestrictedImagesByBaseModel";
-    ELSIF TG_OP = 'DELETE' AND OLD."baseModel" = ANY(restricted_models) THEN
+    -- Check if any involved baseModel is restricted
+    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW."baseModel" IS NOT NULL THEN
+        should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = NEW."baseModel");
+    END IF;
+    
+    IF NOT should_refresh AND TG_OP IN ('DELETE', 'UPDATE') AND OLD."baseModel" IS NOT NULL THEN
+        should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = OLD."baseModel");
+    END IF;
+
+    -- Refresh materialized view if needed
+    IF should_refresh THEN
         REFRESH MATERIALIZED VIEW CONCURRENTLY "RestrictedImagesByBaseModel";
     END IF;
 
-    IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
-    ELSE
-        RETURN NEW;
-    END IF;
+    RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE TRIGGER refresh_restricted_images_version
-    AFTER INSERT OR UPDATE OR DELETE ON "ModelVersion"
+    AFTER INSERT OR UPDATE OF "baseModel" OR DELETE ON "ModelVersion"
     FOR EACH ROW
+    WHEN (TG_OP = 'INSERT' OR TG_OP = 'DELETE' OR (TG_OP = 'UPDATE' AND OLD."baseModel" IS DISTINCT FROM NEW."baseModel"))
     EXECUTE FUNCTION refresh_restricted_images_on_version_change();
+
+-- Trigger on RestrictedBaseModels changes
+CREATE OR REPLACE FUNCTION refresh_restricted_images_on_restricted_models_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Always refresh when restricted base models are added, updated, or removed
+    REFRESH MATERIALIZED VIEW CONCURRENTLY "RestrictedImagesByBaseModel";
+    
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER refresh_restricted_images_restricted_models
+    AFTER INSERT OR UPDATE OR DELETE ON "RestrictedBaseModels"
+    FOR EACH ROW
+    EXECUTE FUNCTION refresh_restricted_images_on_restricted_models_change();
