@@ -534,9 +534,9 @@ export const baseModelResourceTypes = {
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
   Imagen4: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Imagen4.baseModels }],
   WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
-  WanVideo1_3B_T2V: [
-    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
-  ],
+  // WanVideo1_3B_T2V: [
+  //   { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
+  // ],
   WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
   WanVideo14B_I2V_480p: [
     {
