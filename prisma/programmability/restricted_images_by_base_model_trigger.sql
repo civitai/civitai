@@ -3,7 +3,7 @@ CREATE OR REPLACE FUNCTION refresh_restricted_images_on_resource_change()
 RETURNS TRIGGER AS $$
 DECLARE
     affected_count INTEGER;
-    restricted_models TEXT[] := ARRAY['SDXL Turbo', 'SVD', 'Stable Cascade', 'SD 3', 'SD 3.5', 'Sd 3.5 Medium', 'SD 3.5 Large', 'SD 3.5 Large Turbo'];
+    restricted_models TEXT[] := ARRAY['SDXL Turbo', 'SVD', 'Stable Cascade', 'SD 3', 'SD 3.5', 'SD 3.5 Medium', 'SD 3.5 Large', 'SD 3.5 Large Turbo'];
 BEGIN
     -- Check if any of the affected model versions have restricted base models
     IF TG_OP = 'INSERT' THEN
@@ -42,7 +42,7 @@ CREATE OR REPLACE TRIGGER refresh_restricted_images_resource
 CREATE OR REPLACE FUNCTION refresh_restricted_images_on_version_change()
 RETURNS TRIGGER AS $$
 DECLARE
-    restricted_models TEXT[] := ARRAY['SDXL Turbo', 'SVD', 'Stable Cascade', 'SD 3', 'SD 3.5', 'Sd 3.5 Medium', 'SD 3.5 Large', 'SD 3.5 Large Turbo'];
+    restricted_models TEXT[] := ARRAY['SDXL Turbo', 'SVD', 'Stable Cascade', 'SD 3', 'SD 3.5', 'SD 3.5 Medium', 'SD 3.5 Large', 'SD 3.5 Large Turbo'];
 BEGIN
     -- Check if baseModel changed and involves restricted models
     IF TG_OP = 'UPDATE' AND OLD."baseModel" IS DISTINCT FROM NEW."baseModel" THEN
