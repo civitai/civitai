@@ -11,7 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useMemo, useEffect } from 'react';
+import { useCallback, useMemo, useEffect, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -306,3 +306,5 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     </TwCosmeticWrapper>
   );
 }
+
+export const ImagesCardMemoized = memo(ImagesCard);

@@ -31,6 +31,7 @@ type Props<TData> = {
   itemId?: (data: TData) => string | number;
   /** [lowerInterval, upperInterval] */
   withAds?: boolean;
+  overscan?: number;
 };
 
 export function MasonryColumnsVirtual<TData>({
@@ -41,6 +42,7 @@ export function MasonryColumnsVirtual<TData>({
   maxItemHeight,
   itemId,
   withAds,
+  overscan,
 }: Props<TData>) {
   const { columnCount, columnWidth } = useMasonryContext();
 
@@ -68,6 +70,7 @@ export function MasonryColumnsVirtual<TData>({
             columnCount === 1 ? 'w-full' : 'w-[320px]'
           )}
           style={columnCount > 1 ? { width: columnWidth } : undefined}
+          overscan={overscan}
         />
       ))}
     </div>
@@ -79,6 +82,7 @@ function VirtualColumn<TData>({
   className,
   style,
   itemId,
+  overscan = 5,
   ...rest
 }: {
   items: ColumnItem<AdFeedItem<TData>>[];
@@ -87,6 +91,7 @@ function VirtualColumn<TData>({
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
   itemId?: (data: TData) => string | number;
   columnWidth: number;
+  overscan?: number;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useScrollAreaRef();
@@ -111,7 +116,7 @@ function VirtualColumn<TData>({
     count: items.length,
     getScrollElement: () => scrollAreaRef?.current ?? null,
     estimateSize: (i) => items[i].height,
-    overscan: 5,
+    overscan,
     getItemKey,
     gap: 16,
     scrollMargin,
@@ -151,23 +156,14 @@ function VirtualColumn<TData>({
 function VirtualItem<TData>({
   item: { height, data },
   render: RenderComponent,
-  itemId,
   columnWidth,
   index,
 }: {
   item: ColumnItem<AdFeedItem<TData>>;
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
-  itemId?: (data: TData) => string | number;
   columnWidth: number;
   index: number;
 }) {
-  const [visible, setVisible] = useState(false);
-  // useEffect(() => {
-  //   startTransition(() => setVisible(true));
-  // }, []);
-
-  // if (!visible) return null;
-
   switch (data.type) {
     case 'data':
       return (
@@ -177,7 +173,6 @@ function VirtualItem<TData>({
           data={data.data}
           width={columnWidth}
           height={height}
-          visible={visible}
         />
       );
     case 'ad':

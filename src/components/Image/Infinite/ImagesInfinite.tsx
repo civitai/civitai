@@ -9,7 +9,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
-import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -96,7 +96,7 @@ export function ImagesInfiniteContent({
                 return imageHeight + 38;
               }}
               maxItemHeight={600}
-              render={MasonryItem ?? ImagesCard}
+              render={MasonryItem ?? ImagesCardMemoized}
               itemId={(data) => data.id}
               withAds={showAds}
             />

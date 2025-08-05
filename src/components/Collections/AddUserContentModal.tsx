@@ -15,7 +15,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, memo } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -186,7 +186,7 @@ export function AddUserContentModal({ collectionId }: Props) {
                     hideAutoResources: undefined,
                     hideManualResources: undefined,
                   }}
-                  renderItem={SelectableImageCard}
+                  renderItem={SelectableImageCardMemoized}
                   disableStoreFilters
                 />
               </MasonryContainer>
@@ -290,6 +290,8 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
     </MasonryCard>
   );
 }
+
+const SelectableImageCardMemoized = memo(SelectableImageCard);
 
 type StoreState = {
   selected: Record<number, boolean>;
