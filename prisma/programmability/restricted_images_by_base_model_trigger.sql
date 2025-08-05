@@ -42,19 +42,14 @@ CREATE OR REPLACE TRIGGER refresh_restricted_images_resource
     FOR EACH ROW
     EXECUTE FUNCTION refresh_restricted_images_on_resource_change();
 
--- Trigger on ModelVersion baseModel changes
+-- Trigger on ModelVersion baseModel changes (UPDATE only)
 CREATE OR REPLACE FUNCTION refresh_restricted_images_on_version_change()
 RETURNS TRIGGER AS $$
 DECLARE
     should_refresh BOOLEAN := FALSE;
 BEGIN
-    IF TG_OP = 'INSERT' AND NEW."baseModel" IS NOT NULL THEN
-        -- Check if new baseModel is restricted
-        should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = NEW."baseModel");
-    ELSIF TG_OP = 'DELETE' AND OLD."baseModel" IS NOT NULL THEN
-        -- Check if deleted baseModel was restricted
-        should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = OLD."baseModel");
-    ELSIF TG_OP = 'UPDATE' THEN
+    -- Only handle UPDATE operations (INSERT/DELETE are handled by ImageResourceNew triggers via cascade)
+    IF TG_OP = 'UPDATE' THEN
         -- Only refresh if baseModel actually changed and either old or new is restricted
         IF OLD."baseModel" IS DISTINCT FROM NEW."baseModel" THEN
             IF NEW."baseModel" IS NOT NULL THEN
@@ -77,7 +72,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE TRIGGER refresh_restricted_images_version
-    AFTER INSERT OR UPDATE OF "baseModel" OR DELETE ON "ModelVersion"
+    AFTER UPDATE OF "baseModel" ON "ModelVersion"
     FOR EACH ROW
     EXECUTE FUNCTION refresh_restricted_images_on_version_change();
 
