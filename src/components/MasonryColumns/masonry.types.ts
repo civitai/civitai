@@ -12,6 +12,8 @@ export interface MasonryRenderItemProps<Item> {
    * The data at `items[index]` of your `items` prop array.
    */
   data: Item;
+
+  visible?: boolean;
 }
 
 export type MasonryImageDimensionsFn<TData> = (data: TData) => { height: number; width: number };

@@ -81,7 +81,7 @@ export function useMasonryColumns<TData>(
   }, [data, columnWidth, columnCount, maxItemHeight, adsReallyAreEnabled]);
 }
 
-type ColumnItem<TData> = {
+export type ColumnItem<TData> = {
   height: number;
   data: TData;
 };

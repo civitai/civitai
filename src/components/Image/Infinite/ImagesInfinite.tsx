@@ -9,13 +9,12 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
-import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { IsClient } from '~/components/IsClient/IsClient';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -85,7 +84,7 @@ export function ImagesInfiniteContent({
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
           <ImagesProvider images={images} {...imageProviderProps}>
-            <MasonryColumns
+            <MasonryColumnsVirtual
               data={images}
               imageDimensions={(data) => {
                 const width = data?.width ? data.width : 450;
@@ -97,7 +96,7 @@ export function ImagesInfiniteContent({
                 return imageHeight + 38;
               }}
               maxItemHeight={600}
-              render={MasonryItem ?? ImagesCard}
+              render={MasonryItem ?? ImagesCardMemoized}
               itemId={(data) => data.id}
               withAds={showAds}
             />
