@@ -99,6 +99,7 @@ export const constants = {
     'HiDream',
     'OpenAI',
     'Imagen4',
+    'Veo 3',
     'Other',
   ],
   hiddenBaseModels: [
@@ -116,6 +117,7 @@ export const constants = {
     'OpenAI',
     'Imagen4',
     'Wan Video',
+    'Veo 3',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -560,6 +562,7 @@ export const baseModelSets = {
     name: 'Wan Video 14B i2v 720p',
     baseModels: ['Wan Video 14B i2v 720p'],
   }),
+  Veo3: new BaseModelSet({ name: 'Veo 3', baseModels: ['Veo 3'] }),
 };
 
 export function getEcosystemFromBaseModel(baseModel: string) {
@@ -719,6 +722,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://deepmind.google/about/responsibility-safety/',
     name: 'Imagen4',
   },
+  veo3: {
+    url: 'https://policies.google.com/terms',
+    name: 'Veo 3',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -768,6 +775,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
   Imagen4: baseLicenses['imagen4'],
+  'Veo 3': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],

@@ -54,6 +54,7 @@ import { cleanPrompt } from '~/utils/metadata/audit';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getVeo3ProcessFromAir, veo3ModelOptions } from '~/server/orchestrator/veo3/veo3.schema';
 
 type GenerationResourceSimple = {
   id: number;
@@ -444,7 +445,7 @@ const getModelVersionGenerationData = async ({
       case 'hunyuan':
         process = 'txt2vid';
       case 'veo3':
-        process = 'txt2vid';
+        process = getVeo3ProcessFromAir(resources[0].air);
     }
   }
 

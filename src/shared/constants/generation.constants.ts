@@ -293,6 +293,7 @@ const videoBaseModelSetTypes: BaseModelSetType[] = [
   'WanVideo14B_T2V',
   'WanVideo1_3B_T2V',
   'LTXV',
+  'Veo3',
 ];
 export function getResourceGenerationType(
   baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>,
@@ -554,6 +555,7 @@ export const baseModelResourceTypes = {
       partialSupport: baseModelSets.WanVideo14B_I2V_480p.baseModels,
     },
   ],
+  Veo3: [],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

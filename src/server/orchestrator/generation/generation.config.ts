@@ -17,12 +17,10 @@ export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEn
   WanVideo14B_T2V: 'wan',
   WanVideo1_3B_T2V: 'wan',
   HyV1: 'hunyuan',
+  Veo3: 'veo3',
 };
 
-export const modelIdEngineMap = new Map<number, OrchestratorEngine2>([
-  [1665714, 'veo3'],
-  [982559, 'lightricks'],
-]);
+export const modelIdEngineMap = new Map<number, OrchestratorEngine2>([[982559, 'lightricks']]);
 
 export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
 type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
