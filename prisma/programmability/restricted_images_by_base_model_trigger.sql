@@ -48,13 +48,23 @@ RETURNS TRIGGER AS $$
 DECLARE
     should_refresh BOOLEAN := FALSE;
 BEGIN
-    -- Check if any involved baseModel is restricted
-    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW."baseModel" IS NOT NULL THEN
+    IF TG_OP = 'INSERT' AND NEW."baseModel" IS NOT NULL THEN
+        -- Check if new baseModel is restricted
         should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = NEW."baseModel");
-    END IF;
-    
-    IF NOT should_refresh AND TG_OP IN ('DELETE', 'UPDATE') AND OLD."baseModel" IS NOT NULL THEN
+    ELSIF TG_OP = 'DELETE' AND OLD."baseModel" IS NOT NULL THEN
+        -- Check if deleted baseModel was restricted
         should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = OLD."baseModel");
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- Only refresh if baseModel actually changed and either old or new is restricted
+        IF OLD."baseModel" IS DISTINCT FROM NEW."baseModel" THEN
+            IF NEW."baseModel" IS NOT NULL THEN
+                should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = NEW."baseModel");
+            END IF;
+            
+            IF NOT should_refresh AND OLD."baseModel" IS NOT NULL THEN
+                should_refresh := EXISTS (SELECT 1 FROM "RestrictedBaseModels" WHERE "baseModel" = OLD."baseModel");
+            END IF;
+        END IF;
     END IF;
 
     -- Refresh materialized view if needed
@@ -69,7 +79,6 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE TRIGGER refresh_restricted_images_version
     AFTER INSERT OR UPDATE OF "baseModel" OR DELETE ON "ModelVersion"
     FOR EACH ROW
-    WHEN (TG_OP = 'INSERT' OR TG_OP = 'DELETE' OR (TG_OP = 'UPDATE' AND OLD."baseModel" IS DISTINCT FROM NEW."baseModel"))
     EXECUTE FUNCTION refresh_restricted_images_on_version_change();
 
 -- Trigger on RestrictedBaseModels changes
