@@ -1,17 +1,15 @@
 import type { GroupProps } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Button,
   Group,
+  HoverCard,
   Overlay,
   Paper,
-  Popover,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -230,48 +228,61 @@ function ResourceInfoCard({
             )}
 
             {(resource.availability === Availability.Private || !!resource.epochDetails) && (
-              <Tooltip label="This resource is private" position="top" withArrow>
-                <LegacyActionIcon size={18} color="dark.5" variant="filled">
-                  <IconLock size={14} />
-                </LegacyActionIcon>
-              </Tooltip>
+              <HoverCard position="bottom" withArrow>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="dark.5" variant="filled">
+                    <IconLock size={14} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">This resource is private</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
 
             {resource.additionalResourceCost && selectSource === 'generation' && (
-              <Popover position="bottom" withArrow width={200}>
-                <Popover.Target>
+              <HoverCard position="bottom" withArrow width={200}>
+                <HoverCard.Target>
                   <LegacyActionIcon size={18} color="blue" variant="filled">
                     <IconWeight size={14} />
                   </LegacyActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
                   <Text size="sm">
                     This resource carries an additional{' '}
                     <Anchor component={Link} href="/articles/7929">
                       buzz cost
                     </Anchor>
                   </Text>
-                </Popover.Dropdown>
-              </Popover>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
             {resource.earlyAccessEndsAt && (
-              <Popover position="bottom" withArrow width={200}>
-                <Popover.Target>
+              <HoverCard position="bottom" withArrow width={200}>
+                <HoverCard.Target>
                   <LegacyActionIcon size={18} color="yellow.7" variant="filled">
                     <IconBolt className="text-dark-9" fill="currentColor" size={16} />
                   </LegacyActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
                   <Text size="sm">This resource is in early access</Text>
-                </Popover.Dropdown>
-              </Popover>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
             {isPartiallySupported && (
-              <Tooltip label="This resource may not be fully supported for generation with the current base model">
-                <LegacyActionIcon size={18} color="yellow.7" variant="filled">
-                  <IconAlertTriangle size={16} />
-                </LegacyActionIcon>
-              </Tooltip>
+              <HoverCard position="bottom" withArrow width={200}>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="yellow.7" variant="filled">
+                    <IconAlertTriangle size={16} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">
+                    This resource may not be fully supported for generation with the current base
+                    model
+                  </Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
           </div>
         </Group>
