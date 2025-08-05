@@ -4,7 +4,6 @@ import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
-import type { RegionInfo } from '~/server/utils/region-blocking';
 import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
@@ -15,11 +14,9 @@ import { md5 } from '~/shared/utils/md5';
 export function CivitaiSessionProvider({
   children,
   disableHidden,
-  region,
 }: {
   children: React.ReactNode;
   disableHidden?: boolean;
-  region?: RegionInfo;
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
@@ -51,13 +48,12 @@ export function CivitaiSessionProvider({
         autoplayGifs: user.autoplayGifs ?? true,
         blurNsfw: user.blurNsfw,
       },
-      region,
     };
     if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
     return currentUser;
     // data?.expires seems not used but is needed to remotely kill sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.expires, disableHidden, canViewNsfw, region]);
+  }, [data?.expires, disableHidden, canViewNsfw]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
@@ -82,7 +78,6 @@ export type CivitaiSessionUser = SessionUser & {
   meta?: UserMeta;
   isPaidMember: boolean;
   emailHash?: string;
-  region?: RegionInfo;
 };
 
 type SharedUser = { settings: BrowsingSettings };

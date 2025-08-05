@@ -4,7 +4,7 @@ import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react'
 import { useMemo } from 'react';
 import type { BaseModel } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import classes from './ModelURN.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

@@ -13,7 +13,7 @@ import type {
 } from '~/server/services/orchestrator';
 import type { WorkflowStatus } from '@civitai/client';
 import { isDefined } from '~/utils/type-guards';
-import { useGenerationStore } from '~/store/generation.store';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
 
 const POLLABLE_STATUSES: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled', 'processing'];
 
@@ -68,7 +68,7 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
-  const opened = useGenerationStore((state) => state.opened);
+  const opened = useGenerationPanelStore((state) => state.opened);
   const {
     data: requests,
     steps,

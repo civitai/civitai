@@ -5,7 +5,7 @@ import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
 import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
 import { DeleteCard } from '~/components/Account/DeleteCard';
-import { NotificationsCard } from '~/components/Account/NotificationsCard';
+
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
@@ -19,6 +19,9 @@ import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentCo
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
+import dynamic from 'next/dynamic';
+
+const NotificationsCard = dynamic(() => import('~/components/Account/NotificationsCard'));
 
 export default function Account() {
   const { apiKeys, canViewNsfw } = useFeatureFlags();

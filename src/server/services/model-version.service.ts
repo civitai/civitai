@@ -4,7 +4,12 @@ import dayjs from 'dayjs';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL, constants } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  nsfwRestrictedBaseModels,
+  type BaseModel,
+} from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -188,7 +193,28 @@ export const upsertModelVersion = async ({
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
-  // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
+
+  // Get model information to check NSFW + restricted base model combination
+  const model = await dbWrite.model.findUniqueOrThrow({
+    where: { id: data.modelId },
+    select: { nsfw: true },
+  });
+
+  // Validate NSFW + restricted base model combination
+  if (
+    model.nsfw &&
+    data.baseModel &&
+    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
+  ) {
+    throw throwBadRequestError(
+      `NSFW models cannot use base models with license restrictions. The base model "${
+        data.baseModel
+      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+        ', '
+      )}`
+    );
+  }
+
   if (
     updatedEarlyAccessConfig?.timeframe &&
     !updatedEarlyAccessConfig?.chargeForDownload &&
@@ -278,9 +304,12 @@ export const upsertModelVersion = async ({
         dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
-    await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id, version.modelId);
-    await dataForModelsCache.bust(version.modelId);
+
+    await Promise.all([
+      preventReplicationLag('modelVersion', version.id),
+      bustMvCache(version.id, version.modelId),
+      dataForModelsCache.bust(version.modelId),
+    ]);
 
     return version;
   } else {
@@ -453,9 +482,11 @@ export const upsertModelVersion = async ({
       },
     });
 
-    await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id, version.modelId);
-    await dataForModelsCache.bust(version.modelId);
+    await Promise.all([
+      preventReplicationLag('modelVersion', version.id),
+      bustMvCache(version.id, version.modelId),
+      dataForModelsCache.bust(version.modelId),
+    ]);
 
     // Run it in the background to avoid blocking the request.
     ingestModelById({ id: version.modelId }).catch((error) =>
@@ -529,10 +560,30 @@ export const publishModelVersionsWithEarlyAccess = async ({
     select: {
       id: true,
       name: true,
+      baseModel: true,
       earlyAccessConfig: true,
-      model: { select: { id: true, userId: true, name: true } },
+      model: { select: { id: true, userId: true, name: true, nsfw: true } },
     },
   });
+
+  // Validate NSFW + restricted base model combination for all versions
+  for (const version of versions) {
+    if (
+      version.model.nsfw &&
+      version.baseModel &&
+      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+    ) {
+      throw throwBadRequestError(
+        `Cannot publish NSFW model version "${
+          version.name
+        }" with restricted base model. The base model "${
+          version.baseModel
+        }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+          ', '
+        )}`
+      );
+    }
+  }
 
   const updatedVersions = await Promise.all(
     versions.map(async (currentVersion) => {
@@ -642,10 +693,28 @@ export const publishModelVersionById = async ({
     select: {
       id: true,
       name: true,
+      baseModel: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true, availability: true, publishedAt: true } },
+      model: {
+        select: { userId: true, name: true, availability: true, publishedAt: true, nsfw: true },
+      },
     },
   });
+
+  // Validate NSFW + restricted base model combination
+  if (
+    currentVersion.model.nsfw &&
+    currentVersion.baseModel &&
+    nsfwRestrictedBaseModels.includes(currentVersion.baseModel as BaseModel)
+  ) {
+    throw throwBadRequestError(
+      `Cannot publish NSFW model version with restricted base model. The base model "${
+        currentVersion.baseModel
+      }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+        ', '
+      )}`
+    );
+  }
 
   const version = await dbWrite.$transaction(
     async (tx) => {

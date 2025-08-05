@@ -1,5 +1,4 @@
 import * as z from 'zod/v4';
-import { constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -100,10 +99,10 @@ export const userUpdateSchema = z.object({
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({
-      format: z.enum(constants.modelFileFormats).optional(),
-      size: z.enum(constants.modelFileSizes).optional(),
-      fp: z.enum(constants.modelFileFp).optional(),
-      imageFormat: z.enum(constants.imageFormats).optional(),
+      format: z.string().optional(),
+      size: z.string().optional(),
+      fp: z.string().optional(),
+      imageFormat: z.string().optional(),
     })
     .optional(),
   leaderboardShowcase: z.string().nullish(),

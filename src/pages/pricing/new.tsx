@@ -4,6 +4,7 @@ import { MembershipTypeSelector } from '~/components/Purchase/MembershipTypeSele
 import { RedMembershipUnavailable } from '~/components/Purchase/RedMembershipUnavailable';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { GreenMembershipPlans } from '~/components/Purchase/GreenMembershipPlans';
+import { MembershipPageWrapper } from '~/components/Purchase/MembershipPageWrapper';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -55,56 +56,71 @@ export default function Pricing() {
 
   // If no buzz type is selected and not on green environment, show selection screen
   if (!features.isGreen && !selectedBuzzType) {
-    return <MembershipTypeSelector onSelect={setSelectedBuzzType} />;
+    return (
+      <MembershipPageWrapper
+        title="Choose Your Membership Type"
+        introText="Before selecting a membership plan, please choose which type of Buzz you'd like to receive with your membership benefits."
+        reason={reason}
+        containerSize="md"
+      >
+        <MembershipTypeSelector onSelect={setSelectedBuzzType} />
+      </MembershipPageWrapper>
+    );
   }
 
   // If green membership is selected but we're not in green environment, redirect to green
   if (!features.isGreen && selectedBuzzType === 'green') {
     return (
-      <GreenEnvironmentRedirect
-        queryParams={{
-          reason,
-        }}
-        onGoBack={() => setSelectedBuzzType(undefined)}
-      />
+      <MembershipPageWrapper title="Green Memberships" reason={reason}>
+        <GreenEnvironmentRedirect
+          queryParams={{
+            reason,
+          }}
+          onGoBack={() => setSelectedBuzzType(undefined)}
+        />
+      </MembershipPageWrapper>
     );
   }
 
   // If red membership is selected, show unavailable message
   if (!features.isGreen && ['red', 'fakered'].some((s) => s === selectedBuzzType)) {
     return (
+      <MembershipPageWrapper title="Red Memberships" reason={reason}>
+        <div
+          style={{
+            // @ts-ignore
+            '--buzz-color': buzzConfig.colorRgb,
+          }}
+        >
+          <RedMembershipUnavailable
+            onSelectGreen={() => setSelectedBuzzType('green')}
+            onGoBack={() => setSelectedBuzzType(undefined)}
+          />
+        </div>
+      </MembershipPageWrapper>
+    );
+  }
+
+  // Main membership plans view
+  return (
+    <MembershipPageWrapper title="Green Memberships" reason={reason} showBuzzTopUp={true}>
       <div
         style={{
           // @ts-ignore
           '--buzz-color': buzzConfig.colorRgb,
         }}
       >
-        <RedMembershipUnavailable
-          onSelectGreen={() => setSelectedBuzzType('green')}
-          onGoBack={() => setSelectedBuzzType(undefined)}
+        <GreenMembershipPlans
+          reason={reason}
+          selectedBuzzType={selectedBuzzType}
+          interval={interval}
+          onIntervalChange={setInterval}
+          subscription={subscription}
+          subscriptionPaymentProvider={subscriptionPaymentProvider}
+          isFreeTier={isFreeTier}
+          paymentProvider={paymentProvider}
         />
       </div>
-    );
-  }
-
-  // Main membership plans view
-  return (
-    <div
-      style={{
-        // @ts-ignore
-        '--buzz-color': buzzConfig.colorRgb,
-      }}
-    >
-      <GreenMembershipPlans
-        reason={reason}
-        selectedBuzzType={selectedBuzzType}
-        interval={interval}
-        onIntervalChange={setInterval}
-        subscription={subscription}
-        subscriptionPaymentProvider={subscriptionPaymentProvider}
-        isFreeTier={isFreeTier}
-        paymentProvider={paymentProvider}
-      />
-    </div>
+    </MembershipPageWrapper>
   );
 }

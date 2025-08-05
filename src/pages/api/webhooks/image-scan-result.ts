@@ -1,3 +1,4 @@
+import { isDev } from '~/env/other';
 import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import * as z from 'zod/v4';
@@ -123,6 +124,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     const imageId = Number(req.query.imageId);
     const image = await getImage(imageId);
     const result = await auditImageScanResults({ image });
+    if (req.query.rescan) await updateImage(image, result);
     return res.status(200).json(result);
   }
   if (req.method !== 'POST')
@@ -206,8 +208,21 @@ async function handleSuccess(args: BodyProps) {
     const image = await getImage(id);
     if (image.ingestion === ImageIngestionStatus.Blocked) return;
 
-    const { data, reviewKey, tagsForReview = [], flags } = await auditImageScanResults({ image });
+    const result = await auditImageScanResults({ image });
 
+    await updateImage(image, result);
+  } catch (e: any) {
+    await logScanResultError({ id, message: e.message, error: e });
+    throw new Error(e.message);
+  }
+}
+
+async function updateImage(
+  image: GetImageReturn,
+  { data, reviewKey, tagsForReview = [], flags }: AuditImageScanResultsReturn
+) {
+  const { id } = image;
+  try {
     await dbWrite.image.update({ where: { id }, data });
 
     if (data.ingestion === 'Scanned') {
@@ -267,9 +282,9 @@ async function handleSuccess(args: BodyProps) {
         userId: image.userId,
       });
     }
-  } catch (e: any) {
-    await logScanResultError({ id, message: e.message, error: e });
-    throw new Error(e.message);
+  } catch (e) {
+    if (isDev) console.log({ error: e });
+    throw e;
   }
 }
 
@@ -786,6 +801,7 @@ async function processScanResult({
   }
 }
 
+type AuditImageScanResultsReturn = AsyncReturnType<typeof auditImageScanResults>;
 async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   const prompt = normalizeText(image.meta?.['prompt'] as string | undefined);
   const negativePrompt = normalizeText(image.meta?.['negativePrompt'] as string | undefined);

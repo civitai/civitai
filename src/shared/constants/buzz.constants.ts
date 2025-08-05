@@ -48,7 +48,12 @@ export const buzzApiAccountTypes = [
 export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
 export type BuzzCreatorProgramType = 'creatorprogrambank';
 export type BuzzCashType = 'cashpending' | 'cashsettled';
-export type BuzzAccountType = BuzzSpendType | BuzzCreatorProgramType | BuzzCashType;
+export type LegacyBuzzType = 'club';
+export type BuzzAccountType =
+  | BuzzSpendType
+  | BuzzCreatorProgramType
+  | BuzzCashType
+  | LegacyBuzzType;
 type BuzzTypeConfig =
   | {
       type: 'spend';
@@ -58,7 +63,8 @@ type BuzzTypeConfig =
       nsfw?: boolean;
     }
   | { type: 'bank'; value: BuzzApiAccountType }
-  | { type: 'cash'; value: BuzzApiAccountType };
+  | { type: 'cash'; value: BuzzApiAccountType }
+  | { type: 'legacy'; value: BuzzApiAccountType };
 
 const createBuzzTypes = <T extends Record<BuzzSpendType, BuzzSpendType>>(args: T) => args;
 // acts as an enum for easy code tracking
@@ -77,6 +83,7 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
   creatorprogrambank: { type: 'bank', value: 'CreatorProgramBank' },
   cashpending: { type: 'cash', value: 'CashPending' },
   cashsettled: { type: 'cash', value: 'CashSettled' },
+  club: { type: 'legacy', value: 'Club' },
 };
 
 export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[];
@@ -87,6 +94,10 @@ export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
+export const buzzPurchaseTypes = buzzSpendTypes.filter((type) => {
+  const config = buzzTypeConfig[type];
+  return config.type === 'spend' && config.purchasable;
+});
 
 function getApiTypeFromClientType(type: BuzzAccountType) {
   const config = buzzTypeConfig[type];

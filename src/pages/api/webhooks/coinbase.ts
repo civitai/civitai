@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
-import coinbaseCaller, { CoinbaseCaller } from '~/server/http/coinbase/coinbase.caller';
+import { CoinbaseCaller } from '~/server/http/coinbase/coinbase.caller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { processBuzzOrder } from '~/server/services/coinbase.service';

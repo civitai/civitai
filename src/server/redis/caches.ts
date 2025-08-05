@@ -19,7 +19,7 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
@@ -388,6 +388,7 @@ type ModelVersionDetails = {
   status: ModelStatus;
   covered: boolean;
   availability: Availability;
+  nsfwLevel: NsfwLevel;
 };
 type ModelDataCache = {
   modelId: number;
@@ -495,12 +496,12 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
         (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = 'Public' AND c.availability != 'Private') as "collectionCount"
     FROM "User" u
     CROSS JOIN LATERAL (
-        SELECT 
+        SELECT
             SUM(IIF(i."type" =  'image', 1, 0)) as "imageCount",
             SUM(IIF(i."type" =  'video', 1, 0)) as "videoCount"
         FROM "Image" i
         WHERE i."userId" = u.id
-        AND i."postId" NOT IN 
+        AND i."postId" NOT IN
         (
             SELECT p."id"
             FROM "Post" p

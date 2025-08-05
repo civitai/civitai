@@ -1,8 +1,8 @@
-import { Card, Divider, Stack, Switch, Title, Group, Text, Checkbox } from '@mantine/core';
+import { Card, Divider, Stack, Title, Group, Text, Checkbox } from '@mantine/core';
 import { IconBellOff } from '@tabler/icons-react';
 import React from 'react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
-import { useNotificationSettings } from '~/components/Notifications/notifications.utils';
+import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import {
   notificationCategoryTypes,
@@ -12,7 +12,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 
 import { trpc } from '~/utils/trpc';
 
-export function NotificationsCard() {
+export default function NotificationsCard() {
   const queryUtils = trpc.useUtils();
 
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =

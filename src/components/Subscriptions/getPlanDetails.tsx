@@ -109,7 +109,7 @@ export const getPlanDetails: (
       features.privateModels
         ? {
             icon: <IconCategory size={benefitIconSize} />,
-            iconColor: 'blue',
+            iconColor: 'grape',
 
             iconVariant: 'light' as ThemeIconVariant,
             content: (
@@ -127,13 +127,13 @@ export const getPlanDetails: (
         : null,
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
-        iconColor: 'blue',
+        iconColor: 'grape',
         iconVariant: 'light' as ThemeIconVariant,
         content: <Text>{metadata.quantityLimit ?? 4} Images per job</Text>,
       },
       {
         icon: <IconList size={benefitIconSize} />,
-        iconColor: 'blue',
+        iconColor: 'grape',
         iconVariant: 'light' as ThemeIconVariant,
         content: <Text>{metadata.queueLimit ?? 4} Queued jobs</Text>,
       },
@@ -150,13 +150,13 @@ export const getPlanDetails: (
               </Text>
             ),
             icon: <IconCloud size={benefitIconSize} />,
-            iconColor: metadata.vaultSizeKb ? 'blue' : 'gray',
+            iconColor: metadata.vaultSizeKb ? 'grape' : 'gray',
             iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
       {
         icon: <IconHeartHandshake size={benefitIconSize} />,
-        iconColor: !!metadata.tier && metadata.tier !== 'free' ? 'blue' : 'gray',
+        iconColor: !!metadata.tier && metadata.tier !== 'free' ? 'grape' : 'gray',
 
         iconVariant: 'light' as ThemeIconVariant,
         content: (
@@ -189,7 +189,7 @@ export const getPlanDetails: (
           ) : (
             <IconHexagon size={benefitIconSize} />
           ),
-        iconColor: !metadata.badgeType || metadata.badgeType === 'none' ? 'gray' : 'blue',
+        iconColor: !metadata.badgeType || metadata.badgeType === 'none' ? 'gray' : 'grape',
         iconVariant: 'light' as ThemeIconVariant,
       },
       {
@@ -210,7 +210,7 @@ export const getPlanDetails: (
           ) : null,
         icon: <IconHexagon3d size={benefitIconSize} />,
         iconColor:
-          !metadata.badgeType || metadata.badgeType === 'none' || !isAnnual ? 'gray' : 'blue',
+          !metadata.badgeType || metadata.badgeType === 'none' || !isAnnual ? 'gray' : 'grape',
         iconVariant: 'light' as ThemeIconVariant,
       },
     ].filter(isDefined),

@@ -150,6 +150,7 @@ export const useBuzzTransaction = (opts?: {
 
     const balance = total;
     const meetsRequirement = hasRequiredAmount(buzzAmount);
+
     if (!meetsRequirement) {
       trackAction({ type: 'NotEnoughFunds', details: { amount: buzzAmount } }).catch(
         () => undefined
@@ -175,6 +176,8 @@ export const useBuzzTransaction = (opts?: {
 
       return;
     }
+
+    // if
 
     onPerformTransaction();
   };

@@ -64,7 +64,7 @@ import {
   useBountyEngagement,
   useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
-import { constants, getCurrencyConfig } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -98,6 +98,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { Page } from '~/components/AppLayout/Page';
 import classes from './[[...slug]].module.scss';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 const querySchema = z.object({
   id: z.coerce.number(),

@@ -21,7 +21,7 @@ import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/gener
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 export async function createComfyStep(

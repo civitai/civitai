@@ -35,7 +35,9 @@ import { Bar } from 'react-chartjs-2';
 import classes from '~/components/Buzz/buzz.module.scss';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
@@ -65,15 +67,20 @@ const dateOptions = monthsUntilNow.reverse().map((month) => {
   };
 });
 
-export function DailyCreatorCompReward() {
+export function DailyCreatorCompReward({
+  buzzAccountType = 'yellow',
+}: {
+  buzzAccountType?: BuzzSpendType;
+}) {
   const features = useFeatureFlags();
+  const buzzConfig = useBuzzCurrencyConfig(buzzAccountType);
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
-    { date: selectedDate },
+    { date: selectedDate, accountType: buzzAccountType },
     { enabled: features.buzz }
   );
   const theme = useMantineTheme();
@@ -124,7 +131,7 @@ export function DailyCreatorCompReward() {
           titleFont: { size: 14, weight: '600' },
           titleAlign: 'center',
           bodyFont: { size: 20, weight: 'bold' },
-          bodyColor: theme.colors.yellow[7],
+          bodyColor: buzzConfig.color,
           bodyAlign: 'center',
           footerFont: { size: 12, weight: '500' },
           footerAlign: 'center',
@@ -139,13 +146,13 @@ export function DailyCreatorCompReward() {
               return `${formatDate(tooltipItems[0].parsed.x)}`;
             },
             label(tooltipItem) {
-              return `⚡️ ${formatCurrencyForDisplay(tooltipItem.parsed.y, 'BUZZ')}`;
+              return `${formatCurrencyForDisplay(tooltipItem.parsed.y, 'BUZZ')}`;
             },
           },
         },
       },
     }),
-    [filteredVersionIds.length, labelColor, maxSelectedDate, minSelectedDate, theme.colors.yellow]
+    [filteredVersionIds.length, labelColor, maxSelectedDate, minSelectedDate, buzzConfig.color]
   );
 
   const datasets = useMemo(() => {
@@ -170,12 +177,12 @@ export function DailyCreatorCompReward() {
 
     return [
       {
-        backgroundColor: theme.colors.yellow[7],
-        borderColor: theme.colors.yellow[7],
+        backgroundColor: buzzConfig.color,
+        borderColor: buzzConfig.color,
         data: data.map((resource) => ({ x: resource.createdAt, y: resource.total })),
       },
     ];
-  }, [filteredVersionIds, resources, theme.colors.yellow]);
+  }, [filteredVersionIds, resources, buzzConfig.color]);
 
   const selectedResources = resources.filter((v) => filteredVersionIds.includes(v.id));
   const combinedResources = [
@@ -215,10 +222,10 @@ export function DailyCreatorCompReward() {
                   />
                 </Group>
                 <Group justify="flex-start" gap={4}>
-                  <CurrencyIcon currency={Currency.BUZZ} size={24} />
+                  <CurrencyIcon currency={Currency.BUZZ} size={24} type={buzzAccountType} />
                   <Text
                     size="xl"
-                    color="yellow.7"
+                    c={buzzConfig.color}
                     fw="bold"
                     style={{ fontVariant: 'tabular-nums' }}
                   >
@@ -292,9 +299,7 @@ export function DailyCreatorCompReward() {
                             px={8}
                             style={{
                               borderRadius: theme.radius.sm,
-                              backgroundColor: isSelected
-                                ? rgba(theme.colors.yellow[7], 0.1)
-                                : undefined,
+                              backgroundColor: isSelected ? rgba(buzzConfig.color, 0.1) : undefined,
                             }}
                             onClick={() => {
                               setFilteredVersionIds((ids) =>
@@ -316,10 +321,14 @@ export function DailyCreatorCompReward() {
                                 </Text>
                               </Stack>
                               <Group gap={4} wrap="nowrap">
-                                <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                                <CurrencyIcon
+                                  currency={Currency.BUZZ}
+                                  size={16}
+                                  type={buzzAccountType}
+                                />
                                 <Text
                                   size="sm"
-                                  color="yellow.7"
+                                  c={buzzConfig.color}
                                   fw="bold"
                                   style={{ fontVariant: 'tabular-nums' }}
                                 >

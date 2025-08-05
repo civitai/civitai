@@ -3,19 +3,17 @@ import * as z from 'zod/v4';
 import type { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
-import { notificationSingleRowFull } from '~/server/jobs/send-notifications';
 import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import type { NotificationCategoryCount } from '~/server/notifications/notification-cache';
 import { notificationCache } from '~/server/notifications/notification-cache';
-import { getNotificationMessage } from '~/server/notifications/utils.notifications';
-import type {
-  GetUserNotificationsSchema,
-  MarkReadNotificationInput,
-  ToggleNotificationSettingInput,
+import {
+  notificationSingleRowFull,
+  type GetUserNotificationsSchema,
+  type MarkReadNotificationInput,
+  type ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { isDefined } from '~/utils/type-guards';
 
 type NotificationsRaw = {
   id: number;

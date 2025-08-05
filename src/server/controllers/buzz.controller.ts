@@ -111,6 +111,10 @@ export async function createBuzzTipTransactionHandler({
 }) {
   try {
     const { id: fromAccountId } = ctx.user;
+    if (input.fromAccountType !== input.toAccountType) {
+      throw throwBadRequestError('You cannot send Buzz between different account types');
+    }
+
     if (fromAccountId === input.toAccountId)
       throw throwBadRequestError('You cannot send Buzz to the same account');
 
@@ -194,6 +198,7 @@ export async function createBuzzTipTransactionHandler({
       accountId: fromAccountId,
       accountType: 'yellow',
     });
+
     if ((userAccount[0]?.balance ?? 0) < finalAmount) {
       throw throwInsufficientFundsError();
     }

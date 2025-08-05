@@ -1,5 +1,5 @@
-import { getBuzzCurrencyConfig } from '~/server/common/constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { hexToRgbOpenEnded } from '~/utils/mantine-css-helpers';
 

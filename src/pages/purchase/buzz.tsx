@@ -12,7 +12,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import animationClasses from '~/libs/animations.module.scss';
-import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchaseImproved';
+import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -84,7 +84,7 @@ export default function PurchaseBuzz() {
               <Title order={3} className="text-center">
                 Where to go from here?
               </Title>
-              <BuzzFeatures variant="list" showHeader={false} compact={false} />
+              <BuzzFeatures buzzType={buzzType} variant="list" showHeader={false} compact={false} />
             </Stack>
           )}
         </Center>

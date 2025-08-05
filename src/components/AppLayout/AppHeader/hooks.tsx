@@ -27,12 +27,13 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
+import type { CollectionType } from '~/shared/utils/prisma/enums';
+import { useMemo } from 'react';
 
 export type UserMenuItem = {
   label: string;
@@ -319,4 +320,27 @@ export function useGetCreator() {
     { enabled: !!currentUser }
   );
   return creator;
+}
+
+function useSystemCollections() {
+  const currentUser = useCurrentUser();
+  const { data: systemCollections = [], ...other } = trpc.user.getBookmarkCollections.useQuery(
+    undefined,
+    { enabled: !!currentUser }
+  );
+
+  const groupedCollections = useMemo(() => {
+    const grouped = systemCollections.reduce((acc, collection) => {
+      if (collection.type) acc[collection.type] = collection;
+      return acc;
+    }, {} as Record<CollectionType, (typeof systemCollections)[number]>);
+
+    return grouped;
+  }, [systemCollections]);
+
+  return {
+    ...other,
+    systemCollections,
+    groupedCollections,
+  };
 }

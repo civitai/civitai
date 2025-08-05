@@ -17,7 +17,7 @@ import { env } from '~/env/server';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL, getRequestDomainColor } from '~/server/common/constants';
+import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
@@ -36,6 +36,7 @@ import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 

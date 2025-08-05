@@ -5,6 +5,7 @@
 import { BuzzPaddlePaymentButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzPaddlePaymentButton';
 import { BuzzStripePaymentButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzStripePaymentButton';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 interface BuzzPurchasePaymentButtonProps {
   disabled: boolean;
@@ -13,6 +14,7 @@ interface BuzzPurchasePaymentButtonProps {
   onValidate: () => boolean;
   onPurchaseSuccess?: () => void;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
+  buzzType?: BuzzSpendType;
 }
 
 export function BuzzPurchasePaymentButton({
@@ -22,6 +24,7 @@ export function BuzzPurchasePaymentButton({
   onPurchaseSuccess,
   purchaseSuccessMessage,
   disabled,
+  buzzType,
 }: BuzzPurchasePaymentButtonProps) {
   const paymentProvider = usePaymentProvider();
 
@@ -33,6 +36,7 @@ export function BuzzPurchasePaymentButton({
         onPurchaseSuccess={onPurchaseSuccess}
         purchaseSuccessMessage={purchaseSuccessMessage}
         disabled={disabled}
+        buzzType={buzzType}
       />
     );
   }
@@ -44,6 +48,7 @@ export function BuzzPurchasePaymentButton({
         buzzAmount={buzzAmount}
         onValidate={onValidate}
         disabled={disabled}
+        buzzType={buzzType}
       />
     );
   }

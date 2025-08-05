@@ -1,13 +1,13 @@
 import { useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useAppContext } from '~/providers/AppProvider';
 import { isRegionBlocked, isRegionPendingBlock } from '~/server/utils/region-blocking';
 
 export function useIsRegionBlocked() {
-  const currentUser = useCurrentUser();
+  const { region } = useAppContext();
 
   const regionStatus = useMemo(() => {
     // Check the user's region using the currentUser region info
-    const regionInfo = currentUser?.region;
+    const regionInfo = region;
     if (regionInfo) {
       return {
         isBlocked: isRegionBlocked(regionInfo),
@@ -20,7 +20,7 @@ export function useIsRegionBlocked() {
       isBlocked: false,
       isPendingBlock: false,
     };
-  }, [currentUser?.region]);
+  }, [region]);
 
   return regionStatus;
 }

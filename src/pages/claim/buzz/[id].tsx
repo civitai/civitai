@@ -9,7 +9,6 @@ import {
   Text,
   ThemeIcon,
   Title,
-  useMantineTheme,
 } from '@mantine/core';
 import { IconCircleCheck } from '@tabler/icons-react';
 import * as z from 'zod/v4';
@@ -17,7 +16,6 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getCurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -25,6 +23,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import animationClasses from '~/libs/animations.module.scss';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 const querySchema = z.object({ id: z.string() });
 

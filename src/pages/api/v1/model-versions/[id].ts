@@ -16,7 +16,7 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import type { Session } from 'next-auth';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>

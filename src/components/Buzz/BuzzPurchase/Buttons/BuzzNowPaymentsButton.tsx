@@ -1,21 +1,26 @@
 import { Button, Stack, Text } from '@mantine/core';
 import { IconCoinBitcoin } from '@tabler/icons-react';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchase';
+import type { BuzzPurchaseImprovedProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 import { useMutateNowPayments, useNowPaymentsStatus } from '~/components/NowPayments/util';
 import { NOW_PAYMENTS_FIXED_FEE } from '~/server/common/constants';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const BuzzNowPaymentsButton = ({
   unitAmount,
   buzzAmount,
   disabled,
-}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+  buzzType,
+}: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
+  buzzType?: BuzzSpendType;
 }) => {
   const { createPaymentInvoice, creatingPaymentInvoice } = useMutateNowPayments();
   const { isLoading, healthy } = useNowPaymentsStatus();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   if (!isLoading && !healthy) {
     return null;
@@ -44,8 +49,8 @@ export const BuzzNowPaymentsButton = ({
         size="md"
         radius="md"
         variant="light"
-        color="yellow"
-        leftSection={<IconCoinBitcoin size={16} />}
+        color={buzzConfig.color}
+        leftSection={<IconCoinBitcoin size={18} />}
         fw={500}
         fullWidth
       >

@@ -31,7 +31,7 @@ export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow', 'r
       .filter(isDefined);
 
     return { accounts, total, nsfwTotal };
-  }, [initialData]);
+  }, [initialData, buzzTypes]);
 
   return { data, isLoading };
 }
@@ -45,10 +45,11 @@ export const useBuzzSignalUpdate = () => {
       if (!currentUser) return;
       const type = BuzzTypes.toClientType(updated.accountType) as BuzzSpendType;
       queryUtils.buzz.getBuzzAccount.setData(undefined, (old) => {
-        let balance = old?.[type];
-        if (!balance) balance = updated.balance;
+        if (!old) return undefined;
+        let balance = old[type];
+        if (typeof balance !== 'number') balance = updated.balance;
         else balance += updated.delta;
-        return { ...old, [type]: balance } as typeof old;
+        return { ...old, [type]: balance };
       });
     },
     [queryUtils, currentUser]
@@ -97,7 +98,7 @@ export const useBuzzTransactions = (
 export const useTransactionsReport = (
   filters: GetTransactionsReportSchema = {
     window: 'hour',
-    accountType: ['blue', 'yellow'],
+    accountType: 'yellow',
   },
   opts: { enabled: boolean }
 ) => {

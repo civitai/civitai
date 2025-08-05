@@ -9,7 +9,7 @@ import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { devtools } from 'zustand/middleware';
 import type { NsfwLevel } from '~/server/common/enums';
-import type { ColorDomain } from '~/server/common/constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 const Context = createContext<ContentSettingsStore | null>(null);

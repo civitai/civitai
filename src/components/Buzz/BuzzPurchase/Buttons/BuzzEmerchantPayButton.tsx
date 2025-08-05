@@ -3,21 +3,26 @@ import { IconCreditCard } from '@tabler/icons-react';
 import { useMutateEmerchantPay, useEmerchantPayStatus } from '~/components/EmerchantPay/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 interface BuzzEmerchantPayButtonProps {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
+  buzzType?: BuzzSpendType;
 }
 
 export const BuzzEmerchantPayButton = ({
   unitAmount,
   buzzAmount,
   disabled,
+  buzzType,
 }: BuzzEmerchantPayButtonProps) => {
   const features = useFeatureFlags();
   const { createBuzzOrder, creatingBuzzOrder } = useMutateEmerchantPay();
   const { isLoading: checkingHealth, healthy } = useEmerchantPayStatus();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   if (!features.emerchantpayPayments) {
     return null;
@@ -60,11 +65,15 @@ export const BuzzEmerchantPayButton = ({
         disabled={disabled || checkingHealth}
         loading={creatingBuzzOrder}
         onClick={handleClick}
-        radius="xl"
+        size="md"
+        radius="md"
+        variant="light"
+        color={buzzConfig.color}
+        fw={500}
         fullWidth
       >
         <Group gap="xs" wrap="nowrap">
-          <IconCreditCard size={20} />
+          <IconCreditCard size={18} />
           <span>Credit/Debit Card</span>
         </Group>
       </Button>
