@@ -53,7 +53,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
-import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageQueryParams } from '~/components/Image/image.utils';

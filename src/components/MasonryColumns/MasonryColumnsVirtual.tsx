@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -92,10 +100,12 @@ function VirtualColumn<TData>({
     [items]
   );
 
-  const offset =
-    ref.current && scrollAreaRef?.current
-      ? getOffsetTopRelativeToAncestor(ref.current, scrollAreaRef.current)
-      : 0;
+  const [scrollMargin, setScrollMargin] = useState(0);
+  useLayoutEffect(() => {
+    if (ref.current && scrollAreaRef?.current) {
+      setScrollMargin(getOffsetTopRelativeToAncestor(ref.current, scrollAreaRef.current));
+    }
+  }, []);
 
   const rowVirtualizer = useVirtualizer({
     count: items.length,
@@ -104,7 +114,7 @@ function VirtualColumn<TData>({
     overscan: 5,
     getItemKey,
     gap: 16,
-    scrollMargin: offset,
+    scrollMargin,
     initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
   });
 
@@ -121,7 +131,7 @@ function VirtualColumn<TData>({
     >
       {rowVirtualizer.getVirtualItems().map((item) => (
         <div
-          key={item.key.toString()}
+          key={`${item.index}_${item.key}`}
           style={{
             position: 'absolute',
             top: 0,
@@ -151,6 +161,13 @@ function VirtualItem<TData>({
   columnWidth: number;
   index: number;
 }) {
+  const [visible, setVisible] = useState(false);
+  // useEffect(() => {
+  //   startTransition(() => setVisible(true));
+  // }, []);
+
+  // if (!visible) return null;
+
   switch (data.type) {
     case 'data':
       return (
@@ -160,6 +177,7 @@ function VirtualItem<TData>({
           data={data.data}
           width={columnWidth}
           height={height}
+          visible={visible}
         />
       );
     case 'ad':

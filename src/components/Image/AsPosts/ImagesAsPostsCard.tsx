@@ -21,8 +21,6 @@ import {
   IconInfoCircle,
   IconMessage,
   IconPinFilled,
-  IconPinned,
-  IconPinnedOff,
   IconUserPlus,
 } from '@tabler/icons-react';
 import { useCallback } from 'react';
@@ -33,7 +31,6 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -45,17 +42,14 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
-import { showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-// import { TwCarousel } from '~/components/TwCarousel/TwCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
 
 export function ImagesAsPostsCard({
   data,
@@ -68,10 +62,8 @@ export function ImagesAsPostsCard({
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const features = useFeatureFlags();
-  const queryUtils = trpc.useUtils();
 
-  const { modelVersions, showModerationOptions, model, filters } =
-    useImagesAsPostsInfiniteContext();
+  const { modelVersions, model, filters } = useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
 
   const postId = data.postId ?? undefined;
@@ -86,54 +78,7 @@ export function ImagesAsPostsCard({
 
   const image = data.images[0];
 
-  const { gallerySettings, toggle } = useGallerySettings({ modelId: model.id });
-
-  const handleUpdateGallerySettings = async ({
-    imageId,
-    user,
-  }: {
-    imageId?: number;
-    user?: { id: number; username: string | null };
-  }) => {
-    if (showModerationOptions && model) {
-      await toggle({
-        modelId: model.id,
-        images: imageId ? [{ id: imageId }] : undefined,
-        users: user ? [user] : undefined,
-      }).catch(() => null); // Error is handled in the mutation events
-
-      if (filters.hidden)
-        // Refetch the query to update the hidden images
-        await queryUtils.image.getImagesAsPostsInfinite.invalidate({ ...filters });
-    }
-  };
-
-  const handlePinPost = async ({
-    postId,
-    alreadyPinned,
-  }: {
-    postId: number;
-    alreadyPinned: boolean;
-  }) => {
-    if (model) {
-      try {
-        await toggle({
-          modelId: model.id,
-          pinnedPosts: { modelVersionId: currentModelVersionId, postIds: [postId] },
-        });
-
-        showSuccessNotification({
-          title: alreadyPinned ? 'Post unpinned' : 'Post pinned',
-          message: alreadyPinned
-            ? 'This post has been removed from the top of the gallery'
-            : 'This post has been pinned and will appear at the top of the gallery for new visitors',
-        });
-      } catch (error) {
-        // Error is handled in the mutation events
-        return null;
-      }
-    }
-  };
+  const { gallerySettings } = useGallerySettings({ modelId: model.id });
 
   const handleRemixClick = useCallback(
     (selectedImage: typeof image) => (e: React.MouseEvent) => {
@@ -147,70 +92,6 @@ export function ImagesAsPostsCard({
     },
     []
   );
-
-  const moderationOptions = (image: (typeof data.images)[number]) => {
-    if (!showModerationOptions) return null;
-    const imageAlreadyHidden = gallerySettings
-      ? gallerySettings.hiddenImages.indexOf(image.id) > -1
-      : false;
-    const userAlreadyHidden = gallerySettings
-      ? gallerySettings.hiddenUsers.findIndex((u) => u.id === image.user.id) > -1
-      : false;
-    const alreadyPinned =
-      gallerySettings && image.postId
-        ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(image.postId)
-        : false;
-    const maxedOut = gallerySettings
-      ? (gallerySettings.pinnedPosts?.[currentModelVersionId]?.length ?? 0) >=
-        constants.modelGallery.maxPinnedPosts
-      : false;
-
-    return (
-      <>
-        <Menu.Label key="menu-label">Gallery Moderation</Menu.Label>
-        {image.postId ? (
-          <Menu.Item
-            key="pin-post"
-            leftSection={
-              alreadyPinned ? (
-                <IconPinnedOff size={16} stroke={1.5} />
-              ) : (
-                <IconPinned size={16} stroke={1.5} />
-              )
-            }
-            style={{ alignItems: maxedOut ? 'flex-start' : 'center' }}
-            disabled={!alreadyPinned && maxedOut}
-            onClick={() => handlePinPost({ postId: image.postId as number, alreadyPinned })}
-          >
-            {alreadyPinned ? (
-              'Unpin this post'
-            ) : (
-              <Stack gap={2}>
-                <Text inline>Pin this post</Text>
-                {maxedOut && (
-                  <Text size="xs" c="yellow">
-                    Pin limit reached
-                  </Text>
-                )}
-              </Stack>
-            )}
-          </Menu.Item>
-        ) : null}
-        <Menu.Item
-          key="hide-image-gallery"
-          onClick={() => handleUpdateGallerySettings({ imageId: image.id })}
-        >
-          {imageAlreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
-        </Menu.Item>
-        <Menu.Item
-          key="hide-user-gallery"
-          onClick={() => handleUpdateGallerySettings({ user: image.user })}
-        >
-          {userAlreadyHidden ? 'Show content from this user' : 'Hide content from this user'}
-        </Menu.Item>
-      </>
-    );
-  };
 
   const isThumbsUp = !!data.review?.recommended;
   const pinned = gallerySettings
@@ -346,10 +227,7 @@ export function ImagesAsPostsCard({
                     <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                     {safe && (
                       <Stack gap="xs" className="absolute right-2 top-2 z-10">
-                        <ImageContextMenu
-                          image={image}
-                          additionalMenuItems={moderationOptions(image)}
-                        />
+                        <ImagesAsPostsContextMenu image={image} />
                         {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                           <HoverActionButton
                             label="Remix"
@@ -442,10 +320,7 @@ export function ImagesAsPostsCard({
                               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                               {safe && (
                                 <Stack gap="xs" className="absolute right-2 top-2 z-10">
-                                  <ImageContextMenu
-                                    image={image}
-                                    additionalMenuItems={moderationOptions(image)}
-                                  />
+                                  <ImagesAsPostsContextMenu image={image} />
                                   {features.imageGeneration &&
                                     (image.hasPositivePrompt ?? image.hasMeta) && (
                                       <HoverActionButton
