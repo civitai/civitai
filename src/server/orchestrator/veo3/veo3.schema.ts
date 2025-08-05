@@ -10,52 +10,60 @@ import {
   sourceImageSchema,
   resourceSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
+import { lazy } from '~/shared/utils/lazy';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const veo3AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const veo3Duration = [8] as const;
-// export const veo3ModelOptions: { label: string; value: ResourceInput }[] = [
-//   {
-//     label: 'Fast Mode',
-//     value: { id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1995399' },
-//   },
-//   {
-//     label: 'Standard',
-//     value: { id: 1885367, air: 'urn:air:other:checkpoint:civitai:1665714@1885367' },
-//   },
-// ];
 
 export const veo3ModelOptions = [
   {
     label: 'Fast Mode',
-    value: '1995399',
+    process: 'txt2vid',
+    mode: 'fast',
+    value: 'urn:air:veo3:checkpoint:civitai:1665714@1995399',
   },
   {
     label: 'Standard',
-    value: '1885367',
+    process: 'txt2vid',
+    mode: 'standard',
+    value: 'urn:air:veo3:checkpoint:civitai:1665714@1885367',
+  },
+  {
+    label: 'Fast Mode',
+    process: 'img2vid',
+    mode: 'fast',
+    value: 'urn:air:veo3:checkpoint:civitai:1665714@2082027',
+  },
+  {
+    label: 'Standard',
+    process: 'img2vid',
+    mode: 'standard',
+    value: 'urn:air:veo3:checkpoint:civitai:1665714@1996013',
   },
 ];
 
-export const veo3FastModeId = 1995399;
-export const veo3StandardId = 1885367;
-
-export const veo3Models = [
-  { id: veo3FastModeId, air: 'urn:air:other:checkpoint:civitai:1665714@1995399' },
-  { id: veo3StandardId, air: 'urn:air:other:checkpoint:civitai:1665714@1885367' },
-];
+export const getVeo3Models = lazy(() =>
+  veo3ModelOptions.map(({ value }) => {
+    const { version } = parseAIR(value);
+    return { id: version, air: value };
+  })
+);
 
 export function getVeo3Checkpoint(resources: ResourceInput[] | null) {
+  const veo3Models = getVeo3Models();
   const model = resources?.find((x) => veo3Models.some((m) => m.id === x.id));
   return model ?? veo3Models[0];
 }
 
-export function getVeo3IsFastMode(modelVersionId?: number) {
-  return modelVersionId === veo3Models[0].id;
+export function removeVeo3CheckpointFromResources(resources: ResourceInput[] | null) {
+  return resources?.filter((x) => !getVeo3Models().some((m) => m.id === x.id)) ?? [];
 }
 
-export function removeVeo3CheckpointFromResources(resources: ResourceInput[] | null) {
-  return resources?.filter((x) => !veo3Models.some((m) => m.id === x.id)) ?? [];
+export function getVeo3ProcessFromAir(air: string) {
+  return veo3ModelOptions.find((x) => x.value === air)?.process ?? 'txt2vid';
 }
 
 const schema = baseVideoGenerationSchema.extend({
@@ -72,7 +80,6 @@ const schema = baseVideoGenerationSchema.extend({
   images: sourceImageSchema.array().nullish(),
 });
 
-export const veo3ModelVersionId = 1885367;
 export const veo3GenerationConfig = VideoGenerationConfig2({
   label: 'Google VEO 3',
   whatIfProps: ['sourceImage', 'duration', 'aspectRatio', 'generateAudio', 'resources'],
@@ -81,7 +88,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
   defaultValues: {
     aspectRatio: '16:9',
     generateAudio: false,
-    resources: [veo3Models[0]],
+    resources: [getVeo3Models()[0]],
     images: null,
   },
   processes: ['txt2vid', 'img2vid'],
@@ -138,7 +145,9 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
     }
   },
   inputFn: ({ images, ...args }): Veo3VideoGenInput => {
-    const fastMode = !!args.resources?.find((x) => x.id === veo3Models[0].id);
+    const checkpoint = getVeo3Checkpoint(args.resources);
+    const mode = veo3ModelOptions.find((x) => x.value === checkpoint.air)?.mode ?? 'fast';
+    const fastMode = mode === 'fast';
     return {
       ...args,
       fastMode,

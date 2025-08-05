@@ -8,6 +8,7 @@ type ImagesAsPostsInfiniteState = {
   filters: {
     modelId?: number;
     username?: string;
+    modelVersionId?: number;
   } & Record<string, unknown>;
   showModerationOptions?: boolean;
 };

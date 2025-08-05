@@ -310,7 +310,7 @@ function Example() {
 
 import { Label, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
 import { IconCheck, IconSelector } from '@tabler/icons-react';
-import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { ImagesAsPostsInfinite } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
 import { SourceImageUploadMultiple } from '~/components/Generation/Input/SourceImageUploadMultiple';
 

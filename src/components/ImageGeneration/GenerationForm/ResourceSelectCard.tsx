@@ -1,17 +1,15 @@
 import type { GroupProps } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Button,
   Group,
+  HoverCard,
   Overlay,
   Paper,
-  Popover,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -21,15 +19,22 @@ import {
   IconWeight,
   IconX,
 } from '@tabler/icons-react';
+import { useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useStepContext } from '~/components/Generation/Providers/StepProvider';
 import type { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
+import {
+  getBaseModelResourceTypes,
+  getBaseModelSetType,
+} from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
+import clsx from 'clsx';
 
 type Props = {
   resource: GenerationResourceSchema;
@@ -41,10 +46,27 @@ type Props = {
   hideVersion?: boolean;
   groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
+  isPartiallySupported?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
+  const stepContext = useStepContext();
   const isCheckpoint = props.resource.model.type === ModelType.Checkpoint;
+  const { resource } = props;
+  const isPartiallySupported = useMemo(() => {
+    if (!stepContext?.baseModel) return false;
+    const resources = getBaseModelResourceTypes(stepContext.baseModel);
+    return !!resources?.some((r) => {
+      const baseModelType = getBaseModelSetType(resource.baseModel);
+      return (
+        'partialSupport' in r &&
+        (r.partialSupport as string[])
+          .map((x) => getBaseModelSetType(x))
+          ?.includes(baseModelType) &&
+        !(r.baseModels as string[]).includes(baseModelType as string)
+      );
+    });
+  }, [stepContext?.baseModel, resource.baseModel]);
 
   return (
     <div className="relative">
@@ -52,9 +74,9 @@ export const ResourceSelectCard = (props: Props) => {
         <Overlay blur={3} zIndex={10} className="bg-white dark:bg-dark-7" opacity={0.8} />
       )}
       {isCheckpoint || props.showAsCheckpoint ? (
-        <CheckpointInfo {...props} />
+        <CheckpointInfo {...props} isPartiallySupported={isPartiallySupported} />
       ) : (
-        <ResourceInfoCard {...props} />
+        <ResourceInfoCard {...props} isPartiallySupported={isPartiallySupported} />
       )}
     </div>
   );
@@ -67,11 +89,17 @@ function CheckpointInfo({
   selectSource,
   hideVersion,
   groupPosition,
+  isPartiallySupported,
 }: Props) {
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
-    <Group gap="xs" justify={groupPosition ?? 'space-between'} wrap="nowrap">
+    <Group
+      gap="xs"
+      justify={groupPosition ?? 'space-between'}
+      wrap="nowrap"
+      className={clsx('px-3 py-1.5', { ['bg-yellow-5/20']: isPartiallySupported })}
+    >
       <Group gap={4} wrap="nowrap">
         {unavailable ? (
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
@@ -143,13 +171,24 @@ function CheckpointInfo({
   );
 }
 
-function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props) {
+function ResourceInfoCard({
+  resource,
+  onRemove,
+  onUpdate,
+  selectSource,
+  isPartiallySupported,
+}: Props) {
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
 
   return (
-    <Group gap="xs" justify="space-between" wrap="nowrap">
+    <Group
+      gap="xs"
+      justify="space-between"
+      wrap="nowrap"
+      className={clsx('px-3 py-1.5', { ['bg-yellow-5/20']: isPartiallySupported })}
+    >
       <Stack gap={4} w="100%">
         <Group gap={4} justify="space-between" wrap="nowrap">
           <Group gap={4} wrap="nowrap">
@@ -189,41 +228,61 @@ function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props)
             )}
 
             {(resource.availability === Availability.Private || !!resource.epochDetails) && (
-              <Tooltip label="This resource is private" position="top" withArrow>
-                <LegacyActionIcon size={18} color="dark.5" variant="filled">
-                  <IconLock size={14} />
-                </LegacyActionIcon>
-              </Tooltip>
+              <HoverCard position="bottom" withArrow>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="dark.5" variant="filled">
+                    <IconLock size={14} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">This resource is private</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
 
             {resource.additionalResourceCost && selectSource === 'generation' && (
-              <Popover position="bottom" withArrow width={200}>
-                <Popover.Target>
+              <HoverCard position="bottom" withArrow width={200}>
+                <HoverCard.Target>
                   <LegacyActionIcon size={18} color="blue" variant="filled">
                     <IconWeight size={14} />
                   </LegacyActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
                   <Text size="sm">
                     This resource carries an additional{' '}
                     <Anchor component={Link} href="/articles/7929">
                       buzz cost
                     </Anchor>
                   </Text>
-                </Popover.Dropdown>
-              </Popover>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
             {resource.earlyAccessEndsAt && (
-              <Popover position="bottom" withArrow width={200}>
-                <Popover.Target>
+              <HoverCard position="bottom" withArrow width={200}>
+                <HoverCard.Target>
                   <LegacyActionIcon size={18} color="yellow.7" variant="filled">
                     <IconBolt className="text-dark-9" fill="currentColor" size={16} />
                   </LegacyActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
                   <Text size="sm">This resource is in early access</Text>
-                </Popover.Dropdown>
-              </Popover>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            )}
+            {isPartiallySupported && (
+              <HoverCard position="bottom" withArrow width={200}>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="yellow.7" variant="filled">
+                    <IconAlertTriangle size={16} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">
+                    This resource may not be fully supported for generation with the current base
+                    model
+                  </Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
             )}
           </div>
         </Group>
