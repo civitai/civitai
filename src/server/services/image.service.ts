@@ -5044,6 +5044,7 @@ export async function createImageResources({
       )
     );
 
+    console.log('INSERTING IMAGE RESOURCES');
     await dbClient.$queryRaw`
       INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
       VALUES ${values}
