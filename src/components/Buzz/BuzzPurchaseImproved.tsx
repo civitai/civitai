@@ -51,6 +51,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
+import { BuzzZkp2pOnrampButton } from '~/components/Buzz/BuzzZkp2pOnrampButton';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -824,6 +825,16 @@ export const BuzzPurchaseImproved = ({
                                 purchaseSuccessMessage={purchaseSuccessMessage}
                               />
                             </>
+                          )}
+
+                          {features.zkp2pPayments && (
+                            <BuzzZkp2pOnrampButton
+                              unitAmount={unitAmount}
+                              buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                              onPurchaseSuccess={onPurchaseSuccess}
+                              disabled={!ctaEnabled}
+                              purchaseSuccessMessage={purchaseSuccessMessage}
+                            />
                           )}
 
                           {features.nowpaymentPayments && (

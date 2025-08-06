@@ -242,4 +242,7 @@ export const serverSchema = z.object({
   CDP_USDC_ADDRESS: z.string().optional(),
   CDP_PAYMASTER_URL: z.string().optional(),
   CDP_CIVITAI_ADDRESS: z.string().optional(),
+
+  // ZKP2P Related:
+  ZKP2P_BASE_URL: z.string().optional(),
 });

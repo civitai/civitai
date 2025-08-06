@@ -149,7 +149,7 @@ export function ProfileCard() {
                       });
                     }}
                   >
-                    View Debit Card Transactions
+                    View Crypto Transactions
                   </Button>
                 )}
               </Stack>
