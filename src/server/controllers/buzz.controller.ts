@@ -196,7 +196,7 @@ export async function createBuzzTipTransactionHandler({
     // Confirm user funds:
     const userAccount = await getUserBuzzAccount({
       accountId: fromAccountId,
-      accountType: 'yellow',
+      accountType: input.fromAccountType ?? 'yellow',
     });
 
     if ((userAccount[0]?.balance ?? 0) < finalAmount) {

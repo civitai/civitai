@@ -129,7 +129,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
-    accountTypes: ['blue', 'yellow'],
+    accountTypes: buzzSpendTypes,
   });
 
   const thisStep = 3;

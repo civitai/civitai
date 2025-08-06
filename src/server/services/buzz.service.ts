@@ -217,10 +217,14 @@ export async function getUserBuzzTransactions({
 
   // Remove duplicate user ids
   const toUserIds = new Set(
-    transactions.filter((t) => t.toAccountType === 'yellow').map((t) => t.toAccountId)
+    transactions
+      .filter((t) => buzzSpendTypes.some((b) => b === t.toAccountType))
+      .map((t) => t.toAccountId)
   );
   const fromUserIds = new Set(
-    transactions.filter((t) => t.fromAccountType === 'yellow').map((t) => t.fromAccountId)
+    transactions
+      .filter((t) => buzzSpendTypes.some((b) => b === t.fromAccountType))
+      .map((t) => t.fromAccountId)
   );
   // Remove account 0 (central bank)
   toUserIds.delete(0);

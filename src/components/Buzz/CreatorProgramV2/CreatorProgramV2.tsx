@@ -155,13 +155,12 @@ export const CreatorProgramV2 = () => {
 
 const JoinCreatorProgramCard = () => {
   const {
-    data: { accounts },
+    data: { total: buzzAccountTotal },
     isLoading: buzzAccountsLoading,
-  } = useQueryBuzz(['yellow']);
-  const [buzzAccount = { balance: 0 }] = accounts;
+  } = useQueryBuzz(['yellow', 'green']);
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
-    buzz: buzzAccount?.balance ?? 0,
+    buzz: buzzAccountTotal ?? 0,
   });
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
   const isLoading = buzzAccountsLoading || isLoadingRequirements || isLoadingForecast;
@@ -212,7 +211,7 @@ const JoinCreatorProgramCard = () => {
             Your{' '}
             <CurrencyBadge
               currency={Currency.BUZZ}
-              unitAmount={buzzAccount.balance ?? 0}
+              unitAmount={buzzAccountTotal ?? 0}
               formatter={abbreviateNumber}
             />{' '}
             could be worth{' '}

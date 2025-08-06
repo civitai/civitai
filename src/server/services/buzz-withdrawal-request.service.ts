@@ -1,3 +1,6 @@
+// @deprecated This file is deprecated and will be removed in the future.
+// This file is part of the legacy buzz withdrawal request system.
+// Has been replaced by the creators program.
 import type { Prisma } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common/enums';
@@ -74,6 +77,8 @@ CreateBuzzWithdrawalRequestSchema & {
   // Check the user has enough funds:
 
   const userBuzzAccount = await getUserBuzzAccount({
+    // This is legacy. We could technically attempt to use green/red, but yellow is the main account type at the time.
+    // This is NOT used anymore.
     accountId: userId,
     accountType: 'yellow',
   });

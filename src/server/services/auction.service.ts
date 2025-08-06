@@ -389,7 +389,7 @@ export const createBid = async ({
   }
 
   // - Check if entityId is valid for this auction type
-  let accountTypes: BuzzSpendType[] = ['yellow'];
+  const accountTypes: BuzzSpendType[] = ['green', 'yellow', 'red'];
   if (auctionData.auctionBase.type === AuctionType.Model) {
     // TODO switch back to dbRead
     const mv = await dbWrite.modelVersion.findFirst({
@@ -434,10 +434,6 @@ export const createBid = async ({
       if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel))
         throw throwBadRequestError('Invalid model ecosystem for this auction.');
     }
-
-    accountTypes = getBuzzTransactionSupportedAccountTypes({
-      isNsfw: mv.model.nsfw,
-    });
   }
 
   // - Go

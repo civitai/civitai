@@ -18,12 +18,14 @@ import { modelsSearchIndex } from '~/server/search-index';
 import {
   auctionBaseSelect,
   auctionSelect,
+  getAuctionTransactionPrefix,
   isAuctionTransactionPrefix,
   prepareBids,
   type PrepareBidsReturn,
 } from '~/server/services/auction.service';
 import {
   createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -572,10 +574,11 @@ const createRecurringBids = async (now: Dayjs) => {
         }
 
         // Charge the user the relevant bid amount
-        const { transactionId } = await withRetries(() =>
-          createBuzzTransaction({
+        const prefix = getAuctionTransactionPrefix(recurringBid.id, recurringBid.userId);
+        const data = await withRetries(() =>
+          createMultiAccountBuzzTransaction({
             type: TransactionType.Bid,
-            fromAccountType: 'yellow',
+            fromAccountTypes: ['green', 'yellow', 'red'],
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,
@@ -585,12 +588,10 @@ const createRecurringBids = async (now: Dayjs) => {
               entityId: recurringBid.entityId,
               entityType: recurringBid.auctionBase.type,
             },
-            externalTransactionId: `recurring-bid-${recurringBid.userId}-${
-              recurringBid.entityId
-            }-${now.startOf('day').format()}`,
+            externalTransactionIdPrefix: prefix,
           })
         );
-        if (!transactionId) {
+        if ((data.transactionIds?.length ?? 0) === 0) {
           logToAxiom({
             name: 'handle-auctions',
             type: 'warning',
@@ -618,7 +619,7 @@ const createRecurringBids = async (now: Dayjs) => {
             userId: recurringBid.userId,
             entityId: recurringBid.entityId,
             amount: recurringBid.amount,
-            transactionIds: [transactionId],
+            transactionIds: [prefix],
             fromRecurring: true,
           },
         });
