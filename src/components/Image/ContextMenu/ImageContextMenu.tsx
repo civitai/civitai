@@ -12,7 +12,6 @@ export function ImageContextMenu({
   additionalMenuItems,
   noDelete = false,
   image,
-  className,
   children,
   ...actionIconProps
 }: ImageContextMenuProps & ActionIconProps) {
