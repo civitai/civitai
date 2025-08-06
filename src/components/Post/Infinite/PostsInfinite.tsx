@@ -8,8 +8,8 @@ import React, { useEffect } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { PostsCard } from '~/components/Post/Infinite/PostsCard';
+import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
+import { PostsCardMemoized } from '~/components/Post/Infinite/PostsCard';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import type { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -75,7 +75,7 @@ function PostsInfiniteContent({
       ) : !!posts.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryColumns
+          <MasonryColumnsVirtual
             data={posts}
             imageDimensions={(data) => {
               const image = data.images[0];
@@ -84,7 +84,7 @@ function PostsInfiniteContent({
               return { width, height };
             }}
             maxItemHeight={600}
-            render={PostsCard}
+            render={PostsCardMemoized}
             itemId={(data) => data.id}
             withAds={showAds}
           />
