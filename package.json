@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.935",
+  "version": "5.0.939",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -62,7 +62,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.46",
+    "@civitai/client": "^0.1.9-beta.47",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^0.2.2",
@@ -104,6 +104,7 @@
     "@tabler/icons-react": "^3.7.0",
     "@tanstack/react-query": "^4.12.0",
     "@tanstack/react-query-devtools": "^4.13.0",
+    "@tanstack/react-virtual": "^3.13.12",
     "@tiptap/extension-color": "3.0.7",
     "@tiptap/extension-heading": "3.0.7",
     "@tiptap/extension-image": "3.0.7",

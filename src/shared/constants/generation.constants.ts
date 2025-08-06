@@ -211,7 +211,8 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   if (!baseModel) return defaultType;
   return (Object.entries(baseModelSets).find(
     ([key, baseModelSet]) =>
-      key === baseModel || (baseModelSet.baseModels as string[]).includes(baseModel)
+      key.toLowerCase() === baseModel.toLocaleLowerCase() ||
+      (baseModelSet.baseModels as string[]).includes(baseModel)
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
@@ -292,6 +293,7 @@ const videoBaseModelSetTypes: BaseModelSetType[] = [
   'WanVideo14B_T2V',
   'WanVideo1_3B_T2V',
   'LTXV',
+  'Veo3',
 ];
 export function getResourceGenerationType(
   baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>,
@@ -533,16 +535,27 @@ export const baseModelResourceTypes = {
   OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
   Imagen4: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Imagen4.baseModels }],
   WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
-  WanVideo1_3B_T2V: [
-    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
-  ],
+  // WanVideo1_3B_T2V: [
+  //   { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
+  // ],
   WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
   WanVideo14B_I2V_480p: [
-    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_480p.baseModels },
+    {
+      type: ModelType.LORA,
+      baseModels: [
+        ...baseModelSets.WanVideo14B_I2V_480p.baseModels,
+        ...baseModelSets.WanVideo14B_I2V_720p.baseModels,
+      ],
+    },
   ],
   WanVideo14B_I2V_720p: [
-    { type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels },
+    {
+      type: ModelType.LORA,
+      baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels,
+      partialSupport: baseModelSets.WanVideo14B_I2V_480p.baseModels,
+    },
   ],
+  Veo3: [],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
@@ -576,11 +589,13 @@ const fluxStandardModelId = 618692;
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
 export const fluxDraftAir = 'urn:air:flux1:checkpoint:civitai:618692@699279';
+export const fluxKreaAir = 'urn:air:flux1:checkpoint:civitai:618692@2068000';
 export const fluxUltraAirId = 1088507;
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },
-  { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
+  // { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
+  { label: 'Krea', value: fluxKreaAir },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
   { label: 'Ultra', value: fluxUltraAir },
 ];
@@ -624,6 +639,10 @@ const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspec
 export const fluxModelId = 618692;
 export function getIsFluxUltra({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
   return modelId === fluxModelId && fluxMode === fluxUltraAir;
+}
+
+export function getIsFluxKrea({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
+  return modelId === fluxModelId && fluxMode === fluxKreaAir;
 }
 
 export function getSizeFromFluxUltraAspectRatio(value: number) {

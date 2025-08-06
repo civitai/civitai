@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Button,
   Center,
@@ -21,7 +20,7 @@ import {
   IconStar,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -36,10 +35,9 @@ import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDro
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils';
@@ -52,24 +50,22 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 
-type ImagesAsPostsInfiniteProps = {
+export type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
   model: ModelById;
   username?: string;
   modelVersions?: ModelVersionsProps[];
-  generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
   showModerationOptions?: boolean;
   showPOIWarning?: boolean;
   canReview?: boolean;
 };
 
 const LIMIT = 50;
-export default function ImagesAsPostsInfinite({
+export function ImagesAsPostsInfinite({
   model,
   username,
   modelVersions,
   selectedVersionId,
-  generationOptions,
   showModerationOptions,
   showPOIWarning,
   canReview,
@@ -258,20 +254,8 @@ export default function ImagesAsPostsInfinite({
             ) : !!items.length ? (
               <div style={{ position: 'relative' }}>
                 <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-                <MasonryColumns
+                <MasonryColumnsVirtual
                   data={items}
-                  staticItem={
-                    !!generationOptions?.generationModelId && selectedVersionId
-                      ? (props) => (
-                          <ModelGenerationCard
-                            {...props}
-                            versionId={selectedVersionId}
-                            modelId={generationOptions.generationModelId}
-                            withEditingActions={generationOptions?.includeEditingActions}
-                          />
-                        )
-                      : undefined
-                  }
                   imageDimensions={(data) => {
                     const tallestImage = data.images.sort((a, b) => {
                       const aHeight = a.height ?? 0;
