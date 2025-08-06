@@ -27,5 +27,4 @@ export {
   getZkp2pOnrampUrl,
   checkZkp2pOnrampStatus,
   markZkp2pTransactionComplete,
-  handleZkp2pCallback,
 } from '../zkp2p/zkp2p-onramp';

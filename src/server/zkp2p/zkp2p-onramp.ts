@@ -153,8 +153,3 @@ export async function markZkp2pTransactionComplete(key: string, userId: number, 
 
   return true;
 }
-
-// ZKP2P callback handler - convenience function for handling callbacks
-export async function handleZkp2pCallback(userId: number, key: string, txHash?: string) {
-  return markZkp2pTransactionComplete(key, userId, txHash);
-}
