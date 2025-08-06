@@ -74,6 +74,7 @@ type SourceImageUploadContext = {
   aspect: 'square' | 'video';
   cropToFirstImage: boolean;
   aspectRatios?: AspectRatio[];
+  onChange: (value: (string | File)[]) => Promise<void>;
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -101,7 +102,9 @@ export function SourceImageUploadMultiple({
   const previewImages = useMemo(() => {
     if (!value) return [];
     const images: ImageComplete[] = value.map((val) => ({ status: 'complete', ...val }));
-    for (const item of uploads.filter((x) => x.status === 'complete') as ImageComplete[]) {
+    for (const item of uploads.filter(
+      (x) => x.status === 'complete' || x.status === 'cropping'
+    ) as ImageComplete[]) {
       const lastIndex = images.findLastIndex((x) => x.url === item.url && !x.linkToId);
       if (lastIndex > -1) images[lastIndex].linkToId = item.id;
     }
@@ -115,6 +118,33 @@ export function SourceImageUploadMultiple({
   useEffect(() => {
     if (uploads.length > 0 && uploads.every((x) => x.status === 'complete')) setUploads([]);
   }, [uploads]);
+
+  useEffect(() => {
+    if (!previewImages?.length) return;
+    if (cropToFirstImage) {
+      const { width, height } = previewImages[0];
+      const ratio = width / height;
+      const allMatch = previewImages.every(({ width, height }) => width / height === ratio);
+      if (!allMatch)
+        handleCrop(
+          previewImages.map((x) => x.url),
+          'replace'
+        );
+    } else if (!!aspectRatios?.length) {
+      const ratios = aspectRatios.map((ratio) => {
+        const [w, h] = ratio.split(':').map(Number);
+        return w / h;
+      });
+      const allMatch = previewImages.every(({ width, height }) =>
+        ratios.some((r) => r === width / height)
+      );
+      if (!allMatch)
+        handleCrop(
+          previewImages.map((x) => x.url),
+          'replace'
+        );
+    }
+  }, [previewImages]);
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -170,48 +200,6 @@ export function SourceImageUploadMultiple({
   const imagesMissingMetadataCount = previewImages.filter((x) => missingAiMetadata[x.url]).length;
   const _error = initialError ?? error;
 
-  return (
-    <Provider
-      value={{
-        previewItems,
-        setError,
-        setUploads,
-        max,
-        missingAiMetadata,
-        removeItem,
-        aspect,
-        cropToFirstImage,
-        aspectRatios,
-      }}
-    >
-      <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
-        {children(previewItems)}
-
-        {_error && <Alert color="red">{_error}</Alert>}
-        {imagesMissingMetadataCount > 0 && (
-          <Alert
-            color="yellow"
-            title={`We couldn't detect valid metadata in ${
-              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
-            }.`}
-          >
-            {`Outputs based on ${
-              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
-            } must be PG, PG-13, or they will be blocked and you will not be refunded.`}
-          </Alert>
-        )}
-      </div>
-    </Provider>
-  );
-}
-
-SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
-  const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
-  const { previewItems, setError, setUploads, max, aspect, cropToFirstImage, aspectRatios } =
-    useContext();
-  const canAddFiles = previewItems.length < max;
-
   async function handleUpload(src: string | Blob | File, originUrl?: string) {
     const previewUrl = originUrl ?? (typeof src !== 'string' ? URL.createObjectURL(src) : src);
     setUploads((items) => {
@@ -247,7 +235,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
     });
   }
 
-  async function handleCrop(items: (string | Blob | File)[]) {
+  async function handleCrop(items: (string | Blob | File)[], action: 'add' | 'replace' = 'add') {
     const incoming: ImageCrop[] = items.map((src) => ({
       status: 'cropping',
       id: getRandomId(),
@@ -255,7 +243,8 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
     }));
     setUploads(incoming);
     const current = previewItems.filter((x) => x.status === 'complete').map((x) => x.url);
-    const allImages = [...current, ...incoming.map((x) => x.url)];
+    const allImages =
+      action === 'add' ? [...current, ...incoming.map((x) => x.url)] : incoming.map((x) => x.url);
 
     const withAspectRatio = await Promise.all(
       allImages.map(async (url) => {
@@ -278,12 +267,15 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
       })
     ) {
       dialogStore.trigger({
+        id: 'image-crop-modal',
         component: ImageCropModal,
         props: {
           images: withAspectRatio,
           onConfirm: async (output) => {
             const toUpload = output.filter(({ cropped }) => !!cropped);
-            await Promise.all(toUpload.map(({ cropped, src }) => handleUpload(cropped!, src)));
+            await Promise.all(
+              toUpload.map(async ({ cropped, src }) => handleUpload(cropped!, src))
+            );
           },
           onCancel: () => setUploads([]),
           aspectRatios,
@@ -294,10 +286,62 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
     }
   }
 
+  // handle adding new urls or files
   async function handleChange(value: (string | File)[]) {
     if (cropToFirstImage || !!aspectRatios?.length) await handleCrop(value);
     else await Promise.all(value.map((src) => handleUpload(src)));
   }
+
+  return (
+    <Provider
+      value={{
+        previewItems,
+        setError,
+        setUploads,
+        max,
+        missingAiMetadata,
+        removeItem,
+        aspect,
+        cropToFirstImage,
+        aspectRatios,
+        onChange: handleChange,
+      }}
+    >
+      <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
+        {children(previewItems)}
+
+        {_error && <Alert color="red">{_error}</Alert>}
+        {imagesMissingMetadataCount > 0 && (
+          <Alert
+            color="yellow"
+            title={`We couldn't detect valid metadata in ${
+              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
+            }.`}
+          >
+            {`Outputs based on ${
+              imagesMissingMetadataCount > 1 ? 'these images' : 'this image'
+            } must be PG, PG-13, or they will be blocked and you will not be refunded.`}
+          </Alert>
+        )}
+      </div>
+    </Provider>
+  );
+}
+
+SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  const {
+    previewItems,
+    setError,
+    setUploads,
+    max,
+    aspect,
+    cropToFirstImage,
+    aspectRatios,
+    onChange,
+  } = useContext();
+  const canAddFiles = previewItems.length < max;
 
   async function handleDrop(files: File[]) {
     const remaining = max - previewItems.length;
@@ -308,12 +352,12 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
         return !tooLarge;
       })
       .splice(0, remaining);
-    await handleChange(toUpload);
+    await onChange(toUpload);
   }
 
   async function handleDropCapture(e: DragEvent) {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (!!url?.length && previewItems.length < max) await handleChange([url]);
+    if (!!url?.length && previewItems.length < max) await onChange([url]);
   }
 
   if (!canAddFiles) return null;

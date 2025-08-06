@@ -1,11 +1,10 @@
-import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants, maxRandomSeed } from '~/server/common/constants';
-import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { getGenerationTags } from '~/server/orchestrator/generation/generation.schema';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
@@ -93,12 +92,7 @@ export async function generate({
         creators: creatorTip,
       },
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(userId),
     },
   });
 

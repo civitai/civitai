@@ -2,8 +2,7 @@ import type { ImageGenStepTemplate } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
-import { env } from '~/env/server';
-import { SignalMessages } from '~/server/common/enums';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
@@ -66,12 +65,7 @@ export async function createImageGen(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
     },
   })) as TextToImageResponse;
 

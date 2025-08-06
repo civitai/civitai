@@ -23,6 +23,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -133,12 +134,7 @@ export async function createComfy(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
     },
   })) as TextToImageResponse;
 

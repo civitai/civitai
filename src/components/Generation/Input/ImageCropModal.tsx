@@ -69,6 +69,7 @@ export function ImageCropperContent({
   onConfirm,
   aspectRatios,
 }: ImageCropperProps) {
+  console.log({ images });
   const initialAspect = images[0].width / images[0].height;
   const [selected, setSelected] = useState('0');
   const [loading, setLoading] = useState(false);

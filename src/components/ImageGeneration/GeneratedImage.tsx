@@ -640,11 +640,15 @@ function GeneratedImageWorkflowMenuItems({
       )?.[0];
     }
 
+    const { baseModel, ...params } = step.params as any;
+
+    const sourceImage = await getSourceImageFromUrl({ url: image.url });
     generationStore.setData({
       resources: [],
       params: {
-        ...(step.params as any),
-        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+        ...params,
+        sourceImage: sourceImage,
+        images: [sourceImage],
         process: 'img2vid',
       },
       type: 'video',
