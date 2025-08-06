@@ -14,6 +14,8 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -269,20 +271,6 @@ export const constants = {
       silver: 6,
       bronze: 4,
     },
-  },
-  buzz: {
-    minChargeAmount: 500, // $5.00
-    maxChargeAmount: 99999999, // $999,999.99
-    cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
-    referralBonusAmount: 500,
-    maxTipAmount: 100000000,
-    minTipAmount: 50,
-    maxEntityTip: 2000,
-    buzzDollarRatio: 1000,
-    platformFeeRate: 3000, // 30.00%. Divide by 10000
-    minBuzzWithdrawal: 100000,
-    maxBuzzWithdrawal: 100000000,
-    generationBuzzChargingStartDate: new Date('2024-04-04T00:00:00.000Z'),
   },
   profile: {
     coverImageAspectRatio: 1 / 4,

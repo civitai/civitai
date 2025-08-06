@@ -159,14 +159,22 @@ export const useCreatorProgramMutate = () => {
     },
   });
   const bankBuzzMutation = trpc.creatorProgram.bankBuzz.useMutation({
-    onSuccess(_, { amount }) {
+    onSuccess(_, { amount, accountType }) {
       utils.creatorProgram.getCompensationPool.setData({}, (old) => {
         if (!old) return old;
         return { ...old, size: { ...old.size, current: old.size.current + amount } };
       });
       utils.creatorProgram.getBanked.setData(undefined, (old) => {
         if (!old) return old;
-        return { ...old, total: old.total + amount };
+        return {
+          ...old,
+          balances: old.balances.map((balance) => {
+            if (balance.accountType === accountType) {
+              return { ...balance, total: (balance.total ?? 0) + amount };
+            }
+            return balance;
+          }),
+        };
       });
     },
     onError(error) {

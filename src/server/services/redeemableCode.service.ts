@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,

@@ -12,12 +12,14 @@ import type {
   GetAuctionBySlugInput,
   TogglePauseRecurringBidInput,
 } from '~/server/schema/auction.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
-  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
+  refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
@@ -28,15 +30,18 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import {
-  AuctionType,
-  Availability,
-  BuzzAccountType,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
+import { AuctionType, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
+
+export const getAuctionTransactionPrefix = (auctionId: number, userId: number) =>
+  `auction-${auctionId}-${userId}-${new Date().getTime()}`;
+
+export const isAuctionTransactionPrefix = (prefix: string) => {
+  return prefix.startsWith('auction-') && prefix.split('-').length >= 4;
+};
 
 export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   id: true,
@@ -384,7 +389,7 @@ export const createBid = async ({
   }
 
   // - Check if entityId is valid for this auction type
-
+  let accountTypes: BuzzSpendType[] = ['yellow'];
   if (auctionData.auctionBase.type === AuctionType.Model) {
     // TODO switch back to dbRead
     const mv = await dbWrite.modelVersion.findFirst({
@@ -392,12 +397,15 @@ export const createBid = async ({
       select: {
         baseModel: true,
         availability: true,
+        nsfwLevel: true,
         model: {
           select: {
             type: true,
             meta: true,
             poi: true,
             status: true,
+            nsfwLevel: true,
+            nsfw: true,
           },
         },
       },
@@ -426,18 +434,24 @@ export const createBid = async ({
       if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel))
         throw throwBadRequestError('Invalid model ecosystem for this auction.');
     }
+
+    accountTypes = getBuzzTransactionSupportedAccountTypes({
+      isNsfw: mv.model.nsfw,
+    });
   }
 
   // - Go
-
-  const account = await getUserBuzzAccount({ accountId: userId });
-  if ((account.balance ?? 0) < amount) {
+  const balanceData = await getUserBuzzAccount({ accountId: userId, accountTypes });
+  const balance = balanceData.reduce((acc, b) => acc + (b.balance ?? 0), 0);
+  if ((balance ?? 0) < amount) {
     throw throwInsufficientFundsError();
   }
 
-  const { transactionId } = await createBuzzTransaction({
+  const transactionPrefix = getAuctionTransactionPrefix(auctionId, userId);
+
+  const createdTransactions = await createMultiAccountBuzzTransaction({
     type: TransactionType.Bid,
-    fromAccountType: BuzzAccountType.user,
+    fromAccountTypes: accountTypes,
     fromAccountId: userId,
     toAccountId: 0,
     amount,
@@ -447,10 +461,14 @@ export const createBid = async ({
       entityId,
       entityType: auctionData.auctionBase.type,
     },
+    externalTransactionIdPrefix: transactionPrefix,
   });
-  if (transactionId === null) {
+
+  if (!createdTransactions || createdTransactions.transactionCount === 0) {
     throw throwBadRequestError('Could not complete transaction');
   }
+
+  const transactionIds = createdTransactions.transactionIds.map((t) => t.transactionId);
 
   // For notifications...
   // const previousBidsSorted = prepareBids(auctionData).filter(
@@ -471,7 +489,7 @@ export const createBid = async ({
         where: { id: previousBid.id },
         data: {
           amount: { increment: amount },
-          transactionIds: [...previousBid.transactionIds, transactionId],
+          transactionIds: [...previousBid.transactionIds, ...transactionIds],
         },
       });
     } else {
@@ -482,7 +500,7 @@ export const createBid = async ({
           deleted: false,
           isRefunded: false,
           createdAt: now,
-          transactionIds: [transactionId],
+          transactionIds: transactionIds,
         },
       });
     }
@@ -495,7 +513,7 @@ export const createBid = async ({
           auctionId,
           entityId,
           amount,
-          transactionIds: [transactionId],
+          transactionIds: transactionIds,
         },
       });
     } catch (e) {
@@ -513,7 +531,12 @@ export const createBid = async ({
         stack: err.stack,
         cause: err.cause,
       }).catch();
-      await withRetries(() => refundTransaction(transactionId, 'Failed to create bid.'));
+      await withRetries(() =>
+        refundMultiAccountTransaction({
+          externalTransactionIdPrefix: transactionPrefix,
+          description: 'Failed to create bid.',
+        })
+      );
     }
   }
 
@@ -604,7 +627,19 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
   for (const transactionId of bid.transactionIds) {
-    await withRetries(() => refundTransaction(transactionId, 'Deleted bid.'));
+    await withRetries(async () => {
+      if (isAuctionTransactionPrefix(transactionId)) {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: transactionId,
+          description: 'Deleted bid.',
+        });
+
+        return;
+      }
+
+      await refundTransaction(transactionId, 'Deleted bid.');
+      return;
+    });
   }
 
   await dbWrite.bid.update({
@@ -672,9 +707,18 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
     for (const bid of deleted) {
       for (const transactionId of bid.transactionIds) {
         try {
-          await withRetries(() =>
-            refundTransaction(transactionId, 'Deleted bid - model not available.')
-          );
+          await withRetries(async () => {
+            if (isAuctionTransactionPrefix(transactionId)) {
+              await refundMultiAccountTransaction({
+                externalTransactionIdPrefix: transactionId,
+                description: 'Deleted bid - model not available.',
+              });
+            }
+
+            await refundTransaction(transactionId, 'Deleted bid - model not available.');
+
+            return;
+          });
         } catch (e) {
           const error = e as Error;
           logToAxiom({
@@ -786,9 +830,18 @@ export const deleteBidsForModelVersion = async ({ modelVersionId }: { modelVersi
     for (const bid of deleted) {
       for (const transactionId of bid.transactionIds) {
         try {
-          await withRetries(() =>
-            refundTransaction(transactionId, 'Deleted bid - model not available.')
-          );
+          await withRetries(async () => {
+            if (isAuctionTransactionPrefix(transactionId)) {
+              await refundMultiAccountTransaction({
+                externalTransactionIdPrefix: transactionId,
+                description: 'Deleted bid - model not available.',
+              });
+            } else {
+              await refundTransaction(transactionId, 'Deleted bid - model not available.');
+            }
+
+            return;
+          });
         } catch (e) {
           const error = e as Error;
           logToAxiom({

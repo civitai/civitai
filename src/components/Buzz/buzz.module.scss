@@ -90,8 +90,8 @@
   }
 
   &[data-checked] {
-    border: 2px solid var(--mantine-color-accent-5);
-    color: var(--mantine-color-accent-5);
+    border: 2px solid rgb(var(--buzz-color));
+    color: rgb(var(--buzz-color));
     padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
     background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
 
@@ -126,14 +126,14 @@
   }
 
   &[data-active="true"] {
-    border: 1px solid var(--mantine-color-accent-5);
+    border: 1px solid rgb(var(--buzz-color));
     background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
   }
 }
 
 // Icon styling
 .buzzIcon {
-  filter: drop-shadow(0 0 2px var(--mantine-color-accent-5));
+  filter: drop-shadow(0 0 2px rgb(var(--buzz-color)));
 
   &:not(:first-of-type) {
     margin-left: -4px;

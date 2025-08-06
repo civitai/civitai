@@ -9,7 +9,7 @@ import {
   getMonthAccount,
 } from '~/server/services/creator-program.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -66,7 +66,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           await createBuzzTransaction({
             amount: userBanked.total - currentValue,
             fromAccountId: 0,
-            fromAccountType: 'user',
+            fromAccountType: 'yellow',
             toAccountId: monthAccount,
             toAccountType: 'creatorprogrambank',
             type: TransactionType.Bank,
@@ -81,7 +81,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           fromAccountId: monthAccount,
           fromAccountType: 'creatorprogrambank',
           toAccountId: userId,
-          toAccountType: 'user',
+          toAccountType: 'yellow',
           type: TransactionType.Extract,
           description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
         });
@@ -95,9 +95,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       await createBuzzTransaction({
         amount: shouldTakeMoneyFromBank ? Math.min(Math.abs(change), currentValue) : change,
         fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
-        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
+        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'yellow',
         toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
-        toAccountType: shouldTakeMoneyFromBank ? 'user' : 'creatorprogrambank',
+        toAccountType: shouldTakeMoneyFromBank ? 'yellow' : 'creatorprogrambank',
         type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
         description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
       });

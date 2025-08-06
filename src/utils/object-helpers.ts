@@ -130,3 +130,10 @@ export function patch(obj: Record<string, any>, diffs: Difference[]): Record<str
 
   return obj;
 }
+
+export function flip<T extends Record<string, string>>(data: T) {
+  return Object.fromEntries(Object.entries(data).map(([key, value]) => [value, key])) as Record<
+    T[keyof T],
+    keyof T
+  >;
+}

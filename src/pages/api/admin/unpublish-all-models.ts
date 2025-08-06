@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
 import { unpublishModelById } from '~/server/services/model.service';

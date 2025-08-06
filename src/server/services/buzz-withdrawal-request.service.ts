@@ -13,7 +13,6 @@ import {
   BuzzWithdrawalRequestStatus,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
-import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
@@ -22,7 +21,6 @@ import type {
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
-import { TransactionType } from '../schema/buzz.schema';
 import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
@@ -30,6 +28,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 export const createBuzzWithdrawalRequest = async ({
@@ -76,10 +75,10 @@ CreateBuzzWithdrawalRequestSchema & {
 
   const userBuzzAccount = await getUserBuzzAccount({
     accountId: userId,
-    accountType: 'user',
+    accountType: 'yellow',
   });
 
-  if ((userBuzzAccount?.balance ?? 0) < amount) throw throwInsufficientFundsError();
+  if ((userBuzzAccount[0]?.balance ?? 0) < amount) throw throwInsufficientFundsError();
 
   // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
 
@@ -114,7 +113,7 @@ CreateBuzzWithdrawalRequestSchema & {
         userId,
         buzzWithdrawalTransactionId: transaction.transactionId,
         requestedBuzzAmount: amount,
-        platformFeeRate: constants.buzz.platformFeeRate,
+        platformFeeRate: buzzConstants.platformFeeRate,
         ...providerData,
       },
       select: buzzWithdrawalRequestDetails,

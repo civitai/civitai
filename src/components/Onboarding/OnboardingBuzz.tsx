@@ -38,6 +38,7 @@ import {
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import { showErrorNotification } from '~/utils/notifications';
 import { env } from '~/env/client';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 const referralSchema = z.object({
   code: z
@@ -219,7 +220,7 @@ export function OnboardingBuzz() {
                   <Text span>
                     <CurrencyBadge
                       currency={Currency.BUZZ}
-                      unitAmount={constants.buzz.referralBonusAmount}
+                      unitAmount={buzzConstants.referralBonusAmount}
                     />
                   </Text>{' '}
                   bonus with a valid referral code.

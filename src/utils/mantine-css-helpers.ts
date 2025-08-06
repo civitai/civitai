@@ -20,3 +20,20 @@ export const containerQuery = {
     return `@container (width < ${value}px)`;
   },
 };
+
+export const hexToRgb = (hex: string) => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : null;
+};
+
+export const hexToRgbOpenEnded = (hex: string) => {
+  const data = hexToRgb(hex);
+  if (!data) return hex;
+  return `${data.r}, ${data.g}, ${data.b}`;
+};

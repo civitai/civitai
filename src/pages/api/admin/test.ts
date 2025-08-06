@@ -1,5 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbRead } from '~/server/db/client';
+import {
+  getAccountSummary,
+  getTopContributors,
+  getUserBuzzAccountByAccountTypes,
+} from '~/server/services/buzz.service';
 import { refreshImageResources } from '~/server/services/image.service';
 import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -84,16 +89,18 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // await setExperimentalConfig({ userIds: [5] });
     // const data = await updateCollectionsNsfwLevels([24004]);
 
-    const imageResources = await dbRead.$queryRaw<{ imageId: number }[]>`
-      select * from "ImageResourceNew" where "modelVersionId" = 690425 and detected
-    `;
+    // const imageResources = await dbRead.$queryRaw<{ imageId: number }[]>`
+    //   select * from "ImageResourceNew" where "modelVersionId" = 690425 and detected
+    // `;
 
-    await Limiter({ batchSize: 1, limit: 10 }).process(imageResources, async ([{ imageId }]) => {
-      await refreshImageResources(imageId);
-    });
+    // await Limiter({ batchSize: 1, limit: 10 }).process(imageResources, async ([{ imageId }]) => {
+    //   await refreshImageResources(imageId);
+    // });
+
+    const data = await getTopContributors({ accountIds: [5, 6], accountType: 'yellow' });
 
     // res.status(200).send({ data });
-    res.status(200).send({ ok: true });
+    res.status(200).send({ data });
   } catch (e) {
     console.log(e);
     res.status(400).end();

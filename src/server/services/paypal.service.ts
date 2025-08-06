@@ -1,10 +1,9 @@
 import { env } from '~/env/server';
-import { constants } from '../common/constants';
 import { logToAxiom } from '../logging/client';
-import { TransactionType } from '../schema/buzz.schema';
 import type { PaypalPurchaseBuzzSchema } from '../schema/paypal.schema';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { createBuzzTransaction } from './buzz.service';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
 const Authorization = `Basic ${Buffer.from(`${env.PAYPAL_CLIENT_ID}:${env.PAYPAL_SECRET}`).toString(
   'base64'
@@ -17,9 +16,9 @@ export const createBuzzOrder = async ({
   amount,
   userId,
 }: PaypalPurchaseBuzzSchema & { userId: number }) => {
-  if (amount / constants.buzz.buzzDollarRatio < constants.buzz.minChargeAmount / 100) {
+  if (amount / buzzConstants.buzzDollarRatio < buzzConstants.minChargeAmount / 100) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${(constants.buzz.minChargeAmount / 100).toFixed(2)} USD`
+      `Minimum purchase amount is $${(buzzConstants.minChargeAmount / 100).toFixed(2)} USD`
     );
   }
 
@@ -37,7 +36,7 @@ export const createBuzzOrder = async ({
           description: `Individual Buzz purchase - ${amount} Buzz`,
           amount: {
             currency_code: 'USD',
-            value: (amount / constants.buzz.buzzDollarRatio).toFixed(2),
+            value: (amount / buzzConstants.buzzDollarRatio).toFixed(2),
           },
         },
       ],

@@ -1,49 +1,21 @@
 import * as z from 'zod/v4';
-import { constants } from '~/server/common/constants';
+import type { BuzzApiAccountType } from '~/shared/constants/buzz.constants';
+import {
+  BuzzTypes,
+  TransactionType,
+  buzzAccountTypes,
+  buzzApiAccountTypes,
+  buzzConstants,
+  buzzSpendTypes,
+} from '~/shared/constants/buzz.constants';
+import { formatDate } from '~/utils/date-helpers';
 
-export enum TransactionType {
-  Tip = 0,
-  Dues = 1,
-  Generation = 2,
-  Boost = 3,
-  Incentive = 4,
-  Reward = 5,
-  Purchase = 6,
-  Refund = 7,
-  Bounty = 8,
-  BountyEntry = 9,
-  Training = 10,
-  ChargeBack = 11,
-  Donation = 12,
-  ClubMembership = 13,
-  ClubMembershipRefund = 14,
-  ClubWithdrawal = 15,
-  ClubDeposit = 16,
-  Withdrawal = 17,
-  Redeemable = 18,
-  Sell = 19,
-  AuthorizedPurchase = 20,
-  Compensation = 21,
-  Appeal = 22,
-  Bank = 23,
-  Extract = 24,
-  Fee = 25,
-  Bid = 26,
-}
+const buzzAccountTypeFromApiValueSchema = z
+  .enum([...buzzApiAccountTypes, ...buzzApiAccountTypes.map((type) => type.toLowerCase())])
+  .transform((type) => BuzzTypes.toClientType(type as BuzzApiAccountType));
 
-export const buzzAccountTypes = [
-  'user',
-  'club',
-  'generation',
-  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
-  'creatorprogrambank',
-  'cashpending',
-  'cashsettled',
-] as const;
-export type BuzzAccountType = (typeof buzzAccountTypes)[number];
-
-function preprocessAccountType(value: unknown) {
-  return typeof value === 'string' ? (value?.toLowerCase() as BuzzAccountType) : undefined;
+export function preprocessAccountType(value: unknown) {
+  return typeof value === 'string' ? value?.toLowerCase() : undefined;
 }
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
@@ -51,20 +23,13 @@ export const getUserBuzzAccountSchema = z.object({
   // This is the user id
   accountId: z.number().min(0),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  accountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).optional(),
 });
 
 export type GetEarnPotentialSchema = z.infer<typeof getEarnPotentialSchema>;
 export const getEarnPotentialSchema = z.object({
   userId: z.number().min(0).optional(),
   username: z.string().optional(),
-});
-
-export type GetUserBuzzAccountResponse = z.infer<typeof getUserBuzzAccountResponse>;
-export const getUserBuzzAccountResponse = z.object({
-  // This is the user id
-  id: z.number(),
-  balance: z.number().nullable(),
-  lifetimeBalance: z.number().nullable(),
 });
 
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
@@ -90,7 +55,7 @@ export const buzzTransactionDetails = z
 
 export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 
-export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
+// export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
 export const getBuzzTransactionResponse = z.object({
   date: z.coerce.date(),
   type: z
@@ -100,8 +65,8 @@ export const getBuzzTransactionResponse = z.object({
     ),
   fromAccountId: z.coerce.number(),
   toAccountId: z.coerce.number(),
-  fromAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
-  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
+  fromAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
+  toAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
   amount: z.coerce.number(),
   description: z.coerce.string().nullish(),
   details: buzzTransactionDetails.nullish(),
@@ -115,6 +80,7 @@ export const getUserBuzzTransactionsResponse = z.object({
 
 export const buzzTransactionSchema = z.object({
   // To user id (0 is central bank)
+  fromAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountId: z.number().optional(),
   type: z.nativeEnum(TransactionType),
@@ -164,7 +130,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
     if (
       ctx.value.entityType &&
       ['Image', 'Model', 'Article'].includes(ctx.value.entityType) &&
-      ctx.value.amount > constants.buzz.maxEntityTip
+      ctx.value.amount > buzzConstants.maxEntityTip
     ) {
       ctx.issues.push({
         code: 'custom',
@@ -177,6 +143,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  accountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).optional(),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
@@ -196,6 +163,7 @@ export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensat
 export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
   date: z.coerce.date(),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;
@@ -203,17 +171,19 @@ export const claimWatchedAdRewardSchema = z.object({ key: z.string() });
 
 export type GetTransactionsReportSchema = z.infer<typeof getTransactionsReportSchema>;
 export const getTransactionsReportSchema = z.object({
-  accountType: z.array(z.enum(['User', 'Generation'])).optional(),
+  accountType: z.enum(buzzSpendTypes).default('yellow'),
   window: z.enum(['hour', 'day', 'week', 'month']).default('hour'),
 });
 
 export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsReportResultSchema>;
 export const getTransactionsReportResultSchema = z.array(
   z.object({
-    date: z.date(),
+    date: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    start: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    end: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
     accounts: z.array(
       z.object({
-        accountType: z.enum(['User', 'Generation']),
+        accountType: buzzAccountTypeFromApiValueSchema,
         spent: z.number(),
         gained: z.number(),
       })
@@ -241,4 +211,87 @@ export const getBuzzMovementsBetweenAccountsResponse = z.object({
   inwardsBalance: z.number(),
   outwardsBalance: z.number(),
   totalBalance: z.number(),
+});
+
+// Multi-account transaction schemas
+export type CreateMultiAccountBuzzTransactionInput = z.infer<
+  typeof createMultiAccountBuzzTransactionInput
+>;
+export const createMultiAccountBuzzTransactionInput = z.object({
+  fromAccountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).min(1),
+  fromAccountId: z.number().min(1),
+  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
+  toAccountId: z.number().min(0),
+  type: z.nativeEnum(TransactionType).optional(),
+  amount: z.number().min(1),
+  details: z.object({}).passthrough().optional(),
+  externalTransactionIdPrefix: z.string(),
+  description: z.string().trim().max(100).nonempty().nullish(),
+});
+
+// export type CreateMultiAccountBuzzTransactionResponse = z.infer<
+//   typeof createMultiAccountBuzzTransactionResponse
+// >;
+export const createMultiAccountBuzzTransactionResponse = z.object({
+  transactionIds: z.array(
+    z.object({
+      transactionId: z.string(),
+      accountType: buzzAccountTypeFromApiValueSchema,
+      amount: z.number(),
+    })
+  ),
+  totalAmount: z.number(),
+  transactionCount: z.number(),
+});
+
+export type RefundMultiAccountTransactionInput = z.infer<typeof refundMultiAccountTransactionInput>;
+export const refundMultiAccountTransactionInput = z.object({
+  externalTransactionIdPrefix: z.string(),
+  description: z.string().optional(),
+  details: z.object({}).passthrough().optional(),
+});
+
+// export type RefundMultiAccountTransactionResponse = z.infer<
+//   typeof refundMultiAccountTransactionResponse
+// >;
+export const refundMultiAccountTransactionResponse = z.object({
+  refundedTransactions: z.array(
+    z.object({
+      originalTransactionId: z.string(),
+      refundTransactionId: z.string(),
+      accountType: buzzAccountTypeFromApiValueSchema,
+      amount: z.number(),
+      originalExternalTransactionId: z.string(),
+    })
+  ),
+  totalRefunded: z.number(),
+  externalTransactionIdPrefix: z.string(),
+});
+
+export type PreviewMultiAccountTransactionInput = z.infer<
+  typeof previewMultiAccountTransactionInput
+>;
+export const previewMultiAccountTransactionInput = z.object({
+  fromAccountId: z.number().min(1),
+  fromAccountTypes: z.array(z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes))).min(1),
+  amount: z.number().min(1),
+});
+
+// export type PreviewMultiAccountTransactionResponse = z.infer<
+//   typeof previewMultiAccountTransactionResponse
+// >;
+export const previewMultiAccountTransactionResponse = z.object({
+  isPossible: z.boolean(),
+  totalAvailableBalance: z.number(),
+  requestedAmount: z.number(),
+  accountCharges: z.array(
+    z.object({
+      accountType: buzzAccountTypeFromApiValueSchema,
+      availableBalance: z.number(),
+      chargeAmount: z.number(),
+      remainingBalance: z.number(),
+    })
+  ),
+  remainingAmount: z.number(),
+  message: z.string(),
 });

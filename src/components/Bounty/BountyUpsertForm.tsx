@@ -873,7 +873,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               disabled={poi || hasPoiInNsfw || !features.canWrite}
               label="Save"
               buzzAmount={unitAmount}
-              color="yellow.7"
             />
           ) : (
             <Button

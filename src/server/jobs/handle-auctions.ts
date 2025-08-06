@@ -13,15 +13,20 @@ import type {
   DetailsWonAuction,
 } from '~/server/notifications/auction.notifications';
 import { modelVersionResourceCache } from '~/server/redis/caches';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   auctionBaseSelect,
   auctionSelect,
+  isAuctionTransactionPrefix,
   prepareBids,
   type PrepareBidsReturn,
 } from '~/server/services/auction.service';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { resourceDataCache } from '~/server/services/model-version.service';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
@@ -430,7 +435,20 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
         try {
           return withRetries(async () => {
             try {
-              return await refundTransaction(tid, 'Lost bid.');
+              let transactionId: string | null = null;
+              if (isAuctionTransactionPrefix(tid)) {
+                const res = await refundMultiAccountTransaction({
+                  externalTransactionIdPrefix: tid,
+                  description: 'Refund for lost bid',
+                });
+
+                transactionId = res.refundedTransactions[0]?.originalTransactionId ?? null;
+              } else {
+                const res = await refundTransaction(tid, 'Lost bid.');
+                transactionId = res.transactionId;
+              }
+
+              return { transactionId };
             } catch (e) {
               const err = e as Error;
               logToAxiom({
@@ -557,7 +575,7 @@ const createRecurringBids = async (now: Dayjs) => {
         const { transactionId } = await withRetries(() =>
           createBuzzTransaction({
             type: TransactionType.Bid,
-            fromAccountType: BuzzAccountType.user,
+            fromAccountType: 'yellow',
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,

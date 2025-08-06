@@ -14,7 +14,6 @@ import {
 
 import { trpc } from '~/utils/trpc';
 import { showSuccessNotification } from '~/utils/notifications';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useClipboard } from '@mantine/hooks';
 import { IconClipboardCopy, IconTrash } from '@tabler/icons-react';
 import { env } from '~/env/client';
@@ -23,6 +22,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
@@ -69,7 +69,7 @@ export function UserReferralCodesCard() {
               <Text c="accent.5" span inline>
                 <CurrencyBadge
                   currency={Currency.BUZZ}
-                  unitAmount={constants.buzz.referralBonusAmount}
+                  unitAmount={buzzConstants.referralBonusAmount}
                 />
               </Text>{' '}
               which you can use to generate content, run bounties and more!
