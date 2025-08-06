@@ -2,6 +2,8 @@ import type { EvmServerAccount, EvmSmartAccount } from '@coinbase/cdp-sdk';
 import { dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 import { checkOnrampStatus, getOnrampUrl } from '../coinbase/onramp';
+import { getZkp2pOnrampUrl, checkZkp2pOnrampStatus } from '../zkp2p/zkp2p-onramp';
+import { CoinbaseWallet } from '../coinbase/coinbase';
 
 export type OnrampProvider = 'coinbase' | 'zkp2p';
 
@@ -66,7 +68,6 @@ export class EasyWallet {
     let key: string;
 
     if (provider === 'zkp2p') {
-      const { getZkp2pOnrampUrl } = await import('../zkp2p/zkp2p-onramp');
       const zkp2pResult = getZkp2pOnrampUrl({
         address: this.smartAccount.address,
         value,
@@ -106,7 +107,6 @@ export class EasyWallet {
   async checkOnrampStatus(key: string) {
     // Check if this is a ZKP2P transaction based on the key prefix
     if (key.startsWith('zkp2p-')) {
-      const { checkZkp2pOnrampStatus } = await import('../zkp2p/zkp2p-onramp');
       return checkZkp2pOnrampStatus(key, this.userId, () => this.getUSDCBalance());
     }
 
@@ -114,14 +114,8 @@ export class EasyWallet {
     return checkOnrampStatus(key);
   }
 
-  async markZkp2pTransactionComplete(key: string, txHash?: string) {
-    const { markZkp2pTransactionComplete } = await import('../zkp2p/zkp2p-onramp');
-    return markZkp2pTransactionComplete(key, this.userId, txHash);
-  }
-
   // Delegate wallet operations to the CoinbaseWallet
   async listAssets() {
-    const { CoinbaseWallet } = await import('../coinbase/coinbase');
     const coinbaseWallet = new CoinbaseWallet({
       userId: this.userId,
       account: this.account,
@@ -131,7 +125,6 @@ export class EasyWallet {
   }
 
   async getUSDCBalance() {
-    const { CoinbaseWallet } = await import('../coinbase/coinbase');
     const coinbaseWallet = new CoinbaseWallet({
       userId: this.userId,
       account: this.account,
@@ -141,7 +134,6 @@ export class EasyWallet {
   }
 
   async sweepBalance() {
-    const { CoinbaseWallet } = await import('../coinbase/coinbase');
     const coinbaseWallet = new CoinbaseWallet({
       userId: this.userId,
       account: this.account,
@@ -151,7 +143,6 @@ export class EasyWallet {
   }
 
   async sendUSDC(value: number | bigint, key?: string) {
-    const { CoinbaseWallet } = await import('../coinbase/coinbase');
     const coinbaseWallet = new CoinbaseWallet({
       userId: this.userId,
       account: this.account,
@@ -161,7 +152,6 @@ export class EasyWallet {
   }
 
   async checkTxComplete(txHash: `0x${string}`) {
-    const { CoinbaseWallet } = await import('../coinbase/coinbase');
     const coinbaseWallet = new CoinbaseWallet({
       userId: this.userId,
       account: this.account,

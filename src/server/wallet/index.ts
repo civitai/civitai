@@ -23,8 +23,4 @@ export type {
 } from './easy-wallet';
 
 // Re-export ZKP2P service functions for convenience
-export {
-  getZkp2pOnrampUrl,
-  checkZkp2pOnrampStatus,
-  markZkp2pTransactionComplete,
-} from '../zkp2p/zkp2p-onramp';
+export { getZkp2pOnrampUrl, checkZkp2pOnrampStatus } from '../zkp2p/zkp2p-onramp';

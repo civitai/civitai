@@ -127,29 +127,3 @@ export async function checkZkp2pOnrampStatus(
     hash: '0x0' as `0x${string}`,
   };
 }
-
-// ZKP2P transaction completion marking
-export async function markZkp2pTransactionComplete(key: string, userId: number, txHash?: string) {
-  if (!key.startsWith('zkp2p-')) {
-    throw new Error('Invalid ZKP2P transaction key');
-  }
-
-  const transaction = await dbWrite.cryptoTransaction.findFirst({
-    where: { key, userId },
-  });
-
-  if (!transaction) {
-    throw new Error('Transaction not found');
-  }
-
-  await dbWrite.cryptoTransaction.update({
-    where: { key, userId },
-    data: {
-      status: CryptoTransactionStatus.Complete,
-      note: `ZKP2P onramp completed${txHash ? ` - tx: ${txHash}` : ''}`,
-      sweepTxHash: txHash,
-    },
-  });
-
-  return true;
-}

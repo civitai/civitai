@@ -308,25 +308,3 @@ export class CoinbaseWallet {
     return userOp.status === 'complete';
   }
 }
-
-/*
-Example usage:
-
-// Get wallet for user
-const wallet = await getWalletForUser(123);
-
-// Generate Coinbase onramp URL
-const coinbaseOnramp = await wallet.getOnrampUrl({
-  value: 10, // $10 USD
-  redirectUrl: 'https://civitai.com/payment/coinbase'
-});
-
-// Check onramp status
-const status = await wallet.checkOnrampStatus(coinbaseOnramp.key);
-
-// Send USDC to Civitai
-await wallet.sendUSDC(10); // Send 10 USDC
-
-// Check transaction completion
-const isComplete = await wallet.checkTxComplete('0x...');
-*/
