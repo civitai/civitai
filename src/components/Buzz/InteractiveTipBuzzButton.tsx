@@ -1,15 +1,16 @@
 import type { UnstyledButtonProps } from '@mantine/core';
-import { Group, Popover, Stack, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
+import { Group, Popover, Stack, Text, UnstyledButton, Button } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
-import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { IconBolt, IconCheck, IconSend, IconX, IconChevronDown } from '@tabler/icons-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -22,6 +23,7 @@ import classes from './InteractiveTipBuzzButton.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 
 type Props = UnstyledButtonProps &
   React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -29,9 +31,9 @@ type Props = UnstyledButtonProps &
     entityId: number;
     entityType: string;
     hideLoginPopover?: boolean;
+    initialCurrencyType?: 'green' | 'yellow' | 'red';
   };
 
-const CONFIRMATION_THRESHOLD = 100;
 const CLICK_AMOUNT = 10;
 const CONFIRMATION_TIMEOUT = 5000;
 
@@ -41,14 +43,18 @@ const CONFIRMATION_TIMEOUT = 5000;
  */
 type BuzzTippingStore = {
   tips: Record<string, number>;
+  selectedCurrencyType: 'green' | 'yellow' | 'red' | null;
+  setSelectedCurrencyType: (currencyType: 'green' | 'yellow' | 'red') => void;
   onTip: ({
     entityType,
     entityId,
     amount,
+    currencyType,
   }: {
     entityType: string;
     entityId: number;
     amount: number;
+    currencyType?: 'green' | 'yellow' | 'red';
   }) => void;
 };
 
@@ -59,6 +65,12 @@ const useStore = create<BuzzTippingStore>()(
   devtools(
     immer((set) => ({
       tips: {},
+      selectedCurrencyType: null,
+      setSelectedCurrencyType: (currencyType: 'green' | 'yellow' | 'red') => {
+        set((state) => {
+          state.selectedCurrencyType = currencyType;
+        });
+      },
       onTip: ({ entityType, entityId, amount }) => {
         const key = getTippingKey({ entityType, entityId });
         set((state) => {
@@ -81,6 +93,12 @@ export const useBuzzTippingStore = ({
   return useStore(useCallback((state) => state.tips[key] ?? 0, [key]));
 };
 
+export const useGlobalCurrencySelection = () => {
+  const selectedCurrencyType = useStore((state) => state.selectedCurrencyType);
+  const setSelectedCurrencyType = useStore((state) => state.setSelectedCurrencyType);
+  return { selectedCurrencyType, setSelectedCurrencyType };
+};
+
 const steps: [number, number][] = [
   // [20000, 2500],
   // [5000, 1000],
@@ -98,27 +116,81 @@ export function InteractiveTipBuzzButton({
   entityType,
   children,
   hideLoginPopover = false,
+  initialCurrencyType,
   ...buttonProps
 }: Props) {
-  const theme = useMantineTheme();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+
+  // Get all currency balances to determine default and available options
+  const { data: balance } = useQueryBuzz();
+
+  // Get global currency selection from store
+  const globalSelectedCurrency = useStore((state) => state.selectedCurrencyType);
+  const setGlobalSelectedCurrency = useStore((state) => state.setSelectedCurrencyType);
+
+  // Determine default currency type based on highest balance
+  const defaultCurrencyType = useMemo(() => {
+    if (initialCurrencyType) return initialCurrencyType;
+    if (globalSelectedCurrency) return globalSelectedCurrency;
+    if (!balance?.accounts) return 'yellow';
+
+    const greenAccount = balance.accounts.find((acc) => acc.type === 'green');
+    const yellowAccount = balance.accounts.find((acc) => acc.type === 'yellow');
+    const redAccount = balance.accounts.find((acc) => acc.type === 'red');
+
+    const balances = {
+      green: greenAccount?.balance || 0,
+      yellow: yellowAccount?.balance || 0,
+      red: redAccount?.balance || 0,
+    };
+
+    // Return the currency type with the highest balance
+    return Object.entries(balances).reduce((a, b) =>
+      balances[a[0] as keyof typeof balances] > balances[b[0] as keyof typeof balances] ? a : b
+    )[0] as 'green' | 'yellow' | 'red';
+  }, [initialCurrencyType, globalSelectedCurrency, balance?.accounts]);
+
+  const selectedCurrencyType = globalSelectedCurrency || defaultCurrencyType;
+
+  // Initialize global currency if not set
+  useEffect(() => {
+    if (!globalSelectedCurrency && !initialCurrencyType) {
+      setGlobalSelectedCurrency(defaultCurrencyType);
+    }
+  }, [globalSelectedCurrency, defaultCurrencyType, initialCurrencyType, setGlobalSelectedCurrency]);
+
   const {
     data: { total },
-  } = useQueryBuzz(['yellow']);
-  const balance = total;
-  const features = useFeatureFlags();
+  } = useQueryBuzz([selectedCurrencyType]);
+  const currencyBalance = total;
+  const buzzConfig = useBuzzCurrencyConfig(selectedCurrencyType);
+
+  // Pre-compute currency configs to avoid hook rules violations
+  const greenConfig = useBuzzCurrencyConfig('green');
+  const yellowConfig = useBuzzCurrencyConfig('yellow');
+  const redConfig = useBuzzCurrencyConfig('red');
+  const currencyConfigs = {
+    green: greenConfig,
+    yellow: yellowConfig,
+    red: redConfig,
+  };
 
   const [buzzCounter, setBuzzCounter] = useState(0);
   const startTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
   const [showCountDown, setShowCountDown] = useState(false);
+  const [showCurrencySelector, setShowCurrencySelector] = useState(false);
 
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
-      return Math.min(buzzConstants.maxEntityTip, Math.min(balance ?? 0, prevCounter + step));
+      return Math.min(
+        buzzConstants.maxEntityTip,
+        Math.min(currencyBalance ?? 0, prevCounter + step)
+      );
     });
   }, 100);
 
@@ -134,6 +206,7 @@ export function InteractiveTipBuzzButton({
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: false,
+    accountTypes: [selectedCurrencyType],
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>
         <Text>Thank you for your purchase!</Text>
@@ -185,6 +258,8 @@ export function InteractiveTipBuzzButton({
           amount,
           entityId,
           entityType,
+          fromAccountType: selectedCurrencyType,
+          toAccountType: selectedCurrencyType,
           details: {
             entityId,
             entityType,
@@ -194,7 +269,7 @@ export function InteractiveTipBuzzButton({
           onSuccess: (_, { amount }) => {
             setStatus('confirmed');
             if (entityType && entityId) {
-              onTip({ entityType, entityId, amount });
+              onTip({ entityType, entityId, amount, currencyType: selectedCurrencyType });
             }
           },
           onSettled: () => {
@@ -214,7 +289,7 @@ export function InteractiveTipBuzzButton({
     let amount = Number(value);
     if (isNaN(amount) || amount < 1) amount = 1;
     else if (amount > buzzConstants.maxEntityTip) amount = buzzConstants.maxEntityTip;
-    else if (balance && amount > balance) amount = balance ?? 0;
+    else if (currencyBalance && amount > currencyBalance) amount = currencyBalance ?? 0;
     setBuzzCounter(amount);
 
     return amount;
@@ -251,7 +326,17 @@ export function InteractiveTipBuzzButton({
     setShowCountDown(false);
   };
 
-  const clickStart = (e: any) => {
+  const resumeCountdown = () => {
+    if (status === 'confirming' && !confirmTimeoutRef.current) {
+      setShowCountDown(true);
+      confirmTimeoutRef.current = setTimeout(() => {
+        setTimeout(() => reset(), 100);
+        setStatus('pending');
+      }, CONFIRMATION_TIMEOUT);
+    }
+  };
+
+  const clickStart = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice()) {
       e.preventDefault();
       e.stopPropagation();
@@ -277,7 +362,7 @@ export function InteractiveTipBuzzButton({
     }, 150);
   };
 
-  const clickEnd = (e: any) => {
+  const clickEnd = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice() && e.type == 'mouseup') return;
 
     if (startTimerTimeoutRef.current !== null) {
@@ -315,7 +400,7 @@ export function InteractiveTipBuzzButton({
 
   useEffect(() => {
     return () => interval.stop(); // when App is unmounted we should stop counter
-  }, []);
+  }, [interval]);
 
   if (!features.buzz) return null;
 
@@ -366,7 +451,11 @@ export function InteractiveTipBuzzButton({
           {children}
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown py={4} className={clsx({ [classes.confirming]: showCountDown })}>
+      <Popover.Dropdown
+        py={4}
+        className={clsx({ [classes.confirming]: showCountDown })}
+        style={{ '--buzz-color': buzzConfig.color } as React.CSSProperties}
+      >
         <Group className={classes.popoverContent}>
           {status !== 'pending' && (
             <LegacyActionIcon variant="subtle" color="red.5" onClick={cancelTip}>
@@ -374,11 +463,83 @@ export function InteractiveTipBuzzButton({
             </LegacyActionIcon>
           )}
           <Stack gap={2} align="center">
-            <Text c="yellow.7" fw={500} size="xs" opacity={0.8}>
+            {/* Compact Currency Selector */}
+            <Group gap={4} mb={2}>
+              <Button
+                size="xs"
+                variant="subtle"
+                color={buzzConfig.color}
+                onClick={() => {
+                  const newShowState = !showCurrencySelector;
+                  setShowCurrencySelector(newShowState);
+
+                  if (newShowState && status === 'confirming') {
+                    // Stop countdown when opening currency selector
+                    stopCountdown();
+                  } else if (!newShowState && status === 'confirming') {
+                    // Resume countdown when closing currency selector
+                    resumeCountdown();
+                  }
+                }}
+                leftSection={<CurrencyIcon currency="BUZZ" size={12} type={selectedCurrencyType} />}
+                rightSection={<IconChevronDown size={10} />}
+                style={{
+                  fontSize: '10px',
+                  padding: '2px 6px',
+                  height: 'auto',
+                  minHeight: 'auto',
+                }}
+              >
+                {numberWithCommas(currencyBalance || 0)}
+              </Button>
+            </Group>
+
+            {/* Currency Options (when expanded) */}
+            {showCurrencySelector && (
+              <Group gap={2} mb={2}>
+                {(['green', 'yellow', 'red'] as const).map((type) => {
+                  const config = currencyConfigs[type];
+                  const typeBalance =
+                    balance?.accounts?.find((acc) => acc.type === type)?.balance || 0;
+
+                  if (type === selectedCurrencyType) return null; // Don't show current selection
+
+                  return (
+                    <Button
+                      key={type}
+                      size="xs"
+                      variant="outline"
+                      color={config.color}
+                      style={{
+                        borderColor: config.color,
+                        fontSize: '10px',
+                        padding: '2px 6px',
+                        height: 'auto',
+                        minHeight: 'auto',
+                      }}
+                      onClick={() => {
+                        setGlobalSelectedCurrency(type);
+                        setShowCurrencySelector(false);
+
+                        // Resume countdown after currency selection if we're in confirming state
+                        if (status === 'confirming') {
+                          resumeCountdown();
+                        }
+                      }}
+                      leftSection={<CurrencyIcon currency="BUZZ" size={10} type={type} />}
+                    >
+                      {numberWithCommas(typeBalance)}
+                    </Button>
+                  );
+                })}
+              </Group>
+            )}
+
+            <Text c={buzzConfig.color} fw={500} size="xs" opacity={0.8}>
               Tipping
             </Text>
             <Group gap={0} ml={-8}>
-              <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
+              <IconBolt style={{ fill: buzzConfig.color }} color={buzzConfig.color} size={20} />
               <div
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
@@ -399,7 +560,7 @@ export function InteractiveTipBuzzButton({
           {status !== 'pending' && (
             <LegacyActionIcon
               variant="transparent"
-              color={status === 'confirmed' ? 'green' : 'yellow.5'}
+              color={status === 'confirmed' ? 'green' : buzzConfig.color}
               onClick={status === 'confirming' ? () => sendTip() : undefined}
               loading={tipUserMutation.isLoading}
             >
