@@ -96,7 +96,6 @@ export async function checkZkp2pOnrampStatus(
     transaction.status === CryptoTransactionStatus.RampInProgress
   ) {
     const currentBalance = await getUSDCBalance();
-    console.log({ currentBalance });
     // If we have received at least the expected amount, mark as complete
     if (currentBalance >= transaction.amount) {
       await dbWrite.cryptoTransaction.update({
