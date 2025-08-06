@@ -57,7 +57,8 @@ export function getZkp2pOnrampUrl({
 
   const params = new URLSearchParams({
     referrer: zkp2pOptions.referrer || 'Civitai',
-    referrerLogo: zkp2pOptions.referrerLogo || 'https://civitai.com/images/logo.png',
+    referrerLogo:
+      zkp2pOptions.referrerLogo || 'https://civitai.com/images/android-chrome-512x512.png',
     callbackUrl: finalRedirectUrl,
     amountUsdc: usdcAmount,
     toToken,
