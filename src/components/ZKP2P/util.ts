@@ -31,15 +31,15 @@ export const useGetZkp2pTransactionStatus = (key?: string | null) => {
     },
     {
       enabled: !!key,
-      // // Every 5s.
-      // ...(stopRefetch
-      //   ? {
-      //       refetchInterval: false, // Stop refetching if status is set
-      //     }
-      //   : {
-      //       refetchInterval: 5000, // Refetch every 5 seconds
-      //       refetchOnWindowFocus: false,
-      //     }),
+      // Every 5s.
+      ...(stopRefetch
+        ? {
+            refetchInterval: false, // Stop refetching if status is set
+          }
+        : {
+            refetchInterval: 5000, // Refetch every 5 seconds
+            refetchOnWindowFocus: false,
+          }),
     }
   );
 
