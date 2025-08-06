@@ -800,6 +800,16 @@ export const BuzzPurchaseImproved = ({
                       {/* Payment Methods */}
                       <div>
                         <Group gap="sm" wrap="wrap">
+                          {features.zkp2pPayments && (
+                            <BuzzZkp2pOnrampButton
+                              unitAmount={unitAmount}
+                              buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                              onPurchaseSuccess={onPurchaseSuccess}
+                              disabled={!ctaEnabled}
+                              purchaseSuccessMessage={purchaseSuccessMessage}
+                            />
+                          )}
+
                           {features.coinbasePayments && (
                             <>
                               {features.coinbaseOnramp && (
@@ -825,16 +835,6 @@ export const BuzzPurchaseImproved = ({
                                 purchaseSuccessMessage={purchaseSuccessMessage}
                               />
                             </>
-                          )}
-
-                          {features.zkp2pPayments && (
-                            <BuzzZkp2pOnrampButton
-                              unitAmount={unitAmount}
-                              buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                              onPurchaseSuccess={onPurchaseSuccess}
-                              disabled={!ctaEnabled}
-                              purchaseSuccessMessage={purchaseSuccessMessage}
-                            />
                           )}
 
                           {features.nowpaymentPayments && (

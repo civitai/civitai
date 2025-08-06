@@ -70,7 +70,7 @@ export function getZkp2pOnrampUrl({
     ),
   });
 
-  const url = `https://zkp2p.xyz/swap?${params.toString()}`;
+  const url = `${env.ZKP2P_BASE_URL || 'https://zkp2p.xyz'}/swap?${params.toString()}`;
   return { url, key };
 }
 

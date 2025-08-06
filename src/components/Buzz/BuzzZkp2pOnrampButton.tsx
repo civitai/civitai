@@ -42,7 +42,7 @@ export const BuzzZkp2pOnrampButton = ({
         component: AlertDialog,
         props: {
           title: '🌐 Browser Compatibility Required',
-          type: 'warning',
+          type: 'error',
           icon: null,
           children: ({ handleClose }) => (
             <div className="space-y-4">
