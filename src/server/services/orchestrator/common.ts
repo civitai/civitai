@@ -528,6 +528,7 @@ function formatImageGenStep({
             width: image.width ?? width,
             height: image.height ?? height,
             blockedReason: image.blockedReason,
+            nsfwLevel: image.nsfwLevel,
           })) ?? [],
     }),
     {}
@@ -635,6 +636,7 @@ function formatVideoGenStep({
             queuePosition: job.queuePosition,
             aspectRatio,
             blockedReason: image.blockedReason,
+            nsfwLevel: image.nsfwLevel,
           })) ?? [],
     }),
     {}
@@ -732,6 +734,7 @@ function formatTextToImageStep({
             width: image.width ?? input.width,
             height: image.height ?? input.height,
             blockedReason: image.blockedReason,
+            nsfwLevel: image.nsfwLevel,
           })) ?? [],
     }),
     {}
@@ -815,6 +818,7 @@ export function formatComfyStep({
             width: width,
             height: height,
             blockedReason: image.blockedReason,
+            nsfwLevel: image.nsfwLevel,
           })) ?? [],
     }),
     {}

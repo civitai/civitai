@@ -1,5 +1,5 @@
 import type { Scheduler, TextToImageStepTemplate } from '@civitai/client';
-import { TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
+import { NSFWLevel, TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
 import { env } from '~/env/server';
@@ -113,10 +113,11 @@ export async function createTextToImage(
     token: string;
     experimental?: boolean;
     batchAll?: boolean;
+    isGreen?: boolean;
   }
 ) {
   const step = await createTextToImageStep(args);
-  const { params, tips, user, experimental } = args;
+  const { params, tips, user, experimental, isGreen } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
   const workflow = (await submitWorkflow({
@@ -134,6 +135,7 @@ export async function createTextToImage(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen ? NSFWLevel.P_G13 : undefined,
     },
   })) as TextToImageResponse;
 

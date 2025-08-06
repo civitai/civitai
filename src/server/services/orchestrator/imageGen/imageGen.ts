@@ -1,5 +1,5 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
+import { NSFWLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
@@ -47,9 +47,10 @@ export async function createImageGen(
     user: SessionUser;
     token: string;
     experimental?: boolean;
+    isGreen?: boolean;
   }
 ) {
-  const { tips, user, experimental } = args;
+  const { tips, user, experimental, isGreen } = args;
   if (!args.params.engine)
     throw new Error(`cannot generate with $type:'imageGen' without specifying an engine`);
   const config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
@@ -66,6 +67,7 @@ export async function createImageGen(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen ? NSFWLevel.P_G13 : undefined,
     },
   })) as TextToImageResponse;
 

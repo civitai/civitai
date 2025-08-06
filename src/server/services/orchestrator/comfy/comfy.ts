@@ -1,5 +1,5 @@
 import type { ComfyStepTemplate } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
+import { NSFWLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
 import { env } from '~/env/server';
@@ -112,10 +112,11 @@ export async function createComfy(
     user: SessionUser;
     token: string;
     experimental?: boolean;
+    isGreen?: boolean;
   }
 ) {
   const step = await createComfyStep(args);
-  const { user, tips, params, experimental } = args;
+  const { user, tips, params, experimental, isGreen } = args;
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
@@ -135,6 +136,7 @@ export async function createComfy(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen ? NSFWLevel.P_G13 : undefined,
     },
   })) as TextToImageResponse;
 

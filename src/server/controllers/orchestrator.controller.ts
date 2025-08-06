@@ -1,3 +1,4 @@
+import { NSFWLevel } from '@civitai/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants, maxRandomSeed } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
@@ -40,8 +41,9 @@ export async function generate({
   creatorTip = 0,
   tags = [],
   experimental,
+  isGreen,
   ...args
-}: GenerationSchema & Ctx) {
+}: GenerationSchema & Ctx & { isGreen?: boolean }) {
   // throw throwBadRequestError(`Your prompt was flagged for: `);
   if ('prompt' in args.data) {
     try {
@@ -93,6 +95,7 @@ export async function generate({
       },
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
+      nsfwLevel: isGreen ? NSFWLevel.P_G13 : undefined,
     },
   });
 

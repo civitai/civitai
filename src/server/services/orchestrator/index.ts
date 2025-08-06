@@ -22,6 +22,7 @@ interface BaseGeneratedMedia {
   queuePosition?: WorkflowStepJobQueuePosition;
   aspectRatio?: number;
   blockedReason?: string | null;
+  nsfwLevel?: string;
 }
 
 export interface GeneratedVideo extends BaseGeneratedMedia {

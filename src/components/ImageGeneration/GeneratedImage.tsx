@@ -89,11 +89,19 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NSFWLevel } from '@civitai/client';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: NormalizedGeneratedImageStep;
+};
+
+const matureDictionary: Record<string, boolean> = {
+  [NSFWLevel.R]: true,
+  [NSFWLevel.X]: true,
+  [NSFWLevel.XXX]: true,
 };
 
 export function GeneratedImage({
@@ -107,6 +115,7 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
+  const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
@@ -263,6 +272,11 @@ export function GeneratedImage({
             />
           ) : blockedReason ? (
             <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
+          ) : features.isGreen && matureDictionary[image.nsfwLevel ?? ''] ? (
+            <BlockedBlock
+              title={'Blocked'}
+              message={'This image received a mature rating and is unavailable on this site'}
+            />
           ) : (
             <EdgeMedia2
               src={image.url}

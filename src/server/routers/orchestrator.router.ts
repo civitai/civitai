@@ -161,6 +161,7 @@ export const orchestratorRouter = router({
           token: ctx.token,
           experimental: ctx.experimental,
           batchAll: ctx.batchAll,
+          isGreen: ctx.features.isGreen,
         };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
@@ -263,11 +264,15 @@ export const orchestratorRouter = router({
     .query(({ ctx, input }) =>
       whatIf({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
     ),
-  generate: orchestratorGuardedProcedure
-    .input(z.any())
-    .mutation(({ ctx, input }) =>
-      generate({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
-    ),
+  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
+    generate({
+      ...input,
+      userId: ctx.user.id,
+      token: ctx.token,
+      experimental: ctx.experimental,
+      isGreen: ctx.features.isGreen,
+    })
+  ),
   // #endregion
 
   // #region [Image upload]
