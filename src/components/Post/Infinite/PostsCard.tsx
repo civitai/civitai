@@ -8,11 +8,9 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useInView } from '~/hooks/useInView';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import classes from './PostsCard.module.css';

@@ -11,7 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useMemo, useEffect, memo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -28,7 +28,6 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';

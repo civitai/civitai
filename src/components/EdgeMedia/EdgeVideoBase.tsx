@@ -43,6 +43,7 @@ export const EdgeVideoBase = forwardRef<HTMLVideoElement, EdgeVideoBaseProps>(
       observerRef.current.observe(videoElem);
       return () => {
         observerRef.current?.unobserve(videoElem);
+        observerRef.current?.disconnect();
       };
     }, [threshold]);
 

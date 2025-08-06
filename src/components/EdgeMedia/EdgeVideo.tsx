@@ -201,6 +201,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       observer.observe(videoElem);
       return () => {
         observer.unobserve(videoElem);
+        observer.disconnect();
       };
     }, [threshold, options?.anim, loaded]);
 
