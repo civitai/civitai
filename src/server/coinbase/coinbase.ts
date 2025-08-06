@@ -7,11 +7,6 @@ import { checkOnrampStatus, getOnrampUrl } from './onramp';
 import { dbWrite } from '~/server/db/client';
 import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
-import { logToAxiom } from '~/server/logging/client';
-
-const log = (data: MixedObject) => {
-  return logToAxiom({ name: 'coinbase-onramp', type: 'error', ...data }).catch(() => null);
-};
 
 // Initialize the CDP client, which automatically loads
 // the API Key and Wallet Secret from the environment
@@ -132,10 +127,10 @@ export async function getWalletForUser(userId: number) {
     });
   }
 
-  return new EasyWallet({ userId, account, smartAccount });
+  return new CoinbaseWallet({ userId, account, smartAccount });
 }
 
-class EasyWallet {
+export class CoinbaseWallet {
   userId: number;
   account: EvmServerAccount;
   smartAccount: EvmSmartAccount;
@@ -180,6 +175,7 @@ class EasyWallet {
         status: CryptoTransactionStatus.WaitingForRamp,
         amount: value,
         currency: 'USDC',
+        note: 'Coinbase onramp',
       },
     });
 

@@ -53,86 +53,153 @@ export const CryptoTransactions = () => {
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton={true} radius="md">
-      <Stack gap={0} mb="xl">
-        <Group>
-          <Title order={3}>Debit Card Transactions</Title>
-        </Group>
-        <Text size="sm" c="dimmed">
-          Transactions made by Debit Card via Coinbase after the 13th of June 2025 will be shown
-          here.
-        </Text>
+    <Modal {...dialog} size="xl" withCloseButton={true} radius="md">
+      <Stack gap="lg">
+        {/* Header Section */}
+        <Stack gap="xs">
+          <Title order={2} size="h3">
+            Crypto Transactions
+          </Title>
+          <Text size="sm" c="dimmed" lh={1.4}>
+            Transactions made via Coinbase and ZKP2P after June 13th, 2025 will be shown here.
+          </Text>
+        </Stack>
 
+        {/* Outstanding Balance Section */}
         {balance >= 2 && (
-          <Stack>
-            <Text size="sm" c="dimmed">
-              You have outstanding balance in your account of{' '}
-              <CurrencyBadge currency={Currency.USD} unitAmount={balance * 100} />. Click below to
-              process pending transactions using this balance and get Buzz.
+          <Stack
+            gap="md"
+            p="lg"
+            style={{
+              backgroundColor: 'var(--mantine-color-teal-1)',
+              borderRadius: 'var(--mantine-radius-md)',
+              border: '2px solid var(--mantine-color-teal-4)',
+            }}
+          >
+            <Group gap="sm" align="center">
+              <Text size="sm" fw={600} c="teal.8">
+                Outstanding Balance
+              </Text>
+              <CurrencyBadge currency={Currency.USD} unitAmount={balance * 100} />
+            </Group>
+            <Text size="sm" c="dark.6" fw={500} lh={1.4}>
+              You have an outstanding balance in your account that failed to convert to Buzz. Click
+              below to process pending transactions and convert this balance to Buzz.
             </Text>
             <Button
               loading={processingUserPendingTransactions}
               onClick={() => handleProcessPendingTransactions()}
               color="teal"
               disabled={isLoadingBalance}
+              size="sm"
+              fw={500}
+              style={{ alignSelf: 'flex-start' }}
             >
               Process Pending Transactions
             </Button>
           </Stack>
         )}
-      </Stack>
-      {isLoading ? (
-        <Center p="xl">
-          <Loader />
-        </Center>
-      ) : !!items.length ? (
-        <div style={{ position: 'relative' }}>
-          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <Table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Amount</th>
-                <th>Buzz Amount</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((transaction) => {
-                return (
-                  <tr key={transaction.key}>
-                    <td>{formatDate(transaction.createdAt)}</td>
-                    <td>
-                      ${numberWithCommas(transaction.amount)} {Currency.USD}
-                    </td>
-                    <td>
-                      <CurrencyBadge
-                        currency={Currency.BUZZ}
-                        unitAmount={Math.floor(transaction.amount * 1000)}
-                      />
-                    </td>
-                    <td>{getDisplayName(transaction.status)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
-          {pagination && pagination.totalPages > 1 && (
-            <Group justify="space-between" mt="md" wrap="nowrap">
-              <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-              <Pagination value={page} onChange={(p) => setPage(p)} total={pagination.totalPages} />
+        {/* Transactions Section */}
+        {isLoading ? (
+          <Center p="xl">
+            <Stack align="center" gap="md">
+              <Loader size="lg" />
+              <Text size="sm" c="dimmed">
+                Loading transactions...
+              </Text>
+            </Stack>
+          </Center>
+        ) : !!items.length ? (
+          <Stack gap="md">
+            <Group justify="space-between" align="center">
+              <Text size="sm" fw={500}>
+                Transaction History
+              </Text>
+              {pagination && (
+                <Text size="xs" c="dimmed">
+                  {pagination.totalItems.toLocaleString()} total transactions
+                </Text>
+              )}
             </Group>
-          )}
-        </div>
-      ) : (
-        <Stack align="center">
-          <ThemeIcon size={62} radius={100}>
-            <IconCloudOff />
-          </ThemeIcon>
-          <Text align="center">Looks like you have not made any Crypto transactions yet.</Text>
-        </Stack>
-      )}
+
+            <div style={{ position: 'relative' }}>
+              <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+
+              <Table highlightOnHover striped>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Date</Table.Th>
+                    <Table.Th>Payment Method</Table.Th>
+                    <Table.Th>Amount</Table.Th>
+                    <Table.Th>Buzz Amount</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {items.map((transaction) => {
+                    const isZkp2p = transaction.key.startsWith('zkp2p-');
+                    return (
+                      <Table.Tr key={transaction.key}>
+                        <Table.Td>
+                          <Text size="sm">{formatDate(transaction.createdAt)}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" c={isZkp2p ? 'blue' : 'orange'} fw={500}>
+                            {isZkp2p ? 'ZKP2P' : 'Coinbase'}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" fw={500}>
+                            ${numberWithCommas(transaction.amount)} {Currency.USD}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <CurrencyBadge
+                            currency={Currency.BUZZ}
+                            unitAmount={Math.floor(transaction.amount * 1000)}
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" tt="capitalize">
+                            {getDisplayName(transaction.status)}
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+
+              {pagination && pagination.totalPages > 1 && (
+                <Group justify="center" mt="lg">
+                  <Pagination
+                    value={page}
+                    onChange={(p) => setPage(p)}
+                    total={pagination.totalPages}
+                    size="sm"
+                  />
+                </Group>
+              )}
+            </div>
+          </Stack>
+        ) : (
+          <Stack align="center" gap="lg" py="xl">
+            <ThemeIcon size={80} radius="xl" variant="light" color="gray">
+              <IconCloudOff size={40} />
+            </ThemeIcon>
+            <Stack align="center" gap="xs">
+              <Text size="lg" fw={500}>
+                No transactions yet
+              </Text>
+              <Text size="sm" c="dimmed" ta="center" maw={300}>
+                Your crypto transactions will appear here once you make a purchase using Coinbase or
+                ZKP2P.
+              </Text>
+            </Stack>
+          </Stack>
+        )}
+      </Stack>
     </Modal>
   );
 };
