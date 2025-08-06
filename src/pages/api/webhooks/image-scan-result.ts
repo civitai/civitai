@@ -14,7 +14,7 @@ import {
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -820,6 +820,16 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   }));
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
 
+  // Check if image has restricted base models using materialized view
+  const [{ hasRestrictedBaseModel }] = await dbRead.$queryRaw<
+    { hasRestrictedBaseModel: boolean }[]
+  >`
+    SELECT EXISTS (
+      SELECT 1 FROM "RestrictedImagesByBaseModel" ribm 
+      WHERE ribm."imageId" = ${image.id}
+    ) as "hasRestrictedBaseModel"
+  `;
+
   let reviewKey: string | null = null;
   const flags = {
     hasAdultTag: false,
@@ -1004,6 +1014,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   if (flags.nsfw && !validAiGeneration) {
     data.ingestion = ImageIngestionStatus.Blocked;
     data.blockedFor = BlockedReason.AiNotVerified;
+  }
+
+  if (flags.nsfw && hasRestrictedBaseModel) {
+    data.ingestion = ImageIngestionStatus.Blocked;
+    data.blockedFor = BlockedReason.TOS;
   }
 
   if (flags.nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {

@@ -2758,6 +2758,10 @@ export interface ReportAutomated {
   createdAt: Date;
 }
 
+export interface RestrictedBaseModels {
+  baseModel: string;
+}
+
 export interface QuestionRank {
   questionId: number;
   question?: Question;
