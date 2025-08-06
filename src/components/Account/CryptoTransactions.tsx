@@ -66,7 +66,7 @@ export const CryptoTransactions = () => {
         </Stack>
 
         {/* Outstanding Balance Section */}
-        {balance >= 0 && (
+        {balance >= 2 && (
           <Stack
             gap="md"
             p="lg"
