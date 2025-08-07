@@ -28,8 +28,7 @@ export const getServerSideProps = createServerSideProps({
     if (sanitizedSlug.length === 0) return { notFound: true };
 
     try {
-      if (!ssg) throw new Error('SSG helper not available');
-      await ssg.content.get.prefetch({ slug: sanitizedSlug });
+      if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlug });
 
       return {
         props: { slug: sanitizedSlug },
@@ -46,13 +45,8 @@ export default function ContentPage({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: content, isLoading } = trpc.content.get.useQuery({ slug });
 
-  if (isLoading) {
-    return <PageLoader />;
-  }
-
-  if (!content) {
-    return null;
-  }
+  if (isLoading) return <PageLoader />;
+  if (!content) return null;
 
   const { title, description, content: markdownContent } = content;
 
