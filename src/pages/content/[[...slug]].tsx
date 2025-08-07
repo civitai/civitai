@@ -12,7 +12,7 @@ import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 
-export const getServerSideProps = createServerSideProps({
+export const getServerSideProps = createServerSideProps<{ slug: string[] }>({
   useSSG: true,
   prefetch: 'always',
   resolver: async ({ ctx, ssg }) => {
@@ -21,17 +21,14 @@ export const getServerSideProps = createServerSideProps({
     if (!Array.isArray(slug)) slug = [slug];
 
     // Sanitize slug to prevent directory traversal
-    const sanitizedSlug = slug
-      .filter(Boolean)
-      .map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''))
-      .join('/');
-    if (sanitizedSlug.length === 0) return { notFound: true };
+    const sanitizedSlugArray = slug.filter(Boolean).map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''));
+    if (sanitizedSlugArray.length === 0) return { notFound: true };
 
     try {
-      if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlug });
+      if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlugArray });
 
       return {
-        props: { slug: sanitizedSlug },
+        props: { slug: sanitizedSlugArray },
       };
     } catch (error) {
       console.error('Error loading content:', error);
@@ -50,13 +47,16 @@ export default function ContentPage({
 
   const { title, description, content: markdownContent } = content;
 
+  // Convert slug array back to string for the canonical URL
+  const slugString = Array.isArray(slug) ? slug.join('/') : slug;
+
   return (
     <>
       <Meta
         title={`${title} | Civitai`}
         description={description ?? truncate(removeTags(markdownContent), { length: 150 })}
         links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/content/${slug}`, rel: 'canonical' },
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/content/${slugString}`, rel: 'canonical' },
         ]}
       />
       <Container size="md" pt="sm">
