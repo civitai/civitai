@@ -18,7 +18,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 3. **Accounts and Registration.** To access most features of the Service, you must register for an account, whether directly or through a third party integration (“Account”). When you register for an Account, you may be required to provide us with some information about yourself, such as your name, username, email address, or other contact information. You agree that the information you provide to us is accurate, complete, and not misleading, and that you will keep it accurate and up to date at all times. When you register, you will be asked to create a password. You are solely responsible for maintaining the confidentiality of your Account and password, and you accept responsibility for all activities that occur under your Account. If you believe that your Account is no longer secure, then you should immediately notify us at [support@civitai.com](mailto:support@civitai.com).
 
-4. **Buzz.** Citivai may offer and accept on-platform points (“Buzz”). In addition to these Terms, your use of Buzz is subject to the [Buzz Terms and Conditions](https://civitai.com/content/buzz/terms), which are incorporated into these Terms by this reference.
+4. **Buzz.** Citivai may offer and accept on-platform points (“Buzz”). In addition to these Terms, your use of Buzz is subject to the [Buzz Terms and Conditions](/content/buzz/terms), which are incorporated into these Terms by this reference.
 
 5. **General Payment Terms.** Certain features of the Service may require you to pay fees. Before you pay any fees, you will have an opportunity to review and accept the fees that you will be charged. Unless otherwise specifically provided for in these Terms, all fees are in U.S. Dollars or Buzz and are non-refundable, except as required by law.
 
@@ -94,7 +94,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - (b) Content involving minors (under 18) in any sexualized context or context that insinuates, or portrays sexual intent, including but not limited to:
 
-  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting minors](https://civitai.com/safety).
+  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting minors](/safety).
   - "Loli", "Lolicon", "Shota", or "Shotacon" content.
   - Photorealistic minors in any context.
 

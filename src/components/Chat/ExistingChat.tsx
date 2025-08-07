@@ -838,6 +838,7 @@ function DisplayMessages({
               // </Group>
               <Text
                 className={clsx(classes.chatMessage)}
+                component="div"
                 size="xs"
                 py={0}
                 style={{
