@@ -66,7 +66,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     href: '/education',
     target: '_blank',
     rel: 'nofollow noreferrer',
-    children: '💡Education',
+    children: '💡 Education',
   },
   {
     key: 'creator-program',

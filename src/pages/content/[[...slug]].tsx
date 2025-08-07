@@ -1,6 +1,7 @@
 import { Container, Title } from '@mantine/core';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
+import { useRouter } from 'next/router';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -12,16 +13,23 @@ import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 
-export const getServerSideProps = createServerSideProps<{ slug: string[] }>({
+// Helper function to sanitize slug segments
+function sanitizeSlug(slug: string | string[] | undefined): string[] {
+  if (!slug) return [];
+
+  const slugArray = Array.isArray(slug) ? slug : [slug];
+  return slugArray.filter(Boolean).map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''));
+}
+
+export const getServerSideProps = createServerSideProps<{ slug?: string[] }>({
   useSSG: true,
-  prefetch: 'always',
   resolver: async ({ ctx, ssg }) => {
     let { slug } = ctx.params ?? {};
     if (!slug) return { notFound: true };
     if (!Array.isArray(slug)) slug = [slug];
 
     // Sanitize slug to prevent directory traversal
-    const sanitizedSlugArray = slug.filter(Boolean).map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''));
+    const sanitizedSlugArray = sanitizeSlug(slug);
     if (sanitizedSlugArray.length === 0) return { notFound: true };
 
     try {
@@ -38,17 +46,24 @@ export const getServerSideProps = createServerSideProps<{ slug: string[] }>({
 });
 
 export default function ContentPage({
-  slug,
+  slug: slugFromProps,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { data: content, isLoading } = trpc.content.get.useQuery({ slug });
+  const router = useRouter();
 
-  if (isLoading) return <PageLoader />;
+  const sanitizedRouterSlug = sanitizeSlug(router.query.slug);
+  const slug = slugFromProps && slugFromProps.length > 0 ? slugFromProps : sanitizedRouterSlug;
+
+  const { data: content, isLoading } = trpc.content.get.useQuery(
+    { slug },
+    { enabled: slug.length > 0 }
+  );
+
+  if (slug.length === 0 || isLoading) return <PageLoader />;
   if (!content) return null;
 
   const { title, description, content: markdownContent } = content;
 
-  // Convert slug array back to string for the canonical URL
-  const slugString = Array.isArray(slug) ? slug.join('/') : slug;
+  const slugString = slug.join('/');
 
   return (
     <>
