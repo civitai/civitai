@@ -1,6 +1,6 @@
 import type { ModalProps } from '@mantine/core';
 import { Box, Button, Code, CopyButton, Group, Modal, Stack, Text } from '@mantine/core';
-import { IconClipboard } from '@tabler/icons-react';
+import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import type * as z from 'zod/v4';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
@@ -59,19 +59,17 @@ export function ApiKeyModal({ ...props }: Props) {
           <CopyButton value={apiKey}>
             {({ copied, copy }) => (
               <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                <LegacyActionIcon
-                  pos="absolute"
-                  top="50%"
-                  right={10}
-                  variant="transparent"
-                  color="gray"
-                  style={{ transform: 'translateY(-50%) !important' }}
-                >
-                  <IconClipboard />
-                </LegacyActionIcon>
                 <Code block color={copied ? 'green' : undefined}>
                   {copied ? 'Copied' : apiKey}
                 </Code>
+                <LegacyActionIcon
+                  className="absolute right-2 top-1/2 -translate-y-1/2"
+                  right={10}
+                  variant="transparent"
+                  color="gray"
+                >
+                  {copied ? <IconCheck /> : <IconClipboard />}
+                </LegacyActionIcon>
               </Box>
             )}
           </CopyButton>

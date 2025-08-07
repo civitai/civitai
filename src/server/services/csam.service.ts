@@ -578,7 +578,7 @@ export async function processCsamReport(report: CsamReportProps) {
           if (err) reject(err);
           else resolve(data);
         });
-      }).then((data) => zipReader.loadAsync(data));
+      }).then((data) => zipReader.loadAsync(new Uint8Array(data)));
 
       const results = await unzipTrainingData(zData, ({ imgBlob, filename }) =>
         limit(async () => {

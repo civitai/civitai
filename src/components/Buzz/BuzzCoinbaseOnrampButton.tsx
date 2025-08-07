@@ -72,13 +72,12 @@ export const BuzzCoinbaseOnrampButton = ({
                   onClick={() => {
                     window.location.replace(data.url);
                   }}
-                  size="sm"
-                  compact
+                  size="compact-sm"
                   radius="xl"
                 >
                   Continue to purchase
                 </Button>
-                <Button size="sm" compact radius="xl" variant="subtle" onClick={handleClose}>
+                <Button size="compact-sm" radius="xl" variant="subtle" onClick={handleClose}>
                   Close
                 </Button>
               </div>

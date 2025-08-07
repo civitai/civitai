@@ -6,26 +6,29 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 const algorithm = 'aes-256-cbc';
 const encoding = 'base64';
 const key = env.NEXTAUTH_SECRET;
-const iv = randomBytes(16);
 
 export function civTokenEncrypt(data: string): EncryptedDataSchema {
-  const cipher = createCipheriv(algorithm, Buffer.from(key), iv);
-  let encrypted = cipher.update(data);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  const iv = randomBytes(16);
+  const cipher = createCipheriv(algorithm, new Uint8Array(Buffer.from(key)), new Uint8Array(iv));
+  let encrypted = cipher.update(data, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
   return {
     iv: iv.toString(encoding),
-    data: encrypted.toString(encoding),
+    data: encrypted,
     signedAt: new Date().toISOString(),
   };
 }
 
 export function civTokenDecrypt(data: EncryptedDataSchema) {
   const iv = Buffer.from(data.iv, encoding);
-  const encryptedText = Buffer.from(data.data, encoding);
-  const decipher = createDecipheriv(algorithm, Buffer.from(key), iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
+  const decipher = createDecipheriv(
+    algorithm,
+    new Uint8Array(Buffer.from(key)),
+    new Uint8Array(iv)
+  );
+  let decrypted = decipher.update(data.data, 'base64', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
 }
 
 export default AuthedEndpoint(async function handler(req, res, user) {

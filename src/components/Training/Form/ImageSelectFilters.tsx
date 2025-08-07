@@ -295,7 +295,7 @@ export function ImageSelectFiltersProfileDropdown({
         rightSection={<IconChevronDown className={opened ? classes.opened : undefined} size={16} />}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
-        compact
+        size="compact-sm"
       >
         <Group gap={4} className="flex-nowrap">
           <IconFilter size={16} />

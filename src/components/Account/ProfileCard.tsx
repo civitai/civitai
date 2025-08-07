@@ -142,7 +142,7 @@ export function ProfileCard() {
                 {features.coinbaseOnramp && (
                   <Button
                     color="teal"
-                    compact
+                    size="compact-sm"
                     onClick={() => {
                       dialogStore.trigger({
                         component: CryptoTransactions,

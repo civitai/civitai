@@ -3,24 +3,24 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const algorithm = 'aes-256-ctr';
 const secretKey = process.env.COOKIE_SECRET_KEY || 'default_secret_key';
-const iv = randomBytes(16);
 
-const getKey = (secret: string) => scryptSync(secret, 'salt', 32);
+const getKey = (secret: string): Uint8Array => new Uint8Array(scryptSync(secret, 'salt', 32));
 
 const encrypt = (text: string): string => {
-  const cipher = createCipheriv(algorithm, getKey(secretKey), iv);
-  const encrypted = Buffer.concat([cipher.update(text), cipher.final()]);
-  return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+  const iv = randomBytes(16);
+  const cipher = createCipheriv(algorithm, getKey(secretKey), new Uint8Array(iv));
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return `${iv.toString('hex')}:${encrypted}`;
 };
 
 const decrypt = (hash: string): string => {
   const [ivHex, encryptedText] = hash.split(':');
-  const decipher = createDecipheriv(algorithm, getKey(secretKey), Buffer.from(ivHex, 'hex'));
-  const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(encryptedText, 'hex')),
-    decipher.final(),
-  ]);
-  return decrypted.toString();
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = createDecipheriv(algorithm, getKey(secretKey), new Uint8Array(iv));
+  let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
 };
 
 type Context = {

@@ -17,7 +17,11 @@ export function generateSecretHash(key: string) {
 
 export function encryptText({ text, key, iv }: { text: string; key: string; iv: string }) {
   // Create a cipher using the key and IV
-  const cipher = createCipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
+  const cipher = createCipheriv(
+    'aes-256-cbc',
+    new Uint8Array(Buffer.from(key, 'hex')),
+    new Uint8Array(Buffer.from(iv, 'hex'))
+  );
 
   // Encrypt the text
   let encrypted = cipher.update(text, 'utf-8', 'hex');
@@ -28,7 +32,11 @@ export function encryptText({ text, key, iv }: { text: string; key: string; iv: 
 
 export function decryptText({ text, key, iv }: { text: string; key: string; iv: string }) {
   // Create a decipher using the key and extracted IV
-  const decipher = createDecipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
+  const decipher = createDecipheriv(
+    'aes-256-cbc',
+    new Uint8Array(Buffer.from(key, 'hex')),
+    new Uint8Array(Buffer.from(iv, 'hex'))
+  );
 
   // Decrypt the text
   let decrypted = decipher.update(text, 'hex', 'utf-8');
