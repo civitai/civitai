@@ -12,17 +12,12 @@ import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
-import {
-  createBuzzTransaction,
-  getMultipliersForUser,
-  grantBuzzPurchase,
-} from '~/server/services/buzz.service';
+import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
-import { Prisma } from '@prisma/client';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 
