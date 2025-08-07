@@ -259,7 +259,10 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
           WHEN cs.status NOT IN ('active', 'trialing') THEN 1
           ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
         END as "rewardsMultiplier",
-        COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
+        CASE
+          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
+          ELSE COALESCE((p.metadata->>'purchasesMultiplier')::float, 1)
+        END as "purchasesMultiplier"
       FROM "User" u
       LEFT JOIN "CustomerSubscription" cs ON u.id = cs."userId"
       LEFT JOIN "Product" p ON p.id = cs."productId"

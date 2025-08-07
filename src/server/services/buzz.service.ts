@@ -53,7 +53,7 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
     async () => {
       // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
       const response = await fetch(
-        `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
+        `${env.BUZZ_ENDPOINT as string}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );
       if (!response.ok) {
         switch (response.status) {
@@ -1047,7 +1047,9 @@ export async function getTransactionsReport({
     end: endDate.format('YYYY-MM-DD'),
   });
 
-  const response = await fetch(`${env.BUZZ_ENDPOINT}/user/${userId}/transactions/report?${query}`);
+  const response = await fetch(
+    `${env.BUZZ_ENDPOINT as string}/user/${userId}/transactions/report?${query}`
+  );
 
   if (!response.ok) {
     switch (response.status) {
@@ -1089,7 +1091,7 @@ export async function getCounterPartyBuzzTransactions({
       });
 
       const response = await fetch(
-        `${env.BUZZ_ENDPOINT}/account/${
+        `${env.BUZZ_ENDPOINT as string}/account/${
           accountType ? `${accountType}/` : ''
         }${accountId}/counterparties?${queryString}`,
         {}
