@@ -93,7 +93,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
                   {metadata.title}
                 </Text>
                 {metadata.description && (
-                  <Text size="sm" mb="xs">
+                  <Text component="div" size="sm" mb="xs">
                     <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                       {metadata.description}
                     </CustomMarkdown>
@@ -111,7 +111,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
         </Group>
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
-        <Text>
+        <Text component="div">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>
