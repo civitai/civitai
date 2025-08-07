@@ -136,6 +136,7 @@ function VirtualColumn<TData>({
             width: '100%',
             height: items[item.index].height,
             transform: `translateY(${item.start - rowVirtualizer.options.scrollMargin}px)`,
+            contentVisibility: 'auto',
           }}
         >
           <VirtualItem index={item.index} item={items[item.index]} {...rest} />
