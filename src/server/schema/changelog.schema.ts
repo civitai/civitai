@@ -24,7 +24,7 @@ export const createChangelogInput = z.object({
   // }),
   cta: z.string().url().optional().or(z.literal('')),
   effectiveAt: z.date(),
-  type: z.nativeEnum(ChangelogType),
+  type: z.enum(ChangelogType),
   tags: z.string().array().optional(),
   disabled: z.boolean().optional().default(false),
   sticky: z.boolean().optional().default(false),
@@ -33,6 +33,8 @@ export const createChangelogInput = z.object({
 export type UpdateChangelogInput = z.infer<typeof updateChangelogInput>;
 export const updateChangelogInput = createChangelogInput.partial().extend({
   id: z.number(),
+  disabled: z.boolean().optional(),
+  sticky: z.boolean().optional(),
 });
 
 export type DeleteChangelogInput = z.infer<typeof deleteChangelogInput>;

@@ -6,7 +6,6 @@ import {
   Card,
   Center,
   Collapse,
-  ComboboxItem,
   Divider,
   Group,
   Loader,
@@ -46,7 +45,6 @@ import {
   InputCheckbox,
   InputCreatableMultiSelect,
   InputDatePicker,
-  InputMultiSelect,
   InputRTE,
   InputSelect,
   InputText,
@@ -217,7 +215,7 @@ const ChangelogItem = ({
               <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
               {dayjs(item.updatedAt) > dayjs(item.createdAt).add(1, 'hour') && (
                 <Text size="sm" c="dimmed">
-                  Updated: {dayjs().to(dayjs(item.updatedAt))}
+                  Updated: {dayjs(item.updatedAt).format('MMM DD, YYYY h:mm a')}
                 </Text>
               )}
               {canEdit && item.disabled && (
