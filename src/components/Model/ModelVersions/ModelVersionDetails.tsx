@@ -652,7 +652,7 @@ export function ModelVersionDetails({
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${version.meta?.customMessage}.`;
+      : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =

@@ -803,7 +803,7 @@ export const BuzzPurchaseImproved = ({
                           {features.zkp2pPayments && (
                             <BuzzZkp2pOnrampButton
                               unitAmount={unitAmount}
-                              buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                              buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                               onPurchaseSuccess={onPurchaseSuccess}
                               disabled={!ctaEnabled}
                               purchaseSuccessMessage={purchaseSuccessMessage}
@@ -818,7 +818,7 @@ export const BuzzPurchaseImproved = ({
                                     <BuzzCoinbaseOnrampButton
                                       key={type}
                                       unitAmount={unitAmount}
-                                      buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                      buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                                       onPurchaseSuccess={onPurchaseSuccess}
                                       disabled={!ctaEnabled}
                                       purchaseSuccessMessage={purchaseSuccessMessage}
@@ -829,7 +829,7 @@ export const BuzzPurchaseImproved = ({
                               )}
                               <BuzzCoinbaseButton
                                 unitAmount={unitAmount}
-                                buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                                 onPurchaseSuccess={onPurchaseSuccess}
                                 disabled={!ctaEnabled}
                                 purchaseSuccessMessage={purchaseSuccessMessage}
@@ -840,7 +840,7 @@ export const BuzzPurchaseImproved = ({
                           {features.nowpaymentPayments && (
                             <BuzzNowPaymentsButton
                               unitAmount={unitAmount}
-                              buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                              buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                               onPurchaseSuccess={onPurchaseSuccess}
                               disabled={!ctaEnabled}
                               purchaseSuccessMessage={purchaseSuccessMessage}
@@ -849,7 +849,7 @@ export const BuzzPurchaseImproved = ({
 
                           <BuzzPurchasePaymentButton
                             unitAmount={unitAmount}
-                            buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                            buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                             onPurchaseSuccess={onPurchaseSuccess}
                             onValidate={onValidate}
                             disabled={!ctaEnabled}
@@ -935,7 +935,7 @@ export const BuzzPurchaseImproved = ({
                       onCancel?.();
                     }
                   }}
-                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount ?? 0}
+                  buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount ?? 0}
                 />
               )}
             </Stack>

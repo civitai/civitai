@@ -1,6 +1,7 @@
 import { Container, Title } from '@mantine/core';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
+import { useRouter } from 'next/router';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -12,26 +13,30 @@ import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 
-export const getServerSideProps = createServerSideProps({
+// Helper function to sanitize slug segments
+function sanitizeSlug(slug: string | string[] | undefined): string[] {
+  if (!slug) return [];
+
+  const slugArray = Array.isArray(slug) ? slug : [slug];
+  return slugArray.filter(Boolean).map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''));
+}
+
+export const getServerSideProps = createServerSideProps<{ slug?: string[] }>({
   useSSG: true,
-  prefetch: 'always',
   resolver: async ({ ctx, ssg }) => {
     let { slug } = ctx.params ?? {};
     if (!slug) return { notFound: true };
     if (!Array.isArray(slug)) slug = [slug];
 
     // Sanitize slug to prevent directory traversal
-    const sanitizedSlug = slug
-      .filter(Boolean)
-      .map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''))
-      .join('/');
-    if (sanitizedSlug.length === 0) return { notFound: true };
+    const sanitizedSlugArray = sanitizeSlug(slug);
+    if (sanitizedSlugArray.length === 0) return { notFound: true };
 
     try {
-      if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlug });
+      if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlugArray });
 
       return {
-        props: { slug: sanitizedSlug },
+        props: { slug: sanitizedSlugArray },
       };
     } catch (error) {
       console.error('Error loading content:', error);
@@ -41,14 +46,24 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ContentPage({
-  slug,
+  slug: slugFromProps,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const { data: content, isLoading } = trpc.content.get.useQuery({ slug });
+  const router = useRouter();
 
-  if (isLoading) return <PageLoader />;
+  const sanitizedRouterSlug = sanitizeSlug(router.query.slug);
+  const slug = slugFromProps && slugFromProps.length > 0 ? slugFromProps : sanitizedRouterSlug;
+
+  const { data: content, isLoading } = trpc.content.get.useQuery(
+    { slug },
+    { enabled: slug.length > 0 }
+  );
+
+  if (slug.length === 0 || isLoading) return <PageLoader />;
   if (!content) return null;
 
   const { title, description, content: markdownContent } = content;
+
+  const slugString = slug.join('/');
 
   return (
     <>
@@ -56,7 +71,7 @@ export default function ContentPage({
         title={`${title} | Civitai`}
         description={description ?? truncate(removeTags(markdownContent), { length: 150 })}
         links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/content/${slug}`, rel: 'canonical' },
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/content/${slugString}`, rel: 'canonical' },
         ]}
       />
       <Container size="md" pt="sm">
