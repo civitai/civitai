@@ -949,6 +949,8 @@ export const getDailyCompensationRewardByUser = async ({
   const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
 
+  // TODO.resourceCompensations: we should use the new `resourceCompensations` table instead of this,
+  // but we need to migrate the data first, otherwise, this data makes no sense. After 1 month, we can just migrate.
   const generationData = await clickhouse.$query<Row>`
     WITH user_resources AS (
       SELECT
