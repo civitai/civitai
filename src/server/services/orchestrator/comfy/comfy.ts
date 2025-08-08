@@ -1,5 +1,5 @@
 import type { ComfyStepTemplate } from '@civitai/client';
-import { NSFWLevel, TimeSpan } from '@civitai/client';
+import { NsfwLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
 import { env } from '~/env/server';
@@ -136,7 +136,7 @@ export async function createComfy(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: isGreen ? NSFWLevel.P_G13 : undefined,
+      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
     },
   })) as TextToImageResponse;
 

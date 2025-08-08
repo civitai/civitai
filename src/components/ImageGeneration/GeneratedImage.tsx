@@ -90,7 +90,7 @@ import {
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { NSFWLevel } from '@civitai/client';
+import { NsfwLevel } from '@civitai/client';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -99,9 +99,9 @@ export type GeneratedImageProps = {
 };
 
 const matureDictionary: Record<string, boolean> = {
-  [NSFWLevel.R]: true,
-  [NSFWLevel.X]: true,
-  [NSFWLevel.XXX]: true,
+  [NsfwLevel.R]: true,
+  [NsfwLevel.X]: true,
+  [NsfwLevel.XXX]: true,
 };
 
 export function GeneratedImage({
@@ -874,7 +874,7 @@ const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
   Bestiality: 'Bestiality detected.',
   'Child Sexual - Anime': 'Inappropriate minor content detected.',
   'Child Sexual - Realistic': 'Inappropriate minor content detected.',
-  NSFWLevel: 'Mature content restriction.',
+  NsfwLevel: 'Mature content restriction.',
   NSFWLevelSourceImageRestricted: () => (
     <div className="flex flex-col gap-1">
       <Text align="center" size="sm">
@@ -906,5 +906,5 @@ function getImageBlockedReason(reason?: string | null) {
 //   "Bestiality": "Detected bestiality in the image.",
 //   "Child Sexual - Anime": "An inappropriate child reference was detected.",
 //   "Child Sexual - Realistic": "An inappropriate child reference was detected.",
-//   "NSFWLevel": "Mature content restriction"
+//   "NsfwLevel": "Mature content restriction"
 // }

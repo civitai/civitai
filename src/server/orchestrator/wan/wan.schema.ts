@@ -1,4 +1,4 @@
-import type { CivitaiWanVideoGenInput, FALWanVideoGenInput } from '@civitai/client';
+import type { CivitaiWanVideoGenInput, FalWanVideoGenInput } from '@civitai/client';
 import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -165,7 +165,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     resources,
     baseModel,
     ...args
-  }): CivitaiWanVideoGenInput | FALWanVideoGenInput => {
+  }): CivitaiWanVideoGenInput | FalWanVideoGenInput => {
     const config = wanBaseModelMap[baseModel!];
 
     const values = {
@@ -184,7 +184,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
         provider: 'fal',
         aspectRatio,
         enablePromptExpansion: false,
-      } as FALWanVideoGenInput;
+      } as FalWanVideoGenInput;
     } else {
       const aspectRatios = resolutionMap.get(config.resolution)!;
       const aspectRatio = sourceImage

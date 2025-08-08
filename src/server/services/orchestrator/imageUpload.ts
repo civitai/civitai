@@ -1,4 +1,4 @@
-import { invokeImageUploadStepTemplate } from '@civitai/client';
+import { handleError, invokeImageUploadStepTemplate } from '@civitai/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -13,14 +13,14 @@ export async function imageUpload({ sourceImage, token }: { sourceImage: string;
   });
 
   if (!data) {
-    const messages = (error as any).errors?.messages?.join('\n');
+    const messages = handleError(error);
     switch (error.status) {
       case 400:
-        throw throwBadRequestError(messages ?? error.detail);
+        throw throwBadRequestError(messages);
       case 401:
-        throw throwAuthorizationError(messages ?? error.detail);
+        throw throwAuthorizationError(messages);
       default:
-        throw new Error(messages ?? error.detail);
+        throw new Error(messages);
     }
   }
 

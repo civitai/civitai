@@ -1,4 +1,4 @@
-import type { NSFWLevel } from '@civitai/client';
+import type { NsfwLevel } from '@civitai/client';
 import { headBlob } from '@civitai/client';
 
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
@@ -8,11 +8,9 @@ import {
   throwInternalServerError,
 } from '~/server/utils/errorHandling';
 
-export const nsfwNsfwLevels: NSFWLevel[] = ['r', 'x', 'xxx'];
+export const nsfwNsfwLevels: NsfwLevel[] = ['r', 'x', 'xxx'];
 export async function getBlobData({ token, blobId }: { token: string; blobId: string }) {
   const client = createOrchestratorClient(token);
-
-  console.log(client.getConfig().baseUrl);
 
   const response = await fetch(`${client.getConfig().baseUrl}/v2/consumer/blobs/${blobId}`, {
     headers: {
@@ -22,7 +20,7 @@ export async function getBlobData({ token, blobId }: { token: string; blobId: st
   if (!response.ok) throw new Error('unable to fetch blob data');
 
   return {
-    nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NSFWLevel | null,
+    nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NsfwLevel | null,
   };
 
   // const { error, data, response, request } = await headBlob({
@@ -47,6 +45,6 @@ export async function getBlobData({ token, blobId }: { token: string; blobId: st
   // }
 
   // return {
-  //   nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NSFWLevel | null,
+  //   nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NsfwLevel | null,
   // };
 }

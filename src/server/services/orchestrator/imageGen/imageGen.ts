@@ -1,5 +1,5 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
-import { NSFWLevel, TimeSpan } from '@civitai/client';
+import { NsfwLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
@@ -67,7 +67,7 @@ export async function createImageGen(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: isGreen ? NSFWLevel.P_G13 : undefined,
+      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
     },
   })) as TextToImageResponse;
 
