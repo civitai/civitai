@@ -34,7 +34,7 @@ export function NotFound({
     <>
       <Meta title="Page Not Found" deIndex />
 
-      <Container size="md">
+      <Container className="flex items-center h-full" size="md">
         <Stack align="center" gap={0}>
           <Title order={1} lh={1}>
             {title}
