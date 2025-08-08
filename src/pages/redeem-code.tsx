@@ -14,7 +14,6 @@ import {
   IconTicket,
   IconGift,
   IconBolt,
-  IconCrown,
   IconRocket,
   IconUsers,
   IconPhoto,
@@ -49,8 +48,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 const PurchaseOptionsCard = () => {
-  const liveFeatures = useLiveFeatureFlags();
-
   return (
     <div className={classes.purchaseSection}>
       <Group gap="md" wrap="nowrap" className={classes.purchaseContent}>
@@ -75,20 +72,18 @@ const PurchaseOptionsCard = () => {
             >
               View Pricing
             </Button>
-            {liveFeatures.buzzGiftCards && (
-              <Button
-                component="a"
-                href="https://buybuzz.io/"
-                variant="outline"
-                color="gray"
-                size="sm"
-                target="_blank"
-                rel="noopener noreferrer"
-                leftSection={<IconGift size={16} />}
-              >
-                Purchase Codes
-              </Button>
-            )}
+            <Button
+              component="a"
+              href="https://buybuzz.io/"
+              variant="outline"
+              color="gray"
+              size="sm"
+              target="_blank"
+              rel="noopener noreferrer"
+              leftSection={<IconGift size={16} />}
+            >
+              Purchase Codes
+            </Button>
           </Group>
         </div>
       </Group>
@@ -175,6 +170,7 @@ const BenefitsSection = () => {
 
 export default function RedeemCodeImprovedPage() {
   const { query } = useRouter();
+  const liveFeatures = useLiveFeatureFlags();
 
   return (
     <>
@@ -231,7 +227,7 @@ export default function RedeemCodeImprovedPage() {
             <Divider className={classes.subtleDivider} />
 
             {/* Purchase Options */}
-            <PurchaseOptionsCard />
+            {liveFeatures.buzzGiftCards && <PurchaseOptionsCard />}
 
             {/* Footer Info */}
             <div className={classes.footerSection}>
