@@ -5,6 +5,7 @@ import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/c
 import { dbRead } from '~/server/db/client';
 import {
   baseModelEngineMap,
+  getEngineFromBaseModel,
   isVideoGenerationEngine,
   modelIdEngineMap,
 } from '~/server/orchestrator/generation/generation.config';
@@ -36,13 +37,10 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
-import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
-  baseModelResourceTypes,
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
-  getBaseModelSet,
   getBaseModelSetType,
   getClosestAspectRatio,
   getResourceGenerationType,
@@ -55,6 +53,11 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getVeo3ProcessFromAir, veo3ModelOptions } from '~/server/orchestrator/veo3/veo3.schema';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import {
+  getBaseModelsByGroup,
+  getGenerationBaseModelGroup,
+} from '~/shared/constants/base-model.constants';
 
 type GenerationResourceSimple = {
   id: number;
@@ -138,9 +141,9 @@ export const getGenerationResources = async (
       }
       if (baseModel) {
         // const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-        const baseModelSet = getBaseModelSet(baseModel);
-        if (baseModelSet.baseModels.length)
-          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
+        const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
+        if (baseModels.length)
+          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
       }
 
       let orderBy = 'mv.index';
@@ -380,7 +383,7 @@ async function getMediaGenerationData({
     case 'video':
       // TODO - handle legacy mapping here?
       const meta = media.meta as ImageMetaProps;
-      meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
+      if (baseModel) meta.engine = getEngineFromBaseModel(baseModel);
       if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;
 
       if (!meta.process && baseModel) {
@@ -433,7 +436,7 @@ const getModelVersionGenerationData = async ({
   );
 
   const engine =
-    baseModelEngineMap[baseModel] ??
+    getEngineFromBaseModel(baseModel) ??
     (resources.length ? modelIdEngineMap.get(resources[0].model.id) : undefined);
 
   let process: string | undefined;
@@ -779,8 +782,10 @@ export async function getResourceData(
   // TODO - check if resource id is in "EcosystemCheckpoint" table
   return generation
     ? resources.filter((resource) => {
-        const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-        return !!baseModelResourceTypes[baseModel] || !!modelIdEngineMap.get(resource.model.id);
+        const baseModel = getBaseModelSetType(resource.baseModel);
+        return (
+          !!getGenerationBaseModelGroup(baseModel) || !!modelIdEngineMap.get(resource.model.id)
+        );
       })
     : resources;
 }

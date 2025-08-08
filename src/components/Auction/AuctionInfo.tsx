@@ -56,12 +56,12 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
+import { getBaseModelGenerationConfig } from '~/shared/constants/base-model.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -73,14 +73,10 @@ const auctionQuerySchema = z.object({ d: z.coerce.number().max(0).optional() });
 type AuctionQuerySchema = z.infer<typeof auctionQuerySchema>;
 
 const allCheckpointBaseModels = new Set(
-  Object.values(baseModelResourceTypes)
-    .flatMap((resources) =>
-      resources
-        .filter((resource) => resource.type === ModelType.Checkpoint)
-        .map((resource) => resource.baseModels)
-    )
-    .flat()
-) as Set<string>;
+  getBaseModelGenerationConfig().flatMap(({ supportMap }) =>
+    (supportMap.get(ModelType.Checkpoint) ?? []).map((x) => x.baseModel)
+  )
+);
 
 const QuickBid = ({
   label,
@@ -478,7 +474,7 @@ export const AuctionInfo = () => {
   const checkpointUnavailable =
     selectedModel &&
     selectedModel.model.type === ModelType.Checkpoint &&
-    !allCheckpointBaseModels.has(selectedModel.baseModel);
+    !allCheckpointBaseModels.has(selectedModel.baseModel as BaseModel);
 
   return (
     <Stack w="100%" gap="sm">

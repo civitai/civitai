@@ -28,13 +28,12 @@ import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVe
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
-import {
-  getBaseModelResourceTypes,
-  getBaseModelSetType,
-} from '~/shared/constants/generation.constants';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import clsx from 'clsx';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 
 type Props = {
   resource: GenerationResourceSchema;
@@ -55,7 +54,9 @@ export const ResourceSelectCard = (props: Props) => {
   const { resource } = props;
   const isPartiallySupported = useMemo(() => {
     if (!stepContext?.baseModel) return false;
-    const resources = getBaseModelResourceTypes(stepContext.baseModel);
+    const resources = getGenerationBaseModelResourceOptions(
+      stepContext.baseModel as BaseModelGroup
+    );
     return !!resources?.some((r) => {
       const baseModelType = getBaseModelSetType(resource.baseModel);
       return (

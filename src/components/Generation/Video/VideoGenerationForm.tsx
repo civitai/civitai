@@ -106,10 +106,18 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   }
 
   useEffect(() => {
+    console.log({ storeData, config });
     if (storeData && config) {
       // const registered = Object.keys(form.getValues());
-      const { params, resources } = storeData;
-      const validated = config.softValidate({ ...params, resources });
+      const { params, resources, runType } = storeData;
+      let data = { params, resources };
+      if (runType === 'patch') {
+        const formData = form.getValues();
+        data = { ...formData, ...data };
+        console.log({ params, resources });
+        console.log(data);
+      }
+      const validated = config.softValidate(data);
       form.reset(validated, { keepDefaultValues: true });
 
       generationStore.clearData();

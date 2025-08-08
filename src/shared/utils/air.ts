@@ -1,6 +1,6 @@
 import { Air } from '@civitai/client';
-import type { BaseModel } from '~/server/common/constants';
-import { getEcosystemFromBaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { getBaseModelEcosystem } from '~/shared/constants/base-model.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 type CivitaiAir = {
@@ -72,7 +72,7 @@ export function stringifyAIR({
   id?: number | string;
   source?: string;
 }) {
-  const ecosystem = getEcosystemFromBaseModel(baseModel);
+  const ecosystem = getBaseModelEcosystem(baseModel);
 
   const urnType = typeUrnMap[type] ?? 'unknown';
 
