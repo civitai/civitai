@@ -186,6 +186,8 @@ const BuzzPurchasePaymentButton = ({
 
 // Separate component for redeemable codes section
 const RedeemableCodesSection = () => {
+  const liveFeatures = useLiveFeatureFlags();
+
   return (
     <Card padding="md" radius="md" withBorder>
       <Stack gap="sm">
@@ -194,12 +196,25 @@ const RedeemableCodesSection = () => {
             <IconTicket size={16} />
           </ThemeIcon>
           <div style={{ flex: 1 }}>
-            <Text size="sm" fw={500}>
-              Alternative Payment Method
-            </Text>
-            <Text size="xs" c="dimmed">
-              Purchase redeemable codes for yourself or as gifts
-            </Text>
+            {liveFeatures.buzzGiftCards ? (
+              <>
+                <Text size="sm" fw={500}>
+                  Alternative Payment Method
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Purchase redeemable codes for yourself or as gifts
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text size="sm" fw={500}>
+                  Have a redeemable code?
+                </Text>
+                <Text size="xs" c="dimmed">
+                  You can redeem codes and get Buzz instantly!
+                </Text>
+              </>
+            )}
           </div>
         </Group>
 
@@ -216,7 +231,7 @@ const RedeemableCodesSection = () => {
           fw={500}
           fullWidth
         >
-          Redeem or get a Code
+          {liveFeatures.buzzGiftCards ? 'Redeem or get a Code' : 'Redeem a Code'}
         </Button>
       </Stack>
     </Card>
@@ -861,7 +876,7 @@ export const BuzzPurchaseImproved = ({
                       <Divider />
 
                       {/* Alternative Payment Section */}
-                      <RedeemableCodesSection />
+                      {liveFeatures.buzzGiftCards && <RedeemableCodesSection />}
 
                       {/* Footer Info */}
                       {(liveFeatures.buzzGiftCards ||
