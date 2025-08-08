@@ -29,7 +29,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import {
   appliesForFounderDiscount,
@@ -167,10 +167,7 @@ export default function Pricing() {
                     Purchasing or updating memberships is currently disabled. We are working hard to
                     resolve this and will notify you when it is back up. You can still manage your
                     active membership, and your benefits will be active until your
-                    membership&rsquo;s expiration date.{' '}
-                    <Anchor href="https://civitai.com/articles/14945" c="red.3">
-                      Learn more
-                    </Anchor>
+                    membership&rsquo;s expiration date.
                   </Text>
                 </Stack>
               </AlertWithIcon>
@@ -230,7 +227,7 @@ export default function Pricing() {
                     </Text>
                     <Group>
                       {(features.nowpaymentPayments || features.coinbasePayments) && (
-                        <Anchor size="xs" href="/purchase/buzz" c="yellow.7">
+                        <Anchor component={NextLink} size="xs" href="/purchase/buzz" c="yellow.7">
                           Buy with Crypto
                         </Anchor>
                       )}

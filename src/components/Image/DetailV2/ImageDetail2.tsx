@@ -1,6 +1,5 @@
 import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Button,
@@ -34,6 +33,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
+import clsx from 'clsx';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -223,12 +223,18 @@ export function ImageDetail2() {
     </>
   );
 
+  const title = `${image?.type === 'video' ? 'Video' : 'Image'} posted ${
+    image.user.username ? `by ${image.user.username}` : 'to civitai'
+  }`;
+
   return (
     <>
       <Meta
-        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
+        title={title}
         images={image}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
+        links={[
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/images/${image.id}`, rel: 'canonical' },
+        ]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
@@ -259,7 +265,7 @@ export function ImageDetail2() {
                             <div className="flex gap-1">
                               <ImageGuard2.BlurToggle
                                 {...sharedBadgeProps}
-                                className={`${sharedBadgeProps.className} @md:hidden`}
+                                className={clsx('@md:hidden', sharedBadgeProps.className)}
                               />
                               {/* Disable view count  */}
                               {/* <Badge {...sharedBadgeProps}>
@@ -288,7 +294,7 @@ export function ImageDetail2() {
                               </DownloadImage>
                               <ShareButton
                                 url={shareUrl}
-                                title={`Image by ${image.user.username}`}
+                                title={title}
                                 collect={{ type: CollectionType.Image, imageId: image.id }}
                               >
                                 <LegacyActionIcon {...sharedActionIconProps}>

@@ -44,7 +44,7 @@ export const imagesQueryParamSchema = z
     modelVersionId: numericString(),
     notPublished: booleanString(),
     period: z.enum(MetricTimeframe),
-    periodMode: periodModeSchema,
+    periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),
     prioritizedUserIds: numericStringArray(),
     reactions: z.preprocess(
@@ -65,7 +65,7 @@ export const imagesQueryParamSchema = z
     userId: numericString(),
     username: z.coerce.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),
-    withMeta: booleanString().default(false),
+    withMeta: booleanString().optional(),
     requiringMeta: booleanString(),
     remixOfId: numericString(),
   })

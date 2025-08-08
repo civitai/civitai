@@ -28,6 +28,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { RedeemCodeCard } from '~/components/RedeemCode';
 import classes from '~/pages/redeem-code.module.scss';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -47,6 +49,8 @@ export const getServerSideProps = createServerSideProps({
 });
 
 const PurchaseOptionsCard = () => {
+  const liveFeatures = useLiveFeatureFlags();
+
   return (
     <div className={classes.purchaseSection}>
       <Group gap="md" wrap="nowrap" className={classes.purchaseContent}>
@@ -62,7 +66,7 @@ const PurchaseOptionsCard = () => {
           </Text>
           <Group gap="sm">
             <Button
-              component="a"
+              component={NextLink}
               href="/pricing"
               variant="light"
               color="blue"
@@ -71,18 +75,20 @@ const PurchaseOptionsCard = () => {
             >
               View Pricing
             </Button>
-            <Button
-              component="a"
-              href="https://buybuzz.io/"
-              variant="outline"
-              color="gray"
-              size="sm"
-              target="_blank"
-              rel="noopener noreferrer"
-              leftSection={<IconGift size={16} />}
-            >
-              Purchase Codes
-            </Button>
+            {liveFeatures.buzzGiftCards && (
+              <Button
+                component="a"
+                href="https://buybuzz.io/"
+                variant="outline"
+                color="gray"
+                size="sm"
+                target="_blank"
+                rel="noopener noreferrer"
+                leftSection={<IconGift size={16} />}
+              >
+                Purchase Codes
+              </Button>
+            )}
           </Group>
         </div>
       </Group>

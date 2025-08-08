@@ -170,7 +170,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                     <Popover.Dropdown>
                       <Stack>
                         <Group wrap="nowrap">
-                          <Text>
+                          <Text component="div">
                             <Text component="span" fw="bold" c="yellow.7">
                               <IconBolt
                                 color="yellow.7"
@@ -190,7 +190,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                           <List.Item>Creator Club</List.Item>
                           <List.Item>Bounties</List.Item>
                         </List>
-                        <Text>
+                        <Text component="div">
                           <Text component="span" fw="bold" c="blue.4">
                             <IconBolt
                               color="blue.4"
@@ -209,6 +209,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
 
                         <Anchor
                           target="_blank"
+                          rel="nofollow noreferrer"
                           href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
                           size="xs"
                         >

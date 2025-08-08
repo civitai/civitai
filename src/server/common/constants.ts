@@ -1385,7 +1385,7 @@ export type LiveFeatureFlags = {
 };
 
 export const DEFAULT_LIVE_FEATURE_FLAGS = {
-  buzzGiftCards: true,
+  buzzGiftCards: false,
 };
 
 export const EARLY_ACCESS_CONFIG: {
