@@ -14,6 +14,7 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -48,77 +49,6 @@ export const constants = {
     sort: CollectionSort.Newest,
     limit: 50,
   },
-  baseModels: [
-    'ODOR',
-    'SD 1.4',
-    'SD 1.5',
-    'SD 1.5 LCM',
-    'SD 1.5 Hyper',
-    'SD 2.0',
-    'SD 2.0 768',
-    'SD 2.1',
-    'SD 2.1 768',
-    'SD 2.1 Unclip',
-    'SDXL 0.9',
-    'SDXL 1.0',
-    'SD 3',
-    'SD 3.5',
-    'SD 3.5 Medium',
-    'SD 3.5 Large',
-    'SD 3.5 Large Turbo',
-    'Pony',
-    'Flux.1 S',
-    'Flux.1 D',
-    'Flux.1 Kontext',
-    'AuraFlow',
-    'SDXL 1.0 LCM',
-    'SDXL Distilled',
-    'SDXL Turbo',
-    'SDXL Lightning',
-    'SDXL Hyper',
-    'Stable Cascade',
-    'SVD',
-    'SVD XT',
-    'Playground v2',
-    'PixArt a',
-    'PixArt E',
-    'Hunyuan 1',
-    'Hunyuan Video',
-    'Lumina',
-    'Kolors',
-    'Illustrious',
-    'Mochi',
-    'LTXV',
-    'CogVideoX',
-    'NoobAI',
-    'Wan Video',
-    'Wan Video 1.3B t2v',
-    'Wan Video 14B t2v',
-    'Wan Video 14B i2v 480p',
-    'Wan Video 14B i2v 720p',
-    'HiDream',
-    'OpenAI',
-    'Imagen4',
-    'Veo 3',
-    'Other',
-  ],
-  hiddenBaseModels: [
-    'ODOR',
-    'SD 2.1 768',
-    'SD 2.1 Unclip',
-    'SDXL Distilled',
-    'SDXL 0.9',
-    'SD 2.0 768',
-    'SDXL Turbo',
-    'SVD XT',
-    'Playground v2',
-    'Stable Cascade',
-    'SDXL 1.0 LCM',
-    'OpenAI',
-    'Imagen4',
-    'Wan Video',
-    'Veo 3',
-  ] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
@@ -428,9 +358,6 @@ export const constants = {
     labelTypes: ['tag', 'caption'] as const,
   },
 } as const;
-export const activeBaseModels = constants.baseModels.filter(
-  (model) => !constants.hiddenBaseModels.includes(model)
-);
 
 export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
@@ -457,7 +384,6 @@ export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
-export type BaseModel = (typeof constants.baseModels)[number];
 
 type LicenseDetails = {
   url: string;

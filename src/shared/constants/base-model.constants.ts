@@ -128,6 +128,9 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
 
 export const baseModels = baseModelConfig.map((x) => x.name);
 export const baseModelGroups = baseModelConfig.map((x) => x.group);
+export const activeBaseModels = baseModelConfig
+  .filter((x) => !('hidden' in x) || !x.hidden)
+  .map((x) => x.name);
 
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);

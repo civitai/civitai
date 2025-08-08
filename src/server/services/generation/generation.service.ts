@@ -55,6 +55,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getVeo3ProcessFromAir, veo3ModelOptions } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import {
+  getBaseModelMediaType,
   getBaseModelsByGroup,
   getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
@@ -323,8 +324,12 @@ async function getMediaGenerationData({
   let baseModel = getBaseModelFromResources(
     resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
+  let type = media.type;
+  if (baseModel) {
+    type = getBaseModelMediaType(baseModel) ?? media.type;
+  }
 
-  switch (media.type) {
+  switch (type) {
     case 'image':
       let aspectRatio = '0';
       try {

@@ -198,7 +198,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
       key = `${input.type}_${input.id}${input.epoch ? `_${input.epoch}` : ''}`;
       break;
     default:
-      key = `${input.type}_${input.id}`;
+      key = `media_${input.id}`;
       break;
   }
 

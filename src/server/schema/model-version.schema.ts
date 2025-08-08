@@ -4,7 +4,7 @@ import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
@@ -28,6 +28,7 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -144,7 +145,7 @@ export const trainingDetailsObj = z.object({
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(constants.baseModels),
+  baseModel: z.enum(baseModels),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -203,7 +204,7 @@ export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(constants.baseModels),
+  baseModel: z.enum(baseModels),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
