@@ -660,13 +660,15 @@ function GeneratedImageWorkflowMenuItems({
     generationStore.setData({
       resources: [],
       params: {
-        ...params,
+        prompt: params.prompt,
+        negativePrompt: params.negativePrompt,
         sourceImage: sourceImage,
         images: [sourceImage],
         process: 'img2vid',
       },
       type: 'video',
       engine,
+      runType: 'patch',
     });
   }
 

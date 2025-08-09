@@ -15,9 +15,9 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './AuctionFiltersDropdown.module.scss';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[] }) => {
   const colorScheme = useComputedColorScheme('dark');

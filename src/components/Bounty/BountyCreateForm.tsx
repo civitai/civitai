@@ -53,7 +53,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import {
@@ -74,6 +74,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

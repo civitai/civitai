@@ -7,6 +7,7 @@ import type { SetStateAction } from 'react';
 import { useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 const filterSchema = z.object({
   types: z
@@ -17,7 +18,7 @@ const filterSchema = z.object({
     })
     .optional(),
   baseModels: z
-    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+    .union([z.enum(baseModels), z.enum(baseModels).array()])
     .transform((rel) => {
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];

@@ -1,5 +1,4 @@
 import type * as z from 'zod/v4';
-import type { BaseModelSetType } from '~/server/common/constants';
 import { haiperGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
 import { hunyuanGenerationConfig } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { klingGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
@@ -9,8 +8,10 @@ import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema'
 import { veo3GenerationConfig } from '~/server/orchestrator/veo3/veo3.schema';
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 
-export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEngine2>> = {
+export const baseModelEngineMap: Partial<Record<BaseModelGroup, OrchestratorEngine2>> = {
   WanVideo: 'wan',
   WanVideo14B_I2V_480p: 'wan',
   WanVideo14B_I2V_720p: 'wan',
@@ -19,6 +20,11 @@ export const baseModelEngineMap: Partial<Record<BaseModelSetType, OrchestratorEn
   HyV1: 'hunyuan',
   Veo3: 'veo3',
 };
+
+export function getEngineFromBaseModel(baseModel: string) {
+  const group = getBaseModelGroup(baseModel);
+  return group ? baseModelEngineMap[group] : undefined;
+}
 
 export const modelIdEngineMap = new Map<number, OrchestratorEngine2>([[982559, 'lightricks']]);
 

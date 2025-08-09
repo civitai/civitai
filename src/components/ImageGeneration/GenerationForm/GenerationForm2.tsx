@@ -95,7 +95,6 @@ import {
   fluxStandardAir,
   fluxUltraAir,
   fluxUltraAspectRatios,
-  getBaseModelResourceTypes,
   getIsFlux,
   getIsFluxStandard,
   getIsFluxUltra,
@@ -104,7 +103,6 @@ import {
   getIsHiDream,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
-  getImageGenerationBaseModels,
   fluxDraftAir,
   fluxKreaAir,
   getIsFluxKrea,
@@ -139,6 +137,10 @@ import classes from './GenerationForm2.module.scss';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
+import {
+  getGenerationBaseModelResourceOptions,
+  getGenerationBaseModelsByMediaType,
+} from '~/shared/constants/base-model.constants';
 
 let total = 0;
 const tips = {
@@ -523,7 +525,7 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
 
-            const resourceTypes = getBaseModelResourceTypes(baseModel);
+            const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
               return (
                 <ResetGenerationPanel
@@ -638,7 +640,7 @@ export function GenerationFormContent() {
                                   baseModels:
                                     !!resources?.length || !!vae
                                       ? baseModels
-                                      : getImageGenerationBaseModels(),
+                                      : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
                             hideVersion={isFluxStandard || isHiDream || isImageGen}

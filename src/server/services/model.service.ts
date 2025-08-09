@@ -7,7 +7,7 @@ import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
 import {
   CacheTTL,
   constants,
@@ -126,6 +126,7 @@ import type {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,

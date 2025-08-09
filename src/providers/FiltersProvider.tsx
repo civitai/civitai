@@ -35,6 +35,7 @@ import {
   ToolType,
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
@@ -43,7 +44,7 @@ const modelFilterSchema = z.object({
   sort: z.enum(ModelSort).default(ModelSort.HighestRated),
   types: z.enum(ModelType).array().optional(),
   checkpointType: z.enum(CheckpointType).optional(),
-  baseModels: z.enum(constants.baseModels).array().optional(),
+  baseModels: z.enum(baseModels).array().optional(),
   status: z.enum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
@@ -85,7 +86,7 @@ const imageFilterSchema = z.object({
   followed: z.boolean().optional(),
   tools: z.number().array().optional(),
   techniques: z.number().array().optional(),
-  baseModels: z.enum(constants.baseModels).array().optional(),
+  baseModels: z.enum(baseModels).array().optional(),
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
   requiringMeta: z.boolean().optional(),
@@ -186,7 +187,7 @@ const changelogFilterSchema = getChangelogsInput.omit({
 
 export type AuctionFilterSchema = z.infer<typeof auctionFilterSchema>;
 const auctionFilterSchema = z.object({
-  baseModels: z.enum(constants.baseModels).array().optional(),
+  baseModels: z.enum(baseModels).array().optional(),
 });
 
 type StorageState = {

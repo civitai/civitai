@@ -67,11 +67,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
-import {
-  getBaseModelResourceTypes,
-  getBaseModelSetType,
-  getBaseModelSetTypes,
-} from '~/shared/constants/generation.constants';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
@@ -85,6 +81,11 @@ import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import {
+  getGenerationBaseModelResourceOptions,
+  getGenerationBaseModelAssociatedGroups,
+  getBaseModelGroup,
+} from '~/shared/constants/base-model.constants';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -130,23 +131,23 @@ const getAllowedResources = (resources: ResourceHelper[]) => {
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
       const baseModel = !!resource.modelVersionBaseModel
-        ? getBaseModelSetType(resource.modelVersionBaseModel)
+        ? getBaseModelGroup(resource.modelVersionBaseModel)
         : null;
       if (isDefined(baseModel)) {
         return (
-          (getBaseModelResourceTypes(baseModel)?.filter(
+          (getGenerationBaseModelResourceOptions(baseModel)?.filter(
             (t) => t.type !== 'Checkpoint'
           ) as AllowedResource[]) ?? []
         );
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
-        const baseTypes = getBaseModelSetTypes({
-          modelType: resource.modelType,
-          baseModel: resource.modelVersionBaseModel,
-        });
+        const baseTypes = getGenerationBaseModelAssociatedGroups(
+          resource.modelVersionBaseModel,
+          resource.modelType
+        );
         const allTypes = baseTypes.flatMap(
-          (b) => (getBaseModelResourceTypes(b) as AllowedResource[]) ?? []
+          (b) => (getGenerationBaseModelResourceOptions(b) as AllowedResource[]) ?? []
         );
         return Object.values(
           allTypes.reduce<Record<string, AllowedResource>>((acc, { type, baseModels }) => {

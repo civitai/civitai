@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import type { BaseModel, Sampler } from '~/server/common/constants';
+import type { Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
@@ -10,6 +10,8 @@ import { auditPrompt } from '~/utils/metadata/audit';
 import { booleanString } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
 import { generationSamplers } from '~/shared/constants/generation.constants';
+import { baseModels } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.enum(ModelType),
@@ -26,7 +28,7 @@ export const getGenerationResourcesSchema = z.object({
   ids: z.number().array().optional(),
   baseModel: z
     .string()
-    .refine((val) => constants.baseModels.includes(val as BaseModel))
+    .refine((val) => baseModels.includes(val as BaseModel))
     .optional(),
   supported: z.boolean().optional(),
 });

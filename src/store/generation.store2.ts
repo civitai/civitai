@@ -18,23 +18,13 @@ type State = {
   counter: number;
   loading: boolean;
   opened: boolean;
-  view: GenerationPanelView;
-  type: MediaType;
-  engine?: string;
-
-  setView: (value: GenerationPanelView) => void;
-  setType: (value: MediaType) => void;
-  setEngine: (value: string) => void;
 };
 
 export const useGenerationStore = create<State>((set) => ({
   counter: 0,
   loading: false,
   opened: false,
-  view: 'generate',
-  type: 'image',
 
-  setView: (view) => set({ view }),
-  setType: (type) => set({ type }),
-  setEngine: (engine) => set({ engine }),
+  open: () => undefined,
+  close: () => undefined,
 }));

@@ -19,6 +19,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -305,7 +306,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
     // - from imagesQueryParamSchema
-    baseModels: z.enum(constants.baseModels).array().optional(),
+    baseModels: z.enum(baseModels).array().optional(),
     collectionId: z.number().optional(),
     collectionTagId: z.number().optional(),
     hideAutoResources: z.boolean().optional(),

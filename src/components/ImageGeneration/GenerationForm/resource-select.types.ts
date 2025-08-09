@@ -1,9 +1,10 @@
 import * as z from 'zod/v4';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type ResourceSelectOptions = {
   canGenerate?: boolean;
@@ -38,7 +39,7 @@ export const imageSelectTrainingFilterSchema = z.object({
   statuses: z.array(z.nativeEnum(TrainingStatus)),
   types: z.array(z.enum(constants.trainingModelTypes)),
   mediaTypes: z.array(z.enum(constants.trainingMediaTypes)),
-  baseModels: z.array(z.enum(constants.baseModels)),
+  baseModels: z.array(z.enum(baseModels)),
 });
 export type ImageSelectTrainingFilter = z.infer<typeof imageSelectTrainingFilterSchema>;
 

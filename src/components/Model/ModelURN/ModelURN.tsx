@@ -2,7 +2,7 @@ import { ActionIcon, Code, Group, Popover, Stack, Text, Tooltip } from '@mantine
 import { useClipboard } from '@mantine/hooks';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import classes from './ModelURN.module.scss';

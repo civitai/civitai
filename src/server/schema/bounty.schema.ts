@@ -17,6 +17,7 @@ import { tagSchema } from './tag.schema';
 import utc from 'dayjs/plugin/utc';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
+import { baseModels } from '~/shared/constants/base-model.constants';
 dayjs.extend(utc);
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
@@ -31,7 +32,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     sort: z.nativeEnum(BountySort).default(BountySort.Newest),
     engagement: z.enum(['tracking', 'supporter', 'favorite', 'awarded', 'active']).optional(),
     userId: z.number().optional(),
-    baseModels: z.enum(constants.baseModels).array().optional(),
+    baseModels: z.enum(baseModels).array().optional(),
     limit: z.coerce.number().min(1).max(200).default(60),
     excludedUserIds: z.number().array().optional(),
   })
@@ -39,7 +40,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
 
 export type BountyDetailsSchema = z.infer<typeof bountyDetailsSchema>;
 export const bountyDetailsSchema = z.object({
-  baseModel: z.enum(constants.baseModels),
+  baseModel: z.enum(baseModels),
   modelSize: z.enum(constants.modelFileSizes),
   modelFormat: z.enum(constants.modelFileFormats),
 });

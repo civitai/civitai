@@ -131,9 +131,9 @@ import { isNumber } from '~/utils/type-guards';
 
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { getBaseModelEcosystemName } from '~/shared/utils/base-model';
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
+import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -311,7 +311,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
-  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
+  const selectedEcosystemName = getBaseModelSeoName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
   const buzzEarned =
     tippedAmount +

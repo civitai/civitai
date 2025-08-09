@@ -53,7 +53,6 @@ import {
   fluxUltraAirId,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
-  getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
   getIsFlux,
@@ -70,6 +69,7 @@ import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -173,7 +173,8 @@ export async function getGenerationResourceData(
   );
 
   // remove any resources that may not be supported by the generator
-  const availableResourceTypes = getBaseModelResourceTypes(baseModel)?.map((x) => x.type) ?? [];
+  const availableResourceTypes =
+    getGenerationBaseModelResourceOptions(baseModel)?.map((x) => x.type) ?? [];
   const availableResources = resources.filter((x) =>
     availableResourceTypes.includes(x.model.type as any)
   );

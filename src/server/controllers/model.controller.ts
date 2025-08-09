@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import type { BaseModel, BaseModelType, ModelFileType } from '~/server/common/constants';
+import type { BaseModelType, ModelFileType } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,

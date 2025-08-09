@@ -52,6 +52,7 @@ import {
   randPrependBad,
 } from './utils';
 import type { DatabaseError } from 'pg';
+import { baseModels } from '~/shared/constants/base-model.constants';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
@@ -690,7 +691,7 @@ const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadTyp
       null, // fromImportId // TODO
       faker.number.int({ min: 1, max: 8 }), // index // TODO needs other indices?
       fbool(0.01), // inaccurate
-      rand(constants.baseModels), // baseModel
+      rand(baseModels), // baseModel
       rand(['{}', '{"imageNsfwLevel": 1}', '{"imageNsfwLevel": 8}']), // meta
       0, // earlyAccessTimeframe // TODO check model early access
       isPublished ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // publishedAt
@@ -3272,7 +3273,7 @@ const genBounties = (num: number, userIds: number[]) => {
       expiresAt.format('YYYY-MM-DD'), // expiresAt
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
-      rand([null, `{"baseModel": "${rand(constants.baseModels)}"}`]), // details
+      rand([null, `{"baseModel": "${rand(baseModels)}"}`]), // details
       rand(Object.values(BountyMode)), // mode
       rand(Object.values(BountyEntryMode)), // entryMode
       rand(Object.values(BountyType)), // type

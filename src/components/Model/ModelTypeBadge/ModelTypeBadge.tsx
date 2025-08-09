@@ -3,7 +3,7 @@ import { Badge, Divider, Text } from '@mantine/core';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
 const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> = {
@@ -46,7 +46,12 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
   const baseModelIndicator = BaseModelIndicator[baseModel];
   return (
-    <Badge variant="light" radius="xl" {...badgeProps} classNames={{ label: 'flex items-center gap-2'}}>
+    <Badge
+      variant="light"
+      radius="xl"
+      {...badgeProps}
+      classNames={{ label: 'flex items-center gap-2' }}
+    >
       <Text size="xs" tt="capitalize" fw="bold">
         {getDisplayName(type)}
       </Text>
