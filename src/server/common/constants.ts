@@ -556,6 +556,10 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B i2v 480p': baseLicenses['apache 2.0'],
   'Wan Video 14B i2v 720p': baseLicenses['apache 2.0'],
+  'Wan Video 2.2 I2V-A14B': baseLicenses['apache 2.0'],
+  'Wan Video 2.2 T2V-A14B': baseLicenses['apache 2.0'],
+  'Wan Video 2.2 TI2V-5B': baseLicenses['apache 2.0'],
+  Qwen: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

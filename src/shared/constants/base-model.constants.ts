@@ -41,6 +41,7 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Pony', type: 'image', group: 'Pony', ecosystem: 'sdxl' },
+  { name: 'Qwen', type: 'image', group: 'Qwen', ecosystem: 'qwen' },
   {
     name: 'Stable Cascade',
     type: 'image',
@@ -76,32 +77,14 @@ const baseModelConfig = [
   { name: 'SVD', type: 'image', group: 'SVD' },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true },
-  {
-    name: 'Wan Video',
-    type: 'video',
-    group: 'WanVideo',
-    hidden: true,
-  },
-  {
-    name: 'Wan Video 14B t2v',
-    type: 'video',
-    group: 'WanVideo14B_T2V',
-  },
-  {
-    name: 'Wan Video 1.3B t2v',
-    type: 'video',
-    group: 'WanVideo1_3B_T2V',
-  },
-  {
-    name: 'Wan Video 14B i2v 480p',
-    type: 'video',
-    group: 'WanVideo14B_I2V_480p',
-  },
-  {
-    name: 'Wan Video 14B i2v 720p',
-    type: 'video',
-    group: 'WanVideo14B_I2V_720p',
-  },
+  { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true },
+  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V' },
+  { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V' },
+  { name: 'Wan Video 14B i2v 480p', type: 'video', group: 'WanVideo14B_I2V_480p' },
+  { name: 'Wan Video 14B i2v 720p', type: 'video', group: 'WanVideo14B_I2V_720p' },
+  { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B' },
+  { name: 'Wan Video 2.2 I2V-A14B', type: 'video', group: 'WanVideo-22-I2V-A14B' },
+  { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
