@@ -22,7 +22,7 @@ import type {
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';

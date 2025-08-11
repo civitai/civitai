@@ -4,12 +4,7 @@ import dayjs from 'dayjs';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import {
-  CacheTTL,
-  constants,
-  nsfwRestrictedBaseModels,
-  type BaseModel,
-} from '~/server/common/constants';
+import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -63,11 +58,12 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -952,9 +948,9 @@ export const getModelVersionsByModelType = async ({
 }: GetModelVersionByModelTypeProps) => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
-    const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.baseModels.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
+    const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
+    if (baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';

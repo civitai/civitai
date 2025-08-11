@@ -14,6 +14,7 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -48,77 +49,6 @@ export const constants = {
     sort: CollectionSort.Newest,
     limit: 50,
   },
-  baseModels: [
-    'ODOR',
-    'SD 1.4',
-    'SD 1.5',
-    'SD 1.5 LCM',
-    'SD 1.5 Hyper',
-    'SD 2.0',
-    'SD 2.0 768',
-    'SD 2.1',
-    'SD 2.1 768',
-    'SD 2.1 Unclip',
-    'SDXL 0.9',
-    'SDXL 1.0',
-    'SD 3',
-    'SD 3.5',
-    'SD 3.5 Medium',
-    'SD 3.5 Large',
-    'SD 3.5 Large Turbo',
-    'Pony',
-    'Flux.1 S',
-    'Flux.1 D',
-    'Flux.1 Kontext',
-    'AuraFlow',
-    'SDXL 1.0 LCM',
-    'SDXL Distilled',
-    'SDXL Turbo',
-    'SDXL Lightning',
-    'SDXL Hyper',
-    'Stable Cascade',
-    'SVD',
-    'SVD XT',
-    'Playground v2',
-    'PixArt a',
-    'PixArt E',
-    'Hunyuan 1',
-    'Hunyuan Video',
-    'Lumina',
-    'Kolors',
-    'Illustrious',
-    'Mochi',
-    'LTXV',
-    'CogVideoX',
-    'NoobAI',
-    'Wan Video',
-    'Wan Video 1.3B t2v',
-    'Wan Video 14B t2v',
-    'Wan Video 14B i2v 480p',
-    'Wan Video 14B i2v 720p',
-    'HiDream',
-    'OpenAI',
-    'Imagen4',
-    'Veo 3',
-    'Other',
-  ],
-  hiddenBaseModels: [
-    'ODOR',
-    'SD 2.1 768',
-    'SD 2.1 Unclip',
-    'SDXL Distilled',
-    'SDXL 0.9',
-    'SD 2.0 768',
-    'SDXL Turbo',
-    'SVD XT',
-    'Playground v2',
-    'Stable Cascade',
-    'SDXL 1.0 LCM',
-    'OpenAI',
-    'Imagen4',
-    'Wan Video',
-    'Veo 3',
-  ] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
@@ -428,9 +358,6 @@ export const constants = {
     labelTypes: ['tag', 'caption'] as const,
   },
 } as const;
-export const activeBaseModels = constants.baseModels.filter(
-  (model) => !constants.hiddenBaseModels.includes(model)
-);
 
 export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
@@ -457,158 +384,6 @@ export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
-export type BaseModel = (typeof constants.baseModels)[number];
-
-class BaseModelSet<TBaseModel> {
-  name: string;
-  baseModels: StringLiteral<TBaseModel>[];
-  hidden?: StringLiteral<TBaseModel>[];
-  generation: boolean;
-
-  constructor(args: {
-    name: string;
-    baseModels: StringLiteral<TBaseModel>[];
-    hidden?: StringLiteral<TBaseModel>[];
-    generation?: boolean;
-  }) {
-    this.name = args.name;
-    this.baseModels = args.baseModels;
-    this.hidden = args.hidden;
-    this.generation = args.generation ?? false;
-  }
-}
-
-export const baseModelSets = {
-  SD1: new BaseModelSet({
-    name: 'Stable Diffusion',
-    baseModels: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
-    generation: true,
-  }),
-  SD2: new BaseModelSet({
-    name: 'Stable Diffusion',
-    baseModels: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-    hidden: ['SD 2.1 768', 'SD 2.1 Unclip', 'SD 2.0 768'],
-  }),
-  SD3: new BaseModelSet({
-    name: 'Stable Diffusion',
-    baseModels: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
-    generation: true,
-  }),
-  SD3_5M: new BaseModelSet({
-    name: 'Stable Diffusion',
-    baseModels: ['SD 3.5 Medium'],
-    generation: true,
-  }),
-  Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'], generation: true }),
-  Flux1Kontext: new BaseModelSet({
-    name: 'Flux Kontext',
-    baseModels: ['Flux.1 Kontext'],
-    generation: true,
-  }),
-  SDXL: new BaseModelSet({
-    name: 'Stable Diffusion XL',
-    baseModels: [
-      'SDXL 0.9',
-      'SDXL 1.0',
-      'SDXL 1.0 LCM',
-      'SDXL Lightning',
-      'SDXL Hyper',
-      'SDXL Turbo',
-    ],
-    hidden: ['SDXL 0.9', 'SDXL Turbo', 'SDXL 1.0 LCM'],
-    generation: true,
-  }),
-  SDXLDistilled: new BaseModelSet({
-    name: 'Stable Diffusion XL',
-    baseModels: ['SDXL Distilled'],
-    hidden: ['SDXL Distilled'],
-  }),
-  PixArtA: new BaseModelSet({ name: 'PixArt alpha', baseModels: ['PixArt a'] }),
-  PixArtE: new BaseModelSet({ name: 'PixArt sigma', baseModels: ['PixArt E'] }),
-  Lumina: new BaseModelSet({ name: 'Lumina', baseModels: ['Lumina'] }),
-  Kolors: new BaseModelSet({ name: 'Kolors', baseModels: ['Kolors'] }),
-  HyDit1: new BaseModelSet({ name: 'Hunyuan DiT', baseModels: ['Hunyuan 1'] }),
-  HyV1: new BaseModelSet({ name: 'Hunyuan Video', baseModels: ['Hunyuan Video'] }),
-  SCascade: new BaseModelSet({ name: 'Stable Cascade', baseModels: ['Stable Cascade'] }),
-  ODOR: new BaseModelSet({ name: 'ODOR', baseModels: ['Odor'], hidden: ['Odor'] }),
-  Pony: new BaseModelSet({ name: 'Stable Diffusion', baseModels: ['Pony'], generation: true }),
-  Illustrious: new BaseModelSet({
-    name: 'Illustrious',
-    baseModels: ['Illustrious'],
-    generation: true,
-  }),
-  Other: new BaseModelSet({ name: 'Other', baseModels: ['Other'] }),
-  Mochi: new BaseModelSet({ name: 'Mochi', baseModels: ['Mochi'] }),
-  LTXV: new BaseModelSet({ name: 'LTXV', baseModels: ['LTXV'] }),
-  CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
-  NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
-  WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
-  HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
-  OpenAI: new BaseModelSet({ name: 'OpenAI', baseModels: ['OpenAI'] }),
-  Imagen4: new BaseModelSet({ name: 'Imagen4', baseModels: ['Imagen4'] }),
-  WanVideo1_3B_T2V: new BaseModelSet({
-    name: 'Wan Video 1.3B t2v',
-    baseModels: ['Wan Video 1.3B t2v'],
-  }),
-  WanVideo14B_T2V: new BaseModelSet({
-    name: 'Wan Video 14B t2v',
-    baseModels: ['Wan Video 14B t2v'],
-  }),
-  WanVideo14B_I2V_480p: new BaseModelSet({
-    name: 'Wan Video 14B i2v 480p',
-    baseModels: ['Wan Video 14B i2v 480p'],
-  }),
-  WanVideo14B_I2V_720p: new BaseModelSet({
-    name: 'Wan Video 14B i2v 720p',
-    baseModels: ['Wan Video 14B i2v 720p'],
-  }),
-  Veo3: new BaseModelSet({ name: 'Veo 3', baseModels: ['Veo 3'] }),
-};
-
-export function getEcosystemFromBaseModel(baseModel: string) {
-  const ecosystem =
-    Object.entries(baseModelSets)
-      .find(([, baseModelSet]) => (baseModelSet.baseModels as string[]).includes(baseModel))?.[0]
-      ?.toLowerCase() ?? 'multi';
-
-  // for (const item of [
-  //   'wanvideo1_3b_t2v',
-  //   'wanvideo14b_t2v',
-  //   'wanvideo14b_i2v_480p',
-  //   'wanvideo14b_i2v_720p',
-  // ]) {
-  //   if (ecosystem === item) return 'wanvideo';
-  // }
-
-  return ecosystem
-    .replace('pony', 'sdxl')
-    .replace('illustrious', 'sdxl')
-    .replace('noobai', 'sdxl')
-    .replace('sd3_5m', 'sd3');
-}
-
-/*
-'Wan Video 1.3B T2V',
-'Wan Video 14B T2V',
-'Wan Video 14B I2V',
-*/
-
-// the ecosystem in the air just needs to start with a corresponding orchestrator controller ecosystem
-// const test = [
-//   //1.3b
-//   'urn:air:wanvideo-1.3bt2v:lora:civitai:1132089@1315010',
-//   // 14b Text to video
-//   'urn:air:wanvideo-14bt2v:lora:civitai:1132089@1315010',
-
-//   // 14b Image to video
-//   'urn:air:wanvideo-14bi2v480:lora:civitai:1132089@1315010',
-//   'urn:air:wanvideo-14bi2v720:lora:civitai:1132089@1315010',
-// ];
-
-type BaseModelSets = typeof baseModelSets;
-export type BaseModelSetType = keyof BaseModelSets;
-// export const baseModelSetTypes = Object.keys(baseModelSets) as BaseModelSetType[];
-// type BaseModels = BaseModelSets[BaseModelSetType]['baseModels'][number];
 
 type LicenseDetails = {
   url: string;

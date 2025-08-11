@@ -44,7 +44,7 @@ import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvan
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
   ModelVersionUpsertInput,

@@ -28,6 +28,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 const modelQueryParamSchema = z
   .object({
@@ -50,7 +51,7 @@ const modelQueryParamSchema = z
     excludedImageTagIds: z.array(z.coerce.number()),
     baseModels: z.preprocess(
       (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.enum(constants.baseModels))
+      z.array(z.enum(baseModels))
     ),
     clubId: z.coerce.number().optional(),
     collectionTagId: z.coerce.number().optional(),

@@ -4,10 +4,10 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
-import type { BaseModelSetType } from '~/server/common/constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import clsx from 'clsx';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 
 const simpleMetaProps = {
   comfy: 'Workflow',
@@ -165,7 +165,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   );
 }
 
-function removeUnrelated<T extends Record<string, unknown>>(baseModel: BaseModelSetType, data: T) {
+function removeUnrelated<T extends Record<string, unknown>>(baseModel: BaseModelGroup, data: T) {
   let keys: string[] = [];
   switch (baseModel) {
     case 'Flux1':

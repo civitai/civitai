@@ -13,8 +13,14 @@ import { QS } from '~/utils/qs';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 
-export type RunType = 'run' | 'remix' | 'replay';
+export type RunType = 'run' | 'remix' | 'replay' | 'patch';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
+type SetDataArgs = GenerationData & {
+  type: MediaType;
+  workflow?: string;
+  engine?: string;
+  runType?: RunType;
+};
 type GenerationState = {
   counter: number;
   loading: boolean;
@@ -27,13 +33,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (
-    args: GenerationData & {
-      type: MediaType;
-      workflow?: string;
-      engine?: string;
-    }
-  ) => void;
+  setData: (args: SetDataArgs) => void;
   clearData: () => void;
 };
 
@@ -78,7 +78,7 @@ export const useGenerationStore = create<GenerationState>()(
                 ...data,
                 params,
                 resources: withSubstitute(data.resources),
-                runType: input.type === 'image' ? 'remix' : 'run',
+                runType: input.type === 'image' || input.type === 'video' ? 'remix' : 'run',
               };
               state.loading = false;
               state.counter++;
@@ -98,7 +98,7 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: async ({ type, remixOf, workflow, engine, ...data }) => {
+      setData: async ({ type, remixOf, workflow, engine, runType = 'replay', ...data }) => {
         // TODO.Briant - cleanup at a later point in time
         useGenerationFormStore.setState({ type, workflow });
         // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
@@ -106,7 +106,7 @@ export const useGenerationStore = create<GenerationState>()(
         const { params } = await transformParams(data.params);
         if (type === 'video' && !params.process) {
           params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
-        } else if (type === 'image') {
+        } else if (type === 'image' && !params.process) {
           params.process = params.sourceImage ? 'img2img' : 'txt2img';
         }
 
@@ -121,7 +121,7 @@ export const useGenerationStore = create<GenerationState>()(
             type,
             params,
             resources: withSubstitute(data.resources),
-            runType: 'replay',
+            runType,
           };
           state.counter++;
           if (!location.pathname.includes('generate'))
@@ -198,7 +198,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
       key = `${input.type}_${input.id}${input.epoch ? `_${input.epoch}` : ''}`;
       break;
     default:
-      key = `${input.type}_${input.id}`;
+      key = `media_${input.id}`;
       break;
   }
 

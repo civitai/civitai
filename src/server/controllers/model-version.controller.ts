@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';

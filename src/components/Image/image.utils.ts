@@ -9,10 +9,9 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { periodModeSchema } from '~/server/schema/base.schema';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { baseModels } from '~/shared/constants/base-model.constants';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -29,7 +28,7 @@ export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
 export const imagesQueryParamSchema = z
   .object({
     baseModels: z
-      .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
+      .union([z.enum(baseModels).array(), z.enum(baseModels)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
     collectionId: numericString(),

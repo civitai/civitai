@@ -24,6 +24,7 @@ import { constants } from '~/server/common/constants';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import styles from './VaultItemsFiltersDropdown.module.scss';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 
@@ -129,7 +130,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           multiple
         >
           <Group gap={8}>
-            {constants.baseModels.map((baseModel) => (
+            {baseModels.map((baseModel) => (
               <FilterChip key={baseModel} value={baseModel}>
                 <Text tt="capitalize" span inherit>
                   {baseModel}

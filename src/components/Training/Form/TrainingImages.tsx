@@ -72,7 +72,7 @@ import {
   TrainingImagesTagViewer,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import {

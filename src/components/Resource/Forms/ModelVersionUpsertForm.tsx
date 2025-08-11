@@ -40,12 +40,12 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  activeBaseModels,
   constants,
   EARLY_ACCESS_CONFIG,
   nsfwRestrictedBaseModels,
-  type BaseModel,
 } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';

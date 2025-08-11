@@ -3,7 +3,7 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle } from '@tabler/icons-react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
 export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: ModelFileAlertProps) => {

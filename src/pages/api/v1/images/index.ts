@@ -27,6 +27,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 export const config = {
   api: {
@@ -66,7 +67,7 @@ const imagesEndpointSchema = z.object({
     )
     .optional(),
   type: z.enum(MediaType).optional(),
-  baseModels: commaDelimitedEnumArray([...constants.baseModels]).optional(),
+  baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
 });
