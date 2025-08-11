@@ -11,9 +11,9 @@ export function useZodRouteParams<TSchema extends z.ZodObject>(schema: TSchema) 
     const result = schema.safeParse(query);
     const data = result.success ? result.data : {};
 
-    const replaceParams = (params: Partial<z.input<TSchema>>) => {
+    const replaceParams = (params: Partial<z.input<TSchema>>, as?: string) => {
       const data = removeEmpty(schema.parse({ ...query, ...params }));
-      replace({ pathname, query: data as ParsedUrlQueryInput }, undefined, {
+      replace({ pathname, query: data as ParsedUrlQueryInput }, as, {
         shallow: true,
         scroll: false,
       });

@@ -748,7 +748,7 @@ export function ModelVersionDetails({
           ) : (
             <Stack gap={4}>
               <Group gap="xs" className={classes.ctaContainer}>
-                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
+                <Group gap="xs" className="flex-1" wrap="nowrap">
                   {couldGenerate && (
                     <GenerateButton
                       model={model}

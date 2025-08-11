@@ -77,13 +77,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       visible: !!currentUser,
       items: [
         {
-          href: `/user/${currentUser?.username}`,
+          href: `/user/${currentUser?.username as string}`,
           icon: IconUser,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
         {
-          href: `/user/${currentUser?.username}/models?section=training`,
+          href: `/user/${currentUser?.username as string}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
@@ -171,7 +171,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Download Link App',
         },
         {
-          href: `/user/${currentUser?.username}/following`,
+          href: `/user/${currentUser?.username as string}/following`,
           icon: IconUsers,
           label: 'Creators You Follow',
         },

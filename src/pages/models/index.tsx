@@ -21,7 +21,7 @@ function ModelsPage() {
       <Meta
         title="Civitai Models | Discover Free Stable Diffusion & Flux Models"
         description="Browse from thousands of free Stable Diffusion & Flux models, spanning unique anime art styles, immersive 3D renders, stunning photorealism, and more"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/models`, rel: 'canonical' }]}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/models`, rel: 'canonical' }]}
       />
 
       <MasonryContainer className="flex flex-col gap-2">

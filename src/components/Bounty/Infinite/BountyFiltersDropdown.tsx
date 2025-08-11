@@ -6,10 +6,8 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
   Drawer,
-  useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
@@ -22,7 +20,6 @@ import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { PeriodFilter } from '~/components/Filters';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 

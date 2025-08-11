@@ -384,7 +384,7 @@ export const upsertBountyHandler = async ({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator ?? false,
     });
-    if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
+    if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id as number}`);
 
     if (input.id) ctx.track.bounty({ type: 'Update', bountyId: input.id }).catch(handleLogError);
     else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);

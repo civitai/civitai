@@ -46,8 +46,9 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
         )}
       >
         <Stack
-          className={clsx(cardClasses.header, {
+          className={clsx({
             [awardedStyles.awardedBanner]: isAwarded,
+            [cardClasses.header]: true,
           })}
         >
           <Group justify="space-between" wrap="nowrap">
@@ -59,7 +60,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                     e.preventDefault();
                     e.stopPropagation();
 
-                    router.push(`/user/${user.username}`);
+                    if (user.username) router.push(`/user/${user.username}`);
                   }}
                 >
                   <UserAvatar

@@ -1,6 +1,10 @@
-import { Currency, BountyEngagementType } from '~/shared/utils/prisma/enums';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import dayjs from 'dayjs';
 import { useMemo } from 'react';
+import produce from 'immer';
+import * as z from 'zod/v4';
 
+import { Currency, BountyEngagementType, BountyType } from '~/shared/utils/prisma/enums';
 import type {
   CreateBountyInput,
   GetInfiniteBountySchema,
@@ -13,11 +17,10 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
 import type { ToggleUserBountyEngagementsInput } from '~/server/schema/user.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import dayjs from 'dayjs';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { hideNotification, showNotification } from '@mantine/notifications';
-import produce from 'immer';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import { BountySort, BountyStatus } from '~/server/common/enums';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -72,10 +75,23 @@ export const isBenefactor = (
   return !!bounty.benefactors.find((b) => b.user.id === bounty.user?.id);
 };
 
+export type BountyEngagementTypeQueryParam = (typeof constants.bounties.engagementTypes)[number];
+
+const bountyQueryParamsSchema = z.object({
+  types: z.enum(BountyType).array().optional(),
+  status: z.enum(BountyStatus).optional(),
+  sort: z.enum(BountySort).optional(),
+  engagement: z.enum(constants.bounties.engagementTypes).optional(),
+});
+
 export const useBountyFilters = () => {
   const storeFilters = useFiltersContext((state) => state.bounties);
-  return removeEmpty(storeFilters);
+  const { query } = useBountyQueryParams();
+
+  return removeEmpty({ ...storeFilters, ...query });
 };
+
+export const useBountyQueryParams = () => useZodRouteParams(bountyQueryParamsSchema);
 
 export const useQueryBounties = (
   filters: Partial<GetInfiniteBountySchema>,
