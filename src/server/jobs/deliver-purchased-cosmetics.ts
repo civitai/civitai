@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 
 export const deliverPurchasedCosmetics = createJob(
   'deliver-subscription-cosmetics',
-  '*/1 * * * *',
+  '0 0 1 * *',
   async () => {
     const [lastDelivered, setLastDelivered] = await getJobDate('last-cosmetic-delivery');
 
@@ -22,7 +22,6 @@ export const deliverPurchasedCosmetics = createJob(
           WHERE cs.status = 'active'
             AND cs."currentPeriodStart" <= now()
             AND cs."currentPeriodEnd" >= now()
-            AND cs."createdAt" >= ${lastDelivered}
         ),
         subscription_tiers AS (
           SELECT
@@ -49,6 +48,7 @@ export const deliverPurchasedCosmetics = createJob(
         FROM subscription_tiers s
         JOIN "Cosmetic" c ON
           c."productId" = s."productId"
+          AND c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp)
           AND (c."availableStart" IS NULL OR s."currentPeriodStart" >= c."availableStart")
           AND (c."availableEnd" IS NULL OR s."currentPeriodStart" <= c."availableEnd")
         ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
@@ -65,8 +65,7 @@ export const deliverPurchasedCosmetics = createJob(
         FROM "CustomerSubscription" cs
         JOIN "Product" pd ON pd.id = cs."productId"
         JOIN "Cosmetic" c ON c.name = 'Grandfather Badge'
-        WHERE cs."createdAt" >= ${lastDelivered}
-          AND cs.status = 'active'
+        WHERE cs.status = 'active'
           AND cs."currentPeriodStart" <= now()
           AND cs."currentPeriodEnd" >= now()
           AND jsonb_typeof(pd.metadata->'level') != 'undefined'
