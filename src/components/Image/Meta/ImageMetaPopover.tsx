@@ -3,10 +3,9 @@ import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import type { ReactElement } from 'react';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
-export const ImageMetaPopoverLazy = dynamic(
-  () => import('~/components/Image/Meta/ImageMetaPopoverLazy'),
-  { ssr: false }
-);
+const ImageMetaPopoverLazy = dynamic(() => import('~/components/Image/Meta/ImageMetaPopoverLazy'), {
+  ssr: false,
+});
 
 export function ImageMetaPopover2({
   imageId,
