@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 
 export const deliverPurchasedCosmetics = createJob(
   'deliver-subscription-cosmetics',
-  '0 0 1 * *',
+  '0 23 * * *',
   async () => {
     const [lastDelivered, setLastDelivered] = await getJobDate('last-cosmetic-delivery');
 
