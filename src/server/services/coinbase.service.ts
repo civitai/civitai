@@ -94,7 +94,11 @@ export const getTransactionStatusByKey = async ({
 
   let nextTransactionStatus: CryptoTransactionStatus = transaction.status;
 
-  if (
+  // TODO: @lrojas94 - we probably should replace this with a more generic way to handle ramps
+  if (transaction.note === 'ZKP2P onramp') {
+    // Assume success so that we can check the next step
+    nextTransactionStatus = CryptoTransactionStatus.RampSuccess;
+  } else if (
     [
       CryptoTransactionStatus.WaitingForRamp,
       CryptoTransactionStatus.RampFailed,
