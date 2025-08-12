@@ -3,10 +3,11 @@ import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 const schema = z.object({
   batchSize: z.coerce.number().default(1000),
-  dryRun: z.coerce.boolean().default(true),
+  dryRun: booleanString().default(true),
 });
 
 type GallerySettings = {
