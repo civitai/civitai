@@ -17,6 +17,7 @@ services:
     depends_on:
       - db
       - notification-db
+      - logical-db
       - redis
       - redis-sys
     environment:
@@ -26,6 +27,7 @@ services:
       DARKPIT_SHADOW_URL: 'postgresql://modelshare:postgres@db:5432/postgres'
       NOTIFICATION_DB_URL: 'postgresql://postgres:postgres@notification-db:5432/postgres'
       NOTIFICATION_DB_REPLICA_URL: 'postgresql://postgres:postgres@notification-db:5432/postgres'
+      LOGICAL_REPLICA_DB_URL: 'postgresql://postgres:postgres@logical-db:5432/postgres'
       REDIS_URL: 'redis://:redis@redis:6379'
       REDIS_SYS_URL: 'redis://:redis@redis-sys:6379'
       CLICKHOUSE_HOST: 'http://clickhouse:8123'

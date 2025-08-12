@@ -1,6 +1,7 @@
 import { faker } from '@faker-js/faker';
 import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
+import type { DatabaseError } from 'pg';
 import format from 'pg-format';
 // import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -12,6 +13,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
+import { baseModels } from '~/shared/constants/base-model.constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
   ArticleEngagementType,
@@ -51,8 +53,6 @@ import {
   insertRows,
   randPrependBad,
 } from './utils';
-import type { DatabaseError } from 'pg';
-import { baseModels } from '~/shared/constants/base-model.constants';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
@@ -75,6 +75,8 @@ const fbool = faker.datatype.boolean;
 // };
 
 // TODO fix tables ownership from doadmin to civitai
+
+// TODO seed logicalDb
 
 const setSerialNotif = async (table: string) => {
   // language=text
@@ -439,7 +441,7 @@ const genUsers = (num: number, includeCiv = false) => {
   for (let step = extraUsers.length + (includeCiv ? 0 : 1); step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isMuted = fbool(0.01);
-    let username = randPrependBad(faker.internet.userName(), '.');
+    let username = randPrependBad(faker.internet.username(), '.');
     if (seenUserNames.includes(username)) username = `${username}_${faker.number.int(1_000)}`;
     seenUserNames.push(username);
 

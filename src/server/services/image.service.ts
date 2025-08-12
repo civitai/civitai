@@ -29,6 +29,7 @@ import {
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { logicalDb } from '~/server/db/logicalDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
@@ -767,6 +768,7 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
+  useLogicalReplica: boolean;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -1738,6 +1740,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
+    useLogicalReplica,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -2063,11 +2066,23 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     });
 
     const filteredHitIds = filteredHits.map((fh) => fh.id);
-    // we could pull in nsfwLevel/needsReview here too and overwrite the search index attributes (move above the hits filter)
-    const dbIdResp = await dbRead.image.findMany({
-      where: { id: { in: filteredHitIds } },
-      select: { id: true },
-    });
+
+    let dbIdResp: { id: number }[];
+
+    if (!useLogicalReplica) {
+      // we could pull in nsfwLevel/needsReview here too and overwrite the search index attributes (move above the hits filter)
+      dbIdResp = await dbRead.image.findMany({
+        where: { id: { in: filteredHitIds } },
+        select: { id: true },
+      });
+    } else {
+      const dbIdData = await logicalDb.query<{ id: number }>(
+        `select id from "Image" where "id" in ($1)`,
+        [filteredHitIds]
+      );
+      dbIdResp = dbIdData.rows;
+    }
+
     const dbIds = dbIdResp.map((dbi) => dbi.id);
     const filtered = filteredHits.filter((fh) => dbIds.includes(fh.id));
 
