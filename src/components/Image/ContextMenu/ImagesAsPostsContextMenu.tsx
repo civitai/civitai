@@ -36,7 +36,9 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
     if (showModerationOptions && model) {
       await toggle({
         modelId: model.id,
-        images: imageId ? [{ id: imageId }] : undefined,
+        hiddenImages: imageId
+          ? { modelVersionId: currentModelVersionId, imageIds: [imageId] }
+          : undefined,
         users: user ? [user] : undefined,
       }).catch(() => null); // Error is handled in the mutation events
 
@@ -76,7 +78,7 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
   const moderationOptions = (image: ImageContextMenuProps['image']) => {
     if (!showModerationOptions) return null;
     const imageAlreadyHidden = gallerySettings
-      ? gallerySettings.hiddenImages.indexOf(image.id) > -1
+      ? gallerySettings.hiddenImages?.[currentModelVersionId]?.includes(image.id)
       : false;
     const userAlreadyHidden = gallerySettings
       ? gallerySettings.hiddenUsers.findIndex((u) => u.id === image.user?.id) > -1
@@ -111,7 +113,9 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
               'Unpin this post'
             ) : (
               <Stack gap={2}>
-                <Text inline>Pin this post</Text>
+                <Text inherit inline>
+                  Pin this post
+                </Text>
                 {maxedOut && (
                   <Text size="xs" c="yellow">
                     Pin limit reached

@@ -1627,7 +1627,7 @@ export const updateGallerySettingsHandler = async ({
 
     const updatedSettings = gallerySettings
       ? {
-          images: gallerySettings.hiddenImages,
+          hiddenImages: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
           level: gallerySettings.level,
