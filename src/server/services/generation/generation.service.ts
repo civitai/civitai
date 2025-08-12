@@ -789,7 +789,8 @@ export async function getResourceData(
     ? resources.filter((resource) => {
         const baseModel = getBaseModelSetType(resource.baseModel);
         return (
-          !!getGenerationBaseModelGroup(baseModel) || !!modelIdEngineMap.get(resource.model.id)
+          !!getGenerationBaseModelGroup(baseModel)?.supportMap.size ||
+          !!modelIdEngineMap.get(resource.model.id)
         );
       })
     : resources;

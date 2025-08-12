@@ -110,7 +110,7 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
 ];
 
 export const baseModels = baseModelConfig.map((x) => x.name);
-export const baseModelGroups = baseModelConfig.map((x) => x.group);
+export const baseModelGroups = [...new Set(baseModelConfig.map((x) => x.group))];
 export const activeBaseModels = baseModelConfig
   .filter((x) => !('hidden' in x) || !x.hidden)
   .map((x) => x.name);
@@ -372,20 +372,25 @@ type BaseModelSupportType = 'full' | 'partial';
 type BaseModelSupportMapped = { baseModel: BaseModel; support: BaseModelSupportType };
 
 export const getBaseModelGenerationConfig = lazy(() =>
-  baseModelGenerationConfig.map(({ group, support, partialSupport = [] }) => {
-    const supportMap = new Map<ModelType, BaseModelSupportMapped[]>();
-    for (const [index, list] of [support, partialSupport].entries()) {
-      const supportType: BaseModelSupportType = index === 0 ? 'full' : 'partial';
-      for (const { modelTypes, baseModels } of list) {
-        for (const modelType of modelTypes) {
-          const current = supportMap.get(modelType) ?? [];
-          const toAdd = baseModels.map((baseModel) => ({ baseModel, support: supportType }));
-          supportMap.set(modelType, [...new Set([...current, ...toAdd])]);
+  baseModelGroups.map((group) => {
+    const groupConfig = baseModelGenerationConfig.find((x) => x.group === group);
+    if (!groupConfig) return { group, supportMap: new Map<ModelType, BaseModelSupportMapped[]>() };
+    else {
+      const { group, support, partialSupport = [] } = groupConfig;
+      const supportMap = new Map<ModelType, BaseModelSupportMapped[]>();
+      for (const [index, list] of [support, partialSupport].entries()) {
+        const supportType: BaseModelSupportType = index === 0 ? 'full' : 'partial';
+        for (const { modelTypes, baseModels } of list) {
+          for (const modelType of modelTypes) {
+            const current = supportMap.get(modelType) ?? [];
+            const toAdd = baseModels.map((baseModel) => ({ baseModel, support: supportType }));
+            supportMap.set(modelType, [...new Set([...current, ...toAdd])]);
+          }
         }
       }
-    }
 
-    return { group, supportMap };
+      return { group, supportMap };
+    }
   })
 );
 
@@ -397,11 +402,11 @@ export function getGenerationBaseModelsByMediaType(type: MediaType) {
   return baseModels.filter((baseModel) => generationBaseModels.includes(baseModel));
 }
 
-export function getGenerationBaseModelGroup(baseModel: string) {
+export function getGenerationBaseModelGroup(baseModel: string, missedMatch?: boolean) {
   const group = getBaseModelGenerationConfig().find((x) => x.group === baseModel);
-  if (!group) {
+  if (!group && !missedMatch) {
     const match = baseModelConfig.find((x) => x.name === baseModel);
-    if (match) return getGenerationBaseModelGroup(match.group);
+    if (match) return getGenerationBaseModelGroup(match.group, true);
   }
   return group;
 }
