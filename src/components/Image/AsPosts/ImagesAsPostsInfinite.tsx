@@ -235,7 +235,7 @@ export function ImagesAsPostsInfinite({
                 </Text>
               </Text>
             )}
-            {hasModerationPreferences ? (
+            {hasModerationPreferences && selectedVersionId ? (
               <Text size="xs" c="dimmed" mt="-md">
                 Some images have been hidden based on moderation preferences set by the creator,{' '}
                 <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>
