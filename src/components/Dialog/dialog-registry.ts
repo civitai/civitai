@@ -12,7 +12,8 @@ const SetBrowsingLevelModal = dynamic(
 );
 const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'));
 const ResourceSelectModal = dynamic(
-  () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal2')
+  () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal2'),
+  { ssr: false }
 );
 const CollectionSelectModal = dynamic(
   () => import('~/components/CollectionSelectModal/CollectionSelectModal')
@@ -21,7 +22,8 @@ const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection')
 );
 const EditResourceReviewModal = dynamic(
-  () => import('~/components/ResourceReview/EditResourceReviewModal')
+  () => import('~/components/ResourceReview/EditResourceReviewModal'),
+  { ssr: false }
 );
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'));
