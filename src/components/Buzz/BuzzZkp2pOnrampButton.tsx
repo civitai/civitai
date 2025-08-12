@@ -115,8 +115,8 @@ export const BuzzZkp2pOnrampButton = ({
                 <Text size="sm" c="dimmed">
                   Using ZKP2P (a secure exchange platform), you send money through your payment app
                   to another user who has digital dollars waiting in a secure vault for you. Once
-                  your payment is verified, their digital dollars automatically release to you and
-                  convert to Buzz.
+                  your payment is verified, their digital dollars automatically release to your
+                  Civitai account for your Buzz purchase.
                 </Text>
 
                 <div className="space-y-2">
@@ -172,7 +172,7 @@ export const BuzzZkp2pOnrampButton = ({
                       Step 3: Get Your Buzz
                     </Text>
                     <Text size="sm" c="dimmed">
-                      Digital dollars arrive and instantly convert to Buzz
+                      Digital dollars arrive in your Civitai account and become Buzz
                     </Text>
                   </div>
                 </div>
@@ -195,6 +195,7 @@ export const BuzzZkp2pOnrampButton = ({
                     Once you prove payment, the funds automatically release to you
                   </List.Item>
                   <List.Item>Over $10M+ safely processed through ZKP2P</List.Item>
+                  <List.Item>ZKP2P is an independent third-party payment service</List.Item>
                 </List>
               </div>
 
@@ -265,7 +266,7 @@ export const BuzzZkp2pOnrampButton = ({
                     <Text component="span" fw={500}>
                       No refunds through Civitai
                     </Text>{' '}
-                    - You&apos;re trading directly with another user
+                    - ZKP2P is a third-party service that connects buyers and sellers directly.
                   </List.Item>
                   <List.Item>
                     <Text component="span" fw={500}>
@@ -279,6 +280,7 @@ export const BuzzZkp2pOnrampButton = ({
                     </Text>{' '}
                     for now (mobile coming soon)
                   </List.Item>
+                  <List.Item>Civitai does not control or process these payments</List.Item>
                 </List>
               </div>
 
@@ -308,7 +310,11 @@ export const BuzzZkp2pOnrampButton = ({
                 <Text size="xs" c="dimmed" ta="center">
                   By continuing, you acknowledge that you&apos;re exchanging currency with another
                   individual on ZKP2P and that Civitai cannot process refunds for these
-                  transactions.
+                  transactions. View{' '}
+                  <Text component="a" href="https://www.zkp2p.xyz/tos" target="_blank">
+                    ZKP2P's terms of service
+                  </Text>
+                  .
                 </Text>
               </div>
             </div>
