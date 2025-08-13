@@ -13,6 +13,10 @@ import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
+  isImageInQueue,
+  updatePendingImageRatings,
+} from '~/server/services/games/new-order.service';
+import {
   addBlockedImage,
   bulkRemoveBlockedImages,
   deleteImageById,
@@ -63,10 +67,6 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
-import {
-  isImageInQueue,
-  updatePendingImageRatings,
-} from '~/server/services/games/new-order.service';
 
 export const moderateImageHandler = async ({
   input,
@@ -257,6 +257,7 @@ export const getInfiniteImagesHandler = async ({
       useCombinedNsfwLevel: !features.canViewNsfw,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
+      useLogicalReplica: features.logicalReplica,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -317,6 +318,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
+        useLogicalReplica: features.logicalReplica,
       });
 
       for (const image of pinnedPostsImages) {
@@ -338,6 +340,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
+        useLogicalReplica: features.logicalReplica,
       });
 
       // Merge images by postId

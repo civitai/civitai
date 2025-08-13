@@ -23,5 +23,5 @@ JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
 JOIN "RestrictedBaseModels" rbm ON rbm."baseModel" = mv."baseModel"
 WITH DATA;
 
-CREATE UNIQUE INDEX CONCURRENTLY idx_restricted_images_by_base_model_imageid 
+CREATE UNIQUE INDEX idx_restricted_images_by_base_model_imageid
 ON "RestrictedImagesByBaseModel" ("imageId");

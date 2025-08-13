@@ -1,14 +1,15 @@
 import { uniq } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from 'next-auth';
-import { dbWrite } from '~/server/db/client';
-import { getImagesFromSearch, queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getImagesFromSearch, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 /**
  * GET endpoint to batch update Image.blockedFor to null for images with blockedFor = 'moderated',
@@ -22,7 +23,9 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   logToAxiom(
     { type: 'info', name: 'unblock-images-handler-invoked', message: 'Handler invoked' },
     'webhooks'
-  );
+  ).catch();
+
+  const features = getFeatureFlags({ user, req });
 
   const startedAt = Date.now();
   const updatedIds: number[] = [];
@@ -48,6 +51,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
         withMeta: false,
         include: [],
         blockedFor: ['moderated', 'Moderated'],
+        useLogicalReplica: features.logicalReplica,
       });
       if (!images.length) {
         console.log(
