@@ -62,21 +62,50 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update tag engagement metrics
-      INSERT INTO "UserMetric" ("userId", timeframe, "followerCount", "hiddenCount")
-      SELECT
-        "targetUserId",
-        tf.timeframe,
-        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followerCount",
-        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
-      FROM "UserEngagement" e
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "targetUserId" IN (${ids})
-      GROUP BY "targetUserId", tf.timeframe
-      ON CONFLICT ("userId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "hiddenCount" = EXCLUDED."hiddenCount", "updatedAt" = NOW()
+    
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate user engagement metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "targetUserId",
+          tf.timeframe,
+          ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followerCount",
+          ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
+        FROM "UserEngagement" e
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "targetUserId" IN (${ids})
+        GROUP BY "targetUserId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'userId', "targetUserId",
+          'timeframe', timeframe,
+          'followerCount', "followerCount",
+          'hiddenCount', "hiddenCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+    
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated user engagement metrics
+        INSERT INTO "UserMetric" ("userId", timeframe, "followerCount", "hiddenCount")
+        SELECT 
+          (value->>'userId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'followerCount')::int,
+          (value->>'hiddenCount')::int
+        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        ON CONFLICT ("userId", timeframe) DO UPDATE
+          SET "followerCount" = EXCLUDED."followerCount", 
+              "hiddenCount" = EXCLUDED."hiddenCount", 
+              "updatedAt" = NOW()
+      `;
+    }
+    
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -94,22 +123,47 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
-    log('getEngagementTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update tag engagement metrics
-      INSERT INTO "UserMetric" ("userId", timeframe, "followingCount")
-      SELECT
-        "userId",
-        tf.timeframe,
-        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followingCount"
-      FROM "UserEngagement" e
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "userId" IN (${ids})
-      GROUP BY "userId", tf.timeframe
-      ON CONFLICT ("userId", timeframe) DO UPDATE
-        SET "followingCount" = EXCLUDED."followingCount", "updatedAt" = NOW()
+    log('getFollowingTasks', i + 1, 'of', tasks.length);
+    
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate user following metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "userId",
+          tf.timeframe,
+          ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followingCount"
+        FROM "UserEngagement" e
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "userId" IN (${ids})
+        GROUP BY "userId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'userId', "userId",
+          'timeframe', timeframe,
+          'followingCount', "followingCount"
+        )
+      ) as data
+      FROM metric_data
     `;
-    log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
+    
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated user following metrics
+        INSERT INTO "UserMetric" ("userId", timeframe, "followingCount")
+        SELECT 
+          (value->>'userId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'followingCount')::int
+        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        ON CONFLICT ("userId", timeframe) DO UPDATE
+          SET "followingCount" = EXCLUDED."followingCount", "updatedAt" = NOW()
+      `;
+    }
+    
+    log('getFollowingTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
@@ -129,25 +183,50 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getModelTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update published model user metrics
-      INSERT INTO "UserMetric" ("userId", timeframe, "uploadCount")
-      SELECT
-        "userId",
-        tf.timeframe,
-        ${snippets.timeframeSum('mv."publishedAt"')} "uploadCount"
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON mv."modelId" = m.id
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "userId" IN (${ids})
-        AND (
-          mv."status" = 'Published'
-          OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
+    
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate user upload metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "userId",
+          tf.timeframe,
+          ${snippets.timeframeSum('mv."publishedAt"')} "uploadCount"
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON mv."modelId" = m.id
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "userId" IN (${ids})
+          AND (
+            mv."status" = 'Published'
+            OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
+          )
+        GROUP BY "userId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'userId', "userId",
+          'timeframe', timeframe,
+          'uploadCount', "uploadCount"
         )
-      GROUP BY "userId", tf.timeframe
-      ON CONFLICT ("userId", timeframe) DO UPDATE
-        SET "uploadCount" = EXCLUDED."uploadCount", "updatedAt" = NOW()
+      ) as data
+      FROM metric_data
     `;
+    
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated user upload metrics
+        INSERT INTO "UserMetric" ("userId", timeframe, "uploadCount")
+        SELECT 
+          (value->>'userId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'uploadCount')::int
+        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        ON CONFLICT ("userId", timeframe) DO UPDATE
+          SET "uploadCount" = EXCLUDED."uploadCount", "updatedAt" = NOW()
+      `;
+    }
+    
     log('getModelTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -166,22 +245,47 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReviewTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update user review metrics
-      INSERT INTO "UserMetric" ("userId", timeframe, "reviewCount")
-      SELECT
-        "userId",
-        tf.timeframe,
-        ${snippets.timeframeSum('rr."createdAt"')} "reviewCount"
-      FROM "ResourceReview" rr
-      JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "userId" IN (${ids})
-        AND mv.status = 'Published'
-      GROUP BY "userId", tf.timeframe
-      ON CONFLICT ("userId", timeframe) DO UPDATE
-        SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()
+    
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate user review metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "userId",
+          tf.timeframe,
+          ${snippets.timeframeSum('rr."createdAt"')} "reviewCount"
+        FROM "ResourceReview" rr
+        JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "userId" IN (${ids})
+          AND mv.status = 'Published'
+        GROUP BY "userId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'userId', "userId",
+          'timeframe', timeframe,
+          'reviewCount', "reviewCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+    
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated user review metrics
+        INSERT INTO "UserMetric" ("userId", timeframe, "reviewCount")
+        SELECT 
+          (value->>'userId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'reviewCount')::int
+        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        ON CONFLICT ("userId", timeframe) DO UPDATE
+          SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()
+      `;
+    }
+    
     log('getReviewTasks', i + 1, 'of', tasks.length, 'done');
   });
 

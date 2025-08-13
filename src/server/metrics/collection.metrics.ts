@@ -94,20 +94,45 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getItemTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update collection item metrics
-      INSERT INTO "CollectionMetric" ("collectionId", timeframe, "itemCount")
-      SELECT
-        "collectionId",
-        tf.timeframe,
-        ${snippets.timeframeSum('"createdAt"')} as "itemCount"
-      FROM "CollectionItem"
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "collectionId" IN (${ids})
-      GROUP BY "collectionId", tf.timeframe
-      ON CONFLICT ("collectionId", timeframe) DO UPDATE
-        SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()
+    
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate collection item metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "collectionId",
+          tf.timeframe,
+          ${snippets.timeframeSum('"createdAt"')} as "itemCount"
+        FROM "CollectionItem"
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "collectionId" IN (${ids})
+        GROUP BY "collectionId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'collectionId', "collectionId",
+          'timeframe', timeframe,
+          'itemCount', "itemCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+    
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated collection metrics
+        INSERT INTO "CollectionMetric" ("collectionId", timeframe, "itemCount")
+        SELECT 
+          (value->>'collectionId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'itemCount')::int
+        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        ON CONFLICT ("collectionId", timeframe) DO UPDATE
+          SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()
+      `;
+    }
+    
     log('getItemTasks', i + 1, 'of', tasks.length, 'done');
   });
 
