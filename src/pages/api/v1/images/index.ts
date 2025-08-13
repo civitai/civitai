@@ -1,4 +1,3 @@
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from 'dayjs';
@@ -9,10 +8,12 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { usernameSchema } from '~/server/schema/user.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
+import { baseModels } from '~/shared/constants/base-model.constants';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,
@@ -20,6 +21,7 @@ import {
   nsfwLevelMapDeprecated,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import {
   booleanString,
@@ -27,7 +29,6 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
-import { baseModels } from '~/shared/constants/base-model.constants';
 
 export const config = {
   api: {
@@ -97,6 +98,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
     const fn = data.modelId || data.imageId ? getAllImages : getAllImagesIndex;
 
+    const features = getFeatureFlags({ user: session?.user, req });
+
     const { items, nextCursor } = await fn({
       ...data,
       types: type ? [type] : undefined,
@@ -111,6 +114,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       user: session?.user,
       disableMinor: true,
       disablePoi: true,
+      useLogicalReplica: features.logicalReplica,
     });
 
     const metadata: Metadata = {
