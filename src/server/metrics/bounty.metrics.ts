@@ -61,7 +61,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate bounty engagement metrics into JSON
@@ -87,7 +87,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -103,7 +103,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -122,7 +122,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate bounty comment metrics into JSON
@@ -147,7 +147,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -162,7 +162,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
           SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -180,7 +180,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBenefactorTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate bounty benefactor metrics into JSON
@@ -205,7 +205,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -221,7 +221,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           SET "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getBenefactorTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -239,7 +239,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEntryTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate bounty entry metrics into JSON
@@ -262,7 +262,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -277,7 +277,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
           SET "entryCount" = EXCLUDED."entryCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getEntryTasks', i + 1, 'of', tasks.length, 'done');
   });
 

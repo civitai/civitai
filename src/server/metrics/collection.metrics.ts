@@ -95,7 +95,7 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getItemTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate collection item metrics into JSON
@@ -118,7 +118,7 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -133,7 +133,7 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
           SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getItemTasks', i + 1, 'of', tasks.length, 'done');
   });
 

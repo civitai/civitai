@@ -6,7 +6,6 @@ import { articlesSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
-import dayjs from 'dayjs';
 import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:article');
@@ -112,7 +111,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
       `;
     }
-    
+
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -131,7 +130,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate article comment metrics into JSON
@@ -156,7 +155,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -171,7 +170,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
           SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -189,7 +188,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate article collection metrics into JSON
@@ -213,7 +212,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -228,7 +227,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
           SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -246,7 +245,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBuzzTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate article tip metrics into JSON
@@ -272,7 +271,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -288,7 +287,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
           SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -307,7 +306,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate article engagement metrics into JSON
@@ -331,7 +330,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -346,7 +345,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 

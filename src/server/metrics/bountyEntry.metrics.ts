@@ -82,7 +82,9 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated bounty entry reaction metrics
-        INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${snippets.reactionMetricNames})
+        INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${
+          snippets.reactionMetricNames
+        })
         SELECT 
           (value->>'bountyEntryId')::int,
           (value->>'timeframe')::"MetricTimeframe",
@@ -96,7 +98,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
       `;
     }
-    
+
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -115,7 +117,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBenefactorTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate bounty entry benefactor metrics into JSON
@@ -138,7 +140,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -153,7 +155,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           SET "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getBenefactorTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -171,7 +173,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBuzzTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate bountyEntry tip metrics into JSON
@@ -197,7 +199,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -213,7 +215,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
           SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
       `;
     }
-    
+
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
   });
 

@@ -55,7 +55,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate tag engagement metrics into JSON
@@ -80,7 +80,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -98,7 +98,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
               "updatedAt" = NOW()
       `;
     }
-    
+
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -134,7 +134,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
   const tasks = chunk(affected, 500).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log(`get ${table} counts`, i + 1, 'of', tasks.length);
-    
+
     // First, aggregate data into JSON to avoid blocking
     const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
       -- Aggregate tag count metrics into JSON
@@ -158,7 +158,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
       ) as data
       FROM metric_data
     `;
-    
+
     // Then perform the insert from the aggregated data
     if (metrics?.[0]?.data) {
       await executeRefresh(ctx)`
@@ -173,7 +173,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
           SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()
       `;
     }
-    
+
     log(`get ${table} counts`, i + 1, 'of', tasks.length, 'done');
   });
 

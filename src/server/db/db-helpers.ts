@@ -312,10 +312,10 @@ export function getExplainSql(value: typeof Prisma.Sql) {
 /**
  * Helper function to safely encode JSON data for use in SQL queries.
  * This properly escapes the JSON and wraps it in quotes for PostgreSQL.
- * 
+ *
  * @param data - The data to encode as JSON
  * @returns A string that can be safely interpolated into SQL as JSONB
- * 
+ *
  * @example
  * const metrics = await ctx.db.$queryRaw<{ data: any }[]>`...`;
  * if (metrics?.[0]?.data) {
