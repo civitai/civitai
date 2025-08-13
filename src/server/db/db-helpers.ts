@@ -309,6 +309,25 @@ export function getExplainSql(value: typeof Prisma.Sql) {
   return combineSqlWithParams(obj.text, obj.values);
 }
 
+/**
+ * Helper function to safely encode JSON data for use in SQL queries.
+ * This properly escapes the JSON and wraps it in quotes for PostgreSQL.
+ * 
+ * @param data - The data to encode as JSON
+ * @returns A string that can be safely interpolated into SQL as JSONB
+ * 
+ * @example
+ * const metrics = await ctx.db.$queryRaw<{ data: any }[]>`...`;
+ * if (metrics?.[0]?.data) {
+ *   await executeRefresh(ctx)`
+ *     SELECT * FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)})
+ *   `;
+ * }
+ */
+export function jsonbArrayFrom(data: any): string {
+  return `'${JSON.stringify(data)}'::jsonb`;
+}
+
 export const dbKV = {
   get: async function <T>(key: string, defaultValue?: T) {
     const stored = await dbWrite.keyValue.findUnique({ where: { key } });

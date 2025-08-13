@@ -4,6 +4,7 @@ import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:bounty');
 
@@ -90,7 +91,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           (value->>'dislikeCount')::int,
           (value->>'laughCount')::int,
           (value->>'cryCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
           SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
       `;
@@ -147,7 +148,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           (value->>'bountyEntryId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'unitAmountCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
           SET "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
       `;
@@ -207,7 +208,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'tippedCount')::int,
           (value->>'tippedAmountCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
           SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
       `;

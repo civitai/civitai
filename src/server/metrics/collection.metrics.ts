@@ -6,6 +6,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:collection');
 
@@ -127,7 +128,7 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
           (value->>'collectionId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'itemCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("collectionId", timeframe) DO UPDATE
           SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()
       `;

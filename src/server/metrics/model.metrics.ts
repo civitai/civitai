@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { templateHandler } from '~/server/db/db-helpers';
+import { templateHandler, jsonbArrayFrom } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
@@ -466,7 +466,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'thumbsUpCount')::int,
           (value->>'thumbsDownCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
           SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", 
               "thumbsDownCount" = EXCLUDED."thumbsDownCount", 
@@ -570,7 +570,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
           SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()
       `;

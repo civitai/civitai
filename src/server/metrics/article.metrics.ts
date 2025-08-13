@@ -7,6 +7,7 @@ import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import dayjs from 'dayjs';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:article');
 
@@ -106,7 +107,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           (value->>'dislikeCount')::int,
           (value->>'laughCount')::int,
           (value->>'cryCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
       `;
@@ -165,7 +166,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'commentCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
       `;
@@ -222,7 +223,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
       `;
@@ -282,7 +283,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'tippedCount')::int,
           (value->>'tippedAmountCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
       `;
@@ -340,7 +341,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'hideCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()
       `;

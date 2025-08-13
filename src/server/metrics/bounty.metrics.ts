@@ -6,6 +6,7 @@ import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-h
 import { bountiesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:bounty');
 
@@ -97,7 +98,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'favoriteCount')::int,
           (value->>'trackCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
           SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "updatedAt" = NOW()
       `;
@@ -156,7 +157,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
           (value->>'bountyId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'commentCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
           SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
       `;
@@ -215,7 +216,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'benefactorCount')::int,
           (value->>'unitAmountCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
           SET "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
       `;
@@ -271,7 +272,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
           (value->>'bountyId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'entryCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
           SET "entryCount" = EXCLUDED."entryCount", "updatedAt" = NOW()
       `;

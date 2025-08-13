@@ -5,6 +5,7 @@ import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:tag');
 
@@ -90,7 +91,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followerCount')::int,
           (value->>'hiddenCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("tagId", timeframe) DO UPDATE
           SET "followerCount" = EXCLUDED."followerCount", 
               "hiddenCount" = EXCLUDED."hiddenCount", 
@@ -167,7 +168,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
           (value->>'tagId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'count')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("tagId", timeframe) DO UPDATE
           SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()
       `;

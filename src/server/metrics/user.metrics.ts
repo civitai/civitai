@@ -6,6 +6,7 @@ import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:user');
 
@@ -98,7 +99,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followerCount')::int,
           (value->>'hiddenCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "followerCount" = EXCLUDED."followerCount", 
               "hiddenCount" = EXCLUDED."hiddenCount", 
@@ -157,7 +158,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followingCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "followingCount" = EXCLUDED."followingCount", "updatedAt" = NOW()
       `;
@@ -221,7 +222,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'uploadCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "uploadCount" = EXCLUDED."uploadCount", "updatedAt" = NOW()
       `;
@@ -280,7 +281,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'reviewCount')::int
-        FROM jsonb_array_elements(${metrics[0].data}::jsonb) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()
       `;
