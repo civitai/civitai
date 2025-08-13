@@ -6,7 +6,7 @@ import { articlesSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
-import dayjs from 'dayjs';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:article');
 
@@ -65,22 +65,54 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
 
-    await executeRefresh(ctx)`
-      -- update article reaction metrics
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, ${snippets.reactionMetricNames})
-      SELECT
-        r."articleId",
-        tf.timeframe,
-        ${snippets.reactionTimeframes()}
-      FROM "ArticleReaction" r
-      JOIN "Article" a ON a.id = r."articleId" -- ensure the article exists
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE r."articleId" IN (${ids})
-      GROUP BY r."articleId", tf.timeframe
-      ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate article reaction metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          r."articleId",
+          tf.timeframe,
+          ${snippets.reactionTimeframes()}
+        FROM "ArticleReaction" r
+        JOIN "Article" a ON a.id = r."articleId" -- ensure the article exists
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE r."articleId" IN (${ids})
+        GROUP BY r."articleId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'articleId', "articleId",
+          'timeframe', timeframe,
+          'heartCount', "heartCount",
+          'likeCount', "likeCount",
+          'dislikeCount', "dislikeCount",
+          'laughCount', "laughCount",
+          'cryCount', "cryCount"
+        )
+      ) as data
+      FROM metric_data
     `;
-    log('getReactionTasks', i + 1, 'of', tasks.length);
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated article reaction metrics
+        INSERT INTO "ArticleMetric" ("articleId", timeframe, ${snippets.reactionMetricNames})
+        SELECT 
+          (value->>'articleId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'heartCount')::int,
+          (value->>'likeCount')::int,
+          (value->>'dislikeCount')::int,
+          (value->>'laughCount')::int,
+          (value->>'cryCount')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("articleId", timeframe) DO UPDATE
+          SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
+      `;
+    }
+
+    log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
@@ -98,22 +130,47 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update article comment metrics
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, "commentCount")
-      SELECT
-        t."articleId",
-        tf.timeframe,
-        ${snippets.timeframeSum('c."createdAt"')}
-      FROM "Thread" t
-      JOIN "Article" a ON a.id = t."articleId" -- ensure the article exists
-      JOIN "CommentV2" c ON c."threadId" = t.id
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE t."articleId" IN (${ids})
-      GROUP BY t."articleId", tf.timeframe
-      ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate article comment metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          t."articleId",
+          tf.timeframe,
+          ${snippets.timeframeSum('c."createdAt"')} as "commentCount"
+        FROM "Thread" t
+        JOIN "Article" a ON a.id = t."articleId" -- ensure the article exists
+        JOIN "CommentV2" c ON c."threadId" = t.id
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE t."articleId" IN (${ids})
+        GROUP BY t."articleId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'articleId', "articleId",
+          'timeframe', timeframe,
+          'commentCount', "commentCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated article comment metrics
+        INSERT INTO "ArticleMetric" ("articleId", timeframe, "commentCount")
+        SELECT 
+          (value->>'articleId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'commentCount')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("articleId", timeframe) DO UPDATE
+          SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
+      `;
+    }
+
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -131,21 +188,46 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update article collection metrics
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount")
-      SELECT
-        "articleId",
-        tf.timeframe,
-        ${snippets.timeframeSum('ci."createdAt"')}
-      FROM "CollectionItem" ci
-      JOIN "Article" a ON a.id = ci."articleId" -- ensure the article exists
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE ci."articleId" IN (${ids})
-      GROUP BY ci."articleId", tf.timeframe
-      ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate article collection metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "articleId",
+          tf.timeframe,
+          ${snippets.timeframeSum('ci."createdAt"')} as "collectedCount"
+        FROM "CollectionItem" ci
+        JOIN "Article" a ON a.id = ci."articleId" -- ensure the article exists
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE ci."articleId" IN (${ids})
+        GROUP BY ci."articleId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'articleId', "articleId",
+          'timeframe', timeframe,
+          'collectedCount', "collectedCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated article collection metrics
+        INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount")
+        SELECT 
+          (value->>'articleId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'collectedCount')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("articleId", timeframe) DO UPDATE
+          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
+      `;
+    }
+
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -163,22 +245,49 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBuzzTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update article tip metrics
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, "tippedCount", "tippedAmountCount")
-      SELECT
-        "entityId",
-        tf.timeframe,
-        ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
-        ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
-      FROM "BuzzTip" bt
-      JOIN "Article" a ON a.id = bt."entityId" -- ensure the article exists
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "entityId" IN (${ids}) AND "entityType" = 'Article'
-      GROUP BY "entityId", tf.timeframe
-      ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate article tip metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "entityId",
+          tf.timeframe,
+          ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
+          ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
+        FROM "BuzzTip" bt
+        JOIN "Article" a ON a.id = bt."entityId" -- ensure the article exists
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "entityId" IN (${ids}) AND "entityType" = 'Article'
+        GROUP BY "entityId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'articleId', "entityId",
+          'timeframe', timeframe,
+          'tippedCount', "tippedCount",
+          'tippedAmountCount', "tippedAmountCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated article tip metrics
+        INSERT INTO "ArticleMetric" ("articleId", timeframe, "tippedCount", "tippedAmountCount")
+        SELECT 
+          (value->>'articleId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'tippedCount')::int,
+          (value->>'tippedAmountCount')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("articleId", timeframe) DO UPDATE
+          SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
+      `;
+    }
+
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -197,21 +306,46 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update article engagement metrics
-      INSERT INTO "ArticleMetric" ("articleId", timeframe, "hideCount")
-      SELECT
-        "articleId",
-        tf.timeframe,
-        ${snippets.timeframeSum('ae."createdAt"')} "hideCount"
-      FROM "ArticleEngagement" ae
-      JOIN "Article" a ON a.id = ae."articleId" -- ensure the article exists
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "articleId" IN (${ids}) AND ae.type = 'Hide'
-      GROUP BY "articleId", tf.timeframe
-      ON CONFLICT ("articleId", timeframe) DO UPDATE
-        SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate article engagement metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "articleId",
+          tf.timeframe,
+          ${snippets.timeframeSum('ae."createdAt"')} "hideCount"
+        FROM "ArticleEngagement" ae
+        JOIN "Article" a ON a.id = ae."articleId" -- ensure the article exists
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "articleId" IN (${ids}) AND ae.type = 'Hide'
+        GROUP BY "articleId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'articleId', "articleId",
+          'timeframe', timeframe,
+          'hideCount', "hideCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated article engagement metrics
+        INSERT INTO "ArticleMetric" ("articleId", timeframe, "hideCount")
+        SELECT 
+          (value->>'articleId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'hideCount')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("articleId", timeframe) DO UPDATE
+          SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()
+      `;
+    }
+
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 

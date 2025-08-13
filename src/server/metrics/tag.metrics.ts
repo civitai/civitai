@@ -5,6 +5,7 @@ import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
+import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:tag');
 
@@ -54,21 +55,50 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update tag engagement metrics
-      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount")
-      SELECT
-        "tagId",
-        tf.timeframe,
-        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followerCount",
-        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
-      FROM "TagEngagement" e
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "tagId" IN (${ids})
-      GROUP BY "tagId", tf.timeframe
-      ON CONFLICT ("tagId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "hiddenCount" = EXCLUDED."hiddenCount", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate tag engagement metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "tagId",
+          tf.timeframe,
+          ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followerCount",
+          ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
+        FROM "TagEngagement" e
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "tagId" IN (${ids})
+        GROUP BY "tagId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'tagId', "tagId",
+          'timeframe', timeframe,
+          'followerCount', "followerCount",
+          'hiddenCount', "hiddenCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated tag engagement metrics
+        INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount")
+        SELECT 
+          (value->>'tagId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'followerCount')::int,
+          (value->>'hiddenCount')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("tagId", timeframe) DO UPDATE
+          SET "followerCount" = EXCLUDED."followerCount", 
+              "hiddenCount" = EXCLUDED."hiddenCount", 
+              "updatedAt" = NOW()
+      `;
+    }
+
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -104,21 +134,46 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
   const tasks = chunk(affected, 500).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log(`get ${table} counts`, i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update tag count metrics
-      INSERT INTO "TagMetric" ("tagId", timeframe, "${column}")
-      SELECT
-        "tagId",
-        tf.timeframe,
-        ${snippets.timeframeSum('s."createdAt"')}
-      FROM "${table}" t
-      JOIN "${sourceTable}" s ON s.id = t."${id}"
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "tagId" IN (${ids})
-      GROUP BY "tagId", tf.timeframe
-      ON CONFLICT ("tagId", timeframe) DO UPDATE
-        SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+      -- Aggregate tag count metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          "tagId",
+          tf.timeframe,
+          ${snippets.timeframeSum('s."createdAt"')} as count
+        FROM "${table}" t
+        JOIN "${sourceTable}" s ON s.id = t."${id}"
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        WHERE "tagId" IN (${ids})
+        GROUP BY "tagId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'tagId', "tagId",
+          'timeframe', timeframe,
+          'count', count
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics?.[0]?.data) {
+      await executeRefresh(ctx)`
+        -- Insert pre-aggregated tag count metrics
+        INSERT INTO "TagMetric" ("tagId", timeframe, "${column}")
+        SELECT 
+          (value->>'tagId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'count')::int
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        ON CONFLICT ("tagId", timeframe) DO UPDATE
+          SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()
+      `;
+    }
+
     log(`get ${table} counts`, i + 1, 'of', tasks.length, 'done');
   });
 
