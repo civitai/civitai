@@ -198,25 +198,6 @@ export async function purgeResizeCache({ url }: { url: string }) {
   }
 }
 
-async function markImagesDeleted(id: number | number[]) {
-  if (!Array.isArray(id)) id = [id];
-
-  const toSet = Object.fromEntries(id.map((x) => [x, x]));
-  await Promise.all([
-    sysRedis.packed.hmSet(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, toSet),
-    sysRedis.hExpire(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
-  ]);
-}
-
-const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) => {
-  const keys = data.map((x) => x.id.toString());
-  if (!keys.length) return data;
-  const deleted = (
-    (await sysRedis.packed.hmGet<number>(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
-  ).filter(isDefined);
-  return data.filter((x) => !deleted.includes(x.id));
-};
-
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -228,9 +209,6 @@ export const deleteImageById = async ({
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
     if (!image) return;
-
-    // Mark as deleted in cache so we filter it out in the future
-    await markImagesDeleted(id);
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
@@ -1545,15 +1523,13 @@ export const getAllImagesIndex = async (
 
   const currentUserId = user?.id;
 
-  const { data: searchResultsTmp, nextCursor: searchNextCursor } = await getImagesFromSearch({
+  const { data: searchResults, nextCursor: searchNextCursor } = await getImagesFromSearch({
     ...input,
     currentUserId,
     isModerator: user?.isModerator,
     offset,
     entry,
   });
-
-  const searchResults = await filterOutDeleted(searchResultsTmp);
 
   if (!searchResults.length) {
     return {
