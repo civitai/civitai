@@ -5,7 +5,12 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:article');
@@ -66,7 +71,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     log('getReactionTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate article reaction metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -94,7 +99,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated article reaction metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, ${snippets.reactionMetricNames})
@@ -106,7 +111,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           (value->>'dislikeCount')::int,
           (value->>'laughCount')::int,
           (value->>'cryCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
       `;
