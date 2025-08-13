@@ -35,12 +35,10 @@ const imageEntitiesSchema = z.enum(imageEntities);
 export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
 export const comfyMetaSchema = z
   .object({
-    prompt: z.object({}).loose(),
-    workflow: z
-      .object({
-        nodes: z.object({}).loose().array().optional(),
-      })
-      .loose(),
+    prompt: z.looseObject({}),
+    workflow: z.looseObject({
+      nodes: z.looseObject({}).array().optional(),
+    }),
   })
   .partial();
 
@@ -128,7 +126,7 @@ export const civitaiResourceSchema = z.object({
   modelVersionId: z.number(),
 });
 
-export const imageMetaSchema = imageGenerationSchema.partial().loose();
+export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
     comfy: z
@@ -149,7 +147,7 @@ export const imageMetaOutput = imageGenerationSchema
     process: z.string().optional(),
     type: z.string().optional(),
   })
-  .loose();
+  .passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({

@@ -199,11 +199,10 @@ export const modelUpsertSchema = licensingSchema.extend({
   minor: z.boolean().default(false).optional(),
   sfwOnly: z.boolean().default(false).optional(),
   meta: z
-    .object({
+    .looseObject({
       showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
     })
-    .loose()
     .transform((val) => val as ModelMeta | null)
     .nullish(),
   availability: z.enum(Availability).optional(),
