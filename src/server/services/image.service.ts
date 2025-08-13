@@ -2077,7 +2077,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       });
     } else {
       const dbIdData = await logicalDb.query<{ id: number }>(
-        `select id from "Image" where "id" in ($1)`,
+        `select id from "Image" where "id" = ANY($1::integer[])`,
         [filteredHitIds]
       );
       dbIdResp = dbIdData.rows;
