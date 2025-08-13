@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -75,7 +76,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
         FROM "UserEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "targetUserId" IN (${ids})
+        WHERE "targetUserId" IN (${Prisma.join(ids)})
         GROUP BY "targetUserId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -136,7 +137,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followingCount"
         FROM "UserEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${ids})
+        WHERE "userId" IN (${Prisma.join(ids)})
         GROUP BY "userId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -196,7 +197,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
         FROM "ModelVersion" mv
         JOIN "Model" m ON mv."modelId" = m.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${ids})
+        WHERE "userId" IN (${Prisma.join(ids)})
           AND (
             mv."status" = 'Published'
             OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
@@ -258,7 +259,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
         FROM "ResourceReview" rr
         JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${ids})
+        WHERE "userId" IN (${Prisma.join(ids)})
           AND mv.status = 'Published'
         GROUP BY "userId", tf.timeframe
       )

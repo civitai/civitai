@@ -442,7 +442,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
         CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE r.exclude = FALSE
           AND r."tosViolation" = FALSE
-          AND r."modelId" IN (${ids})
+          AND r."modelId" IN (${Prisma.join(ids)})
         GROUP BY r."modelId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -522,6 +522,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT "modelId" as id
     FROM "CollectionItem"
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    ORDER BY "modelId"
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
@@ -106,7 +107,7 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"')} as "itemCount"
         FROM "CollectionItem"
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "collectionId" IN (${ids})
+        WHERE "collectionId" IN (${Prisma.join(ids)})
         GROUP BY "collectionId", tf.timeframe
       )
       SELECT jsonb_agg(

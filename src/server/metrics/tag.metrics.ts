@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -67,7 +68,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
         FROM "TagEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "tagId" IN (${ids})
+        WHERE "tagId" IN (${Prisma.join(ids)})
         GROUP BY "tagId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -146,7 +147,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
         FROM "${table}" t
         JOIN "${sourceTable}" s ON s.id = t."${id}"
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "tagId" IN (${ids})
+        WHERE "tagId" IN (${Prisma.join(ids)})
         GROUP BY "tagId", tf.timeframe
       )
       SELECT jsonb_agg(

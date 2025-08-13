@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { createLogger } from '~/utils/logging';
@@ -61,7 +62,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         FROM "BountyEntryReaction" r
         JOIN "BountyEntry" be ON be.id = r."bountyEntryId" -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE r."bountyEntryId" IN (${ids.join(',')})
+        WHERE r."bountyEntryId" IN (${Prisma.join(ids)})
         GROUP BY r."bountyEntryId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -128,7 +129,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
         FROM "BountyBenefactor" bb
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE bb."awardedToId" IN (${ids.join(',')})
+        WHERE bb."awardedToId" IN (${Prisma.join(ids)})
         GROUP BY bb."bountyId", bb."awardedToId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -186,7 +187,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
         FROM "BuzzTip" bt
         JOIN "BountyEntry" be ON be.id = bt."entityId" -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "entityId" IN (${ids.join(',')}) AND "entityType" = 'bountyEntry'
+        WHERE "entityId" IN (${Prisma.join(ids)}) AND "entityType" = 'bountyEntry'
         GROUP BY "entityId", tf.timeframe
       )
       SELECT jsonb_agg(
