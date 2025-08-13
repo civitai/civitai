@@ -276,7 +276,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     if (isCivitComfy) {
-      metadata.civitaiResources ??= [];
+      const civitaiResources = metadata.civitaiResources ?? [];
+
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
         const resource: CivitaiResource = {
@@ -285,7 +286,12 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         };
         const weight = additionalResources.find((x) => x.name === air)?.strength;
         if (weight) resource.weight = weight;
-        (metadata.civitaiResources as CivitaiResource[]).push(resource);
+        const index = civitaiResources.findIndex(
+          (x) => x.modelVersionId === resource.modelVersionId
+        );
+        if (index > -1) civitaiResources[index] = resource;
+        else civitaiResources.push(resource);
+        metadata.civitaiResources = civitaiResources;
       }
     }
 
