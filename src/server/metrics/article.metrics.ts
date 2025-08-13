@@ -137,7 +137,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
     log('getCommentTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate article comment metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -162,7 +162,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated article comment metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "commentCount")
@@ -170,7 +170,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'commentCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
       `;
@@ -195,7 +195,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
     log('getCollectionTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate article collection metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -219,7 +219,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated article collection metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount")
@@ -227,7 +227,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
       `;
@@ -252,7 +252,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
     log('getBuzzTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate article tip metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -278,7 +278,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated article tip metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "tippedCount", "tippedAmountCount")
@@ -287,7 +287,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'tippedCount')::int,
           (value->>'tippedAmountCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
       `;
@@ -313,7 +313,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     log('getEngagementTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate article engagement metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -337,7 +337,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated article engagement metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "hideCount")
@@ -345,7 +345,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'hideCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
           SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()
       `;
