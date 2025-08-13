@@ -109,7 +109,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     if (storeData && config) {
       // const registered = Object.keys(form.getValues());
       const { params, resources, runType } = storeData;
-      let data = { params, resources };
+      let data = { ...params, resources };
       if (runType === 'patch') {
         const formData = form.getValues();
         data = { ...formData, ...data };
