@@ -276,7 +276,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     if (isCivitComfy) {
-      const civitaiResources = metadata.civitaiResources ?? [];
+      const civitaiResources = (metadata.civitaiResources ?? []) as CivitaiResource[];
 
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
