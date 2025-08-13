@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
@@ -74,7 +75,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         FROM "BountyEngagement" e
         JOIN "Bounty" b ON b.id = e."bountyId" -- ensure the bounty exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "bountyId" IN (${ids})
+        WHERE "bountyId" IN (${Prisma.join(ids)})
         GROUP BY "bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -135,7 +136,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
         JOIN "Bounty" b ON b.id = t."bountyId" -- ensure the bounty exists
         JOIN "CommentV2" c ON c."threadId" = t.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE t."bountyId" IN (${ids})
+        WHERE t."bountyId" IN (${Prisma.join(ids)})
         GROUP BY t."bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -192,7 +193,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
         FROM "BountyBenefactor"
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "bountyId" IN (${ids})
+        WHERE "bountyId" IN (${Prisma.join(ids)})
         GROUP BY "bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -250,7 +251,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"')} as "entryCount"
         FROM "BountyEntry"
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "bountyId" IN (${ids})
+        WHERE "bountyId" IN (${Prisma.join(ids)})
         GROUP BY "bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
