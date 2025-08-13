@@ -95,6 +95,13 @@ export const imageMetadataResourceSchema = z.object({
   hash: z.string().optional(),
 });
 
+export const additionalResourceSchema = z.object({
+  name: z.string().optional(),
+  type: z.string().optional(),
+  strength: z.number().optional(),
+  strengthClip: z.number().optional(),
+});
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -113,6 +120,7 @@ export const imageGenerationSchema = z.object({
   type: z.string().optional(),
   workflow: z.string().optional(),
   resources: imageMetadataResourceSchema.array().optional(),
+  additionalResources: additionalResourceSchema.array().optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),
