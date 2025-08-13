@@ -24,13 +24,15 @@ type ClientInstanceType =
   | 'primaryRead'
   | 'primaryReadLong'
   | 'notification'
-  | 'notificationRead';
+  | 'notificationRead'
+  | 'logicalReplica';
 const instanceUrlMap: Record<ClientInstanceType, string> = {
   notification: env.NOTIFICATION_DB_URL,
   notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
   primary: env.DATABASE_URL,
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
+  logicalReplica: env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL,
 };
 
 export function getClient(
@@ -46,7 +48,11 @@ export function getClient(
   const connectionString = connectionStringUrl.toString();
 
   const isNotification = instance === 'notification' || instance === 'notificationRead';
-  const appBaseName = isNotification ? 'notif-pg' : 'node-pg';
+  const appBaseName = isNotification
+    ? 'notif-pg'
+    : instance === 'logicalReplica'
+    ? 'logical-pg'
+    : 'node-pg';
 
   const pool = new Pool({
     connectionString,

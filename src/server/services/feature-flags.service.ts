@@ -128,6 +128,7 @@ const featureFlags = createFeatureFlags({
   zkp2pPayments: ['mod'],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
+  logicalReplica: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
