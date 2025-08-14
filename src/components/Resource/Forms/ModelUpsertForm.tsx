@@ -727,9 +727,11 @@ export const PrivateModelAutomaticSetup = ({
         utils.modelVersion.getById.invalidate({ id: modelVersionId });
       }
 
-      await router.replace(
-        `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
-      );
+      if (form.id) {
+        await router.replace(
+          `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
+        );
+      }
 
       handleClose();
     } catch (error) {

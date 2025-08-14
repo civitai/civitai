@@ -115,11 +115,19 @@ export function ImagesAsPostsInfinite({
     [gallerySettings?.hiddenTags]
   );
 
+  const hiddenImageIds = useMemo(
+    () =>
+      selectedVersionId && gallerySettings
+        ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
+        : [],
+    [selectedVersionId, gallerySettings]
+  );
+
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    hiddenImages: !showHidden ? gallerySettings?.hiddenImages : undefined,
+    hiddenImages: !showHidden ? hiddenImageIds : undefined,
     hiddenUsers: !showHidden ? hiddenUsers : undefined,
     hiddenTags: !showHidden ? hiddenTags : undefined,
     browsingLevel: intersection,
@@ -137,12 +145,12 @@ export function ImagesAsPostsInfinite({
   };
 
   useEffect(() => {
-    if (!gallerySettings?.hiddenImages.length) setShowHidden(false);
-  }, [gallerySettings?.hiddenImages]);
+    if (!hiddenImageIds.length) setShowHidden(false);
+  }, [hiddenImageIds]);
 
   const isMuted = currentUser?.muted ?? false;
   const hasModerationPreferences =
-    !!gallerySettings?.hiddenImages.length ||
+    !!hiddenImageIds.length ||
     !!gallerySettings?.hiddenUsers.length ||
     !!gallerySettings?.hiddenTags.length;
 
@@ -191,7 +199,7 @@ export function ImagesAsPostsInfinite({
                 <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
                 {showModerationOptions && (
                   <>
-                    {!!gallerySettings?.hiddenImages.length && (
+                    {!!hiddenImageIds.length && (
                       <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                         <LegacyActionIcon
                           variant="light"

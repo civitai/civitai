@@ -303,10 +303,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const modelGallerySettings = input.modelId
       ? await getGallerySettingsByModelId({ id: input.modelId })
       : null;
-    const hiddenImagesIds = modelGallerySettings?.hiddenImages ?? [];
+    const hiddenImages = modelGallerySettings?.hiddenImages ?? {};
+    const versionHiddenImages = input.modelVersionId
+      ? hiddenImages[input.modelVersionId] ?? []
+      : [];
     const pinnedPosts = modelGallerySettings?.pinnedPosts ?? {};
-    const versionPinnedPosts =
-      pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
+    const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
       const { items: pinnedPostsImages } = await fetchFn({
@@ -335,7 +337,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         useCombinedNsfwLevel: !features.canViewNsfw,
         cursor,
-        ids: fetchHidden ? hiddenImagesIds : undefined,
+        ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },

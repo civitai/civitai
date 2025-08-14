@@ -31,26 +31,41 @@ export const useGallerySettings = ({ modelId }: { modelId: number }) => {
   });
   const handleToggleSettings = async ({
     modelId,
-    images,
     tags,
     users,
     level,
+    hiddenImages,
     pinnedPosts,
   }: {
     modelId: number;
-    images?: Array<{ id: number }>;
     tags?: Array<{ id: number; name: string }>;
     users?: Array<{ id: number; username: string | null }>;
     level?: number;
+    hiddenImages?: { modelVersionId: number; imageIds: number[] };
     pinnedPosts?: { modelVersionId: number; postIds: number[] };
   }) => {
     if (!data) return;
     const updatedSettings = {
-      hiddenImages: images
-        ? images.some((x) => data.hiddenImages.includes(x.id))
-          ? data.hiddenImages.filter((x) => !images.find((i) => i.id === x))
-          : [...data.hiddenImages, ...images.map((x) => x.id)]
-        : data?.hiddenImages ?? [],
+      hiddenImages: hiddenImages
+        ? hiddenImages.imageIds.some((id) => {
+            const versionHiddenImages = data.hiddenImages?.[hiddenImages.modelVersionId] ?? [];
+            return versionHiddenImages.includes(id);
+          })
+          ? {
+              ...data.hiddenImages,
+              [hiddenImages.modelVersionId]:
+                data.hiddenImages?.[hiddenImages.modelVersionId]?.filter(
+                  (id) => !hiddenImages.imageIds.includes(id)
+                ) ?? [],
+            }
+          : {
+              ...data.hiddenImages,
+              [hiddenImages.modelVersionId]: [
+                ...(data.hiddenImages?.[hiddenImages.modelVersionId] ?? []),
+                ...hiddenImages.imageIds,
+              ],
+            }
+        : data?.hiddenImages ?? {},
       hiddenTags: tags
         ? tags.some((x) => data.hiddenTags.map((x) => x.id).includes(x.id))
           ? data.hiddenTags.filter((x) => !tags.find((t) => t.id === x.id))
