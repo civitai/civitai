@@ -20,13 +20,13 @@ export const createTrainingRequestDryRunSchema = z.object({
 
 export type MoveAssetInput = z.infer<typeof moveAssetInput>;
 export const moveAssetInput = z.object({
-  url: z.string().url(),
+  url: z.string(), // TODO zod/v4 upgrade, change this back to url (zod bug)
   modelVersionId: z.number().positive(),
 });
 
 export type AutoTagInput = z.infer<typeof autoTagInput>;
 export const autoTagInput = z.object({
-  url: z.string().url(),
+  url: z.string(), // TODO zod/v4 upgrade, change this back to url (zod bug)
   modelId: z.number().positive(),
 });
 export type AutoCaptionInput = z.infer<typeof autoCaptionInput>;
