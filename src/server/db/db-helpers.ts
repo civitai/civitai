@@ -15,7 +15,8 @@ type CancellableResult<R extends QueryResultRow = any> = {
 };
 export type AugmentedPool = Pool & {
   cancellableQuery: <R extends QueryResultRow = any>(
-    sql: Prisma.Sql | string
+    sql: Prisma.Sql | string,
+    params?: any[]
   ) => Promise<CancellableResult<R>>;
 };
 
@@ -71,22 +72,38 @@ export function getClient(
   }) as AugmentedPool;
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
-    sql: Prisma.Sql | string
+    sql: Prisma.Sql | string,
+    params?: any[]
   ) {
     const connection = await pool.connect();
     const pidQuery = await connection.query('SELECT pg_backend_pid()');
     const pid = pidQuery.rows[0].pg_backend_pid;
 
-    // Fix dates
+    let queryText: string;
+    let queryParams: any[] | undefined;
+
     if (typeof sql === 'object') {
-      for (const i in sql.values) sql.values[i] = formatSqlType(sql.values[i]);
+      // Prisma.Sql object
+      queryText = sql.text;
+      queryParams = sql.values;
+      for (const i in queryParams) queryParams[i] = formatSqlType(queryParams[i]);
+    } else if (params !== undefined) {
+      // Plain string with parameters
+      queryText = sql;
+      queryParams = params.map(formatSqlType);
+    } else {
+      // Plain string without parameters
+      queryText = sql;
+      queryParams = undefined;
     }
 
     // Logging
-    log(instance, sql);
+    log(instance, params !== undefined ? { text: queryText, values: queryParams } : sql);
 
     let done = false;
-    const query = connection.query<R>(sql);
+    const query = queryParams !== undefined 
+      ? connection.query<R>(queryText, queryParams)
+      : connection.query<R>(queryText);
     query.finally(() => {
       done = true;
       connection.release();
@@ -307,6 +324,25 @@ export function getExplainSql(value: typeof Prisma.Sql) {
     ${value}
   `;
   return combineSqlWithParams(obj.text, obj.values);
+}
+
+/**
+ * Helper function to safely encode JSON data for use in SQL queries.
+ * This properly escapes the JSON and wraps it in quotes for PostgreSQL.
+ *
+ * @param data - The data to encode as JSON
+ * @returns A string that can be safely interpolated into SQL as JSONB
+ *
+ * @example
+ * const metrics = await ctx.db.$queryRaw<{ data: any }[]>`...`;
+ * if (metrics?.[0]?.data) {
+ *   await executeRefresh(ctx)`
+ *     SELECT * FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)})
+ *   `;
+ * }
+ */
+export function jsonbArrayFrom(data: any): string {
+  return `'${JSON.stringify(data)}'::jsonb`;
 }
 
 export const dbKV = {

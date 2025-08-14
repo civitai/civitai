@@ -3,10 +3,10 @@ import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { templateHandler } from '~/server/db/db-helpers';
+import { templateHandler, jsonbArrayFrom } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
+import { executeRefresh, executeRefreshWithParams, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getLastAuctionReset } from '~/server/services/auction.service';
@@ -424,27 +424,58 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getModelRatingTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update model rating metrics
-      INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
-      SELECT
-        r."modelId",
-        tf.timeframe,
-        ${snippets.timeframeCount('r."createdAt"', 'r."userId"', 'recommended')} "thumbsUpCount",
-        ${snippets.timeframeCount(
-          'r."createdAt"',
-          'r."userId"',
-          'NOT recommended'
-        )} "thumbsDownCount"
-      FROM "ResourceReview" r
-      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      WHERE r.exclude = FALSE
-        AND r."tosViolation" = FALSE
-        AND r."modelId" IN (${ids})
-      GROUP BY r."modelId", tf.timeframe
-      ON CONFLICT ("modelId", timeframe) DO UPDATE
-        SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await getMetricJson(ctx)`
+      -- Aggregate model rating metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          r."modelId",
+          tf.timeframe,
+          ${snippets.timeframeCount('r."createdAt"', 'r."userId"', 'recommended')} "thumbsUpCount",
+          ${snippets.timeframeCount(
+            'r."createdAt"',
+            'r."userId"',
+            'NOT recommended'
+          )} "thumbsDownCount"
+        FROM "ResourceReview" r
+        CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+        WHERE r.exclude = FALSE
+          AND r."tosViolation" = FALSE
+          AND r."modelId" IN (${ids})
+        GROUP BY r."modelId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'modelId', "modelId",
+          'timeframe', timeframe,
+          'thumbsUpCount', "thumbsUpCount",
+          'thumbsDownCount', "thumbsDownCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model rating metrics
+        INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
+        SELECT 
+          (value->>'modelId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'thumbsUpCount')::int,
+          (value->>'thumbsDownCount')::int
+        FROM jsonb_array_elements($1::jsonb) AS value
+        ON CONFLICT ("modelId", timeframe) DO UPDATE
+          SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", 
+              "thumbsDownCount" = EXCLUDED."thumbsDownCount", 
+              "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
+    }
+
     log('getModelRatingTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -493,35 +524,63 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT "modelId" as id
     FROM "CollectionItem"
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    ORDER BY "modelId"
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update model collect metrics
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await getMetricJson(ctx)`
+      -- Aggregate model collection metrics into JSON
       WITH Timeframes AS (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ),
+      metric_data AS (
+        SELECT
+          c."modelId",
+          tf.timeframe,
+          COUNT(DISTINCT c."addedById") AS "collectedCount"
+        FROM "CollectionItem" c
+        JOIN Timeframes tf ON
+          (tf.timeframe = 'AllTime')
+          OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
+          OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')
+          OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
+          OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
+        JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
+        WHERE c."modelId" = ANY (ARRAY[${ids}])
+          AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        GROUP BY c."modelId", tf.timeframe
       )
-      INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
-      SELECT
-        c."modelId",
-        tf.timeframe,
-        COUNT(DISTINCT c."addedById") AS "collectedCount"
-      FROM "CollectionItem" c
-      JOIN Timeframes tf ON
-        (tf.timeframe = 'AllTime')
-        OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
-        OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')
-        OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
-        OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
-      JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-      WHERE c."modelId" = ANY (ARRAY[${ids}])
-        AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY c."modelId", tf.timeframe
-      ON CONFLICT ("modelId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'modelId', "modelId",
+          'timeframe', timeframe,
+          'collectedCount', "collectedCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model collection metrics
+        INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
+        SELECT 
+          (value->>'modelId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'collectedCount')::int
+        FROM jsonb_array_elements($1::jsonb) AS value
+        ON CONFLICT ("modelId", timeframe) DO UPDATE
+          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
+    }
+
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
