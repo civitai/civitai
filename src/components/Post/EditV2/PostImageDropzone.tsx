@@ -13,6 +13,7 @@ import type { PostDetailEditable } from '~/server/services/post.service';
 import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,
+  useOrchestratorUrlStore,
 } from '~/store/post-image-transmitter.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -127,6 +128,7 @@ export function PostImageDropzone({
   };
   // #endregion
 
+  const orchestratorTransferredMedia = useOrchestratorUrlStore((state) => state.data);
   // #region [orchestrator files]
   useEffect(() => {
     async function handleSrc() {
@@ -135,7 +137,7 @@ export function PostImageDropzone({
       if (files.length) handleUpload([...files]);
     }
     handleSrc();
-  }, []); // eslint-disable-line
+  }, [orchestratorTransferredMedia]); // eslint-disable-line
   // #endregion
 
   return (

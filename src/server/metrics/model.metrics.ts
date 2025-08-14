@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { templateHandler, jsonbArrayFrom } from '~/server/db/db-helpers';
+import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import {

@@ -106,21 +106,31 @@ export function GeneratedImageActions({
         }
       })
       .filter(isDefined);
+
     try {
       const key = 'generator';
       orchestratorMediaTransmitter.setUrls(key, imageData);
-      const post = await createPostMutation.mutateAsync({});
-      // updateImages({}) // tODO - show that this image has been posted?
-      if (running) helpers?.next();
-      await router.push({
-        pathname: '/posts/[postId]/edit',
-        query: removeEmpty({
-          postId: post.id,
-          src: key,
-          returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
-        }),
-      });
-      generationPanel.close();
+
+      if (router.pathname === '/posts/[postId]/edit') {
+        await router.replace(
+          { pathname: '/posts/[postId]/edit', query: { postId: router.query.postId, src: key } },
+          undefined,
+          { shallow: true }
+        );
+      } else {
+        const post = await createPostMutation.mutateAsync({});
+        // updateImages({}) // tODO - show that this image has been posted?
+        if (running) helpers?.next();
+        await router.push({
+          pathname: '/posts/[postId]/edit',
+          query: removeEmpty({
+            postId: post.id,
+            src: key,
+            returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
+          }),
+        });
+        generationPanel.close();
+      }
       deselect();
     } catch (e) {
       const error = e as Error;

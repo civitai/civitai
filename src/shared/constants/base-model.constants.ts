@@ -7,6 +7,7 @@ type BaseModelConfigToSatisfy = {
   group: string;
   hidden?: boolean;
   ecosystem?: string;
+  engine?: string;
 };
 type BaseModelConfig = typeof baseModelConfig;
 export type BaseModel = BaseModelConfig[number]['name'];
@@ -21,11 +22,11 @@ const baseModelConfig = [
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
-  { name: 'Hunyuan Video', type: 'video', group: 'HyV1' },
+  { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
   { name: 'Illustrious', type: 'image', group: 'Illustrious', ecosystem: 'sdxl' },
   { name: 'Imagen4', type: 'image', group: 'Imagen4', hidden: true },
   { name: 'Kolors', type: 'image', group: 'Kolors' },
-  { name: 'LTXV', type: 'video', group: 'LTXV' },
+  { name: 'LTXV', type: 'video', group: 'LTXV', engine: 'lightricks' },
   { name: 'Lumina', type: 'image', group: 'Lumina' },
   { name: 'Mochi', type: 'image', group: 'Mochi' },
   { name: 'NoobAI', type: 'image', group: 'NoobAI', ecosystem: 'sdxl' },
@@ -76,15 +77,15 @@ const baseModelConfig = [
   },
   { name: 'SVD', type: 'image', group: 'SVD' },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
-  { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true },
-  { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true },
-  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V' },
-  { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V' },
-  { name: 'Wan Video 14B i2v 480p', type: 'video', group: 'WanVideo14B_I2V_480p' },
-  { name: 'Wan Video 14B i2v 720p', type: 'video', group: 'WanVideo14B_I2V_720p' },
-  { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B' },
-  { name: 'Wan Video 2.2 I2V-A14B', type: 'video', group: 'WanVideo-22-I2V-A14B' },
-  { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B' },
+  { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
+  { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true, engine: 'wan' },
+  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
+  { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V', engine: 'wan' },
+  { name: 'Wan Video 14B i2v 480p', type: 'video', group: 'WanVideo14B_I2V_480p', engine: 'wan' },
+  { name: 'Wan Video 14B i2v 720p', type: 'video', group: 'WanVideo14B_I2V_720p', engine: 'wan' },
+  { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B', engine: 'wan' },
+  { name: 'Wan Video 2.2 I2V-A14B', type: 'video', group: 'WanVideo-22-I2V-A14B', engine: 'wan' },
+  { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B', engine: 'wan' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
@@ -105,6 +106,9 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
       'WanVideo14B_T2V',
       'WanVideo14B_I2V_480p',
       'WanVideo14B_I2V_720p',
+      'WanVideo-22-I2V-A14B',
+      'WanVideo-22-T2V-A14B',
+      'WanVideo-22-TI2V-5B',
     ],
   },
 ];
@@ -135,12 +139,16 @@ export function getBaseModelSeoName(baseModel?: string) {
 
 export function getBaseModelEcosystem(baseModel: string) {
   const config = getBaseModelConfig(baseModel);
-  if (config) return 'ecosystem' in config ? config.ecosystem : config.group.toLowerCase();
-  return 'unknown';
+  return 'ecosystem' in config ? config.ecosystem : config.group.toLocaleLowerCase();
 }
 
 export function getBaseModelMediaType(baseModel: string) {
   return getBaseModelConfig(baseModel)?.type;
+}
+
+export function getBaseModelEngine(baseModel: string) {
+  const config = getBaseModelConfig(baseModel);
+  return 'engine' in config ? config.engine : undefined;
 }
 
 export function getBaseModelConfigsByGroup(group: BaseModelGroup) {
@@ -362,6 +370,18 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 720p'] }],
     partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] }],
   },
+  // {
+  //   group: 'WanVideo-22-T2V-A14B',
+  //   support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 2.2 T2V-A14B'] }],
+  // },
+  // {
+  //   group: 'WanVideo-22-I2V-A14B',
+  //   support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 2.2 I2V-A14B'] }],
+  // },
+  // {
+  //   group: 'WanVideo-22-TI2V-5B',
+  //   support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 2.2 TI2V-5B'] }],
+  // },
   {
     group: 'Veo3',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],

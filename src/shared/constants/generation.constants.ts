@@ -9,10 +9,8 @@ import {
   maxUpscaleSize,
   minDownscaleSize,
 } from '~/server/common/constants';
-import { modelIdEngineMap } from '~/server/orchestrator/generation/generation.config';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import {
@@ -271,10 +269,8 @@ export function getBaseModelFromResourcesWithDefault<
 }
 
 export function getResourceGenerationType(
-  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>,
-  resources: GenerationResource[]
+  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>
 ) {
-  if (resources.some((r) => modelIdEngineMap.get(r.model.id))) return 'video';
   return getBaseModelMediaType(baseModel);
 }
 

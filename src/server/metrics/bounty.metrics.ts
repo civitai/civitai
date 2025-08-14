@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
