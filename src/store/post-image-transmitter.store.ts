@@ -10,7 +10,7 @@ type DataProps = {
   meta?: Record<string, unknown>;
 };
 
-const useOrchestratorUrlStore = create<{
+export const useOrchestratorUrlStore = create<{
   data: Record<string, DataProps[]>;
   setData: (key: string, data: DataProps[]) => void;
   getData: (key: string) => DataProps[];
