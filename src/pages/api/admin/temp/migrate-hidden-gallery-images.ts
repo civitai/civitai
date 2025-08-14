@@ -133,11 +133,6 @@ export default WebhookEndpoint(async (req, res) => {
 
         totalProcessed++;
       }
-
-      // Add a small delay between batches to avoid overwhelming the database
-      if (batchIndex < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
     }
 
     return res.json({
