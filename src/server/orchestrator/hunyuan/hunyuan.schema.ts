@@ -28,7 +28,7 @@ const schema = baseVideoGenerationSchema.extend({
   steps: z.number().default(20),
   model: z.string().optional(),
   aspectRatio: z.enum(hunyuanAspectRatios).default('1:1').catch('1:1'),
-  resources: z.array(resourceSchema.passthrough()).nullable().default(null),
+  resources: z.array(resourceSchema).nullable().default(null),
 });
 
 export const hunyuanGenerationConfig = VideoGenerationConfig2({

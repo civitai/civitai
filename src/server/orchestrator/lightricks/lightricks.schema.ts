@@ -32,7 +32,7 @@ export const lightricksGenerationConfig = VideoGenerationConfig2({
   whatIfProps: ['duration', 'cfgScale', 'steps', 'process'],
   metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   schema,
-  defaultValues: { aspectRatio: '3:2' },
+  defaultValues: { aspectRatio: '16:9' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
     if (data.process === 'txt2vid') {

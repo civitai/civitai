@@ -100,6 +100,13 @@ export const additionalResourceSchema = z.object({
   strengthClip: z.number().optional(),
 });
 
+export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
+export const civitaiResourceSchema = z.object({
+  type: z.string().optional(),
+  weight: z.number().optional(),
+  modelVersionId: z.number(),
+});
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -114,11 +121,13 @@ export const imageGenerationSchema = z.object({
   external: externalMetaSchema.optional(),
   effects: z.record(z.string(), z.any()).optional(),
   engine: z.string().optional(),
+  version: z.string().optional(),
   process: z.string().optional(),
   type: z.string().optional(),
   workflow: z.string().optional(),
   resources: imageMetadataResourceSchema.array().optional(),
   additionalResources: additionalResourceSchema.array().optional(),
+  civitaiResources: civitaiResourceSchema.array().optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),
@@ -127,14 +136,8 @@ export const imageGenerationSchema = z.object({
     .catch(undefined),
 });
 
-export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
-export const civitaiResourceSchema = z.object({
-  type: z.string().optional(),
-  weight: z.number().optional(),
-  modelVersionId: z.number(),
-});
 
-export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
+export const imageMetaSchema = z.looseObject({ ...imageGenerationSchema.shape });
 export const imageMetaOutput = imageGenerationSchema
   .extend({
     comfy: z

@@ -564,6 +564,7 @@ function formatVideoGenStep({
 
   // handle legacy source image
   let sourceImage = 'sourceImage' in params ? params.sourceImage : undefined;
+  if ('images' in params && !!params.images?.length) sourceImage = params.images[0];
   if (
     'width' in params &&
     'height' in params &&
@@ -693,7 +694,7 @@ function formatVideoGenStep({
     images: videos,
     status: step.status,
     metadata,
-    resources: combineResourcesWithInputResource(resources, stepResources),
+    resources: combinedResources,
   };
 }
 
