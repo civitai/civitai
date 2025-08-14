@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 
@@ -16,7 +16,7 @@ export const upsertClubAdminInviteInput = z.object({
   clubId: z.number(),
   expiresAt: z.date().nullish(),
   permissions: z
-    .array(z.nativeEnum(ClubAdminPermission))
+    .array(z.enum(ClubAdminPermission))
     .min(1, { message: 'At least one permission is required' }),
 });
 
@@ -47,7 +47,7 @@ export type AcceptClubAdminInviteInput = z.infer<typeof acceptClubAdminInviteInp
 export const updateClubAdminInput = z.object({
   userId: z.number(),
   clubId: z.number(),
-  permissions: z.array(z.nativeEnum(ClubAdminPermission)).min(1),
+  permissions: z.array(z.enum(ClubAdminPermission)).min(1),
 });
 
 export type UpdateClubAdminInput = z.infer<typeof updateClubAdminInput>;

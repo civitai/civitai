@@ -1,5 +1,5 @@
 import type { MantineColor } from '@mantine/core';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
@@ -49,14 +49,14 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
 
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
   externalId: z.string(),
-  externalType: z.nativeEnum(ExternalModerationType),
+  externalType: z.enum(ExternalModerationType),
   entityId: z.number(),
   tags: z.array(z.string()),
   // tags: z.array(
   //   z.object({
   //     tag: z.string(),
   //     confidence: z.number(),
-  //     outcome: z.string(), // z.nativeEnum(Outcome), // but this causes errors
+  //     outcome: z.string(), // z.enum(Outcome), // but this causes errors
   //     message: z.string().optional(),
   //   })
   // ),
@@ -67,7 +67,7 @@ export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
 
 // #region [report reason schemas]
 const baseSchema = z.object({
-  type: z.nativeEnum(ReportEntity),
+  type: z.enum(ReportEntity),
   id: z.number(),
   details: baseDetailSchema.default({}),
 });
@@ -122,18 +122,18 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
 export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
 export const setReportStatusSchema = z.object({
   id: z.number(),
-  status: z.nativeEnum(ReportStatus),
+  status: z.enum(ReportStatus),
 });
 
 export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
 export const bulkUpdateReportStatusSchema = z.object({
   ids: z.number().array(),
-  status: z.nativeEnum(ReportStatus),
+  status: z.enum(ReportStatus),
 });
 
 export type GetReportsInput = z.infer<typeof getReportsSchema>;
 export const getReportsSchema = getAllQuerySchema.extend({
-  type: z.nativeEnum(ReportEntity),
+  type: z.enum(ReportEntity),
   filters: z
     .object({
       id: z.string(),
@@ -152,8 +152,8 @@ export const getReportsSchema = getAllQuerySchema.extend({
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
-  type: z.nativeEnum(ReportEntity),
-  statuses: z.nativeEnum(ReportStatus).array(),
+  type: z.enum(ReportEntity),
+  statuses: z.enum(ReportStatus).array(),
 });
 
 export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
@@ -166,14 +166,14 @@ export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
 export type UpdateReportSchema = z.infer<typeof updateReportSchema>;
 export const updateReportSchema = z.object({
   id: z.number(),
-  status: z.nativeEnum(ReportStatus),
+  status: z.enum(ReportStatus),
   internalNotes: z.string().nullish(),
 });
 
 export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;
 export const createEntityAppealSchema = z.object({
   entityId: z.number(),
-  entityType: z.nativeEnum(EntityType),
+  entityType: z.enum(EntityType),
   message: z.string().trim().min(1).max(MAX_APPEAL_MESSAGE_LENGTH),
 });
 
@@ -186,15 +186,15 @@ export const getRecentAppealsSchema = z.object({
 export type GetAppealDetailsInput = z.output<typeof getAppealDetailsSchema>;
 export const getAppealDetailsSchema = z.object({
   entityId: z.number(),
-  entityType: z.nativeEnum(EntityType),
+  entityType: z.enum(EntityType),
   userId: z.number(),
 });
 
 export type ResolveAppealInput = z.output<typeof resolveAppealSchema>;
 export const resolveAppealSchema = z.object({
   ids: z.number().array().min(1),
-  entityType: z.nativeEnum(EntityType),
-  status: z.nativeEnum(AppealStatus),
+  entityType: z.enum(EntityType),
+  status: z.enum(AppealStatus),
   resolvedMessage: z.string().trim().max(MAX_APPEAL_MESSAGE_LENGTH).optional(),
   internalNotes: z.string().trim().optional(),
 });

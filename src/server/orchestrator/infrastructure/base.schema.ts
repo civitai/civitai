@@ -1,5 +1,5 @@
 import { Priority } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export const promptSchema = z
   .string()
@@ -25,7 +25,7 @@ export const sourceImageSchema = z.object({
 });
 
 export const seedSchema = z.number().nullish();
-const prioritySchema = z.nativeEnum(Priority).optional().catch('low');
+const prioritySchema = z.enum(Priority).optional().catch('low');
 
 // const baseGenerationSchema = z.object({
 //   priority: prioritySchema,

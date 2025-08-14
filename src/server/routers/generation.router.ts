@@ -23,7 +23,7 @@ import {
   getWorkflowDefinitions,
   setWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getGenerationEngines } from '~/server/services/generation/engines';
 
 export const generationRouter = router({

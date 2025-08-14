@@ -2,7 +2,7 @@ import { Anchor, Stack, Text } from '@mantine/core';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { createContext, useContext, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
@@ -432,7 +432,7 @@ const metadataSchema = modelFileMetadataSchema
   .extend({
     versionId: z.number(),
     type: z.enum(constants.modelFileTypes),
-    modelType: z.nativeEnum(ModelType),
+    modelType: z.enum(ModelType),
   })
   .refine(
     (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),

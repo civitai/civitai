@@ -1,5 +1,5 @@
 import { Priority } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import type { Sampler } from '~/server/common/constants';
 import { generation } from '~/server/common/constants';

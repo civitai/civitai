@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { queryModelVersionsForModeratorHandler } from '~/server/controllers/model-version.controller';
 import { getModelsPagedSimpleHandler } from '~/server/controllers/model.controller';
 import {

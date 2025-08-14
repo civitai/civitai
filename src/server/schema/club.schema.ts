@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ClubSort } from '~/server/common/enums';
 import { infiniteQuerySchema, paginationSchema, resourceInput } from '~/server/schema/base.schema';
@@ -20,7 +20,7 @@ export const upsertClubTierInput = z
         (data) => data === 0 || data >= constants.clubs.minMonthlyBuzz,
         `Minimum price is ${constants.clubs.minMonthlyBuzz} Buzz`
       ),
-    currency: z.nativeEnum(Currency).default(Currency.BUZZ),
+    currency: z.enum(Currency).default(Currency.BUZZ),
     coverImage: comfylessImageSchema.nullish(),
     unlisted: z.boolean().default(false),
     joinable: z.boolean().default(true),
@@ -113,7 +113,7 @@ export const getInfiniteClubSchema = infiniteQuerySchema.merge(
     nsfw: z.boolean().optional(),
     userId: z.number().optional(),
     engagement: z.enum(['engaged']).optional(),
-    sort: z.nativeEnum(ClubSort).default(ClubSort.Newest),
+    sort: z.enum(ClubSort).default(ClubSort.Newest),
     limit: z.coerce.number().min(1).max(200).default(60),
     clubIds: z.array(z.number()).optional(),
     include: z.array(z.enum(['tiers'])).optional(),

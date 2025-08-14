@@ -5,7 +5,7 @@ import {
   seedSchema,
   sourceImageSchema,
 } from './../infrastructure/base.schema';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { promptSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';

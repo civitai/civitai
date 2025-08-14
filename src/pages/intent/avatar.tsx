@@ -13,7 +13,7 @@ import {
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -27,7 +27,7 @@ import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const avatarQuerySchema = z.object({
-  mediaUrl: z.string().url(),
+  mediaUrl: z.url(),
 });
 
 export const getServerSideProps = createServerSideProps({
