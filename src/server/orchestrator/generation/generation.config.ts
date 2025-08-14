@@ -8,25 +8,6 @@ import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema'
 import { veo3GenerationConfig } from '~/server/orchestrator/veo3/veo3.schema';
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
-import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
-
-export const baseModelEngineMap: Partial<Record<BaseModelGroup, OrchestratorEngine2>> = {
-  WanVideo: 'wan',
-  WanVideo14B_I2V_480p: 'wan',
-  WanVideo14B_I2V_720p: 'wan',
-  WanVideo14B_T2V: 'wan',
-  WanVideo1_3B_T2V: 'wan',
-  HyV1: 'hunyuan',
-  Veo3: 'veo3',
-};
-
-export function getEngineFromBaseModel(baseModel: string) {
-  const group = getBaseModelGroup(baseModel);
-  return group ? baseModelEngineMap[group] : undefined;
-}
-
-export const modelIdEngineMap = new Map<number, OrchestratorEngine2>([[982559, 'lightricks']]);
 
 export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
 type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
@@ -42,10 +23,6 @@ export const videoGenerationConfig2 = {
   hunyuan: hunyuanGenerationConfig,
   wan: wanGenerationConfig,
 };
-
-export function isVideoGenerationEngine(engine?: string) {
-  return engine ? !!videoGenerationConfig2[engine as OrchestratorEngine2] : false;
-}
 
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {
   return videoGenerationConfig2[key as OrchestratorEngine2];

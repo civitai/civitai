@@ -11,6 +11,10 @@ import { InputRequestPriority } from '~/components/Generation/Input/RequestPrior
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { useEffect, useMemo } from 'react';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import {
+  InputSourceImageUploadMultiple,
+  SourceImageUploadMultiple,
+} from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 export function WanFormInput() {
   const form = useFormContext();
@@ -63,7 +67,23 @@ export function WanFormInput() {
       )} */}
 
       {process === 'img2vid' && (
-        <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
+        <div className="-mx-2">
+          <InputSourceImageUploadMultiple
+            name="images"
+            max={1}
+            warnOnMissingAiMetadata
+            aspect="video"
+          >
+            {(previewItems) => (
+              <div className="mx-auto w-full max-w-80">
+                {previewItems.map((item, i) => (
+                  <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                ))}
+                <SourceImageUploadMultiple.Dropzone />
+              </div>
+            )}
+          </InputSourceImageUploadMultiple>
+        </div>
       )}
       {!!resources?.length && (
         <InputResourceSelectMultipleStandalone

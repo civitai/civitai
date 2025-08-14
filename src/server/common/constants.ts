@@ -392,7 +392,7 @@ type LicenseDetails = {
   poweredBy?: string;
   restrictedNsfwLevels?: NsfwLevel[];
 };
-export const baseLicenses: Record<string, LicenseDetails> = {
+const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
     url: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
     name: 'CreativeML Open RAIL-M',

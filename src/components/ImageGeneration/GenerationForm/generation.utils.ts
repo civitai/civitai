@@ -274,7 +274,10 @@ export function getStepMeta(step?: WorkflowStepFormatted): any {
       return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
     }
   });
-  return removeEmpty({ ...step?.params, civitaiResources });
+  // remove 'resources' due to property being set on video gen
+  const { resources, ...params } = step.params as typeof step.params & { resources: any };
+
+  return removeEmpty({ ...params, civitaiResources });
 }
 
 export function ResourceSelectHandler(options?: ResourceSelectOptions) {

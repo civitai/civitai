@@ -25,7 +25,7 @@ export const sourceImageSchema = z.object({
 });
 
 export const seedSchema = z.number().nullish();
-const prioritySchema = z.nativeEnum(Priority).optional().catch('low');
+const prioritySchema = z.enum(Priority).optional().catch('low');
 
 // const baseGenerationSchema = z.object({
 //   priority: prioritySchema,
