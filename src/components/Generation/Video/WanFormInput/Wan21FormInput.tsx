@@ -1,12 +1,11 @@
 import { Anchor, Input } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { wanDuration, wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import { wanDuration, wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { useEffect, useMemo } from 'react';
@@ -16,21 +15,21 @@ import {
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
-export function WanFormInput() {
+export function Wan21FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
   const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const config = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap];
+  const config = wan22BaseModelMap[baseModel as keyof typeof wan22BaseModelMap];
   const canPickDuration = config?.provider !== 'fal';
 
   const availableBaseModels = useMemo(
     () =>
-      Object.entries(wanBaseModelMap)
+      Object.entries(wan22BaseModelMap)
         .filter(([key, value]) => value.process === process)
         .map(([key, value]) => ({
           value: key,
-          label: value.label,
+          label: value.resolution,
           default: value.default,
           provider: value.provider,
         })),

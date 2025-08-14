@@ -23,7 +23,7 @@ import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
-import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import { wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
@@ -670,7 +670,7 @@ function formatVideoGenStep({
     params.process = params.type;
 
   if (!params.process && baseModel) {
-    const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
+    const wanProcess = wan22BaseModelMap[baseModel as keyof typeof wan22BaseModelMap]?.process;
     if (wanProcess) (params as any).process = wanProcess as any;
   }
 

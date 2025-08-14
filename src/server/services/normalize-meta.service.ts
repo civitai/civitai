@@ -1,4 +1,4 @@
-import { wanBaseModelGroupIdMap, wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import { wanBaseModelGroupIdMap, wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { getWanVersion } from '../orchestrator/wan/wan.schema';
@@ -118,7 +118,7 @@ function processWanVideoGenMeta(data: WanVideoGenMeta) {
   }
 
   if (!data.process)
-    data.process = wanBaseModelMap[data.baseModel as keyof typeof wanBaseModelMap]?.process;
+    data.process = wan22BaseModelMap[data.baseModel as keyof typeof wan22BaseModelMap]?.process;
 
   data.version = getWanVersion(baseModel);
 
