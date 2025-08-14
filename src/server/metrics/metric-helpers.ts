@@ -26,6 +26,25 @@ export function executeRefresh(ctx: { pg: AugmentedPool; jobContext: JobContext 
   });
 }
 
+export async function executeRefreshWithParams(
+  ctx: { pg: AugmentedPool; jobContext: JobContext },
+  sql: string,
+  params: any[]
+) {
+  const query = await ctx.pg.cancellableQuery(sql, params);
+  ctx.jobContext.on('cancel', query.cancel);
+  await query.result();
+}
+
+export function getMetricJson(ctx: { pg: AugmentedPool; jobContext: JobContext }) {
+  return templateHandler(async (sql) => {
+    const query = await ctx.pg.cancellableQuery<{ data: any }>(sql);
+    ctx.jobContext.on('cancel', query.cancel);
+    const [results] = await query.result();
+    return results?.data;
+  });
+}
+
 function timeframeSum(
   dateField: string,
   value = '1',

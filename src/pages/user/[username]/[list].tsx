@@ -29,7 +29,7 @@ import { dbRead } from '~/server/db/client';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 interface UserListContentProps {
-  items: Array<{ id: number; username: string | null; image?: string }>;
+  items: Array<{ id: number; username: string | null; image?: string | null }>;
   type: 'following' | 'followers' | 'hidden' | 'blocked';
   totalCount: number;
   page: number;
@@ -60,7 +60,7 @@ function UserListContent({ items, type, totalCount, page, onPageChange }: UserLi
     <>
       {items.length > 0 ? (
         <List listStyleType="none" styles={{ itemWrapper: { width: '100%' } }}>
-          {items.map((user: { id: number; username: string | null; image?: string }) => (
+          {items.map((user: { id: number; username: string | null; image?: string | null }) => (
             <List.Item
               className="flex p-2 [&:nth-of-type(2n)]:bg-gray-0 dark:[&:nth-of-type(2n)]:bg-dark-8"
               classNames={{ itemLabel: 'w-full' }}

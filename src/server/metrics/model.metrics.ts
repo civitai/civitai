@@ -3,10 +3,15 @@ import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { templateHandler, jsonbArrayFrom } from '~/server/db/db-helpers';
+import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getLastAuctionReset } from '~/server/services/auction.service';
@@ -426,7 +431,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
     log('getModelRatingTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate model rating metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -442,7 +447,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
         CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE r.exclude = FALSE
           AND r."tosViolation" = FALSE
-          AND r."modelId" IN (${Prisma.join(ids)})
+          AND r."modelId" IN (${ids})
         GROUP BY r."modelId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -457,21 +462,23 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated model rating metrics
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model rating metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
         SELECT 
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'thumbsUpCount')::int,
           (value->>'thumbsDownCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
           SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", 
               "thumbsDownCount" = EXCLUDED."thumbsDownCount", 
-              "updatedAt" = now()
-      `;
+              "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getModelRatingTasks', i + 1, 'of', tasks.length, 'done');
@@ -530,7 +537,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     log('getCollectionTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate model collection metrics into JSON
       WITH Timeframes AS (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
@@ -563,18 +570,20 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated model collection metrics
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model collection metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
         SELECT 
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
-          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()
-      `;
+          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');

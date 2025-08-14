@@ -165,6 +165,7 @@ export type ModelGallerySettingsSchema = {
   tags?: number[] | undefined;
   images?: number[] | undefined;
   level?: number | undefined;
+  hiddenImages?: Record<string, number[]> | undefined;
   pinnedPosts?: Record<string, number[]> | undefined;
 };
 
@@ -172,7 +173,7 @@ export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput
 export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
-  hiddenImages: z.number().array(),
+  hiddenImages: z.record(z.string(), z.number().array()).optional(),
   level: z.number().optional(),
   pinnedPosts: z
     .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
@@ -198,11 +199,10 @@ export const modelUpsertSchema = licensingSchema.extend({
   minor: z.boolean().default(false).optional(),
   sfwOnly: z.boolean().default(false).optional(),
   meta: z
-    .object({
+    .looseObject({
       showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
     })
-    .passthrough()
     .transform((val) => val as ModelMeta | null)
     .nullish(),
   availability: z.enum(Availability).optional(),

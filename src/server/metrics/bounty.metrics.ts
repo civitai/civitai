@@ -1,13 +1,17 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
-import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:bounty');
 
@@ -64,7 +68,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     log('getEngagementTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate bounty engagement metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -75,7 +79,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         FROM "BountyEngagement" e
         JOIN "Bounty" b ON b.id = e."bountyId" -- ensure the bounty exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "bountyId" IN (${Prisma.join(ids)})
+        WHERE "bountyId" IN (${ids})
         GROUP BY "bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -90,19 +94,21 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated bounty engagement metrics
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated bounty engagement metrics
         INSERT INTO "BountyMetric" ("bountyId", timeframe, "favoriteCount", "trackCount")
         SELECT 
           (value->>'bountyId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'favoriteCount')::int,
           (value->>'trackCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
-          SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "updatedAt" = NOW()
-      `;
+          SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
@@ -125,7 +131,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
     log('getCommentTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate bounty comment metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -136,7 +142,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
         JOIN "Bounty" b ON b.id = t."bountyId" -- ensure the bounty exists
         JOIN "CommentV2" c ON c."threadId" = t.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE t."bountyId" IN (${Prisma.join(ids)})
+        WHERE t."bountyId" IN (${ids})
         GROUP BY t."bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -150,18 +156,20 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated bounty comment metrics
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated bounty comment metrics
         INSERT INTO "BountyMetric" ("bountyId", timeframe, "commentCount")
         SELECT 
           (value->>'bountyId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'commentCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
-          SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
-      `;
+          SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -183,7 +191,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
     log('getBenefactorTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate bounty benefactor metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -193,7 +201,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
         FROM "BountyBenefactor"
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "bountyId" IN (${Prisma.join(ids)})
+        WHERE "bountyId" IN (${ids})
         GROUP BY "bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -208,19 +216,21 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated bounty benefactor metrics
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated bounty benefactor metrics
         INSERT INTO "BountyMetric" ("bountyId", timeframe, "benefactorCount", "unitAmountCount")
         SELECT 
           (value->>'bountyId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'benefactorCount')::int,
           (value->>'unitAmountCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
-          SET "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
-      `;
+          SET "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getBenefactorTasks', i + 1, 'of', tasks.length, 'done');
@@ -242,7 +252,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
     log('getEntryTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate bounty entry metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -251,7 +261,7 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"')} as "entryCount"
         FROM "BountyEntry"
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "bountyId" IN (${Prisma.join(ids)})
+        WHERE "bountyId" IN (${ids})
         GROUP BY "bountyId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -265,18 +275,20 @@ async function getEntryTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated bounty entry metrics
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated bounty entry metrics
         INSERT INTO "BountyMetric" ("bountyId", timeframe, "entryCount")
         SELECT 
           (value->>'bountyId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'entryCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("bountyId", timeframe) DO UPDATE
-          SET "entryCount" = EXCLUDED."entryCount", "updatedAt" = NOW()
-      `;
+          SET "entryCount" = EXCLUDED."entryCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getEntryTasks', i + 1, 'of', tasks.length, 'done');
