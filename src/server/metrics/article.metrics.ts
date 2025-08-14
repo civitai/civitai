@@ -7,6 +7,7 @@ import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   executeRefresh,
+  executeRefreshWithParams,
   getAffected,
   getMetricJson,
   snippets,
@@ -100,8 +101,9 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated article reaction metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated article reaction metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, ${snippets.reactionMetricNames})
         SELECT 
           (value->>'articleId')::int,
@@ -111,10 +113,11 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           (value->>'dislikeCount')::int,
           (value->>'laughCount')::int,
           (value->>'cryCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
-          SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
-      `;
+          SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
@@ -163,17 +166,19 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated article comment metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated article comment metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "commentCount")
         SELECT 
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'commentCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
-          SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
-      `;
+          SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -220,17 +225,19 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated article collection metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated article collection metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount")
         SELECT 
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
-          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
-      `;
+          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
@@ -279,18 +286,20 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated article tip metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated article tip metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "tippedCount", "tippedAmountCount")
         SELECT 
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'tippedCount')::int,
           (value->>'tippedAmountCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
-          SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
-      `;
+          SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
@@ -338,17 +347,19 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated article engagement metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated article engagement metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "hideCount")
         SELECT 
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'hideCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("articleId", timeframe) DO UPDATE
-          SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()
-      `;
+          SET "hideCount" = EXCLUDED."hideCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');

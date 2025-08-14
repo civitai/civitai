@@ -5,9 +5,8 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import { executeRefresh, executeRefreshWithParams, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
-import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:user');
 
@@ -92,20 +91,22 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated user engagement metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated user engagement metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "followerCount", "hiddenCount")
         SELECT 
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followerCount')::int,
           (value->>'hiddenCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "followerCount" = EXCLUDED."followerCount", 
               "hiddenCount" = EXCLUDED."hiddenCount", 
-              "updatedAt" = NOW()
-      `;
+              "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
@@ -152,17 +153,19 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated user following metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated user following metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "followingCount")
         SELECT 
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followingCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
-          SET "followingCount" = EXCLUDED."followingCount", "updatedAt" = NOW()
-      `;
+          SET "followingCount" = EXCLUDED."followingCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getFollowingTasks', i + 1, 'of', tasks.length, 'done');
@@ -216,17 +219,19 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated user upload metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated user upload metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "uploadCount")
         SELECT 
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'uploadCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
-          SET "uploadCount" = EXCLUDED."uploadCount", "updatedAt" = NOW()
-      `;
+          SET "uploadCount" = EXCLUDED."uploadCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getModelTasks', i + 1, 'of', tasks.length, 'done');
@@ -275,17 +280,19 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated user review metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated user review metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "reviewCount")
         SELECT 
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'reviewCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
-          SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()
-      `;
+          SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getReviewTasks', i + 1, 'of', tasks.length, 'done');

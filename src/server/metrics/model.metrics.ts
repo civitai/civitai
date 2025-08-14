@@ -6,7 +6,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler, jsonbArrayFrom } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import { executeRefresh, executeRefreshWithParams, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getLastAuctionReset } from '~/server/services/auction.service';
@@ -458,20 +458,22 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated model rating metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model rating metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
         SELECT 
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'thumbsUpCount')::int,
           (value->>'thumbsDownCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
           SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", 
               "thumbsDownCount" = EXCLUDED."thumbsDownCount", 
-              "updatedAt" = now()
-      `;
+              "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getModelRatingTasks', i + 1, 'of', tasks.length, 'done');
@@ -564,17 +566,19 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
 
     // Then perform the insert from the aggregated data
     if (metrics) {
-      await executeRefresh(ctx)`
-        -- Insert pre-aggregated model collection metrics
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model collection metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
         SELECT 
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
+        FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
-          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()
-      `;
+          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
     }
 
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
