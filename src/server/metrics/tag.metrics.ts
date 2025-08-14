@@ -60,16 +60,23 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     // First, aggregate data into JSON to avoid blocking - only get total counts
     const metrics = await getMetricJson(ctx)`
       -- Aggregate tag engagement metrics into JSON (AllTime counts only)
+      WITH counts AS (
+        SELECT
+          "tagId",
+          SUM(CASE WHEN type = 'Follow' THEN 1 ELSE 0 END) as "followerCount",
+          SUM(CASE WHEN type = 'Hide' THEN 1 ELSE 0 END) as "hiddenCount"
+        FROM "TagEngagement"
+        WHERE "tagId" IN (${ids})
+        GROUP BY "tagId"
+      )
       SELECT jsonb_agg(
         jsonb_build_object(
           'tagId', "tagId",
-          'followerCount', SUM(CASE WHEN type = 'Follow' THEN 1 ELSE 0 END),
-          'hiddenCount', SUM(CASE WHEN type = 'Hide' THEN 1 ELSE 0 END)
+          'followerCount', "followerCount",
+          'hiddenCount', "hiddenCount"
         )
       ) as data
-      FROM "TagEngagement"
-      WHERE "tagId" IN (${ids})
-      GROUP BY "tagId"
+      FROM counts
     `;
 
     // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
@@ -130,16 +137,22 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
     // First, aggregate data into JSON to avoid blocking - only get total count
     const metrics = await getMetricJson(ctx)`
       -- Aggregate tag count metrics into JSON (AllTime count only)
+      WITH counts AS (
+        SELECT
+          "tagId",
+          COUNT(*) as "count"
+        FROM "${table}" t
+        JOIN "${sourceTable}" s ON s.id = t."${id}"
+        WHERE "tagId" IN (${ids})
+        GROUP BY "tagId"
+      )
       SELECT jsonb_agg(
         jsonb_build_object(
           'tagId', "tagId",
-          'count', COUNT(*)
+          'count', "count"
         )
       ) as data
-      FROM "${table}" t
-      JOIN "${sourceTable}" s ON s.id = t."${id}"
-      WHERE "tagId" IN (${ids})
-      GROUP BY "tagId"
+      FROM counts
     `;
 
     // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
