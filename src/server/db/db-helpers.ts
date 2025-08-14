@@ -101,9 +101,10 @@ export function getClient(
     log(instance, params !== undefined ? { text: queryText, values: queryParams } : sql);
 
     let done = false;
-    const query = queryParams !== undefined 
-      ? connection.query<R>(queryText, queryParams)
-      : connection.query<R>(queryText);
+    const query =
+      queryParams !== undefined
+        ? connection.query<R>(queryText, queryParams)
+        : connection.query<R>(queryText);
     query.finally(() => {
       done = true;
       connection.release();

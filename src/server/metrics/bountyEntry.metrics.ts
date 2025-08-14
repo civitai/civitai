@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { createLogger } from '~/utils/logging';
@@ -89,9 +88,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
       await executeRefreshWithParams(
         ctx,
         `-- Insert pre-aggregated bounty entry reaction metrics
-        INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${
-          snippets.reactionMetricNames
-        })
+        INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${snippets.reactionMetricNames})
         SELECT 
           (value->>'bountyEntryId')::int,
           (value->>'timeframe')::"MetricTimeframe",

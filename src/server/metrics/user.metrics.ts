@@ -1,11 +1,16 @@
-import { Prisma } from '@prisma/client';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, executeRefreshWithParams, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('metrics:user');

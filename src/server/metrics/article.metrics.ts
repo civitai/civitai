@@ -12,7 +12,6 @@ import {
   getMetricJson,
   snippets,
 } from '~/server/metrics/metric-helpers';
-import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:article');
 

@@ -1,9 +1,14 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, executeRefreshWithParams, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';

@@ -4,7 +4,13 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, executeRefreshWithParams, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('metrics:tag');
@@ -56,49 +62,21 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
 
-    // First, aggregate data into JSON to avoid blocking - only get total counts
-    const metrics = await getMetricJson(ctx)`
-      -- Aggregate tag engagement metrics into JSON (AllTime counts only)
-      WITH counts AS (
-        SELECT
-          "tagId",
-          SUM(CASE WHEN type = 'Follow' THEN 1 ELSE 0 END) as "followerCount",
-          SUM(CASE WHEN type = 'Hide' THEN 1 ELSE 0 END) as "hiddenCount"
-        FROM "TagEngagement"
-        WHERE "tagId" IN (${ids})
-        GROUP BY "tagId"
-      )
-      SELECT jsonb_agg(
-        jsonb_build_object(
-          'tagId', "tagId",
-          'followerCount', "followerCount",
-          'hiddenCount', "hiddenCount"
-        )
-      ) as data
-      FROM counts
+    await executeRefresh(ctx)`
+      -- update tag engagement metrics
+      INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount")
+      SELECT
+        "tagId",
+        tf.timeframe,
+        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followerCount",
+        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
+      FROM "TagEngagement" e
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "tagId" IN (${ids})
+      GROUP BY "tagId", tf.timeframe
+      ON CONFLICT ("tagId", timeframe) DO UPDATE
+        SET "followerCount" = EXCLUDED."followerCount", "hiddenCount" = EXCLUDED."hiddenCount", "updatedAt" = NOW()
     `;
-
-    // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
-    if (metrics) {
-      await executeRefreshWithParams(
-        ctx,
-        `-- Insert tag engagement metrics for all timeframes using the AllTime counts
-        INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount")
-        SELECT 
-          (value->>'tagId')::int,
-          tf.timeframe,
-          (value->>'followerCount')::int,
-          (value->>'hiddenCount')::int
-        FROM jsonb_array_elements($1::jsonb) AS value
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        ON CONFLICT ("tagId", timeframe) DO UPDATE
-          SET "followerCount" = EXCLUDED."followerCount", 
-              "hiddenCount" = EXCLUDED."hiddenCount", 
-              "updatedAt" = NOW()`,
-        [JSON.stringify(metrics)]
-      );
-    }
-
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -135,45 +113,21 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
     ctx.jobContext.checkIfCanceled();
     log(`get ${table} counts`, i + 1, 'of', tasks.length);
 
-    // First, aggregate data into JSON to avoid blocking - only get total count
-    const metrics = await getMetricJson(ctx)`
-      -- Aggregate tag count metrics into JSON (AllTime count only)
-      WITH counts AS (
-        SELECT
-          "tagId",
-          COUNT(*) as "count"
-        FROM "${table}" t
-        JOIN "${sourceTable}" s ON s.id = t."${id}"
-        WHERE "tagId" IN (${ids})
-        GROUP BY "tagId"
-      )
-      SELECT jsonb_agg(
-        jsonb_build_object(
-          'tagId', "tagId",
-          'count', "count"
-        )
-      ) as data
-      FROM counts
+    await executeRefresh(ctx)`
+      -- update tag count metrics
+      INSERT INTO "TagMetric" ("tagId", timeframe, "${column}")
+      SELECT
+        "tagId",
+        tf.timeframe,
+        ${snippets.timeframeSum('s."createdAt"')}
+      FROM "${table}" t
+      JOIN "${sourceTable}" s ON s.id = t."${id}"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "tagId" IN (${ids})
+      GROUP BY "tagId", tf.timeframe
+      ON CONFLICT ("tagId", timeframe) DO UPDATE
+        SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()
     `;
-
-    // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
-    if (metrics) {
-      await executeRefreshWithParams(
-        ctx,
-        `-- Insert tag count metrics for all timeframes using the AllTime count
-        INSERT INTO "TagMetric" ("tagId", timeframe, "${column}")
-        SELECT 
-          (value->>'tagId')::int,
-          tf.timeframe,
-          (value->>'count')::int
-        FROM jsonb_array_elements($1::jsonb) AS value
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        ON CONFLICT ("tagId", timeframe) DO UPDATE
-          SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()`,
-        [JSON.stringify(metrics)]
-      );
-    }
-
     log(`get ${table} counts`, i + 1, 'of', tasks.length, 'done');
   });
 
