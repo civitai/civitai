@@ -5,7 +5,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import { executeRefresh, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
 import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
@@ -66,7 +66,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     log('getEngagementTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate user engagement metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -76,7 +76,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
         FROM "UserEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "targetUserId" IN (${Prisma.join(ids)})
+        WHERE "targetUserId" IN (${ids})
         GROUP BY "targetUserId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -91,7 +91,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated user engagement metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "followerCount", "hiddenCount")
@@ -100,7 +100,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followerCount')::int,
           (value->>'hiddenCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "followerCount" = EXCLUDED."followerCount", 
               "hiddenCount" = EXCLUDED."hiddenCount", 
@@ -128,7 +128,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
     log('getFollowingTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate user following metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -137,7 +137,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followingCount"
         FROM "UserEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${Prisma.join(ids)})
+        WHERE "userId" IN (${ids})
         GROUP BY "userId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -151,7 +151,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated user following metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "followingCount")
@@ -159,7 +159,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followingCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "followingCount" = EXCLUDED."followingCount", "updatedAt" = NOW()
       `;
@@ -187,7 +187,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
     log('getModelTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate user upload metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -197,7 +197,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
         FROM "ModelVersion" mv
         JOIN "Model" m ON mv."modelId" = m.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${Prisma.join(ids)})
+        WHERE "userId" IN (${ids})
           AND (
             mv."status" = 'Published'
             OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
@@ -215,7 +215,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated user upload metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "uploadCount")
@@ -223,7 +223,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'uploadCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "uploadCount" = EXCLUDED."uploadCount", "updatedAt" = NOW()
       `;
@@ -249,7 +249,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
     log('getReviewTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate user review metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -259,7 +259,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
         FROM "ResourceReview" rr
         JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${Prisma.join(ids)})
+        WHERE "userId" IN (${ids})
           AND mv.status = 'Published'
         GROUP BY "userId", tf.timeframe
       )
@@ -274,7 +274,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated user review metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "reviewCount")
@@ -282,7 +282,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'reviewCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
           SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()
       `;

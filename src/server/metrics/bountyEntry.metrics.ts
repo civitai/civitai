@@ -3,7 +3,12 @@ import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
 import { jsonbArrayFrom } from '~/server/db/db-helpers';
 
@@ -52,7 +57,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     log('getReactionTasks', i + 1, 'of', tasks.length);
 
     // First, aggregate data into JSON to avoid blocking
-    const metrics = await ctx.db.$queryRaw<{ data: any }[]>`
+    const metrics = await getMetricJson(ctx)`
       -- Aggregate bounty entry reaction metrics into JSON
       WITH metric_data AS (
         SELECT
@@ -62,7 +67,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         FROM "BountyEntryReaction" r
         JOIN "BountyEntry" be ON be.id = r."bountyEntryId" -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE r."bountyEntryId" IN (${Prisma.join(ids)})
+        WHERE r."bountyEntryId" IN (${ids})
         GROUP BY r."bountyEntryId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -80,7 +85,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     `;
 
     // Then perform the insert from the aggregated data
-    if (metrics?.[0]?.data) {
+    if (metrics) {
       await executeRefresh(ctx)`
         -- Insert pre-aggregated bounty entry reaction metrics
         INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${
@@ -94,7 +99,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
           (value->>'dislikeCount')::int,
           (value->>'laughCount')::int,
           (value->>'cryCount')::int
-        FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)}) AS value
+        FROM jsonb_array_elements(${jsonbArrayFrom(metrics)}) AS value
         ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
           SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
       `;
