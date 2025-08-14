@@ -5,7 +5,13 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, executeRefreshWithParams, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('metrics:user');
@@ -57,7 +63,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "targetUserId" as id
     FROM "UserEngagement"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -75,7 +81,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Hide'`)} "hiddenCount"
         FROM "UserEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "targetUserId" IN (${ids})
+        WHERE "targetUserId" = ANY(${ids}::int[])
         GROUP BY "targetUserId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -95,15 +101,15 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated user engagement metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "followerCount", "hiddenCount")
-        SELECT 
+        SELECT
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followerCount')::int,
           (value->>'hiddenCount')::int
         FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("userId", timeframe) DO UPDATE
-          SET "followerCount" = EXCLUDED."followerCount", 
-              "hiddenCount" = EXCLUDED."hiddenCount", 
+          SET "followerCount" = EXCLUDED."followerCount",
+              "hiddenCount" = EXCLUDED."hiddenCount",
               "updatedAt" = NOW()`,
         [JSON.stringify(metrics)]
       );
@@ -121,7 +127,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "userId" as id
     FROM "UserEngagement"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -138,7 +144,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Follow'`)} "followingCount"
         FROM "UserEngagement" e
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${ids})
+        WHERE "userId" = ANY(${ids}::int[])
         GROUP BY "userId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -157,7 +163,7 @@ async function getFollowingTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated user following metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "followingCount")
-        SELECT 
+        SELECT
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'followingCount')::int
@@ -181,8 +187,8 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
       m."userId" as id
     FROM "ModelVersion" mv
     JOIN "Model" m ON mv."modelId" = m.id
-    WHERE (mv."publishedAt" > '${ctx.lastUpdate}' AND mv."status" = 'Published')
-      OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
+    WHERE (mv."publishedAt" > ${ctx.lastUpdate} AND mv."status" = 'Published')
+      OR (mv."publishedAt" <= ${ctx.lastUpdate} AND mv."status" = 'Scheduled')
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -200,10 +206,10 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
         FROM "ModelVersion" mv
         JOIN "Model" m ON mv."modelId" = m.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${ids})
+        WHERE "userId" = ANY(${ids}::int[])
           AND (
             mv."status" = 'Published'
-            OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
+            OR (mv."publishedAt" <= ${ctx.lastUpdate} AND mv."status" = 'Scheduled')
           )
         GROUP BY "userId", tf.timeframe
       )
@@ -223,7 +229,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated user upload metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "uploadCount")
-        SELECT 
+        SELECT
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'uploadCount')::int
@@ -246,7 +252,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "userId" as id
     FROM "ResourceReview"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -264,7 +270,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
         FROM "ResourceReview" rr
         JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "userId" IN (${ids})
+        WHERE "userId" = ANY(${ids}::int[])
           AND mv.status = 'Published'
         GROUP BY "userId", tf.timeframe
       )
@@ -284,7 +290,7 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated user review metrics
         INSERT INTO "UserMetric" ("userId", timeframe, "reviewCount")
-        SELECT 
+        SELECT
           (value->>'userId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'reviewCount')::int

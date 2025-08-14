@@ -49,7 +49,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "bountyEntryId" AS id
     FROM "BountyEntryReaction"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -67,7 +67,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         FROM "BountyEntryReaction" r
         JOIN "BountyEntry" be ON be.id = r."bountyEntryId" -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE r."bountyEntryId" IN (${ids})
+        WHERE r."bountyEntryId" = ANY(${ids}::int[])
         GROUP BY r."bountyEntryId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -89,10 +89,8 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
       await executeRefreshWithParams(
         ctx,
         `-- Insert pre-aggregated bounty entry reaction metrics
-        INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${
-          snippets.reactionMetricNames
-        })
-        SELECT 
+        INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${snippets.reactionMetricNames})
+        SELECT
           (value->>'bountyEntryId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'heartCount')::int,
@@ -118,7 +116,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
     -- get recent bounty entry benefactors
     SELECT "awardedToId" as id
     FROM "BountyBenefactor"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
       AND "awardedToId" IS NOT NULL
   `;
 
@@ -136,7 +134,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
           ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
         FROM "BountyBenefactor" bb
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE bb."awardedToId" IN (${ids})
+        WHERE bb."awardedToId" = ANY(${ids}::int[])
         GROUP BY bb."bountyId", bb."awardedToId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -155,7 +153,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated bounty entry benefactor metrics
         INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "unitAmountCount")
-        SELECT 
+        SELECT
           (value->>'bountyEntryId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'unitAmountCount')::int
@@ -177,7 +175,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
     -- get recent bountyEntry tips
     SELECT "entityId" as id
     FROM "BuzzTip"
-    WHERE "entityType" = 'bountyEntry' AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "entityType" = 'bountyEntry' AND "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -196,7 +194,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
         FROM "BuzzTip" bt
         JOIN "BountyEntry" be ON be.id = bt."entityId" -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "entityId" IN (${ids}) AND "entityType" = 'bountyEntry'
+        WHERE "entityId" = ANY(${ids}::int[]) AND "entityType" = 'bountyEntry'
         GROUP BY "entityId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -216,7 +214,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated bountyEntry tip metrics
         INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "tippedCount", "tippedAmountCount")
-        SELECT 
+        SELECT
           (value->>'bountyEntryId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'tippedCount')::int,

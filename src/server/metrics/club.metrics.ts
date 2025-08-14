@@ -102,7 +102,7 @@ export const clubMetrics = createMetricProcessor({
         LEFT JOIN (
             SELECT
               cm."clubId",
-              COUNT(*) AS member_count,
+              COUNT(1) AS member_count,
               SUM(IIF(cm."startedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_member_count,
               SUM(IIF(cm."startedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_member_count,
               SUM(IIF(cm."startedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_member_count,
@@ -131,7 +131,7 @@ export const clubMetrics = createMetricProcessor({
         LEFT JOIN (
           SELECT
             cp."clubId",
-            COUNT(*) AS club_post_count,
+            COUNT(1) AS club_post_count,
             SUM(IIF(cp."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_club_post_count,
             SUM(IIF(cp."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_club_post_count,
             SUM(IIF(cp."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_club_post_count,

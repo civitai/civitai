@@ -173,7 +173,7 @@ async function getReactionTasks(ctx: ImageMetricContext) {
     SELECT
       "imageId" AS id
     FROM "ImageReaction"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -229,7 +229,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
     SELECT t."imageId" as id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."imageId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+    WHERE t."imageId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
     ORDER BY t."imageId"
   `;
 
@@ -260,7 +260,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
     -- get recent image collections
     SELECT "imageId" as id
     FROM "CollectionItem"
-    WHERE "imageId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "imageId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
     ORDER BY "imageId"
   `;
 
@@ -290,7 +290,7 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
     -- get recent image tips
     SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
-    WHERE "entityType" = 'Image' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
+    WHERE "entityType" = 'Image' AND ("createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate})
     ORDER BY "entityId"
   `;
 

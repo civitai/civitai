@@ -90,7 +90,7 @@ export function getClient(
     } else if (params !== undefined) {
       // Plain string with parameters
       queryText = sql;
-      queryParams = params.map(formatSqlType);
+      queryParams = params;
     } else {
       // Plain string without parameters
       queryText = sql;
@@ -101,9 +101,10 @@ export function getClient(
     log(instance, params !== undefined ? { text: queryText, values: queryParams } : sql);
 
     let done = false;
-    const query = queryParams !== undefined 
-      ? connection.query<R>(queryText, queryParams)
-      : connection.query<R>(queryText);
+    const query =
+      queryParams !== undefined
+        ? connection.query<R>(queryText, queryParams)
+        : connection.query<R>(queryText);
     query.finally(() => {
       done = true;
       connection.release();
@@ -143,6 +144,24 @@ export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
   return function (sql: TemplateStringsArray, ...values: any[]) {
     const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
     return fn(sqlString);
+  };
+}
+
+export function parameterizedTemplateHandler<T>(
+  fn: (sql: string, params: any[]) => Promise<T> | T
+) {
+  return function (sql: TemplateStringsArray, ...values: any[]) {
+    const params: any[] = [];
+    const sqlString = sql.reduce((acc, part, i) => {
+      acc += part;
+      const value = values[i];
+      if (!value) return acc;
+      if (typeof value === 'string') return acc + value;
+      params.push(value);
+      acc += `$${params.length}`;
+      return acc;
+    }, '');
+    return fn(sqlString, params);
   };
 }
 

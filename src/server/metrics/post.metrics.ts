@@ -170,7 +170,7 @@ async function getReactionTasks(ctx: MetricContext) {
       SELECT DISTINCT
         i."postId" AS id
       FROM "Image" i
-      WHERE i.id IN (${ids})
+      WHERE i.id = ANY(${ids}::int[])
         AND i.id BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
     `;
     postIds.filter(isDefined).forEach((x) => affected.add(x));
@@ -207,7 +207,7 @@ async function getCommentTasks(ctx: MetricContext) {
       t."postId" AS id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."postId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+    WHERE t."postId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
@@ -223,7 +223,7 @@ async function getCommentTasks(ctx: MetricContext) {
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE t."postId" IN (${ids})
-        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
+        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY t."postId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -238,7 +238,7 @@ async function getCollectionTasks(ctx: MetricContext) {
     SELECT DISTINCT
       "postId" AS id
     FROM "CollectionItem"
-    WHERE "postId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "postId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {

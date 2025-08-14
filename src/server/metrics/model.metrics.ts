@@ -6,7 +6,12 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler, jsonbArrayFrom } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, executeRefreshWithParams, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getLastAuctionReset } from '~/server/services/auction.service';
@@ -442,7 +447,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
         CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE r.exclude = FALSE
           AND r."tosViolation" = FALSE
-          AND r."modelId" IN (${ids})
+          AND r."modelId" = ANY(${ids}::int[])
         GROUP BY r."modelId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -462,15 +467,15 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
         ctx,
         `-- Insert pre-aggregated model rating metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
-        SELECT 
+        SELECT
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'thumbsUpCount')::int,
           (value->>'thumbsDownCount')::int
         FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
-          SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", 
-              "thumbsDownCount" = EXCLUDED."thumbsDownCount", 
+          SET "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+              "thumbsDownCount" = EXCLUDED."thumbsDownCount",
               "updatedAt" = now()`,
         [JSON.stringify(metrics)]
       );
@@ -550,7 +555,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
           OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
           OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
         JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-        WHERE c."modelId" = ANY (ARRAY[${ids}])
+        WHERE c."modelId" = ANY(${ids}::int[])
           AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY c."modelId", tf.timeframe
       )
@@ -570,7 +575,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
         ctx,
         `-- Insert pre-aggregated model collection metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
-        SELECT 
+        SELECT
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int

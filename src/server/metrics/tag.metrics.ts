@@ -4,7 +4,13 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, executeRefreshWithParams, getAffected, getMetricJson, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('metrics:tag');
@@ -49,7 +55,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "tagId" as id
     FROM "TagEngagement"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -65,7 +71,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
           SUM(CASE WHEN type = 'Follow' THEN 1 ELSE 0 END) as "followerCount",
           SUM(CASE WHEN type = 'Hide' THEN 1 ELSE 0 END) as "hiddenCount"
         FROM "TagEngagement"
-        WHERE "tagId" IN (${ids})
+        WHERE "tagId" = ANY(${ids}::int[])
         GROUP BY "tagId"
       )
       SELECT jsonb_agg(
@@ -84,7 +90,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert tag engagement metrics for all timeframes using the AllTime counts
         INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount")
-        SELECT 
+        SELECT
           (value->>'tagId')::int,
           tf.timeframe,
           (value->>'followerCount')::int,
@@ -92,8 +98,8 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         FROM jsonb_array_elements($1::jsonb) AS value
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
         ON CONFLICT ("tagId", timeframe) DO UPDATE
-          SET "followerCount" = EXCLUDED."followerCount", 
-              "hiddenCount" = EXCLUDED."hiddenCount", 
+          SET "followerCount" = EXCLUDED."followerCount",
+              "hiddenCount" = EXCLUDED."hiddenCount",
               "updatedAt" = NOW()`,
         [JSON.stringify(metrics)]
       );
@@ -128,7 +134,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
     SELECT
       "tagId" AS id
     FROM "${table}"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 500).map((ids, i) => async () => {
@@ -141,10 +147,10 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
       WITH counts AS (
         SELECT
           "tagId",
-          COUNT(*) as "count"
+          COUNT(1) as "count"
         FROM "${table}" t
         JOIN "${sourceTable}" s ON s.id = t."${id}"
-        WHERE "tagId" IN (${ids})
+        WHERE "tagId" = ANY(${ids}::int[])
         GROUP BY "tagId"
       )
       SELECT jsonb_agg(
@@ -162,7 +168,7 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
         ctx,
         `-- Insert tag count metrics for all timeframes using the AllTime count
         INSERT INTO "TagMetric" ("tagId", timeframe, "${column}")
-        SELECT 
+        SELECT
           (value->>'tagId')::int,
           tf.timeframe,
           (value->>'count')::int

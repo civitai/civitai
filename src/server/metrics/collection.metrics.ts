@@ -56,7 +56,7 @@ async function getContributorTasks(ctx: MetricProcessorRunContext) {
     -- get recent collection contributors
     SELECT "collectionId" as id
     FROM "CollectionContributor"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -96,7 +96,7 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
     -- get recent collection items
     SELECT "collectionId" as id
     FROM "CollectionItem"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -109,9 +109,9 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
       WITH counts AS (
         SELECT
           "collectionId",
-          COUNT(*) as "itemCount"
+          COUNT(1) as "itemCount"
         FROM "CollectionItem"
-        WHERE "collectionId" IN (${ids})
+        WHERE "collectionId" = ANY(${ids}::int[])
         GROUP BY "collectionId"
       )
       SELECT jsonb_agg(
