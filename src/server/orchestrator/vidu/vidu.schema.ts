@@ -1,6 +1,6 @@
 import type { ViduVideoGenInput } from '@civitai/client';
 import { ViduVideoGenStyle } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   baseVideoGenerationSchema,
@@ -59,7 +59,7 @@ const schema = baseVideoGenerationSchema.extend({
   aspectRatio: z.enum(viduAspectRatios).optional().catch('1:1'),
   movementAmplitude: z.enum(viduMovementAmplitudes).default('auto').catch('auto'),
   model: z.literal('q1').default('q1').catch('q1'),
-  // model: z.nativeEnum(ViduVideoGenModel).default('q1').catch('q1'),
+  // model: z.enum(ViduVideoGenModel).default('q1').catch('q1'),
 });
 
 export const viduGenerationConfig = VideoGenerationConfig2({

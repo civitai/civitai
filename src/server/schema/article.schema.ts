@@ -1,5 +1,5 @@
 import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { CacheTTL, constants } from '~/server/common/constants';
 import { ArticleSort } from '~/server/common/enums';

@@ -1,6 +1,6 @@
 import { env } from 'process';
 import sanitize from 'sanitize-html';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -15,7 +15,7 @@ enum Status {
 const schema = z.object({
   imageId: z.number(),
   youtubeId: z.string().optional(),
-  status: z.nativeEnum(Status),
+  status: z.enum(Status),
   youtubeRefreshToken: z.string(),
 });
 

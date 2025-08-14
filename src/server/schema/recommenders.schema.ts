@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { baseQuerySchema } from '~/server/schema/base.schema';
 
 export type RecommendationsResponse = z.infer<typeof recommendationsResponseSchema>;

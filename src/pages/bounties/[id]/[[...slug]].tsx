@@ -23,7 +23,7 @@ import {
 } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';

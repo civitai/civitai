@@ -3,7 +3,7 @@ import { Container } from '@mantine/core';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { BountyEntryUpsertForm } from '~/components/Bounty/BountyEntryUpsertForm';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';

@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
@@ -36,7 +36,7 @@ export type ImageSelectSource = 'generation' | 'training' | 'uploaded';
 export const imageSelectTrainingFilterSchema = z.object({
   hasLabels: z.boolean().nullable(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullable(),
-  statuses: z.array(z.nativeEnum(TrainingStatus)),
+  statuses: z.array(z.enum(TrainingStatus)),
   types: z.array(z.enum(constants.trainingModelTypes)),
   mediaTypes: z.array(z.enum(constants.trainingMediaTypes)),
   baseModels: z.array(z.enum(baseModels)),
@@ -44,6 +44,6 @@ export const imageSelectTrainingFilterSchema = z.object({
 export type ImageSelectTrainingFilter = z.infer<typeof imageSelectTrainingFilterSchema>;
 
 export const imageSelectProfileFilterSchema = z.object({
-  mediaTypes: z.array(z.nativeEnum(MediaType)),
+  mediaTypes: z.array(z.enum(MediaType)),
 });
 export type ImageSelectProfileFilter = z.infer<typeof imageSelectProfileFilterSchema>;

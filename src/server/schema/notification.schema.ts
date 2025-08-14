@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';

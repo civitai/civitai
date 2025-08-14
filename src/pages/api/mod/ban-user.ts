@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { BanReasonCode } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
@@ -8,7 +8,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
-  reasonCode: z.nativeEnum(BanReasonCode).optional(),
+  reasonCode: z.enum(BanReasonCode).optional(),
   detailsExternal: z.string().optional(),
   detailsInternal: z.string().optional(),
 });

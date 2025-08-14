@@ -1,5 +1,5 @@
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -301,7 +301,7 @@ export const useShopLastViewed = () => {
 const cosmeticShopQueryParams = z
   .object({
     cosmeticTypes: z
-      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.nativeEnum(CosmeticType).array())
+      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(CosmeticType).array())
       .optional(),
   })
   .partial();

@@ -12,7 +12,7 @@ import type { VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { GenForm } from '~/components/Generation/Form/GenForm';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 const schema = z.looseObject({});
 

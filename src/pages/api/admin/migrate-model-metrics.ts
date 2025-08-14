@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import type { Task } from '~/server/utils/concurrency-helpers';

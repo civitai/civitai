@@ -2,7 +2,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import dayjs from 'dayjs';
 import { useMemo } from 'react';
 import produce from 'immer';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { Currency, BountyEngagementType, BountyType } from '~/shared/utils/prisma/enums';
 import type {

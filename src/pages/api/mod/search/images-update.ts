@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';

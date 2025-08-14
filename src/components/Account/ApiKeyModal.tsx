@@ -1,7 +1,7 @@
 import type { ModalProps } from '@mantine/core';
 import { Box, Button, Code, CopyButton, Group, Modal, Stack, Text } from '@mantine/core';
 import { IconCheck, IconClipboard } from '@tabler/icons-react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
 import { KeyScope } from '~/shared/utils/prisma/enums';

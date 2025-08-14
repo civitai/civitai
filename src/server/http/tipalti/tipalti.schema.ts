@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { TipaltiStatus } from '~/server/common/enums';
 
 export namespace Tipalti {
@@ -53,7 +53,7 @@ export namespace Tipalti {
   export const createPayeeResponseSchema = z.object({
     id: z.string(),
     refCode: z.string().optional(),
-    status: z.nativeEnum(TipaltiStatus),
+    status: z.enum(TipaltiStatus),
     statusChangeDateTimeUTC: z.string().nullish(),
     statusReason: z.string().nullish(),
     isAccountClosed: z.boolean().optional(),

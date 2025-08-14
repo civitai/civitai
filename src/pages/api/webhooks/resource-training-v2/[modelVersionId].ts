@@ -1,7 +1,7 @@
 import type { ImageResourceTrainingStep, Workflow } from '@civitai/client';
 import { WorkflowStatus } from '@civitai/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -16,7 +16,7 @@ import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-mo
 
 const workflowSchema = z.object({
   workflowId: z.string(),
-  status: z.nativeEnum(WorkflowStatus),
+  status: z.enum(WorkflowStatus),
   // $type
   // timestamp
 });

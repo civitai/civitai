@@ -2,7 +2,7 @@ import type { Stripe } from '@stripe/stripe-js';
 import { useRef, useEffect } from 'react';
 import { env } from '~/env/client';
 import { useRouter } from 'next/router';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { showSuccessNotification } from '~/utils/notifications';
 import { Anchor, Stack, Text } from '@mantine/core';
 import { removeEmpty } from '~/utils/object-helpers';

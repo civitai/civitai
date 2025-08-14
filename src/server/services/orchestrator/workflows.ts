@@ -10,7 +10,7 @@ import {
   updateWorkflow as clientUpdateWorkflow,
   handleError,
 } from '@civitai/client';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { isProd } from '~/env/other';
 import type {
   PatchWorkflowParams,

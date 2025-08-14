@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from 'next-auth';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { toggleModelVersionOnVault } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { removeEmpty } from '~/utils/object-helpers';

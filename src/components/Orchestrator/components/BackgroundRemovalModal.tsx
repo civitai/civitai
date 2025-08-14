@@ -10,7 +10,7 @@ import {
   useGenerate,
   useGenerateWithCost,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { IconX } from '@tabler/icons-react';

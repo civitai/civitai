@@ -2,7 +2,7 @@ import { Button, Card, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';

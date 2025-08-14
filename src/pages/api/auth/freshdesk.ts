@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { createFreshdeskToken } from '~/server/integrations/freshdesk';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';

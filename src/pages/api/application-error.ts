@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';

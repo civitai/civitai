@@ -1,5 +1,5 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { buzzAccountTypes } from '~/server/schema/buzz.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 
@@ -20,6 +20,6 @@ export type TrainingUpdateSignalSchema = z.infer<typeof trainingUpdateSignalSche
 export const trainingUpdateSignalSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
-  status: z.nativeEnum(TrainingStatus),
+  status: z.enum(TrainingStatus),
   fileMetadata: modelFileMetadataSchema,
 });

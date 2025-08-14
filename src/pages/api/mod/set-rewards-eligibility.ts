@@ -1,7 +1,7 @@
 import { RewardsEligibility } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { v4 as uuid } from 'uuid';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { userMultipliersCache } from '~/server/redis/caches';
@@ -11,7 +11,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
-  eligibility: z.nativeEnum(RewardsEligibility),
+  eligibility: z.enum(RewardsEligibility),
   modId: z.coerce.number(),
 });
 

@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { autoCaptionSchema } from '~/store/training.store';
 
@@ -37,7 +37,7 @@ export namespace Orchestrator {
 
     const imageAutoTagInputSchema = z.object({
       retries: z.number().positive(),
-      mediaUrl: z.string().url(),
+      mediaUrl: z.url(),
       modelId: z.number().positive(),
       properties: z.object({
         userId: z.number(),

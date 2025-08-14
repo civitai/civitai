@@ -20,7 +20,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import {
   Form,
   InputCheckbox,

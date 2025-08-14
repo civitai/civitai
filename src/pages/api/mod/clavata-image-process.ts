@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { clavata } from '~/server/integrations/clavata';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 

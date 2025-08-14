@@ -7,7 +7,7 @@ import { clubTransactionSchema } from '~/server/schema/buzz.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { NumberInputWrapper } from '../../libs/form/components/NumberInputWrapper';
 import { BuzzTransactionButton } from '../Buzz/BuzzTransactionButton';

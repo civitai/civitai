@@ -2,7 +2,7 @@ import type { Icon } from '@tabler/icons-react';
 import { IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -34,7 +34,7 @@ const collectionQueryParamSchema = z
     collectionId: z
       .union([z.array(z.coerce.number()), z.coerce.number()])
       .transform((val) => (Array.isArray(val) ? val[0] : val)),
-    sort: z.nativeEnum(CollectionSort),
+    sort: z.enum(CollectionSort),
     userId: z.coerce.number().optional(),
   })
   .partial();

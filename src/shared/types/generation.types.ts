@@ -1,5 +1,3 @@
-import * as z from 'zod/v4';
-
 type NodeRef = [string, number];
 export type ComfyNode = {
   inputs: Record<string, number | string | NodeRef>;

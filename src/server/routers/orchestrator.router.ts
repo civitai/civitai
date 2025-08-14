@@ -4,7 +4,7 @@ import type {
   TextToImageStepTemplate,
 } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';

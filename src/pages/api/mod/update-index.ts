@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import {
   ARTICLES_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,

@@ -1,5 +1,5 @@
 import { Currency } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';
@@ -9,7 +9,7 @@ export type BountyEntryFileMeta = z.infer<typeof bountyEntryFileMeta>;
 const bountyEntryFileMeta = z
   .object({
     unlockAmount: z.number(),
-    currency: z.nativeEnum(Currency),
+    currency: z.enum(Currency),
     benefactorsOnly: z.boolean(),
   })
   .partial();

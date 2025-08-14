@@ -1,5 +1,5 @@
 import { BuzzClientAccount, TransactionType } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { imageSelectTrainingFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
@@ -19,7 +19,7 @@ export const trainingResultsV1Schema = z.object({
       z.object({
         jobId: z.string().optional(), // nb: this is an old reference prior to 10/26/23
         time: z.string(),
-        status: z.nativeEnum(TrainingStatus),
+        status: z.enum(TrainingStatus),
         message: z.string().nullish(),
       })
     )
@@ -53,14 +53,14 @@ export const trainingResultsV2Schema = z.object({
     z.object({
       id: z.string().nullish(),
       amount: z.number(),
-      accountType: z.nativeEnum(BuzzClientAccount).nullish(),
-      type: z.nativeEnum(TransactionType),
+      accountType: z.enum(BuzzClientAccount).nullish(),
+      type: z.enum(TransactionType),
     })
   ),
   history: z.array(
     z.object({
       time: z.string(),
-      status: z.nativeEnum(TrainingStatus),
+      status: z.enum(TrainingStatus),
     })
   ),
   // error_type: z.enum(['user', 'system']).nullish(),
@@ -70,7 +70,7 @@ export const trainingResultsV2Schema = z.object({
       epochNumber: z.number(),
       modelUrl: z.string(),
       modelSize: z.number(),
-      sampleImages: z.array(z.string().url()),
+      sampleImages: z.array(z.url()),
     })
   ),
   sampleImagesPrompts: z.array(z.string()),
@@ -98,7 +98,7 @@ export const modelFileMetadataSchema = z.object({
   shareDataset: z.boolean().nullish(),
   numImages: z.number().nullish(),
   numCaptions: z.number().nullish(), // this should be named numLabels, but it's too late now
-  selectedEpochUrl: z.string().url().nullish(),
+  selectedEpochUrl: z.url().nullish(),
   trainingResults: trainingResultsSchema.nullish(),
   bountyId: z.number().nullish(),
   bountyEntryId: z.number().nullish(),
@@ -108,22 +108,22 @@ export type ModelFileInput = z.infer<typeof modelFileSchema>;
 export const modelFileSchema = z.object({
   id: z.number().optional(),
   name: z.string(),
-  url: z.string().url().min(1, 'You must select a file'),
+  url: z.url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
   format: z.enum(constants.modelFileFormats).optional(),
-  visibility: z.nativeEnum(ModelFileVisibility).optional(),
+  visibility: z.enum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
 });
 
 export type ModelFileCreateInput = z.infer<typeof modelFileCreateSchema>;
 export const modelFileCreateSchema = z.object({
   name: z.string(),
-  url: z.string().url().min(1, 'You must select a file'),
+  url: z.url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
   modelVersionId: z.number(),
-  visibility: z.nativeEnum(ModelFileVisibility).optional(),
+  visibility: z.enum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
 });
 
@@ -131,11 +131,11 @@ export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;
 export const modelFileUpdateSchema = z.object({
   id: z.number(),
   name: z.string().optional(),
-  url: z.string().url().min(1, 'You must select a file').optional(),
+  url: z.url().min(1, 'You must select a file').optional(),
   sizeKB: z.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
   modelVersionId: z.number().optional(), // nb: this should probably not be an option here
-  visibility: z.nativeEnum(ModelFileVisibility).optional(),
+  visibility: z.enum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
 });
 

@@ -1,5 +1,5 @@
 import { Alert, Stack, Radio, Text } from '@mantine/core';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { InputText, InputRTE, InputImageUpload, InputRadioGroup } from '~/libs/form';
 import { imageSchema } from '~/server/schema/image.schema';
 import { reportOwnershipDetailsSchema } from '~/server/schema/report.schema';

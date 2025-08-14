@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
@@ -11,9 +11,9 @@ import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpe
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
-  period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
+  period: z.enum(MetricTimeframe).default(constants.postFilterDefaults.period),
   periodMode: periodModeSchema,
-  sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
+  sort: z.enum(PostSort).default(constants.postFilterDefaults.sort),
   draftOnly: z.boolean().optional(),
 });
 
@@ -86,7 +86,7 @@ export const addPostTagSchema = z.object({
 export type AddPostImageInput = z.infer<typeof addPostImageSchema>;
 export const addPostImageSchema = z.object({
   name: z.string().nullish(),
-  url: z.string().url().or(z.string().uuid()),
+  url: z.url().or(z.string().uuid()),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
@@ -101,9 +101,9 @@ export const addPostImageSchema = z.object({
       return value;
     }, imageMetaSchema.nullish())
     .nullish(),
-  type: z.nativeEnum(MediaType).default(MediaType.image),
+  type: z.enum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
-  externalDetailsUrl: z.string().url().optional(),
+  externalDetailsUrl: z.url().optional(),
 });
 
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;

@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import {
   MIN_BANK_AMOUNT,
   MIN_WITHDRAWAL_AMOUNT,
@@ -27,7 +27,7 @@ export const cashWithdrawalMetadataSchema = z
 export type UpdateCashWithdrawalSchema = z.infer<typeof updateCashWithdrawalSchema>;
 export const updateCashWithdrawalSchema = z.object({
   withdrawalId: z.string(),
-  status: z.nativeEnum(CashWithdrawalStatus),
+  status: z.enum(CashWithdrawalStatus),
   note: z.string().optional(),
   metadata: cashWithdrawalMetadataSchema.optional(),
   fees: z.number().optional(),

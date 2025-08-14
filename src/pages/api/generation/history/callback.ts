@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';

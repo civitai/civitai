@@ -17,7 +17,7 @@ import {
 import { IconInfoCircle, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';

@@ -1,5 +1,5 @@
 import type { InfiniteData } from '@tanstack/react-query';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { generatedImageStepMetadataSchema } from '~/server/schema/orchestrator/textToImage.schema';
 
 // #region [interfaces]

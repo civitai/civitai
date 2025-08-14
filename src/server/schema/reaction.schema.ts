@@ -1,5 +1,5 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export const reactableEntities: readonly [string, ...string[]] = [
   'question',
@@ -19,5 +19,5 @@ export type ToggleReactionInput = z.infer<typeof toggleReactionSchema>;
 export const toggleReactionSchema = z.object({
   entityId: z.number(),
   entityType: z.enum(reactableEntities),
-  reaction: z.nativeEnum(ReviewReactions),
+  reaction: z.enum(ReviewReactions),
 });

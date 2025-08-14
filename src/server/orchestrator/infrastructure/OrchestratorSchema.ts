@@ -1,4 +1,4 @@
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 
 interface IOrchestratorSchema<TSchema extends z.ZodObject> {
   schemas: TSchema[];

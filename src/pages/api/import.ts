@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { processImport } from '~/server/importers/importRouter';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 

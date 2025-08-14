@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { numericString, sanitizedNullableString } from '~/utils/zod-helpers';
 

@@ -2,7 +2,7 @@ import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@manti
 import { openConfirmModal } from '@mantine/modals';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import cardClasses from '~/components/Cards/Cards.module.css';
 import {

@@ -1,5 +1,5 @@
 import { Availability } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getByIdSchema = z.object({ id: z.number() });
@@ -74,7 +74,7 @@ export type SupportedAvailabilityResources = (typeof supportedAvailabilityResour
 export const availabilitySchema = z.object({
   entityType: z.enum(supportedAvailabilityResources),
   entityId: z.number(),
-  availability: z.nativeEnum(Availability),
+  availability: z.enum(Availability),
 });
 
 export type AvailabilityInput = z.infer<typeof availabilitySchema>;

@@ -1,7 +1,7 @@
 import { constants } from '~/server/common/constants';
 import { QuestionStatus } from './../common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { QuestionSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -9,9 +9,9 @@ import { tagSchema } from '~/server/schema/tag.schema';
 export type GetQuestionsInput = z.infer<typeof getQuestionsSchema>;
 export const getQuestionsSchema = getAllQuerySchema.extend({
   tagname: z.string().optional(),
-  sort: z.nativeEnum(QuestionSort).default(constants.questionFilterDefaults.sort),
-  period: z.nativeEnum(MetricTimeframe).default(constants.questionFilterDefaults.period),
-  status: z.nativeEnum(QuestionStatus).optional(),
+  sort: z.enum(QuestionSort).default(constants.questionFilterDefaults.sort),
+  period: z.enum(MetricTimeframe).default(constants.questionFilterDefaults.period),
+  status: z.enum(QuestionStatus).optional(),
 });
 
 export type UpsertQuestionInput = z.infer<typeof upsertQuestionSchema>;

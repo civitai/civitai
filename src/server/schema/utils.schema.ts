@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { santizeHtmlOptions } from '~/utils/html-helpers';
 import { sanitizeHtml } from '~/utils/html-helpers';
 

@@ -12,6 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
+import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
@@ -37,7 +38,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './TrainingSelectFile.module.css';
-import clsx from 'clsx';
 
 const TRANSMITTER_KEY = 'trainer';
 

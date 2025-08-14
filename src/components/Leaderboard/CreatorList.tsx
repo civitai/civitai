@@ -1,7 +1,7 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { Stack } from '@mantine/core';
-// import * as z from 'zod/v4';
+// import * as z from 'zod';
 
 import { CreatorCard } from '~/components/Leaderboard/CreatorCard';
 import { numericString } from '~/utils/zod-helpers';

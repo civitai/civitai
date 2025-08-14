@@ -14,7 +14,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconCalendar, IconCalendarDue, IconX } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo, useState } from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';

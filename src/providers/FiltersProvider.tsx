@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { constants } from '~/server/common/constants';

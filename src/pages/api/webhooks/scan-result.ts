@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { ModelFile } from '~/shared/utils/prisma/models';
 import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';

@@ -5,7 +5,7 @@ import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
 import { useMemo } from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';

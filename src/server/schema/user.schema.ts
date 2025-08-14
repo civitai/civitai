@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -66,14 +66,14 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 export const profilePictureSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
-  url: z.string().url().or(z.string().uuid()),
+  url: z.url().or(z.string().uuid()),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
   metadata: z.object({}).passthrough().optional(),
-  type: z.nativeEnum(MediaType).default(MediaType.image),
+  type: z.enum(MediaType).default(MediaType.image),
 });
 
 export const creatorCardStatsPreferences = z.array(z.string()).max(3);
@@ -127,7 +127,7 @@ export type ToggleFavoriteInput = z.infer<typeof toggleFavoriteInput>;
 
 export const toggleModelEngagementInput = z.object({
   modelId: z.number(),
-  type: z.nativeEnum(ModelEngagementType).optional(),
+  type: z.enum(ModelEngagementType).optional(),
 });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
@@ -137,7 +137,7 @@ export const toggleFollowUserSchema = z.object({
 });
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;
 
-export const getUserTagsSchema = z.object({ type: z.nativeEnum(TagEngagementType) });
+export const getUserTagsSchema = z.object({ type: z.enum(TagEngagementType) });
 export type GetUserTagsSchema = z.infer<typeof getUserTagsSchema>;
 
 export const toggleBlockedTagSchema = z.object({ tagId: z.number() });
@@ -169,7 +169,7 @@ export const getUserCosmeticsSchema = z.object({
 
 export type GetUserArticleEngagementsInput = z.infer<typeof getUserArticleEngagementsSchema>;
 export const getUserArticleEngagementsSchema = z.object({
-  type: z.nativeEnum(ArticleEngagementType),
+  type: z.enum(ArticleEngagementType),
 });
 
 export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticleEngagementSchema>;
@@ -179,7 +179,7 @@ export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema
 
 export type GetUserBountyEngagementsInput = z.infer<typeof getUserBountyEngagementsSchema>;
 export const getUserBountyEngagementsSchema = z.object({
-  type: z.nativeEnum(BountyEngagementType),
+  type: z.enum(BountyEngagementType),
 });
 
 export type ToggleUserBountyEngagementsInput = z.infer<typeof toggleUserBountyEngagementSchema>;
@@ -303,7 +303,7 @@ export const userMeta = z.object({
   scores: userScoreMetaSchema.optional(),
   banDetails: z
     .object({
-      reasonCode: z.nativeEnum(BanReasonCode).optional(),
+      reasonCode: z.enum(BanReasonCode).optional(),
       detailsInternal: z.string().optional(),
       detailsExternal: z.string().optional(),
     })
@@ -335,7 +335,7 @@ export const updateContentSettingsSchema = z.object({
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
 export const toggleBanUserSchema = z.object({
   id: z.number(),
-  reasonCode: z.nativeEnum(BanReasonCode).optional(),
+  reasonCode: z.enum(BanReasonCode).optional(),
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),

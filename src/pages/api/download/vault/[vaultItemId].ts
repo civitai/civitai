@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from 'next-auth';
 import requestIp from 'request-ip';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';

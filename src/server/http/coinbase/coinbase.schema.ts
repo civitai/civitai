@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export namespace Coinbase {
   const baseMeta = z
@@ -19,8 +19,8 @@ export namespace Coinbase {
       currency: z.string().min(1, 'Currency is required'),
     }),
     metadata: baseMeta.optional(),
-    redirect_url: z.string().url('Invalid URL').optional(),
-    cancel_url: z.string().url('Invalid URL').optional(),
+    redirect_url: z.url('Invalid URL').optional(),
+    cancel_url: z.url('Invalid URL').optional(),
   });
 
   export type CreateChargeResponseSchema = z.infer<typeof createChargeResponseSchema>;

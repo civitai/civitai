@@ -1,6 +1,6 @@
 import { Button, Modal, Text } from '@mantine/core';
 import { useState } from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputNumber, InputSelect, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';

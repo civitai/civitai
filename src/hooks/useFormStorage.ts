@@ -1,7 +1,7 @@
 import { openConfirmModal } from '@mantine/modals';
 import { useCallback, useEffect } from 'react';
 import type { EventType, FieldPath, UseFormReturn } from 'react-hook-form';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 

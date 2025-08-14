@@ -14,7 +14,7 @@ import {
 import { CosmeticSource } from '~/shared/utils/prisma/enums';
 import { IconCircleCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useQueryCosmetic } from '~/components/Cosmetics/cosmetics.util';

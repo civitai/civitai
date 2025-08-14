@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';

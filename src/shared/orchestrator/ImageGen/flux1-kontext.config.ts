@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 

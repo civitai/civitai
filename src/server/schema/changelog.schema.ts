@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { ChangelogType } from '~/shared/utils/prisma/enums';
 
@@ -9,7 +9,7 @@ export const getChangelogsInput = infiniteQuerySchema.extend({
   search: z.string().optional(),
   dateBefore: z.date().optional(),
   dateAfter: z.date().optional(),
-  types: z.nativeEnum(ChangelogType).array().optional(),
+  types: z.enum(ChangelogType).array().optional(),
   tags: z.string().array().optional(),
 });
 
@@ -18,11 +18,11 @@ export const createChangelogInput = z.object({
   title: z.string().min(1),
   titleColor: z.string().optional(),
   content: z.string().min(1),
-  link: z.string().url().optional().or(z.literal('')),
+  link: z.url().optional().or(z.literal('')),
   //   link: z.string().optional().refine(value => !value || /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})(\/[\w.-]*)*\/?$/.test(value), {
   //     message: "Please provide a valid URL",
   // }),
-  cta: z.string().url().optional().or(z.literal('')),
+  cta: z.url().optional().or(z.literal('')),
   effectiveAt: z.date(),
   type: z.enum(ChangelogType),
   tags: z.string().array().optional(),

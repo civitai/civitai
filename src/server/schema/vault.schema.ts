@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { VaultSort } from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -8,14 +8,14 @@ export const getPaginatedVaultItemsSchema = paginationSchema.merge(
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
     query: z.string().optional(),
-    types: z.array(z.nativeEnum(ModelType)).optional(),
+    types: z.array(z.enum(ModelType)).optional(),
     categories: z.array(z.string()).optional(),
     baseModels: z.array(z.string()).optional(),
     dateCreatedFrom: z.date().optional(),
     dateCreatedTo: z.date().optional(),
     dateAddedFrom: z.date().optional(),
     dateAddedTo: z.date().optional(),
-    sort: z.nativeEnum(VaultSort).default(VaultSort.RecentlyAdded),
+    sort: z.enum(VaultSort).default(VaultSort.RecentlyAdded),
   })
 );
 

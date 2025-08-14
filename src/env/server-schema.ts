@@ -1,5 +1,5 @@
 // @ts-check
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import {
   commaDelimitedStringArray,

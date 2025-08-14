@@ -3,7 +3,7 @@ import { closeAllModals, openModal } from '@mantine/modals';
 import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconBrandYoutube } from '@tabler/icons-react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { Form, InputText, useForm } from '~/libs/form';
 

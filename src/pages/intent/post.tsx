@@ -14,12 +14,12 @@ import {
 import { IconCheck, IconMinus, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,
@@ -39,7 +39,7 @@ const postQuerySchema = z.object({
   /**
    *  Absolute url of the media to post
    */
-  mediaUrl: z.string().url(),
+  mediaUrl: z.url(),
   /**
    * Title to use for the post
    */
@@ -53,7 +53,7 @@ const postQuerySchema = z.object({
    * They can include parameters specific to your service so that people can have a better idea of how the media was made on your service.
    * Only for approved domains - contact us to be added
    */
-  detailsUrl: z.string().url().optional(),
+  detailsUrl: z.url().optional(),
   /**
    * Tags to apply to the post (comma delimited)
    * Maximum of 5

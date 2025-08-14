@@ -1,7 +1,7 @@
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import dayjs from 'dayjs';
 import { useMemo } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { Form, InputDatePicker, InputDateTimePicker, InputTime, useForm } from '~/libs/form';
 

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { batchProcessor } from '~/server/db/db-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

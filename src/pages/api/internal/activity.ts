@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 
 const schema = z.object({

@@ -1,5 +1,5 @@
 import type { Imagen4ImageGenInput } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const;

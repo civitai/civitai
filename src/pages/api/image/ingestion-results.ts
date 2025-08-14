@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getIngestionResults } from '~/server/services/image.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';

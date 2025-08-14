@@ -1,5 +1,5 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';

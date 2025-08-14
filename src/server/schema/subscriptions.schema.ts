@@ -1,10 +1,10 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
 
 export type GetPlansSchema = z.infer<typeof getPlansSchema>;
 export const getPlansSchema = z.object({
-  paymentProvider: z.nativeEnum(PaymentProvider).optional(),
+  paymentProvider: z.enum(PaymentProvider).optional(),
   interval: z.enum(['month', 'year']).optional(),
 });
 
@@ -40,7 +40,11 @@ export const subscriptionMetadata = z
   .object({
     renewalEmailSent: z.boolean().optional(),
     renewalBonus: z.number().optional(),
-    prepaids: z.partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number()).optional(),
-    proratedDays: z.partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number()).optional(),
+    prepaids: z
+      .partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number())
+      .optional(),
+    proratedDays: z
+      .partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number())
+      .optional(),
   })
   .passthrough();

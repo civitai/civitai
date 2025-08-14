@@ -1,6 +1,6 @@
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -32,8 +32,8 @@ const postQueryParamSchema = z
     modelVersionId: numericString(),
     username: z.string().transform(postgresSlugify).nullish(),
     view: z.enum(['categories', 'feed']),
-    period: z.nativeEnum(MetricTimeframe),
-    sort: z.nativeEnum(PostSort),
+    period: z.enum(MetricTimeframe),
+    sort: z.enum(PostSort),
     collectionId: numericString(),
     section: z.enum(['published', 'draft']),
     followed: booleanString().optional(),

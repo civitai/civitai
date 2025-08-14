@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { bustImageModRulesCache } from '~/server/services/image.service';
 import { bustModelModRulesCache } from '~/server/services/model.service';

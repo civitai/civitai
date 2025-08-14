@@ -1,6 +1,6 @@
 import type { MiniMaxVideoGenInput } from '@civitai/client';
 import { MiniMaxVideoGenModel } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   baseVideoGenerationSchema,

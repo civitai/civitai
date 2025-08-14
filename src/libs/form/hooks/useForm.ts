@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useCallback, useState } from 'react';
 import type { FieldValues, UseFormProps, UseFormReset } from 'react-hook-form';
 import { useForm as useReactHookForm } from 'react-hook-form';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export const useForm = <TSchema extends z.ZodType<FieldValues, FieldValues>, TContext>(
   args: Omit<UseFormProps<z.input<TSchema>, TContext, z.output<TSchema>>, 'resolver'> & {
