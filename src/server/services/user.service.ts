@@ -599,7 +599,15 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   if (type === 'blocked') {
     // For blocked users, we need to use the cache since it's stored differently
     const allBlocked = await BlockedUsers.getCached({ userId: user.id });
-    const items = allBlocked.slice(skip, skip + take);
+    const paginatedIds = allBlocked.slice(skip, skip + take);
+    
+    // Fetch user details for the paginated blocked users
+    const items = paginatedIds.length > 0 
+      ? await dbRead.user.findMany({
+          where: { id: { in: paginatedIds.map((u) => u.id) } },
+          select: simpleUserSelect,
+        })
+      : [];
 
     return getPagingData({ items, count: allBlocked.length }, limit, page);
   }
@@ -1709,13 +1717,12 @@ export async function amIBlockedByUser({
   targetUsername?: string;
 }) {
   if (!(targetUserId || targetUsername)) return false;
-
-  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
-  if (cachedBlockedBy.some((user) => user.id === targetUserId || user.username === targetUsername))
-    return true;
-
   if (!targetUserId && targetUsername)
     targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
+
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
+
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 
