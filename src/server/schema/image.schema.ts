@@ -19,7 +19,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -108,6 +108,7 @@ export const civitaiResourceSchema = z.object({
 });
 
 export const imageGenerationSchema = z.object({
+  baseModel: z.enum(baseModelGroups).optional(),
   prompt: undefinedString,
   negativePrompt: undefinedString,
   cfgScale: stringToNumber,
@@ -135,7 +136,6 @@ export const imageGenerationSchema = z.object({
     .optional()
     .catch(undefined),
 });
-
 
 export const imageMetaSchema = z.looseObject({ ...imageGenerationSchema.shape });
 export const imageMetaOutput = imageGenerationSchema

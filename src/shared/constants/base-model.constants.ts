@@ -354,20 +354,31 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   },
   {
     group: 'WanVideo14B_T2V',
-    support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B t2v'] }],
+    support: [
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 14B t2v'] },
+    ],
   },
   {
     group: 'WanVideo14B_I2V_480p',
     support: [
       {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Wan Video 14B i2v 480p'],
+      },
+      {
         modelTypes: [ModelType.LORA],
-        baseModels: ['Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+        baseModels: ['Wan Video 14B i2v 720p'],
       },
     ],
   },
   {
     group: 'WanVideo14B_I2V_720p',
-    support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 720p'] }],
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Wan Video 14B i2v 720p'],
+      },
+    ],
     partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] }],
   },
   // {

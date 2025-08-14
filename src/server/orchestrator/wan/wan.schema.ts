@@ -135,8 +135,8 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     'cfgScale',
     'draft',
     'resources',
-    'sourceImage',
     'baseModel',
+    'images',
   ],
   metadataDisplayProps: ['process', 'cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
   schema,
@@ -150,12 +150,14 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   },
   processes: ['txt2vid', 'img2vid'],
   whatIfFn: (data) => {
-    if (data.process === 'img2vid' && !data.sourceImage) {
-      data.sourceImage = {
-        url: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/4a0f3c58d8c6a370bc926efe3279cbad.jpeg',
-        width: 375,
-        height: 442,
-      };
+    if (data.process === 'img2vid' && !data.images?.length) {
+      data.images = [
+        {
+          url: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3fdba611-f34d-4a68-8bf8-3805629652d3/4a0f3c58d8c6a370bc926efe3279cbad.jpeg',
+          width: 375,
+          height: 442,
+        },
+      ];
     }
     return data;
   },
@@ -241,6 +243,14 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       ]);
       const [width, height] = aspectRatios[aspectRatio];
       const model = config.model;
+      console.log({
+        ...values,
+        sourceImage: imageUrls?.[0],
+        provider: 'civitai',
+        width,
+        height,
+        model,
+      });
       return {
         ...values,
         sourceImage: imageUrls?.[0],
