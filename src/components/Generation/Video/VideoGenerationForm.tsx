@@ -115,7 +115,6 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
         data = { ...formData, ...params };
       }
       const validated = config.softValidate(data);
-      console.log({ ...validated, resources });
       form.reset({ ...validated, resources }, { keepDefaultValues: true });
 
       generationStore.clearData();

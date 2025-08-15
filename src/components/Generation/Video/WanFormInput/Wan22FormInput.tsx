@@ -4,53 +4,26 @@ import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/Inpu
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { wanDuration, wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
+import { wan22AspectRatios, wan22Resolutions } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo } from 'react';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
-export function Wan21FormInput() {
+export function Wan22FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
-  const resolution = form.watch('resolution');
-  const baseModel = form.watch('baseModel');
+  // const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const config = wan22BaseModelMap[baseModel as keyof typeof wan22BaseModelMap];
-  const canPickDuration = config?.provider !== 'fal';
 
-  const availableBaseModels = useMemo(
-    () =>
-      Object.entries(wan22BaseModelMap)
-        .filter(([key, value]) => value.process === process)
-        .map(([key, value]) => ({
-          value: key,
-          label: value.resolution,
-          default: value.default,
-          provider: value.provider,
-        })),
-    [process]
-  );
-
-  useEffect(() => {
-    if (!availableBaseModels.find((x) => x.value === baseModel)) {
-      const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
-      if (defaultModel) {
-        form.setValue('baseModel', defaultModel.value);
-      }
-    }
-  }, [availableBaseModels, baseModel]);
-
-  useEffect(() => {
-    if (config?.provider === 'fal') form.setValue('duration', 5);
-  }, [config?.provider]);
-
-  const resources = getGenerationBaseModelResourceOptions(baseModel) ?? [];
+  const baseModelGroup: BaseModelGroup =
+    process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
+  const resources = getGenerationBaseModelResourceOptions(baseModelGroup);
 
   return (
     <>
@@ -95,27 +68,15 @@ export function Wan21FormInput() {
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"
-          options={config.aspectRatios}
+          options={wan22AspectRatios}
         />
-      )}
-      {availableBaseModels.length > 1 && (
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Resolution</Input.Label>
-          <InputSegmentedControl
-            name="baseModel"
-            data={availableBaseModels.map(({ label, value }) => ({ label, value }))}
-          />
-        </div>
       )}
 
       <div className="flex flex-col gap-0.5">
-        <Input.Label>Duration</Input.Label>
-        <InputSegmentedControl
-          disabled={!canPickDuration}
-          name="duration"
-          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
-        />
+        <Input.Label>Resolution</Input.Label>
+        <InputSegmentedControl name="resolution" data={[...wan22Resolutions]} />
       </div>
+
       <InputNumberSlider
         name="cfgScale"
         label={
@@ -141,8 +102,8 @@ export function Wan21FormInput() {
         precision={1}
         reverse
       />
+      <InputSwitch name="turbo" label="Turbo" />
       <InputSeed name="seed" label="Seed" />
-      <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
     </>
   );
 }

@@ -1,4 +1,11 @@
-import type { Wan21CivitaiVideoGenInput, Wan21FalVideoGenInput } from '@civitai/client';
+import type {
+  Wan21CivitaiVideoGenInput,
+  Wan21FalVideoGenInput,
+  Wan225bFalImageToVideoInput,
+  Wan225bFalTextToVideoInput,
+  Wan22FalImageToVideoInput,
+  Wan22FalTextToVideoInput,
+} from '@civitai/client';
 import * as z from 'zod/v4';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -17,11 +24,15 @@ import {
 import { defaultCatch } from '~/utils/zod-helpers';
 
 export const wanDuration = [3, 5] as const;
-export const wanResolution = [480, 720] as const;
-const wanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
-const wanFalAspectRatios = ['16:9', '1:1', '9:16'] as const;
-export const wan22InterpolatorModels = ['film', 'rife'] as const;
-export const wanVersions = ['v2.1', 'v2.2', 'v2.2-5B'] as const;
+const wan21CivitaiAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
+const wan21FalAspectRatios = ['16:9', '1:1', '9:16'] as const;
+export const wan22InterpolatorModels = ['none', 'film', 'rife'] as const;
+export const wanVersions = ['v2.1', 'v2.2', 'v2.2-5b'] as const;
+
+export const wan22AspectRatios = ['16:9', '1:1', '9:16'] as const;
+export const wan22Resolutions = ['480p', '720p'] as const;
+export const wan225bAspectRatios = wan21FalAspectRatios;
+export const wan225bResolutions = ['480p', '580p', '720p'] as const;
 
 type WanVersion = (typeof wanVersions)[number];
 export const wanVersionMap = new Map<WanVersion, BaseModelGroup[]>([
@@ -36,7 +47,7 @@ export const wanVersionMap = new Map<WanVersion, BaseModelGroup[]>([
     ],
   ],
   ['v2.2', ['WanVideo-22-I2V-A14B', 'WanVideo-22-T2V-A14B']],
-  ['v2.2-5B', ['WanVideo-22-TI2V-5B']],
+  ['v2.2-5b', ['WanVideo-22-TI2V-5B']],
 ]);
 
 export function getWanVersion(baseModel: string) {
@@ -59,7 +70,7 @@ export const wan22BaseModelMap = {
     default: true,
     resolution: '480p',
     provider: 'civitai',
-    aspectRatios: wanAspectRatios,
+    aspectRatios: [...wan21CivitaiAspectRatios],
   },
   WanVideo14B_I2V_480p: {
     process: 'img2vid',
@@ -67,7 +78,7 @@ export const wan22BaseModelMap = {
     default: false,
     resolution: '480p',
     provider: 'civitai',
-    aspectRatios: wanAspectRatios,
+    aspectRatios: [...wan21CivitaiAspectRatios],
   },
   WanVideo14B_I2V_720p: {
     process: 'img2vid',
@@ -75,14 +86,13 @@ export const wan22BaseModelMap = {
     default: true,
     resolution: '720p',
     provider: 'fal',
-    aspectRatios: wanFalAspectRatios,
+    aspectRatios: [...wan21FalAspectRatios],
   },
 };
 
 const baseSchema = z.object({
   ...baseVideoGenerationSchema.shape,
   engine: defaultCatch(z.literal('wan'), 'wan'),
-  baseModel: z.enum(baseModelGroups),
   prompt: promptSchema,
   images: sourceImageSchema.array().nullish(),
   cfgScale: z.number().min(1).max(10).optional().catch(4),
@@ -90,38 +100,54 @@ const baseSchema = z.object({
   duration: z.literal(wanDuration).optional().catch(5),
   seed: seedSchema,
   resources: z.array(resourceSchema).nullable().default(null),
-  aspectRatio: z.enum(wanAspectRatios).optional().catch('1:1'),
+
   enablePromptExpansion: z.boolean().optional(),
 });
 
 type Wan21Schema = z.infer<typeof wan21Schema>;
 const wan21Schema = baseSchema.extend({
   version: z.literal('v2.1'),
+  // baseModel: z.enum(baseModelGroups),
   resolution: z.enum(['480p', '720p']).catch('480p'),
+  aspectRatio: z.enum(wan21CivitaiAspectRatios).optional().catch('1:1'),
 });
 type Wan22Schema = z.infer<typeof wan22Schema>;
 const wan22Schema = baseSchema.extend({
   version: z.literal('v2.2'),
   negativePrompt: negativePromptSchema,
-  resolution: z.enum(['480p', '720p']).catch('480p'),
+  resolution: z.enum(wan22Resolutions).catch('480p'),
   shift: z.number().optional(),
   interpolatorModel: z.enum(wan22InterpolatorModels).optional(),
   useTurbo: z.boolean().optional(),
+  aspectRatio: z.enum(wan22AspectRatios).optional().catch('1:1'),
 });
 type Wan225bSchema = z.infer<typeof wan225bSchema>;
 const wan225bSchema = baseSchema.extend({
   version: z.literal('v2.2-5b'),
   negativePrompt: negativePromptSchema,
-  resolution: z.enum(['480p', '580p', '720p']).catch('480p'),
+  resolution: z.enum(wan225bResolutions).catch('480p'),
   useDistill: z.boolean().optional(),
   numInferenceSteps: z.number().optional(),
+  aspectRatio: z.enum(wan225bAspectRatios).optional().catch('1:1'),
 });
 
 const schema = z.discriminatedUnion('version', [wan21Schema, wan22Schema, wan225bSchema]);
 
+// const wan21Defaults: z.input<typeof wan21Schema> = {
+//   version: 'v2.1',
+//   process: 'txt2vid',
+//   baseModel: 'WanVideo14B_T2V',
+//   aspectRatio: '1:1',
+//   duration: 5,
+//   cfgScale: 3.5,
+//   frameRate: 16,
+//   resolution: wan22BaseModelMap.WanVideo14B_T2V.resolution,
+// };
+
 export const wanGenerationConfig = VideoGenerationConfig2({
   label: 'Wan',
   whatIfProps: [
+    'version',
     'process',
     'duration',
     'steps',
@@ -141,7 +167,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     baseModel: 'WanVideo14B_T2V',
     aspectRatio: '1:1',
     duration: 5,
-    cfgScale: 4,
+    cfgScale: 3.5,
     frameRate: 16,
     resolution: wan22BaseModelMap.WanVideo14B_T2V.resolution,
   },
@@ -159,7 +185,11 @@ export const wanGenerationConfig = VideoGenerationConfig2({
   },
   transformFn: (data) => {
     if (data.process === 'txt2vid') delete data.images;
-    else delete data.aspectRatio;
+    else if (data.process === 'img2vid') delete data.aspectRatio;
+    if (data.version !== 'v2.1') {
+      delete data.duration;
+      delete data.priority;
+    }
     switch (data.version) {
       case 'v2.1':
         return handleTransformWan21Schema(data);
@@ -194,25 +224,50 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     switch (data.version) {
       case 'v2.1':
         return handleWan21Input(data);
+      case 'v2.2':
+        return handleWan22Input(data);
+      case 'v2.2-5b':
+        return handleWan225bInput(data);
+      default:
+        return data;
     }
-    return data;
   },
 });
 
+// export function getWanDefaultValues({ version }: { version: WanVersion }) {
+//   switch (version) {
+//     case 'v2.1':
+//       return wan21Defaults;
+
+//     case 'v2.2':
+//       return {
+//         version: 'v2.2',
+//         process: 'txt2vid',
+//         aspectRatio: '1:1',
+//         cfgScale: 3.5,
+//         resolution: '480p',
+//       };
+//     case 'v2.2-5b':
+//       return {
+//         version: 'v2.2-5b',
+//         process: 'txt2vid',
+//         aspectRatio: '1:1',
+//         cfgScale: 3.5,
+//         resolution: '480p',
+//       };
+//   }
+// }
+
+type Wan21Transformed = ReturnType<typeof handleTransformWan21Schema>;
 function handleTransformWan21Schema(data: Wan21Schema) {
   const config = wan22BaseModelMap[data.baseModel as keyof typeof wan22BaseModelMap];
   if (!data.process) data.process = data.baseModel?.includes('i2v') ? 'img2vid' : 'txt2vid';
-  if (data.process === 'txt2vid') {
-    delete data.images;
-  } else if (data.process === 'img2vid') {
-    delete data.aspectRatio;
-  }
 
   if (config.provider === 'fal') {
     const imageOrAspectRatio = data.images?.[0] ?? data.aspectRatio;
     data.duration = 5;
     data.aspectRatio = imageOrAspectRatio
-      ? findClosestAspectRatio(imageOrAspectRatio, [...wanFalAspectRatios])
+      ? findClosestAspectRatio(imageOrAspectRatio, [...wan21FalAspectRatios])
       : undefined;
   }
 
@@ -224,37 +279,73 @@ function handleTransformWan21Schema(data: Wan21Schema) {
   };
 }
 
+type Wan22Transformed = ReturnType<typeof handleTransformWan22Schema>;
 function handleTransformWan22Schema(data: Wan22Schema) {
-  return { ...data };
+  const baseModel = data.process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
+  return { ...data, baseModel };
 }
 
+type Wan225bTransformed = ReturnType<typeof handleTransformWan225bSchema>;
 function handleTransformWan225bSchema(data: Wan225bSchema) {
-  return { ...data };
+  const baseModel = 'WanVideo-22-TI2V-5B';
+  return { ...data, baseModel };
 }
 
-function handleWan21Input(data: Omit<ReturnType<typeof handleTransformWan21Schema>, 'resources'>) {
+type WithLoras<T extends { resources?: unknown }> = Omit<T, 'resources'> & {
+  loras?: { air: string; strength?: number }[];
+};
+
+function handleWan21Input(data: WithLoras<Wan21Transformed>) {
+  const images = data.images?.map((x) => x.url);
   if (data.provider === 'civitai') {
     const config = wan22BaseModelMap[data.baseModel as keyof typeof wan22BaseModelMap];
     const resolution = Number(data.resolution.split('p')[0]);
-    const aspectRatios = getResolutionsFromAspectRatios(resolution, [...wanAspectRatios]);
+    const aspectRatios = getResolutionsFromAspectRatios(resolution, [...wan21CivitaiAspectRatios]);
     const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
-      ...wanAspectRatios,
+      ...wan21CivitaiAspectRatios,
     ]);
     const [width, height] = aspectRatios[aspectRatio];
     const model = config.model;
+
     return {
       ...data,
-      sourceImage: data.images?.[0].url,
       provider: 'civitai',
       width,
       height,
       model,
+      images,
     } as Wan21CivitaiVideoGenInput;
   } else {
+    const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
+      ...wan21FalAspectRatios,
+    ]);
     return {
       ...data,
-      sourceImage: data.images?.[0].url,
+      aspectRatio,
       enablePromptExpansion: false,
+      images,
     } as Wan21FalVideoGenInput;
   }
+}
+
+function handleWan22Input(data: WithLoras<Wan22Transformed>) {
+  const operation = data.process === 'txt2vid' ? 'text-to-video' : 'image-to-video';
+  const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
+    ...wan22AspectRatios,
+  ]);
+  const images = data.images?.map((x) => x.url);
+  return { ...data, operation, provider: 'fal', aspectRatio, images } as
+    | Wan22FalImageToVideoInput
+    | Wan22FalTextToVideoInput;
+}
+
+function handleWan225bInput(data: WithLoras<Wan225bTransformed>) {
+  const operation = data.process === 'txt2vid' ? 'text-to-video' : 'image-to-video';
+  const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
+    ...wan225bAspectRatios,
+  ]);
+  const images = data.images?.map((x) => x.url);
+  return { ...data, operation, provider: 'fal', aspectRatio, images } as
+    | Wan225bFalImageToVideoInput
+    | Wan225bFalTextToVideoInput;
 }

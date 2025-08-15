@@ -1,4 +1,3 @@
-import type { VideoGenInput } from '@civitai/client';
 import * as z from 'zod/v4';
 import { maxRandomSeed } from '~/server/common/constants';
 

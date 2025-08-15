@@ -1,12 +1,20 @@
 import { Radio, Text } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputRadioGroup } from '~/libs/form';
-import { wanVersions } from '~/server/orchestrator/wan/wan.schema';
+import { wanGenerationConfig, wanVersions } from '~/server/orchestrator/wan/wan.schema';
 import { Wan21FormInput } from '~/components/Generation/Video/WanFormInput/Wan21FormInput';
+import { Wan22FormInput } from '~/components/Generation/Video/WanFormInput/Wan22FormInput';
+import { Wan225bFormInput } from '~/components/Generation/Video/WanFormInput/Wan225bFormInput';
+import { useLayoutEffect } from 'react';
 
 export function WanFormInput() {
   const form = useFormContext();
   const version = form.watch('version');
+
+  useLayoutEffect(() => {
+    const values = form.getValues();
+    form.reset({ ...wanGenerationConfig.softValidate(values) });
+  }, [version]);
 
   return (
     <>
@@ -21,6 +29,8 @@ export function WanFormInput() {
         </div>
       </InputRadioGroup>
       {version === 'v2.1' && <Wan21FormInput />}
+      {version === 'v2.2' && <Wan22FormInput />}
+      {version === 'v2.2-5b' && <Wan225bFormInput />}
     </>
   );
 }
