@@ -235,6 +235,11 @@ export function getIsSD3(baseModel?: string) {
   return baseModelSetType === 'SD3' || baseModelSetType === 'SD3_5M';
 }
 
+export function getIsQwen(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Qwen';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
@@ -255,6 +260,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
     return 'Flux1Kontext';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
