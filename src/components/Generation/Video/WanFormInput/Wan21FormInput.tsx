@@ -19,17 +19,18 @@ export function Wan21FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
   const resolution = form.watch('resolution');
-  const baseModel = form.watch('baseModel');
+  // const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const config = wan22BaseModelMap[baseModel as keyof typeof wan22BaseModelMap];
+  const config = wan22BaseModelMap.find((x) => x.resolution === resolution);
+  const baseModel = config?.baseModel;
   const canPickDuration = config?.provider !== 'fal';
 
   const availableBaseModels = useMemo(
     () =>
-      Object.entries(wan22BaseModelMap)
-        .filter(([key, value]) => value.process === process)
-        .map(([key, value]) => ({
-          value: key,
+      wan22BaseModelMap
+        .filter((value) => value.process === process)
+        .map((value) => ({
+          value: value.resolution,
           label: value.resolution,
           default: value.default,
           provider: value.provider,
@@ -38,10 +39,10 @@ export function Wan21FormInput() {
   );
 
   useEffect(() => {
-    if (!availableBaseModels.find((x) => x.value === baseModel)) {
+    if (!availableBaseModels.find((x) => x.value === resolution)) {
       const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
       if (defaultModel) {
-        form.setValue('baseModel', defaultModel.value);
+        form.setValue('resolution', defaultModel.value);
       }
     }
   }, [availableBaseModels, baseModel]);
@@ -50,7 +51,7 @@ export function Wan21FormInput() {
     if (config?.provider === 'fal') form.setValue('duration', 5);
   }, [config?.provider]);
 
-  const resources = getGenerationBaseModelResourceOptions(baseModel) ?? [];
+  const resources = baseModel ? getGenerationBaseModelResourceOptions(baseModel) : [];
 
   return (
     <>
@@ -95,14 +96,14 @@ export function Wan21FormInput() {
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"
-          options={config.aspectRatios}
+          options={[...(config?.aspectRatios ?? [])]}
         />
       )}
       {availableBaseModels.length > 1 && (
         <div className="flex flex-col gap-0.5">
           <Input.Label>Resolution</Input.Label>
           <InputSegmentedControl
-            name="baseModel"
+            name="resolution"
             data={availableBaseModels.map(({ label, value }) => ({ label, value }))}
           />
         </div>

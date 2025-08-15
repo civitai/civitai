@@ -435,7 +435,7 @@ const getModelVersionGenerationData = async ({
     case 'wan':
       version = getWanVersion(baseModel);
       if (version === 'v2.1')
-        process = wan22BaseModelMap[baseModel as keyof typeof wan22BaseModelMap]?.process;
+        process = wan22BaseModelMap.find((x) => x.baseModel === baseModel)?.process;
       break;
     case 'hunyuan':
       process = 'txt2vid';

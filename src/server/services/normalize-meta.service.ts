@@ -1,4 +1,8 @@
-import { wanBaseModelGroupIdMap, wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import {
+  wanBaseModelGroupIdMap,
+  wan22BaseModelMap,
+  getWan21ResolutionFromBaseModel,
+} from '~/server/orchestrator/wan/wan.schema';
 import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { getWanVersion } from '../orchestrator/wan/wan.schema';
@@ -51,6 +55,7 @@ type WanVideoGenMeta = BaseMeta & {
   seed?: number;
   sourceImage?: ImageProps;
   images?: ImageProps[];
+  resolution?: string;
 };
 
 type NormalizeMetaProps = {
@@ -112,13 +117,19 @@ export function normalizeMeta<T extends NormalizeMetaProps>(initialMeta: T) {
 function processWanVideoGenMeta(data: WanVideoGenMeta) {
   let baseModel = data.baseModel ?? 'WanVideo';
 
-  if (baseModel === 'WanVideo') {
+  if (baseModel === 'WanVideo' || !baseModel) {
     if (data.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
-    else if (data.process === 'img2vid') baseModel = 'WanVideo14B_I2V_480p';
+    else if (data.process === 'img2vid') {
+      baseModel = 'WanVideo14B_I2V_480p';
+      if (data.resolution === '720p') baseModel = 'WanVideo14B_I2V_720p';
+    }
   }
 
-  if (!data.process)
-    data.process = wan22BaseModelMap[data.baseModel as keyof typeof wan22BaseModelMap]?.process;
+  const match = wan22BaseModelMap.find((x) => x.baseModel === data.baseModel);
+  if (match) {
+    if (!data.process) data.process = match.process;
+    if (!data.resolution) data.resolution = match.resolution;
+  }
 
   data.version = getWanVersion(baseModel);
 

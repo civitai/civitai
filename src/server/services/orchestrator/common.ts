@@ -669,14 +669,15 @@ function formatVideoGenStep({
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
     params.process = params.type;
 
-  if (!params.process && baseModel) {
-    const wanProcess = wan22BaseModelMap[baseModel as keyof typeof wan22BaseModelMap]?.process;
-    if (wanProcess) (params as any).process = wanProcess as any;
-  }
-
   if (baseModel === 'WanVideo') {
     if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
     else baseModel = 'WanVideo14B_I2V_720p';
+  }
+
+  const match = baseModel ? wan22BaseModelMap.find((x) => x.baseModel === baseModel) : undefined;
+  if (match) {
+    (params as any).process = match.process;
+    (params as any).resolution = match.resolution;
   }
 
   return {
