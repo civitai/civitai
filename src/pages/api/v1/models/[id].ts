@@ -11,9 +11,13 @@ import { getModelsWithVersions } from '~/server/services/model.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -29,6 +33,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       .status(400)
       .json({ error: `Invalid id: ${parsedParams.error.issues[0].input as string}` });
 
+  const region = getRegion(req);
+  const isRestricted = isRegionRestricted(region);
+
   try {
     const { items } = await getModelsWithVersions({
       input: {
@@ -39,7 +46,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         archived: true,
         period: 'AllTime',
         periodMode: 'published',
-        browsingLevel: allBrowsingLevelsFlag,
+        browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag,
       },
     });
     if (items.length === 0)

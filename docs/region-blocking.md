@@ -158,6 +158,15 @@ Your markdown content here with **bold** text for emphasis...
 - **Markdown support**: Full markdown rendering with custom component styling
 - **Support integration**: Region-blocked page includes contact link to support@civitai.com
 
+### Feature Flags Integration
+
+The region system integrates with the feature flags service to enable region-based feature toggling:
+
+**Region Availability Types**:
+
+- `restricted`: Feature only available in restricted regions
+- `nonRestricted`: Feature only available in non-restricted regions
+
 ## Testing
 
 ### Local Testing

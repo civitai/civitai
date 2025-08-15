@@ -3,12 +3,14 @@ import { camelCase } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
+const regionAvailability = ['restricted', 'nonRestricted'] as const;
 type ServerAvailability = keyof typeof serverDomainMap;
 export const serverDomainMap = {
   green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
@@ -21,6 +23,7 @@ const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTi
 type RoleAvailability = (typeof roleAvailablity)[number];
 const featureAvailability = [
   ...envAvailability,
+  ...regionAvailability,
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
@@ -103,7 +106,8 @@ const featureFlags = createFeatureFlags({
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: ['public', 'blue', 'red'],
+  canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
+  isRestrictedRegion: ['restricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
@@ -178,6 +182,26 @@ const hasFeature = (
     if (!serverMatch) return false;
   }
 
+  // Check region availability
+  let regionMatch = true;
+  const regionRequirements = availability.filter((x) =>
+    regionAvailability.includes(x as (typeof regionAvailability)[number])
+  );
+  if (regionRequirements.length > 0 && req) {
+    // Extract headers to pass to getRegion - it expects the request object or just headers
+    const region = getRegion({ headers: req.headers } as any);
+    const isRestricted = isRegionRestricted(region);
+
+    regionMatch = regionRequirements.some((requirement) => {
+      if (requirement === 'restricted') return isRestricted;
+      if (requirement === 'nonRestricted') return !isRestricted;
+      return false;
+    });
+
+    // if region doesn't match, return false regardless of other availability flags
+    if (!regionMatch) return false;
+  }
+
   // Check granted access
   const grantedAccess = availability.includes('granted')
     ? !!user?.permissions?.includes(key)
@@ -195,7 +219,7 @@ const hasFeature = (
     }
   }
 
-  return envRequirement && serverMatch && (grantedAccess || roleAccess);
+  return envRequirement && serverMatch && regionMatch && (grantedAccess || roleAccess);
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;
