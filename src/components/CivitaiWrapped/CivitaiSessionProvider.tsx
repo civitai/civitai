@@ -2,9 +2,14 @@ import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
+import { useAppContext } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
-import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
+import { isRegionRestricted } from '~/server/utils/region-blocking';
+import {
+  browsingModeDefaults,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
@@ -21,6 +26,8 @@ export function CivitaiSessionProvider({
   const { data, update, status } = useSession();
   const user = data?.user;
   const { canViewNsfw } = useFeatureFlags();
+  const { region } = useAppContext();
+  const isRestricted = isRegionRestricted(region) && user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
 
   const sessionUser = useMemo(() => {
@@ -42,7 +49,7 @@ export function CivitaiSessionProvider({
       refresh: update,
       settings: {
         showNsfw: user.showNsfw,
-        browsingLevel: user.browsingLevel,
+        browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : user.browsingLevel,
         disableHidden: disableHidden ?? true,
         allowAds: user.allowAds ?? !isMember ? true : false,
         autoplayGifs: user.autoplayGifs ?? true,
