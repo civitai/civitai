@@ -29,6 +29,7 @@ import {
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { retryLock } from '~/server/db/db-helpers';
 import { logicalDb } from '~/server/db/logicalDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
@@ -5053,14 +5054,19 @@ export async function createImageResources({
       )
     );
 
-    await dbClient.$queryRaw`
-      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
-      VALUES ${values}
-      ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
-      SET
-        detected = excluded.detected,
-        strength = excluded.strength;
-    `;
+    // Use retryLock to handle potential lock timeouts on ImageResourceNew table
+    await retryLock(dbClient, async (tx) => {
+      await tx.$queryRaw`
+        INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
+        VALUES ${values}
+        ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
+        SET
+          detected = EXCLUDED.detected,
+          strength = EXCLUDED.strength
+        WHERE ("ImageResourceNew".detected, "ImageResourceNew".strength)
+              IS DISTINCT FROM (EXCLUDED.detected, EXCLUDED.strength);
+      `;
+    });
   }
 
   return resources;
