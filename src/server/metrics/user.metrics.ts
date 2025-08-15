@@ -359,7 +359,6 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(data, 1000).map((rows, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
-    const json = JSON.stringify(rows);
     await executeRefresh(ctx)`
       INSERT INTO "UserMetric" ("userId", timeframe, "reactionCount")
       SELECT
@@ -378,7 +377,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
               WHEN tf.timeframe = 'AllTime' THEN data::json->>'all_time'
             END
           AS int) as "reactionCount"
-        FROM json_array_elements('${json}'::json) data
+        FROM jsonb_array_elements(${rows}::jsonb) data
         CROSS JOIN (
             SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
         ) tf

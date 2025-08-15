@@ -41,7 +41,6 @@ export const imageMetrics = createMetricProcessor({
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', tasks.length);
 
-      const batchJson = JSON.stringify(batch);
       const metricInsertColumns = metrics.map((key) => `"${key}" INT[]`).join(', ');
       const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
       const metricValues = metrics
@@ -61,7 +60,7 @@ export const imageMetrics = createMetricProcessor({
 
       await executeRefresh(ctx)`
         -- update image metrics
-        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("imageId" INT, ${metricInsertColumns}))
+        WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("imageId" INT, ${metricInsertColumns}))
         INSERT INTO "ImageMetric" ("imageId", "timeframe", "updatedAt", ${metricInsertKeys})
         SELECT
           d."imageId",
@@ -123,7 +122,7 @@ export const imageMetrics = createMetricProcessor({
               WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
               ELSE 'AllTime'::"MetricTimeframe"
           END
-          WHERE "imageId" IN (${ids})
+          WHERE "imageId" = ANY(${ids}::int[])
             AND "imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]};
         `;
         await sleep(2000);

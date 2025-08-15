@@ -39,7 +39,6 @@ export const postMetrics = createMetricProcessor({
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', updateTasks.length);
 
-      const batchJson = JSON.stringify(batch);
       const metricInsertColumns = metrics.map((key) => `"${key}" INT[]`).join(', ');
       const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
       const metricValues = metrics
@@ -59,7 +58,7 @@ export const postMetrics = createMetricProcessor({
 
       await executeRefresh(ctx)`
         -- update post metrics
-        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("postId" INT, ${metricInsertColumns}))
+        WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("postId" INT, ${metricInsertColumns}))
         INSERT INTO "PostMetric" ("postId", "timeframe", "updatedAt", ${metricInsertKeys})
         SELECT
           d."postId",
@@ -125,7 +124,7 @@ export const postMetrics = createMetricProcessor({
         await executeRefresh(ctx)`
           UPDATE "PostMetric" pm
           SET "ageGroup" = '${capitalize(timePeriods[periodIndex + 1])}'::"MetricTimeframe"
-          WHERE pm."postId" IN (${ids})
+          WHERE pm."postId" = ANY(${ids}::int[])
             AND pm."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         `;
         log('update ageGroups', timePeriod, i + 1, 'of', ageGroupTasks.length, 'done');
