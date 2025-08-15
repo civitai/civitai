@@ -311,7 +311,7 @@ async function getMediaGenerationData({
         if (!exists)
           imageResources.push({
             modelVersionId,
-            strength: strength ?? undefined,
+            strength: strength ? strength / 100 : undefined,
           });
       }
     });
@@ -321,7 +321,7 @@ async function getMediaGenerationData({
       const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
       return {
         ...item,
-        strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
+        strength: imageResource?.strength ?? item.strength,
       };
     })
   );
