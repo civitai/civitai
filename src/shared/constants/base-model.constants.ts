@@ -349,6 +349,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],
   },
   {
+    group: 'Qwen',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
+  },
+  {
     group: 'WanVideo',
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video'] }],
   },

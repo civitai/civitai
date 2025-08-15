@@ -755,6 +755,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  Qwen: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2113658,
+      name: 'Qwen-Image Full BF16',
+      trainedWords: [],
+      baseModel: 'Qwen',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1864281,
+        name: 'Qwen-Image',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   HiDream: {
     aspectRatios: commonAspectRatios,
     checkpoint: {
