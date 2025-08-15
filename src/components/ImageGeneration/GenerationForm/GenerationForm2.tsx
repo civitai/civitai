@@ -807,7 +807,7 @@ export function GenerationFormContent() {
                     }}
                   </Watch>
 
-                  {isSD3 && (
+                  {(isSD3 || isQwen) && (
                     <Alert className="overflow-visible">
                       This is an experimental build, as such pricing and results are subject to
                       change
