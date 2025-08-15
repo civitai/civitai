@@ -21,7 +21,7 @@ import { allInjectableResourceIds } from '~/shared/constants/generation.constant
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model');
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 200;
 
 type ModelMetricContext = MetricProcessorRunContext & {
   queuedModelVersions: number[];
@@ -65,7 +65,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionAggregationTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
-    for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
+    for (const tasks of modelTasks) await limitConcurrency(tasks, 2);
 
     // If beginning of day - clear top earners cache
     //---------------------------------------
