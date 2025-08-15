@@ -26,6 +26,7 @@ export function CivitaiSessionProvider({
   const { data, update, status } = useSession();
   const user = data?.user;
   const { canViewNsfw } = useFeatureFlags();
+  console.log({ canViewNsfw });
   const { region } = useAppContext();
   const isRestricted = isRegionRestricted(region) && user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);

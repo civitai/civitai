@@ -120,7 +120,7 @@ export function isRegionPendingRestriction(
  * Generic helper to get effective date for a region from a config array
  */
 function getRegionEffectiveDate(region: RegionInfo, config: RegionBlockConfig[]): Date | null {
-  const { countryCode, fullLocationCode = '' } = region;
+  const { countryCode = '', fullLocationCode = '' } = region || {};
   if (!countryCode || !fullLocationCode) return null;
 
   const regionToCheck =

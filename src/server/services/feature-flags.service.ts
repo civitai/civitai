@@ -1,5 +1,7 @@
 import type { IncomingHttpHeaders } from 'http';
+import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
+import type { NextApiRequest } from 'next';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
@@ -143,10 +145,7 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 type FeatureAccessContext = {
   user?: SessionUser;
   host?: string;
-  req?: {
-    headers: IncomingHttpHeaders;
-    // url?: string;
-  };
+  req?: NextApiRequest | IncomingMessage;
 };
 const hasFeature = (
   key: FeatureFlagKey,
@@ -188,14 +187,17 @@ const hasFeature = (
     regionAvailability.includes(x as (typeof regionAvailability)[number])
   );
   if (regionRequirements.length > 0 && req) {
-    // Extract headers to pass to getRegion - it expects the request object or just headers
-    const region = getRegion({ headers: req.headers } as any);
+    const region = getRegion(req);
     const isRestricted = isRegionRestricted(region);
 
     regionMatch = regionRequirements.some((requirement) => {
-      if (requirement === 'restricted') return isRestricted;
-      if (requirement === 'nonRestricted') return !isRestricted;
-      return false;
+      const matches =
+        requirement === 'restricted'
+          ? isRestricted
+          : requirement === 'nonRestricted'
+          ? !isRestricted
+          : false;
+      return matches;
     });
 
     // if region doesn't match, return false regardless of other availability flags
