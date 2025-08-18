@@ -79,8 +79,8 @@ const baseModelConfig = [
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
   { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true, engine: 'wan' },
-  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
   { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V', engine: 'wan' },
+  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
   { name: 'Wan Video 14B i2v 480p', type: 'video', group: 'WanVideo14B_I2V_480p', engine: 'wan' },
   { name: 'Wan Video 14B i2v 720p', type: 'video', group: 'WanVideo14B_I2V_720p', engine: 'wan' },
   { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B', engine: 'wan' },
@@ -347,6 +347,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'OpenAI',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],
+  },
+  {
+    group: 'Qwen',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
   },
   {
     group: 'WanVideo',

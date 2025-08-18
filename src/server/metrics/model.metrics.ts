@@ -282,7 +282,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
     -- get recent version reviews
     SELECT DISTINCT "modelVersionId" as id
     FROM "ResourceReview"
-    WHERE "createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate}
+    WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -322,7 +322,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT "modelVersionId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-    WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > ${ctx.lastUpdate}
+    WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -420,7 +420,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
     -- Get recent model reviews
     SELECT DISTINCT "modelId" as id
     FROM "ResourceReview"
-    WHERE "createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate}
+    WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -525,7 +525,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     -- Get recent model collects
     SELECT DISTINCT "modelId" as id
     FROM "CollectionItem"
-    WHERE "modelId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
+    WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
     ORDER BY "modelId"
   `;
 
@@ -595,14 +595,14 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
     WHERE "entityId" IS NOT NULL AND "entityType" = 'Model'
-      AND ("createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate})
+      AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
 
     UNION
 
     SELECT DISTINCT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-    WHERE mvm."updatedAt" > ${ctx.lastUpdate}
+    WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -656,7 +656,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-    WHERE mvm."updatedAt" > ${ctx.lastUpdate}
+    WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
