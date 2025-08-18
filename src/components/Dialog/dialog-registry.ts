@@ -25,10 +25,15 @@ const EditResourceReviewModal = dynamic(
   () => import('~/components/ResourceReview/EditResourceReviewModal'),
   { ssr: false }
 );
-const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
-const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'));
+const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'), { ssr: false });
+const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
+  ssr: false,
+});
 const ReadOnlyModal = dynamic(() => import('~/components/Modals/ReadOnlyModal'));
-const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
+const AddToCollectionModal = dynamic(
+  () => import('~/components/Collections/AddToCollectionModal'),
+  { ssr: false }
+);
 
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 export const openBlockModelTagsModal = createDialogTrigger(BlockModelTagsModal);

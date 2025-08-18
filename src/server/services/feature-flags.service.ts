@@ -1,4 +1,3 @@
-import type { IncomingHttpHeaders } from 'http';
 import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';

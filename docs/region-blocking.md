@@ -25,6 +25,7 @@ Both systems support:
 ### 1. Middleware
 
 - **`region-block.middleware.ts`**: Blocks web traffic from blocked regions (date-aware)
+- **`region-restriction.middleware.ts`**: Redirects restricted regions to civitai.green domain
 - **`api-region-block.middleware.ts`**: Blocks API access from blocked regions (date-aware)
 
 ### 2. Utilities
@@ -40,8 +41,10 @@ Both systems support:
 
 - **`useIsRegionBlocked.ts`**: React hook for client-side region blocking detection
 - **`useIsRegionRestricted.ts`**: React hook specifically for region restriction status
-- **`useRegionBlockWarning.ts`**: React hook for showing warning notifications
+- **`useRegionBlockWarning.ts`**: React hook for showing warning notifications using dialogStore pattern
+- **`useRegionRedirectDetection.ts`**: React hook that automatically detects region-based redirects and triggers modal using dialogStore
 - **`RegionWarningModal.tsx`**: Dynamic modal component that fetches content from Redis
+- **`RegionRedirectModal.tsx`**: Modal component to inform users about region redirects
 
 ### 5. Content Management
 
@@ -143,6 +146,14 @@ Your markdown content here with **bold** text for emphasis...
 - **Complete blocking**: For regions requiring full access restriction
 - **Feature limitation**: For regions requiring reduced functionality while maintaining access
 - **Separate configuration**: Block and restriction configs are independent
+
+### Region Restriction Redirect
+
+- **Automatic redirect**: Users from restricted regions are automatically redirected to the green domain (civitai.green)
+- **Transparent experience**: The redirect maintains the same URL path and query parameters
+- **User notification**: A modal informs users about the redirect and explains the content limitations
+- **Headers**: Redirect includes `x-region-redirect: true` and `x-redirect-reason: region-restriction` headers
+- **Query parameter**: Adds `region-redirect=true` to the URL for frontend detection
 
 ### Warning System
 
