@@ -539,6 +539,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   AuraFlow: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
+  'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
