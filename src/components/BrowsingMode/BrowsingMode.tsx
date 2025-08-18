@@ -92,7 +92,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                   Your content levels are limited by restrictions in your region
                 </Text>
               )}
-              {!browsingSettingsAddons.settings.disablePoi && (
+              {browsingSettingsAddons.settings.disablePoi && (
                 <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
                   <Text c="dimmed" size="xs">
