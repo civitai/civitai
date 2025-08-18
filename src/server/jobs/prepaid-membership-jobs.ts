@@ -112,7 +112,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           "updatedAt" = NOW()
         FROM (
           SELECT 
-            (value ->> 'id')::string AS "id",
+            (value ->> 'id')::text AS "id",
             value AS data
           FROM json_array_elements(${JSON.stringify(
             data.map((d) => ({
