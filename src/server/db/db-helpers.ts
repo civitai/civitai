@@ -5,6 +5,7 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import { isProd } from '~/env/other';
 
 const log = createLogger('pgDb', 'blue');
 
@@ -33,7 +34,7 @@ const instanceUrlMap: Record<ClientInstanceType, string> = {
   primary: env.DATABASE_URL,
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
-  logicalReplica: env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL,
+  logicalReplica: isProd ? env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL : env.DATABASE_URL,
 };
 
 export function getClient(
