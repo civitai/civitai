@@ -57,6 +57,7 @@ import {
   getInjectablResources,
   getIsFlux,
   getIsFluxStandard,
+  getIsQwen,
   getIsSD3,
   getRoundedWidthHeight,
   samplersToSchedulers,
@@ -223,7 +224,8 @@ export async function parseGenerateImageInput({
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
-  if (isFlux) {
+  const isQwen = getIsQwen(originalParams.baseModel);
+  if (isFlux || isQwen) {
     // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
     // originalResources = [{ id: version, strength: 1 }];

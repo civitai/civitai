@@ -80,7 +80,7 @@ async function getContributorTasks(ctx: MetricProcessorRunContext) {
         )} as "contributorCount"
       FROM "CollectionContributor"
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "collectionId" IN (${ids})
+      WHERE "collectionId" = ANY(${ids}::int[])
       GROUP BY "collectionId", tf.timeframe
       ON CONFLICT ("collectionId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "contributorCount" = EXCLUDED."contributorCount", "updatedAt" = NOW()

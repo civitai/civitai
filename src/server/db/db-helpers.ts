@@ -154,9 +154,17 @@ export function parameterizedTemplateHandler<T>(
     const params: any[] = [];
     const sqlString = sql.reduce((acc, part, i) => {
       acc += part;
-      const value = values[i];
-      if (!value) return acc;
+      let value = values[i];
+      if (value === undefined) return acc;
       if (typeof value === 'string') return acc + value;
+
+      // Determine if this should be treated as JSONB based on SQL context
+      const nextPart = sql[i + 1] || '';
+      const isJsonbContext = nextPart.includes('::jsonb') || nextPart.includes('::json');
+
+      // For JSONB contexts, stringify the object/array
+      if (typeof value === 'object' && isJsonbContext) value = JSON.stringify(value);
+
       params.push(value);
       acc += `$${params.length}`;
       return acc;

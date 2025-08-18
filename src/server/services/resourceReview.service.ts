@@ -20,6 +20,7 @@ import {
 } from '~/server/services/user-preferences.service';
 import {
   amIBlockedByUser,
+  getBasicDataForUsers,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
@@ -360,9 +361,6 @@ type ResourceReviewRow = {
   exclude: boolean;
   metadata: any;
   userId: number;
-  username: string;
-  deletedAt: Date | null;
-  userImage: string | null;
   imageCount: number;
   commentCount: number;
 };
@@ -376,7 +374,10 @@ export const getPagedResourceReviews = async ({
   const { limit, page, modelVersionId, username } = input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
-  if (username) AND.push(Prisma.sql`u.username = ${username}`);
+  if (username) {
+    const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
+    if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
+  }
 
   const excludedUsers = await Promise.all([
     HiddenUsers.getCached({ userId }),
@@ -385,13 +386,12 @@ export const getPagedResourceReviews = async ({
   ]);
   const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
   if (excludedUserIds.length) {
-    AND.push(Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`rr."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(rr.id)::int as count
     FROM "ResourceReview" rr
-    JOIN "User" u ON rr."userId" = u.id
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   const itemsRaw = await dbRead.$queryRaw<ResourceReviewRow[]>`
@@ -407,9 +407,6 @@ export const getPagedResourceReviews = async ({
       rr.exclude,
       rr.metadata,
       rr."userId",
-      u.username,
-      u."deletedAt",
-      u.image as "userImage",
       -- TODO: This is a temporary fix until we can figure out a more performant way to get the count
       -- (
       --   SELECT "imageCount"::int
@@ -423,7 +420,6 @@ export const getPagedResourceReviews = async ({
         WHERE t."reviewId" = rr.id
       ) "commentCount"
     FROM "ResourceReview" rr
-    JOIN "User" u ON rr."userId" = u.id
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC
     LIMIT ${limit}
@@ -431,22 +427,24 @@ export const getPagedResourceReviews = async ({
   `;
 
   const userIds = itemsRaw.map((item) => item.userId);
+  const users = await getBasicDataForUsers(userIds);
   const userCosmetics = await getCosmeticsForUsers(userIds);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const items = itemsRaw
-    .map(({ userId, username, userImage, deletedAt, imageCount = 0, ...item }) => {
+    .map(({ userId, imageCount = 0, ...item }) => {
       let quality = 0;
       if (item.details && item.details.length > 0) quality++;
       if (imageCount > 0) quality++;
+      const user = users[userId];
       return {
         ...item,
         imageCount,
         quality,
         user: {
           id: userId,
-          username,
-          userImage,
-          deletedAt,
+          username: user.username,
+          userImage: user.image,
+          deletedAt: user.deletedAt,
           cosmetics: userCosmetics?.[userId] ?? [],
           profilePicture: profilePictures?.[userId] ?? null,
         },

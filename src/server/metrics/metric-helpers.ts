@@ -23,8 +23,8 @@ export function getAffected(ctx: {
 }
 
 export function executeRefresh(ctx: { pg: AugmentedPool; jobContext: JobContext }) {
-  return templateHandler(async (sql) => {
-    const query = await ctx.pg.cancellableQuery(sql);
+  return parameterizedTemplateHandler(async (sql, params) => {
+    const query = await ctx.pg.cancellableQuery(sql, params);
     ctx.jobContext.on('cancel', query.cancel);
     await query.result();
   });
