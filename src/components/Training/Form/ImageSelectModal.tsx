@@ -80,7 +80,10 @@ export type SelectedImage = {
   type: MediaType;
 };
 
-type GennedMedia = NormalizedGeneratedImage & { params: TextToImageSteps[number]['params'] };
+type GennedMedia = NormalizedGeneratedImage & {
+  params: TextToImageSteps[number]['params'];
+  completed?: Date;
+};
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
 type TrainedData = Omit<RecentTrainingData[number], 'metadata' | 'modelVersion'> & {
   metadata: FileMetadata | null;
@@ -174,10 +177,17 @@ export default function ImageSelectModal({
     () =>
       steps.flatMap((step) =>
         step.images
-          .filter((x) => x.status === 'succeeded' && !!x.completed)
+          .filter((x) => x.status === 'succeeded' && x.available)
           .map((asset) => {
-            if (!asset.completed || asset.status !== 'succeeded') return null;
-            return { ...asset, params: { ...step.params, seed: asset.seed } };
+            if (!asset.available || asset.status !== 'succeeded') return null;
+            return {
+              ...asset,
+              params: {
+                ...step.params,
+                seed: asset.seed,
+                completed: step.completedAt ? new Date(step.completedAt) : undefined,
+              },
+            };
           })
           .filter(isDefined)
       ),

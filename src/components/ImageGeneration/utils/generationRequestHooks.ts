@@ -112,20 +112,7 @@ export function useGetTextToImageRequests(
           })
           .map((response) => {
             const steps = response.steps.map((step) => {
-              const images = imageFilter({ step, tags }).sort((a, b) => {
-                if (!b.completed) return 1;
-                if (!a.completed) return -1;
-                return b.completed.getTime() - a.completed.getTime();
-                // if (a.completed !== b.completed) {
-                //   if (!b.completed) return 1;
-                //   if (!a.completed) return -1;
-                //   return b.completed.getTime() - a.completed.getTime();
-                // } else {
-                //   if (a.id < b.id) return -1;
-                //   if (a.id > b.id) return 1;
-                //   return 0;
-                // }
-              });
+              const images = imageFilter({ step, tags });
               return { ...step, images };
             });
             return { ...response, steps };
@@ -479,7 +466,6 @@ export function usePatchTags() {
 
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & {
   $type: 'job';
-  completed?: Date;
 };
 type CustomWorkflowEvent = Omit<WorkflowEvent, '$type'> & { $type: 'workflow' };
 const debouncer = createDebouncer(100);
@@ -490,7 +476,7 @@ export function useTextToImageSignalUpdate() {
     SignalMessages.TextToImageUpdate,
     (data: CustomJobEvent | CustomWorkflowEvent) => {
       if (data.$type === 'job' && data.jobId) {
-        signalJobEventsDictionary[data.jobId] = { ...data, completed: new Date() };
+        signalJobEventsDictionary[data.jobId] = { ...data };
       } else if (data.$type === 'workflow' && data.workflowId) {
         signalWorkflowEventsDictionary[data.workflowId] = data;
       }
@@ -535,7 +521,6 @@ function updateFromEvents() {
               const images = step.images.filter((x) => x.jobId === jobId);
               for (const image of images) {
                 image.status = signalEvent.status!;
-                image.completed = signalEvent.completed;
                 image.blockedReason = image.blockedReason ?? signalEvent.blockedReason;
                 if (image.type === 'video') {
                   image.progress = signalEvent.progress ?? 0;

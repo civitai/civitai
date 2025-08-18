@@ -14,7 +14,8 @@ interface BaseGeneratedMedia {
   id: string;
   status: WorkflowStatus;
   seed?: number;
-  completed?: Date;
+  available?: boolean;
+  // completed?: Date;
   url: string;
   width: number;
   height: number;

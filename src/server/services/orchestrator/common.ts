@@ -9,17 +9,10 @@ import type {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
-import {
-  createCivitaiClient,
-  ImageJobNetworkParams,
-  Priority,
-  TextToImageInput,
-} from '@civitai/client';
-import { uniq, uniqBy } from 'lodash-es';
+import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod/v4';
 import { env } from '~/env/server';
-import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
@@ -32,7 +25,6 @@ import type {
   generateImageSchema,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import type { UserTier } from '~/server/schema/user.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
@@ -43,12 +35,9 @@ import type {
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import type { InjectableResource } from '~/shared/constants/generation.constants';
 import {
   allInjectableResourceIds,
   fluxDraftAir,
-  fluxModeOptions,
-  fluxModelId,
   fluxUltraAir,
   fluxUltraAirId,
   getBaseModelFromResources,
@@ -60,15 +49,13 @@ import {
   getIsQwen,
   getIsSD3,
   getRoundedWidthHeight,
-  samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { hiDreamModelId } from '~/shared/orchestrator/hidream.config';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
+import { Availability } from '~/shared/utils/prisma/enums';
+import { includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/shared/utils/air';
+import { parseAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 
@@ -548,6 +535,7 @@ function formatImageGenStep({
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
+    completedAt: step.completedAt,
   };
 }
 
@@ -697,6 +685,7 @@ function formatVideoGenStep({
     status: step.status,
     metadata,
     resources: combinedResources,
+    completedAt: step.completedAt,
   };
 }
 
@@ -733,7 +722,7 @@ function formatTextToImageStep({
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
             seed: input.seed ? input.seed + i : undefined,
-            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            // completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
             width: image.width ?? input.width,
             height: image.height ?? input.height,
@@ -777,6 +766,7 @@ function formatTextToImageStep({
     status: step.status,
     metadata: metadata,
     resources: resources.filter((x) => !injectableIds.includes(x.id)),
+    completedAt: step.completedAt,
   };
 }
 
@@ -853,6 +843,7 @@ export function formatComfyStep({
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
+    completedAt: step.completedAt,
   };
 }
 

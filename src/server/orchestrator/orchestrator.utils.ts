@@ -7,7 +7,7 @@ export function getOrchestratorCallbacks(userId: number): Array<WorkflowCallback
   return [
     {
       url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TextToImageUpdate}`,
-      type: ['workflow:*', 'job:*'],
+      type: ['workflow:*', 'step:*'],
       // type: ['workflow:*', 'step:*', 'job:*'],
     },
   ];
