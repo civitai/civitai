@@ -1,7 +1,8 @@
 import { chunk } from 'lodash-es';
+import dayjs from 'dayjs';
+import * as z from 'zod/v4';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import dayjs from 'dayjs';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
@@ -10,15 +11,24 @@ import type {
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
 
+const schema = z.object({
+  date: z.coerce.date().optional(),
+});
+
 export const deliverPrepaidMembershipBuzz = createJob(
   'deliver-civitai-membership-buzz',
   '0 1 * * *', // We should run this after the expire not before.
-  async () => {
+  async (ctx) => {
     const now = dayjs();
     const date = now.format('YYYY-MM');
 
     // Get the current day of the month
-    const currentDay = now.date();
+    let currentDay = now.date();
+    const parseResult = schema.safeParse(ctx.req?.query);
+    if (parseResult.success && parseResult.data.date) {
+      // Override currentDay with the parsed date's day
+      currentDay = parseResult.data.date.getDate();
+    }
 
     const data = await dbWrite.$queryRaw<
       {
@@ -102,8 +112,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
       console.log(`Decrementing prepaid counts for ${data.length} users`);
 
       await dbWrite.$executeRaw`
-        UPDATE "CustomerSubscription" 
-        SET 
+        UPDATE "CustomerSubscription"
+        SET
           "metadata" = jsonb_set(
             "metadata",
             ARRAY['prepaids', (updates.data ->> 'tier')],
@@ -111,7 +121,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           ),
           "updatedAt" = NOW()
         FROM (
-          SELECT 
+          SELECT
             (value ->> 'id')::text AS "id",
             value AS data
           FROM json_array_elements(${JSON.stringify(
