@@ -106,6 +106,7 @@ import {
   fluxDraftAir,
   fluxKreaAir,
   getIsFluxKrea,
+  getIsQwen,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -439,6 +440,7 @@ export function GenerationFormContent() {
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isQwen = getIsQwen(baseModel);
 
   // HiDream
   const isHiDream = getIsHiDream(baseModel);
@@ -472,7 +474,7 @@ export function GenerationFormContent() {
               ? fluxMode === fluxDraftAir
               : isSD3
               ? model.id === 983611
-              : features.draft && !!draft && !isImageGen && !isFlux;
+              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
               ? 10
@@ -484,13 +486,13 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3) {
+            if (isFlux || isSD3 || isQwen) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -502,26 +504,28 @@ export function GenerationFormContent() {
             const disableAdvanced = isFluxUltra || isOpenAI || isImagen4 || isHiDream;
             const disableNegativePrompt =
               isFlux ||
+              isQwen ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full');
             const disableWorkflowSelect =
-              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext;
+              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext || isQwen;
             const disableDraft =
               !features.draft ||
               isOpenAI ||
               isFlux ||
+              isQwen ||
               isSD3 ||
               isImagen4 ||
               isHiDream ||
               isFluxKontext;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3) || isOpenAI || isFluxKontext;
+              (features.image && !isFlux && !isSD3 && !isQwen) || isOpenAI || isFluxKontext;
             const disableCfgScale = isFluxUltra;
-            const disableSampler = isFlux || isSD3 || isFluxKontext;
+            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableSteps = isFluxUltra || isFluxKontext;
-            const disableClipSkip = isSDXL || isFlux || isSD3 || isFluxKontext;
-            const disableVae = isFlux || isSD3 || isFluxKontext;
+            const disableClipSkip = isSDXL || isFlux || isQwen || isSD3 || isFluxKontext;
+            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
 
@@ -797,13 +801,13 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isSD3 && <ReadySection />}
+                          {!isFlux && !isQwen && !isSD3 && <ReadySection />}
                         </Card>
                       );
                     }}
                   </Watch>
 
-                  {isSD3 && (
+                  {(isSD3 || isQwen) && (
                     <Alert className="overflow-visible">
                       This is an experimental build, as such pricing and results are subject to
                       change
@@ -1262,7 +1266,7 @@ export function GenerationFormContent() {
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
                                     presets={
-                                      isFlux || isFluxKontext || isSD3
+                                      isFlux || isQwen || isFluxKontext || isSD3
                                         ? undefined
                                         : [
                                             { label: 'Creative', value: '4' },
@@ -1339,7 +1343,7 @@ export function GenerationFormContent() {
                                           sliderProps={sharedSliderProps}
                                           numberProps={sharedNumberProps}
                                           presets={
-                                            isFlux || isSD3
+                                            isFlux || isQwen || isSD3
                                               ? undefined
                                               : [
                                                   {
@@ -1634,9 +1638,10 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const [baseModel, resources, vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isQwen = getIsQwen(baseModel);
   const isOpenAI = baseModel === 'OpenAI';
   const hasCreatorTip =
-    (!isFlux && !isSD3 && !isOpenAI) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();

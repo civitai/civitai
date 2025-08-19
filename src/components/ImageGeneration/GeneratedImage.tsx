@@ -56,6 +56,7 @@ import type {
 import {
   getIsFlux,
   getIsHiDream,
+  getIsQwen,
   getIsSD3,
   getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
@@ -255,7 +256,7 @@ export function GeneratedImage({
 
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
-  const aspectRatio = isBlocked ? 1 : image.aspectRatio ?? image.width / image.height;
+  const aspectRatio = isBlocked ? 1 : image.aspect;
 
   return (
     <TwCard
@@ -581,10 +582,11 @@ function GeneratedImageWorkflowMenuItems({
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
   const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
+  const isQwen = !isVideo && getIsQwen(step.params.baseModel);
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
   const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
+  const canImg2Img = !isQwen && !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
@@ -826,9 +828,9 @@ function GeneratedImageWorkflowMenuItems({
                 <IconInfoHexagon size={14} stroke={1.5} />
               )
             }
-            onClick={() => copy(image.jobId)}
+            onClick={() => copy(workflowId)}
           >
-            Copy Job ID
+            Copy Workflow ID
           </Menu.Item>
           {!isBlocked && (
             <Menu.Item

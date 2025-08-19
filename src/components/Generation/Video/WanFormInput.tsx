@@ -88,7 +88,10 @@ export function WanFormInput() {
       {!!resources?.length && (
         <InputResourceSelectMultipleStandalone
           name="resources"
-          options={{ resources, canGenerate: true }}
+          options={{
+            resources: resources.filter((x) => x.type !== 'Checkpoint'),
+            canGenerate: true,
+          }}
           buttonLabel="Add additional resource"
         />
       )}

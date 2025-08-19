@@ -90,7 +90,7 @@ export function getClient(
     } else if (params !== undefined) {
       // Plain string with parameters
       queryText = sql;
-      queryParams = params.map(formatSqlType);
+      queryParams = params;
     } else {
       // Plain string without parameters
       queryText = sql;
@@ -144,6 +144,32 @@ export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
   return function (sql: TemplateStringsArray, ...values: any[]) {
     const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
     return fn(sqlString);
+  };
+}
+
+export function parameterizedTemplateHandler<T>(
+  fn: (sql: string, params: any[]) => Promise<T> | T
+) {
+  return function (sql: TemplateStringsArray, ...values: any[]) {
+    const params: any[] = [];
+    const sqlString = sql.reduce((acc, part, i) => {
+      acc += part;
+      let value = values[i];
+      if (value === undefined) return acc;
+      if (typeof value === 'string') return acc + value;
+
+      // Determine if this should be treated as JSONB based on SQL context
+      const nextPart = sql[i + 1] || '';
+      const isJsonbContext = nextPart.includes('::jsonb') || nextPart.includes('::json');
+
+      // For JSONB contexts, stringify the object/array
+      if (typeof value === 'object' && isJsonbContext) value = JSON.stringify(value);
+
+      params.push(value);
+      acc += `$${params.length}`;
+      return acc;
+    }, '');
+    return fn(sqlString, params);
   };
 }
 

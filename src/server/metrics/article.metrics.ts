@@ -63,7 +63,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "articleId" AS id
     FROM "ArticleReaction"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -81,7 +81,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         FROM "ArticleReaction" r
         JOIN "Article" a ON a.id = r."articleId" -- ensure the article exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE r."articleId" IN (${ids})
+        WHERE r."articleId" = ANY(${ids}::int[])
         GROUP BY r."articleId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -104,7 +104,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated article reaction metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, ${snippets.reactionMetricNames})
-        SELECT 
+        SELECT
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'heartCount')::int,
@@ -131,7 +131,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
     SELECT t."articleId" as id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."articleId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+    WHERE t."articleId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -150,7 +150,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
         JOIN "Article" a ON a.id = t."articleId" -- ensure the article exists
         JOIN "CommentV2" c ON c."threadId" = t.id
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE t."articleId" IN (${ids})
+        WHERE t."articleId" = ANY(${ids}::int[])
         GROUP BY t."articleId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -169,7 +169,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated article comment metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "commentCount")
-        SELECT 
+        SELECT
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'commentCount')::int
@@ -191,7 +191,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
     -- get recent article collections
     SELECT "articleId" as id
     FROM "CollectionItem"
-    WHERE "articleId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "articleId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -209,7 +209,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
         FROM "CollectionItem" ci
         JOIN "Article" a ON a.id = ci."articleId" -- ensure the article exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE ci."articleId" IN (${ids})
+        WHERE ci."articleId" = ANY(${ids}::int[])
         GROUP BY ci."articleId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -228,7 +228,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated article collection metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "collectedCount")
-        SELECT 
+        SELECT
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
@@ -250,7 +250,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
     -- get recent article tips
     SELECT "entityId" as id
     FROM "BuzzTip"
-    WHERE "entityType" = 'Article' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
+    WHERE "entityType" = 'Article' AND ("createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate})
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -269,7 +269,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
         FROM "BuzzTip" bt
         JOIN "Article" a ON a.id = bt."entityId" -- ensure the article exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "entityId" IN (${ids}) AND "entityType" = 'Article'
+        WHERE "entityId" = ANY(${ids}::int[]) AND "entityType" = 'Article'
         GROUP BY "entityId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -289,7 +289,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated article tip metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "tippedCount", "tippedAmountCount")
-        SELECT 
+        SELECT
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'tippedCount')::int,
@@ -313,7 +313,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     SELECT
       "articleId" as id
     FROM "ArticleEngagement"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -331,7 +331,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         FROM "ArticleEngagement" ae
         JOIN "Article" a ON a.id = ae."articleId" -- ensure the article exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE "articleId" IN (${ids}) AND ae.type = 'Hide'
+        WHERE "articleId" = ANY(${ids}::int[]) AND ae.type = 'Hide'
         GROUP BY "articleId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -350,7 +350,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         ctx,
         `-- Insert pre-aggregated article engagement metrics
         INSERT INTO "ArticleMetric" ("articleId", timeframe, "hideCount")
-        SELECT 
+        SELECT
           (value->>'articleId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'hideCount')::int

@@ -539,6 +539,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   AuraFlow: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
+  'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
@@ -751,6 +752,25 @@ export const generationConfig = {
       model: {
         id: 618692,
         name: 'FLUX',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Qwen: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2113658,
+      name: 'Qwen-Image Full BF16',
+      trainedWords: [],
+      baseModel: 'Qwen',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1864281,
+        name: 'Qwen-Image',
         type: 'Checkpoint',
       },
     } as GenerationResource,

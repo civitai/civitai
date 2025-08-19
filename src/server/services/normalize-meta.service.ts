@@ -51,7 +51,6 @@ type WanVideoGenMeta = BaseMeta & {
   seed?: number;
   sourceImage?: ImageProps;
   images?: ImageProps[];
-  resources: MetaResource[];
 };
 
 type NormalizeMetaProps = {
@@ -63,13 +62,29 @@ type NormalizeMetaProps = {
   baseModel?: string;
 };
 
-export function normalizeMeta<T extends NormalizeMetaProps>(initialMeta: T) {
-  const { civitaiResources, resources: stripThisVariable, type, ...meta } = initialMeta;
+export function getMetaResources({
+  baseModel,
+  civitaiResources,
+}: {
+  baseModel?: BaseModelGroup;
+  civitaiResources?: CivitaiResource[];
+}) {
   const resources =
     civitaiResources?.map(({ weight, modelVersionId }) => ({
-      modelVersionId,
+      modelVersionId: Number(modelVersionId),
       strength: weight,
     })) ?? [];
+
+  // add missing resource by baseModel
+  const modelVersionId = baseModel ? wanBaseModelGroupIdMap[baseModel] : undefined;
+  if (modelVersionId && !resources.find((x) => x.modelVersionId === modelVersionId)) {
+    resources.push({ modelVersionId, strength: undefined });
+  }
+  return resources;
+}
+
+export function normalizeMeta<T extends NormalizeMetaProps>(initialMeta: T) {
+  const { civitaiResources, resources: stripThisVariable, type, ...meta } = initialMeta;
   const prompt = 'prompt' in meta ? (meta.prompt as string) : undefined;
   const negativePrompt = 'negativePrompt' in meta ? (meta.negativePrompt as string) : undefined;
   const process = meta.process ?? (type && typeof type === 'string') ? type : undefined;
@@ -77,7 +92,6 @@ export function normalizeMeta<T extends NormalizeMetaProps>(initialMeta: T) {
   const data = {
     ...meta,
     ...cleanPrompt({ prompt, negativePrompt }),
-    resources,
     process,
     engine,
   };
@@ -108,15 +122,10 @@ function processWanVideoGenMeta(data: WanVideoGenMeta) {
 
   data.version = getWanVersion(baseModel);
 
-  // add missing resource by baseModel
-  const modelVersionId = wanBaseModelGroupIdMap[baseModel];
-  if (modelVersionId && !data.resources.find((x) => x.modelVersionId === modelVersionId)) {
-    data.resources.push({ modelVersionId });
-  }
-
   if (data.sourceImage) {
     data.images = [data.sourceImage];
     delete data.sourceImage;
   }
+  delete data.workflow;
   return { ...data, baseModel };
 }

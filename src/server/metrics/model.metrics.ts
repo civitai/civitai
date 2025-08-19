@@ -21,7 +21,7 @@ import { allInjectableResourceIds } from '~/shared/constants/generation.constant
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model');
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 200;
 
 type ModelMetricContext = MetricProcessorRunContext & {
   queuedModelVersions: number[];
@@ -65,7 +65,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionAggregationTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
-    for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
+    for (const tasks of modelTasks) await limitConcurrency(tasks, 2);
 
     // If beginning of day - clear top earners cache
     //---------------------------------------
@@ -138,7 +138,6 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
     `;
 
     ctx.jobContext.checkIfCanceled();
-    const downloadsJson = JSON.stringify(downloads);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
       SELECT mvm.modelVersionId,
@@ -155,7 +154,7 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
                        WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'all_time'
                        END
                      AS int)                                   as downloads
-            FROM json_array_elements('${downloadsJson}'::json) mvs
+            FROM jsonb_array_elements(${downloads}::jsonb) mvs
                    CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf) mvm
       WHERE mvm.downloads IS NOT NULL
         AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
@@ -203,7 +202,6 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     `;
 
     ctx.jobContext.checkIfCanceled();
-    const generationsJson = JSON.stringify(generations);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
       SELECT mvm.modelVersionId,
@@ -220,7 +218,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
                        WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'all_time'
                        END
                      AS int)                                   as generations
-            FROM json_array_elements('${generationsJson}'::json) mvs
+            FROM jsonb_array_elements(${generations}::jsonb) mvs
                    CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf) mvm
       WHERE mvm.generations IS NOT NULL
         AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
@@ -306,7 +304,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
-        AND r."modelVersionId" IN (${ids})
+        AND r."modelVersionId" = ANY(${ids}::int[])
         AND r."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY r."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
@@ -342,7 +340,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      WHERE dg."modelVersionId" IN (${ids})
+      WHERE dg."modelVersionId" = ANY(${ids}::int[])
         AND dg."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY dg."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
@@ -386,7 +384,6 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
     ctx.jobContext.checkIfCanceled();
     log('getVersionBuzzEarnedTasks', i + 1, 'of', tasks.length);
 
-    const json = JSON.stringify(batchData);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "earnedAmount")
       SELECT mvm.modelVersionId,
@@ -402,7 +399,7 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
                 WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'earned'
               END
           AS int) as earned
-        FROM json_array_elements('${json}'::json) mvs
+        FROM jsonb_array_elements(${batchData}::jsonb) mvs
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       ) mvm
       WHERE mvm.earned IS NOT NULL
@@ -447,7 +444,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
         CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE r.exclude = FALSE
           AND r."tosViolation" = FALSE
-          AND r."modelId" IN (${ids})
+          AND r."modelId" = ANY(${ids}::int[])
         GROUP BY r."modelId", tf.timeframe
       )
       SELECT jsonb_agg(
@@ -467,15 +464,15 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
         ctx,
         `-- Insert pre-aggregated model rating metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
-        SELECT 
+        SELECT
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'thumbsUpCount')::int,
           (value->>'thumbsDownCount')::int
         FROM jsonb_array_elements($1::jsonb) AS value
         ON CONFLICT ("modelId", timeframe) DO UPDATE
-          SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", 
-              "thumbsDownCount" = EXCLUDED."thumbsDownCount", 
+          SET "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+              "thumbsDownCount" = EXCLUDED."thumbsDownCount",
               "updatedAt" = now()`,
         [JSON.stringify(metrics)]
       );
@@ -511,7 +508,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       FROM "Comment" c
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE c."tosViolation" = false
-        AND c."modelId" IN (${ids})
+        AND c."modelId" = ANY(${ids}::int[])
         AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY c."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
@@ -555,7 +552,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
           OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
           OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
         JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-        WHERE c."modelId" = ANY (ARRAY[${ids}])
+        WHERE c."modelId" = ANY(${ids}::int[])
           AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY c."modelId", tf.timeframe
       )
@@ -575,7 +572,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
         ctx,
         `-- Insert pre-aggregated model collection metrics
         INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
-        SELECT 
+        SELECT
           (value->>'modelId')::int,
           (value->>'timeframe')::"MetricTimeframe",
           (value->>'collectedCount')::int
@@ -622,7 +619,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
         FROM "BuzzTip" bt
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE bt."entityType" = 'Model' AND bt."entityId" IS NOT NULL
-          AND bt."entityId" IN (${ids})
+          AND bt."entityId" = ANY(${ids}::int[])
           AND bt."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY "entityId", tf.timeframe
       ), "versionTips" AS (
@@ -633,7 +630,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
           SUM(mvm."tippedAmountCount") "tippedAmountCount"
         FROM "ModelVersionMetric" mvm
         JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-        WHERE mv."modelId" IN (${ids})
+        WHERE mv."modelId" = ANY(${ids}::int[])
           AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY mv."modelId", mvm.timeframe
       )
@@ -678,7 +675,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
         now() "updatedAt"
       FROM "ModelVersionMetric" mvm
       JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-      WHERE mv."modelId" IN (${ids})
+      WHERE mv."modelId" = ANY(${ids}::int[])
         AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY mv."modelId", mvm.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE

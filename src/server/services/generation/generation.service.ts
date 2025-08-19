@@ -53,7 +53,7 @@ import {
   getBaseModelsByGroup,
   getGenerationBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
-import { normalizeMeta } from '~/server/services/normalize-meta.service';
+import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
 
 type GenerationResourceSimple = {
   id: number;
@@ -296,12 +296,9 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
-
-  const common = {
-    prompt: meta.prompt,
-    negativePrompt: meta.negativePrompt,
-  };
+  // const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
+  const initialMeta = media.meta as ImageMetaProps;
+  const imageResources = getMetaResources(initialMeta);
 
   await dbRead.imageResourceNew
     .findMany({
@@ -314,24 +311,40 @@ async function getMediaGenerationData({
         if (!exists)
           imageResources.push({
             modelVersionId,
-            strength: strength ?? undefined,
+            strength: strength ? strength / 100 : undefined,
           });
       }
     });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const resources = await getResourceData(versionIds, user, generation).then((data) =>
+  const allResources = await getResourceData(versionIds, user, generation).then((data) =>
     data.map((item) => {
       const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
       return {
         ...item,
-        strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
+        strength: imageResource?.strength ?? item.strength,
       };
     })
   );
   const baseModel = getBaseModelFromResources(
-    resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+    allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
+
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
+  const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
+  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
+  const supportedResources = normalized.baseModel
+    ? getGenerationBaseModelGroup(normalized.baseModel)
+    : undefined;
+  const resources = !supportedResources
+    ? allResources
+    : allResources.filter((x) =>
+        supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
+      );
+
+  const common = {
+    prompt: normalized.prompt,
+    negativePrompt: normalized.negativePrompt,
+  };
 
   switch (type) {
     case 'image':
@@ -370,6 +383,7 @@ async function getMediaGenerationData({
           aspectRatio,
           baseModel,
           clipSkip,
+          engine,
         },
       };
     case 'video':
@@ -379,11 +393,11 @@ async function getMediaGenerationData({
         remixOf,
         resources,
         params: {
-          ...meta,
+          ...normalized,
           ...common,
-          baseModel,
           width,
           height,
+          engine,
         },
       };
     case 'audio':

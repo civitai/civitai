@@ -19,6 +19,7 @@ const baseModelConfig = [
   { name: 'CogVideoX', type: 'image', group: 'CogVideoX' },
   { name: 'Flux.1 S', type: 'image', group: 'Flux1' },
   { name: 'Flux.1 D', type: 'image', group: 'Flux1' },
+  { name: 'Flux.1 Krea', type: 'image', group: 'Flux1' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
@@ -79,8 +80,8 @@ const baseModelConfig = [
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
   { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true, engine: 'wan' },
-  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
   { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V', engine: 'wan' },
+  { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
   { name: 'Wan Video 14B i2v 480p', type: 'video', group: 'WanVideo14B_I2V_480p', engine: 'wan' },
   { name: 'Wan Video 14B i2v 720p', type: 'video', group: 'WanVideo14B_I2V_720p', engine: 'wan' },
   { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B', engine: 'wan' },
@@ -328,7 +329,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
-        baseModels: ['Flux.1 S', 'Flux.1 D'],
+        baseModels: ['Flux.1 S', 'Flux.1 D', 'Flux.1 Krea'],
       },
     ],
   },
@@ -349,25 +350,40 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],
   },
   {
+    group: 'Qwen',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
+  },
+  {
     group: 'WanVideo',
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video'] }],
   },
   {
     group: 'WanVideo14B_T2V',
-    support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B t2v'] }],
+    support: [
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 14B t2v'] },
+    ],
   },
   {
     group: 'WanVideo14B_I2V_480p',
     support: [
       {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Wan Video 14B i2v 480p'],
+      },
+      {
         modelTypes: [ModelType.LORA],
-        baseModels: ['Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+        baseModels: ['Wan Video 14B i2v 720p'],
       },
     ],
   },
   {
     group: 'WanVideo14B_I2V_720p',
-    support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 720p'] }],
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Wan Video 14B i2v 720p'],
+      },
+    ],
     partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] }],
   },
   // {
