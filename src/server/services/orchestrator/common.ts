@@ -799,7 +799,7 @@ export async function getWorkflowStatusUpdate({
   const result = await getWorkflow({ token, path: { workflowId: workflowId as string } });
   if (result) {
     return {
-      id: result.id,
+      id: workflowId,
       status: result.status!,
       steps: result.steps?.map((step) => ({
         name: step.name,

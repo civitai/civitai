@@ -10,8 +10,8 @@ import type { UserTier } from '~/server/schema/user.schema';
 import type { NormalizedGeneratedImageResponse } from '~/server/services/orchestrator';
 import type { WorkflowStatus } from '@civitai/client';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-
-const POLLABLE_STATUSES: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled', 'processing'];
+import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
+import { usePollWorkflows } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 
 type GenerationState = {
   queued: {
@@ -161,6 +161,8 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     store.setState({ requestsLoading: isLoading, hasGeneratedImages: images.length > 0 });
   }, [images, isLoading]);
   // #endregion
+
+  // usePollWorkflows();
 
   if (!storeRef.current) storeRef.current = createGenerationStore();
 
