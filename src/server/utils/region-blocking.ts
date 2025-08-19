@@ -44,10 +44,7 @@ export const REGION_BLOCK_CONFIG: RegionBlockConfig[] = process.env.REGION_BLOCK
 // Region restriction configurations with effective dates
 // Format: same as block config - "REGION:YYYY-MM-DD,REGION:YYYY-MM-DD" or "COUNTRY:STATE:YYYY-MM-DD"
 // Example: "FR:2025-08-01,DE:2025-09-01,US:NY:2025-07-24"
-const DEFAULT_REGION_RESTRICTION_CONFIG: RegionBlockConfig[] = [
-  { region: 'FR', effectiveDate: '2025-08-01' },
-  { region: 'DE', effectiveDate: '2025-08-01' },
-];
+const DEFAULT_REGION_RESTRICTION_CONFIG: RegionBlockConfig[] = [];
 
 export const REGION_RESTRICTION_CONFIG: RegionBlockConfig[] = process.env.REGION_RESTRICTION_CONFIG
   ? process.env.REGION_RESTRICTION_CONFIG.split(',').map((config) => {
