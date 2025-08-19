@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { tagIdsForImagesCache, thumbnailCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, thumbnailCache, imageTagsCache } from '~/server/redis/caches';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -41,6 +41,7 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
 
     const imageIds = [...new Set(items.map((x) => x.imageId))];
     await tagIdsForImagesCache.bust(imageIds);
+    await imageTagsCache.bust(imageIds);
   });
 
   await updateImageNsfwLevels(args);
@@ -74,6 +75,7 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
 
     const imageIds = [...new Set(items.map((x) => x.imageId))];
     await tagIdsForImagesCache.bust(imageIds);
+    await imageTagsCache.bust(imageIds);
   });
 
   await updateImageNsfwLevels(args);
@@ -94,6 +96,7 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
 
     const imageIds = [...new Set(items.map((x) => x.imageId))];
     await tagIdsForImagesCache.bust(imageIds);
+    await imageTagsCache.bust(imageIds);
   });
 
   await updateImageNsfwLevels(args);
