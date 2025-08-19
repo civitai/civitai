@@ -1,4 +1,4 @@
-import type { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
+import type { WorkflowStepEvent } from '@civitai/client';
 import { applyPatch, JsonPatchFactory } from '@civitai/client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
@@ -25,6 +25,7 @@ import type {
 import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import type {
   queryGeneratedImageWorkflows,
+  WorkflowStatusUpdate,
   WorkflowStepFormatted,
 } from '~/server/services/orchestrator/common';
 import type {
@@ -37,8 +38,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
-type InfiniteTextToImageRequests = InfiniteData<
+export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
 >;
 export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
@@ -183,7 +185,7 @@ export function useSubmitCreateImage() {
           }
         },
       });
-      updateFromEvents();
+      // updateFromEvents();
     },
     // onError: (error) => {
     //   showErrorNotification({
@@ -213,7 +215,7 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
           }
         },
       });
-      updateFromEvents();
+      // updateFromEvents();
     },
     ...args,
   });
@@ -464,78 +466,60 @@ export function usePatchTags() {
   return { patchTags, isLoading };
 }
 
-type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & {
-  $type: 'job';
-};
-type CustomWorkflowEvent = Omit<WorkflowEvent, '$type'> & { $type: 'workflow' };
+type CustomWorkflowStepEvent = Omit<WorkflowStepEvent, '$type'> & { $type: 'step' };
 const debouncer = createDebouncer(100);
-const signalJobEventsDictionary: Record<string, CustomJobEvent> = {};
-const signalWorkflowEventsDictionary: Record<string, CustomWorkflowEvent> = {};
+let signalStepEventsDictionary: Record<string, CustomWorkflowStepEvent> = {};
 export function useTextToImageSignalUpdate() {
-  return useSignalConnection(
-    SignalMessages.TextToImageUpdate,
-    (data: CustomJobEvent | CustomWorkflowEvent) => {
-      if (data.$type === 'job' && data.jobId) {
-        signalJobEventsDictionary[data.jobId] = { ...data };
-      } else if (data.$type === 'workflow' && data.workflowId) {
-        signalWorkflowEventsDictionary[data.workflowId] = data;
-      }
-
-      debouncer(() => updateFromEvents());
-    }
-  );
+  return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
+    if (data.$type === 'step') signalStepEventsDictionary[data.workflowId] = { ...data };
+    debouncer(() => updateSignaledWorkflows());
+  });
 }
 
-function updateFromEvents() {
-  if (!Object.keys(signalJobEventsDictionary).length) return;
+async function fetchSignaledWorkflow(
+  workflowId: string
+): Promise<WorkflowStatusUpdate | undefined> {
+  const response = await fetch(`/api/generation/workflows/${workflowId}/status-update`);
+  if (response.ok) return await response.json();
+  else {
+    // TODO - handle errors
+  }
+}
 
-  updateTextToImageRequests({
-    cb: (old) => {
-      for (const page of old.pages) {
+async function updateSignaledWorkflows() {
+  const signalData = { ...signalStepEventsDictionary };
+  signalStepEventsDictionary = {};
+
+  const workflowIds = Object.keys(signalData);
+  if (!workflowIds.length) return;
+
+  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+  const workflows = await Promise.all(workflowIds.map(fetchSignaledWorkflow)).then((data) =>
+    data.filter(isDefined)
+  );
+  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+    produce(state, (old?: InfiniteTextToImageRequests) => {
+      if (!old) return;
+      outerLoop: for (const page of old.pages) {
         for (const item of page.items) {
-          if (
-            !Object.keys(signalJobEventsDictionary).length &&
-            !Object.keys(signalWorkflowEventsDictionary).length
-          )
-            return;
-
-          const workflowEvent = signalWorkflowEventsDictionary[item.id];
-          if (workflowEvent) {
-            item.status = workflowEvent.status!;
-            if (item.status === signalWorkflowEventsDictionary[item.id].status)
-              delete signalWorkflowEventsDictionary[item.id];
-          }
-
-          for (const step of item.steps) {
-            // get all jobIds associated with images
-            const imageJobIds = [...new Set(step.images.map((x) => x.jobId))];
-            // get any pending events associated with imageJobIds
-            const jobEventIds = Object.keys(signalJobEventsDictionary).filter((jobId) =>
-              imageJobIds.includes(jobId)
-            );
-
-            for (const jobId of jobEventIds) {
-              const signalEvent = signalJobEventsDictionary[jobId];
-              if (!signalEvent) continue;
-              const { status } = signalEvent;
-              const images = step.images.filter((x) => x.jobId === jobId);
-              for (const image of images) {
-                image.status = signalEvent.status!;
-                image.blockedReason = image.blockedReason ?? signalEvent.blockedReason;
-                if (image.type === 'video') {
-                  image.progress = signalEvent.progress ?? 0;
-                  image.reason = image.reason ?? signalEvent.reason;
+          if (!workflows.length) break outerLoop;
+          const index = workflows.findIndex((x) => x.id === item.id);
+          if (index > -1) {
+            const match = workflows.splice(index, 1)[0];
+            if (match) {
+              item.status = match.status;
+              for (const step of item.steps) {
+                const stepMatch = match.steps?.find((x) => x.name === step.name);
+                if (stepMatch) {
+                  step.images = stepMatch.images;
+                  step.status = stepMatch.status;
+                  step.completedAt = stepMatch.completedAt;
                 }
-              }
-
-              if (status === signalJobEventsDictionary[jobId].status) {
-                delete signalJobEventsDictionary[jobId];
-                if (!Object.keys(signalJobEventsDictionary).length) break;
               }
             }
           }
         }
       }
-    },
-  });
+    })
+  );
 }

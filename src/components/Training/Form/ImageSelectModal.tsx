@@ -186,6 +186,7 @@ export default function ImageSelectModal({
                 ...step.params,
                 seed: asset.seed,
                 completed: step.completedAt ? new Date(step.completedAt) : undefined,
+                stepName: step.name,
               },
             };
           })
