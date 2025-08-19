@@ -1,4 +1,4 @@
-import * as z from 'zod';
+import type * as z from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid' | 'ref2vid';
