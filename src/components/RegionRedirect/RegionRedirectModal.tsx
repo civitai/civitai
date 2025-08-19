@@ -25,14 +25,13 @@ export default function RegionRedirectModal({
 
   // TODO.regionRestriction: Make this pretty
   const defaultContent = (
-    <Stack gap="md">
-      <Text size="sm">
+    <Stack gap="sm">
+      <Text>
         To ensure compliance with local regulations, users from your region are automatically
         redirected to our alternative platform. You&apos;ll have access to a curated selection of
         SFW (Safe for Work) content and features.
       </Text>
-
-      <Text size="sm">
+      <Text>
         This redirect helps us maintain service availability in your area while respecting regional
         content guidelines.
       </Text>
@@ -45,15 +44,21 @@ export default function RegionRedirectModal({
       onClose={handleDismiss}
       title={title}
       size="md"
-      centered
+      classNames={{
+        title: 'text-xl font-bold text-inherit',
+        header: 'bg-green-8 text-white',
+        close: 'text-inherit',
+        body: 'p-4',
+      }}
       closeOnClickOutside={false}
       closeOnEscape={false}
-      withCloseButton={true}
+      withCloseButton
+      centered
     >
       {children || defaultContent}
 
-      <Group justify="flex-end" gap="sm" mt="lg">
-        <Button variant="outline" onClick={handleDismiss}>
+      <Group justify="flex-end" gap="sm" mt="xs">
+        <Button variant="default" onClick={handleDismiss}>
           Dismiss
         </Button>
       </Group>
