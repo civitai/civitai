@@ -43,7 +43,7 @@ const schema = z
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
-    message: 'Please enter a valid amount',
+    error: 'Please enter a valid amount',
     path: ['customAmount'],
   });
 

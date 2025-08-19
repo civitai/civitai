@@ -111,19 +111,19 @@ const formSchema = upsertBountyInputSchema
     ),
   })
   .refine((data) => data.poi !== true, {
-    message: 'The creation of bounties intended to depict an actual person is prohibited',
+    error: 'The creation of bounties intended to depict an actual person is prohibited',
     path: ['poi'],
   })
   .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
     path: ['nsfw'],
   })
   .refine((data) => data.startsAt < data.expiresAt, {
-    message: 'Start date must be before expiration date',
+    error: 'Start date must be before expiration date',
     path: ['startsAt'],
   })
   .refine((data) => data.expiresAt > data.startsAt, {
-    message: 'Expiration date must be after start date',
+    error: 'Expiration date must be after start date',
     path: ['expiresAt'],
   });
 

@@ -7,10 +7,10 @@ const schema = z
   .array(
     z
       .string()
-      .refine((hash) => hash.length === 64, { message: 'Invalid hash' })
+      .refine((hash) => hash.length === 64, { error: 'Invalid hash' })
       .transform((hash) => hash.toUpperCase())
   )
-  .max(10000, { message: 'Too many hashes' });
+  .max(10000, { error: 'Too many hashes' });
 
 export default PublicEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse) {

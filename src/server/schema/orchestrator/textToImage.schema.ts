@@ -19,7 +19,7 @@ export const textToImageParamsSchema = z.object({
   negativePrompt: z.string().optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
-    message: 'invalid sampler',
+    error: 'Invalid sampler',
   }),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
   clipSkip: z.coerce.number().max(3).optional(),

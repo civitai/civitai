@@ -89,7 +89,7 @@ export default PublicEndpoint(
     if (!queryResults.success)
       return res
         .status(400)
-        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
+        .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
     const input = queryResults.data;
     const modelVersionId = input.modelVersionId;
     if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');

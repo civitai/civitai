@@ -55,7 +55,7 @@ const formSchema = upsertClubPostInput.refine(
     return true;
   },
   {
-    message: 'Title and description are required',
+    error: 'Title and description are required',
     path: ['title'],
   }
 );

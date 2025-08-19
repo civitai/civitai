@@ -17,7 +17,7 @@ export const upsertClubAdminInviteInput = z.object({
   expiresAt: z.date().nullish(),
   permissions: z
     .array(z.enum(ClubAdminPermission))
-    .min(1, { message: 'At least one permission is required' }),
+    .min(1, { error: 'At least one permission is required' }),
 });
 
 export const deleteClubAdminInviteInput = z.object({

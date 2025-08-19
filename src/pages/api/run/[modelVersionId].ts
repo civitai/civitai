@@ -15,7 +15,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   if (!results.success)
     return res
       .status(400)
-      .json({ error: `Invalid id: ${results.error.flatten().fieldErrors.modelVersionId}` });
+      .json({ error: z.prettifyError(results.error) ?? 'Invalid modelVersionId' });
 
   const { modelVersionId, strategyId, partnerId } = results.data;
   if (!modelVersionId) return res.status(420).json({ error: 'Missing modelVersionId' });

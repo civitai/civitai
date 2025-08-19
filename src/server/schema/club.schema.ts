@@ -29,7 +29,7 @@ export const upsertClubTierInput = z
     oneTimeFee: z.boolean().default(false),
   })
   .refine((data) => !!data.clubId || !!data.id, {
-    message: 'When creating a new tier, clubId must be provided',
+    error: 'When creating a new tier, clubId must be provided',
   });
 
 export type UpsertClubInput = z.infer<typeof upsertClubInput>;

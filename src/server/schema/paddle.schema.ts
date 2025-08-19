@@ -25,7 +25,7 @@ export const transactionCreateSchema = z.object({
   currency: z
     .string()
     .default('USD')
-    .refine((val) => val as CurrencyCode, { message: 'Only USD is supported' }),
+    .refine((val) => val as CurrencyCode, { error: 'Only USD is supported' }),
   metadata: transactionMetadataSchema.optional(),
   recaptchaToken: z.string(),
 });

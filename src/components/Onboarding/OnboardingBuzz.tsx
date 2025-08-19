@@ -44,7 +44,7 @@ const referralSchema = z.object({
     .string()
     .trim()
     .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
-      message: `Referral codes must be at least ${
+      error: `Referral codes must be at least ${
         constants.referrals.referralCodeMinLength + 1
       } characters long`,
     })

@@ -14,9 +14,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const queryResults = schema.safeParse(req.query);
   if (!queryResults.success) {
     return res.status(400).json({
-      error: `Invalid query parameters: ${JSON.stringify(
-        queryResults.error.flatten().fieldErrors
-      )}`,
+      error: z.prettifyError(queryResults.error) ?? 'Invalid query parameters',
     });
   }
 

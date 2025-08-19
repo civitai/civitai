@@ -58,7 +58,7 @@ export default AuthedEndpoint(
     if (!queryResults.success)
       return res
         .status(400)
-        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.vaultItemId}` });
+        .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid vaultItemId' });
     const input = queryResults.data;
     const vaultItemId = input.vaultItemId;
     if (!vaultItemId) return onError(400, 'Missing vaultItemId');

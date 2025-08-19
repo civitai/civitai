@@ -51,7 +51,7 @@ export default PublicEndpoint(
     if (!queryResults.success)
       return res
         .status(400)
-        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.fileId}` });
+        .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid fileId' });
 
     const { fileId } = queryResults.data;
 

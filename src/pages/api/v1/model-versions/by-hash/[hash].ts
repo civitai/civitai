@@ -13,9 +13,7 @@ const schema = z.object({
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const results = schema.safeParse(req.query);
   if (!results.success)
-    return res
-      .status(400)
-      .json({ error: `Invalid hash: ${results.error.flatten().fieldErrors.hash}` });
+    return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid hash' });
 
   const { hash } = results.data;
   if (!hash) return res.status(400).json({ error: 'Missing hash' });

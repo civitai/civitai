@@ -437,12 +437,12 @@ const metadataSchema = modelFileMetadataSchema
   .refine(
     (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
     {
-      message: 'Model size is required for model files',
+      error: 'Model size is required for model files',
       path: ['size'],
     }
   )
   .refine((data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.fp : true), {
-    message: 'Floating point is required for model files',
+    error: 'Floating point is required for model files',
     path: ['fp'],
   })
   .array();

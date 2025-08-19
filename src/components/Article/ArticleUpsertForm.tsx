@@ -41,7 +41,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
-  coverImage: imageSchema.refine((data) => !!data.url, { message: 'Please upload a cover image' }),
+  coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
   userNsfwLevel: z.string().optional(),
 });
 const querySchema = z.object({

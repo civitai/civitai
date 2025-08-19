@@ -1,6 +1,7 @@
 import { Alert, Button, Loader, Modal, Text, Textarea } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { useState } from 'react';
+import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
@@ -53,7 +54,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
     if (!result.success) {
       setState({
         ...state,
-        error: result.error.flatten().fieldErrors.message?.[0] ?? 'Message is required',
+        error: z.prettifyError(result.error) ?? 'Message is required',
       });
       return;
     }
