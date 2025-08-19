@@ -134,6 +134,7 @@ const featureFlags = createFeatureFlags({
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
   logicalReplica: ['public'],
+  modelVersionPopularity: ['mod'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

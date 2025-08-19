@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export type PaypalPurchaseBuzzSchema = z.infer<typeof paypalPurchaseBuzzSchema>;
 export const paypalPurchaseBuzzSchema = z.object({

@@ -1,5 +1,5 @@
 import { LinkType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
 
 export type GetUserLinksQuery = z.infer<typeof getUserLinksSchema>;
@@ -9,7 +9,7 @@ export type UpsertUserLinkParams = z.infer<typeof upsertUserLinkSchema>;
 export const upsertUserLinkSchema = z.object({
   id: z.number().optional(),
   url: zc.safeUrl,
-  type: z.nativeEnum(LinkType),
+  type: z.enum(LinkType),
 });
 export const upsertManyUserLinkSchema = z.array(upsertUserLinkSchema);
 export type UpsertManyUserLinkParams = z.infer<typeof upsertManyUserLinkSchema>;

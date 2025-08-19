@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { InferGetServerSidePropsType } from 'next';

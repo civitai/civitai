@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { publicApiContext } from '~/server/createContext';
 import { appRouter } from '~/server/routers';

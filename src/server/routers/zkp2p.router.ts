@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { router, protectedProcedure } from '~/server/trpc';
 import {
   createBuzzOrderZkp2pHandler,

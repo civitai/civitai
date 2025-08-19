@@ -15,7 +15,7 @@ import {
 import { Form, InputClubResourceManagementInput, useForm } from '~/libs/form';
 import type { SupportedClubEntities } from '~/server/schema/club.schema';
 import { upsertClubResourceInput } from '~/server/schema/club.schema';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { showSuccessNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';

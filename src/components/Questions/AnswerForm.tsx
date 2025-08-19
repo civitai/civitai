@@ -3,7 +3,7 @@ import { showNotification } from '@mantine/notifications';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import type { GetAnswersProps } from '~/server/controllers/answer.controller';
 import { trpc } from '~/utils/trpc';

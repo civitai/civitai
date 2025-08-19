@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { addManualAssignments } from '~/server/events/base.event';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';

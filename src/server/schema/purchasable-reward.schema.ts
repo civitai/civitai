@@ -1,5 +1,5 @@
 import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import {
   PurchasableRewardModeratorViewMode,
   PurchasableRewardViewMode,
@@ -16,7 +16,7 @@ export const purchasableRewardUpsertSchema = z.object({
   about: z.string().trim().min(1),
   redeemDetails: z.string().trim().min(1),
   termsOfUse: z.string().trim().min(1),
-  usage: z.nativeEnum(PurchasableRewardUsage),
+  usage: z.enum(PurchasableRewardUsage),
   codes: z.array(z.string()).optional(),
   archived: z.boolean().optional(),
   availableFrom: z.date().nullish(),
@@ -37,7 +37,7 @@ export type GetPaginatedPurchasableRewardsSchema = z.infer<
 export const getPaginatedPurchasableRewardsSchema = paginationSchema.merge(
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
-    mode: z.nativeEnum(PurchasableRewardViewMode).default(PurchasableRewardViewMode.Available),
+    mode: z.enum(PurchasableRewardViewMode).default(PurchasableRewardViewMode.Available),
   })
 );
 
@@ -48,7 +48,7 @@ export const getPaginatedPurchasableRewardsModeratorSchema = paginationSchema.me
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
     archived: z.boolean().optional(),
-    usage: z.array(z.nativeEnum(PurchasableRewardUsage)).optional(),
+    usage: z.array(z.enum(PurchasableRewardUsage)).optional(),
     mode: z
       .nativeEnum(PurchasableRewardModeratorViewMode)
       .default(PurchasableRewardModeratorViewMode.Available),

@@ -5,7 +5,7 @@ import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
 import { CsamProvider } from '~/components/Csam/CsamProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Text, Card, Badge, Group } from '@mantine/core';
 import { useStepper } from '~/hooks/useStepper';
 import { trpc } from '~/utils/trpc';

@@ -1,5 +1,5 @@
 import { Button, Card, Group, Stack, Title } from '@mantine/core';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -21,7 +21,7 @@ export function RemoveAccountCard() {
     username: z.string().superRefine((val, ctx) => {
       if (val !== user?.username) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: 'username must match',
         });
       }

@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import {
@@ -47,7 +47,7 @@ export const saveCollectionItemInputSchema = collectionItemSchema
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
-    { message: 'Only one item can be added at a time.' }
+    { error: 'Only one item can be added at a time.' }
   )
   .refine(
     ({ type, articleId, imageId, postId, modelId }) => {
@@ -70,7 +70,7 @@ export const saveCollectionItemInputSchema = collectionItemSchema
       }
       return false;
     },
-    { message: 'Please pass a valid item type.' }
+    { error: 'Please pass a valid item type.' }
   );
 
 export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
@@ -86,7 +86,7 @@ export const bulkSaveCollectionItemsInput = z
   .refine(
     ({ articleIds, imageIds, postIds, modelIds }) =>
       [articleIds, imageIds, postIds, modelIds].filter(isDefined).length === 1,
-    { message: 'Only one item can be added at a time.' }
+    { error: 'Only one item can be added at a time.' }
   );
 
 export type GetAllUserCollectionsInputSchema = z.infer<typeof getAllUserCollectionsInputSchema>;
@@ -143,7 +143,7 @@ export const collectionMetadataSchema = z
       return true;
     },
     {
-      message: 'Submission start date must be before submission end date.',
+      error: 'Submission start date must be before submission end date.',
       path: ['submissionStartDate'],
     }
   )
@@ -159,7 +159,7 @@ export const collectionMetadataSchema = z
 
       return false;
     },
-    { message: 'Either provide both submission values or none.', path: ['submissionStartDate'] }
+    { error: 'Either provide both submission values or none.', path: ['submissionStartDate'] }
   );
 
 export type UpsertCollectionInput = z.infer<typeof upsertCollectionInput>;
@@ -193,7 +193,7 @@ export const getUserCollectionItemsByItemSchema = collectionItemSchema
   .refine(
     ({ articleId, imageId, postId, modelId }) =>
       [articleId, imageId, postId, modelId].filter(isDefined).length === 1,
-    { message: 'Please pass a single resource to match collections to.' }
+    { error: 'Please pass a single resource to match collections to.' }
   );
 
 export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSchema>;

@@ -1,5 +1,5 @@
 import type { CurrencyCode } from '@paddle/paddle-js';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 
 const buzzPurchaseMetadataSchema = z
@@ -25,7 +25,7 @@ export const transactionCreateSchema = z.object({
   currency: z
     .string()
     .default('USD')
-    .refine((val) => val as CurrencyCode, { message: 'Only USD is supported' }),
+    .refine((val) => val as CurrencyCode, { error: 'Only USD is supported' }),
   metadata: transactionMetadataSchema.optional(),
   recaptchaToken: z.string(),
 });

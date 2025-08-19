@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export type GetUserReferralCodesSchema = z.infer<typeof getUserReferralCodesSchema>;
 export const getUserReferralCodesSchema = z.object({

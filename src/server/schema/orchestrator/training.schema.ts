@@ -1,5 +1,5 @@
 import type { SessionUser } from 'next-auth';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';
 
@@ -23,7 +23,7 @@ export const imageTrainingRouterWhatIfSchema = imageTrainingBaseSchema.merge(
 export type ImageTrainingRouterWhatIfSchema = z.infer<typeof imageTrainingRouterWhatIfSchema>;
 
 const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
-  trainingData: z.string().url(),
+  trainingData: z.url(),
   loraName: z.string(),
   samplePrompts: z.array(z.string()),
   params: z.union([

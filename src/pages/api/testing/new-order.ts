@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { poolCounters, blessedBuzzCounter } from '~/server/games/new-order/utils';
 import { addImageToQueue, getImagesQueue } from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -12,7 +12,7 @@ import { NsfwLevel } from '~/server/common/enums';
 const insertInQueueSchema = z.object({
   action: z.literal('insert-in-queue'),
   imageIds: commaDelimitedNumberArray(),
-  rankType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
+  rankType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
   priority: z.coerce.number().default(1),
 });
 const getQueueSchema = z.object({
@@ -21,12 +21,12 @@ const getQueueSchema = z.object({
 });
 const showAllQueuesSchema = z.object({
   action: z.literal('show-all-queues'),
-  rankType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
+  rankType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
 });
 const removeFromQueueSchema = z.object({
   action: z.literal('remove-from-queue'),
   limit: z.coerce.number().default(1000),
-  rankType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
+  rankType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
 });
 
 const getBlessedBuzzSchema = z.object({

@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { excludeUserDownloadHistory } from '~/server/services/download.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.973",
+  "version": "5.0.979",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -222,7 +222,7 @@
     "uuid": "^9.0.0",
     "viem": "^2.30.6",
     "xml2js": "^0.6.2",
-    "zod": "^3.25.67",
+    "zod": "^4.0.17",
     "zustand": "^4.3.7"
   },
   "devDependencies": {
@@ -287,5 +287,10 @@
   },
   "ct3aMetadata": {
     "initVersion": "6.2.1"
+  },
+  "overrides": {
+    "openai": {
+      "zod": "$zod"
+    }
   }
 }

@@ -25,7 +25,7 @@ import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';

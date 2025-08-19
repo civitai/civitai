@@ -1,7 +1,7 @@
 import { Alert, Center, Container, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

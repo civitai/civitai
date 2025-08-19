@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { CacheTTL, constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -12,15 +11,17 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { stringifyAIR } from '~/shared/utils/air';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
@@ -664,6 +665,40 @@ export async function getUserFollows(userId: number) {
   const userFollows = await userFollowsCache.fetch(userId);
   return userFollows[userId]?.follows ?? [];
 }
+
+type ImageTagsCacheItem = {
+  imageId: number;
+  tags: ImageTagComposite[];
+};
+
+export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
+  key: REDIS_KEYS.CACHES.IMAGE_TAGS,
+  idKey: 'imageId',
+  ttl: CacheTTL.day,
+  staleWhileRevalidate: false,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+
+    const imageTags = await db.imageTag.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        ...imageTagCompositeSelect,
+      },
+      orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
+      take: 100,
+    });
+
+    const result = imageTags.reduce((acc, tag) => {
+      const { imageId, ...tagData } = tag;
+      acc[imageId] ??= { imageId, tags: [] };
+      acc[imageId].tags.push(tagData);
+      return acc;
+    }, {} as Record<number, ImageTagsCacheItem>);
+
+    return result;
+  },
+});
 
 type ModelTagCacheItem = {
   modelId: number;

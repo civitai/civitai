@@ -1,11 +1,11 @@
 import { EntityCollaboratorStatus, EntityType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export type UpsertEntityCollaboratorInput = z.infer<typeof upsertEntityCollaboratorInput>;
 export const upsertEntityCollaboratorInput = z.object({
   targetUserId: z.number(),
   entityId: z.number(),
-  entityType: z.nativeEnum(EntityType),
+  entityType: z.enum(EntityType),
   sendMessage: z.boolean().optional().default(true),
 });
 
@@ -13,13 +13,13 @@ export type RemoveEntityCollaboratorInput = z.infer<typeof removeEntityCollabora
 export const removeEntityCollaboratorInput = z.object({
   targetUserId: z.number(),
   entityId: z.number(),
-  entityType: z.nativeEnum(EntityType),
+  entityType: z.enum(EntityType),
 });
 
 export type GetEntityCollaboratorsInput = z.infer<typeof getEntityCollaboratorsInput>;
 export const getEntityCollaboratorsInput = z.object({
   entityId: z.number(),
-  entityType: z.nativeEnum(EntityType),
+  entityType: z.enum(EntityType),
 });
 
 export type ActionEntityCollaboratorInviteInput = z.infer<
@@ -27,7 +27,7 @@ export type ActionEntityCollaboratorInviteInput = z.infer<
 >;
 export const actionEntityCollaboratorInviteInput = z.object({
   entityId: z.number(),
-  entityType: z.nativeEnum(EntityType),
-  status: z.nativeEnum(EntityCollaboratorStatus),
+  entityType: z.enum(EntityType),
+  status: z.enum(EntityCollaboratorStatus),
 });
 // TODO: Add end-point to send system message to user / new action type.

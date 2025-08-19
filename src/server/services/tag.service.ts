@@ -6,6 +6,7 @@ import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { imageTagsCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
@@ -16,7 +17,7 @@ import type {
   GetVotableTagsSchema2,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
-import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
+import { modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -267,31 +268,33 @@ export const getVotableTags = async ({
     }
   } else if (type === 'image') {
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
-    const tags = await dbRead.imageTag.findMany({
-      where: { imageId: id },
-      select: imageTagCompositeSelect,
-      orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
-      take: take ?? 100,
-    });
-    const hasWDTags = tags.some((x) => x.source === TagSource.WD14);
-    results.push(
-      ...tags
-        .filter((x) => {
-          if (x.source === TagSource.Rekognition && hasWDTags) {
-            if (x.tagType === TagType.Moderation) return true;
-            if (alwaysIncludeTags.includes(x.tagName)) return true;
-            return false;
-          }
-          return true;
-        })
-        .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
-          ...tag,
-          id: tagId,
-          type: tagType,
-          nsfwLevel: tagNsfwLevel,
-          name: tagName,
-        }))
-    );
+
+    // Fetch from cache
+    const cachedData = await imageTagsCache.fetch(id);
+    const cacheItem = cachedData[id];
+
+    if (cacheItem) {
+      const tags = cacheItem.tags.slice(0, take ?? 100);
+      const hasWDTags = tags.some((x) => x.source === TagSource.WD14);
+      results.push(
+        ...tags
+          .filter((x) => {
+            if (x.source === TagSource.Rekognition && hasWDTags) {
+              if (x.tagType === TagType.Moderation) return true;
+              if (alwaysIncludeTags.includes(x.tagName)) return true;
+              return false;
+            }
+            return true;
+          })
+          .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
+            ...tag,
+            id: tagId,
+            type: tagType,
+            nsfwLevel: tagNsfwLevel,
+            name: tagName,
+          }))
+      );
+    }
     if (userId) {
       const userVotes = await dbRead.tagsOnImageVote.findMany({
         where: { imageId: id, userId },
@@ -324,44 +327,54 @@ export async function getVotableImageTags({
   user: SessionUser;
   nsfwLevel?: number;
 }) {
-  const imageTags = await dbRead.imageTag.findMany({
-    where: {
-      imageId: { in: ids },
-      tagNsfwLevel: nsfwLevel ? { in: Flags.instanceToArray(nsfwLevel) } : undefined,
-    },
-    select: { ...imageTagCompositeSelect, imageId: true },
-    orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
-    take: 100,
-  });
-  const hasWDTags = imageTags.some((x) => x.source === TagSource.WD14);
-  const tags = imageTags
-    .filter((x) => {
-      if (x.source === TagSource.Rekognition && hasWDTags) {
-        if (x.tagType === TagType.Moderation) return true;
-        if (alwaysIncludeTags.includes(x.tagName)) return true;
-        return false;
-      }
-      return true;
-    })
-    .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfwLevel: tagNsfwLevel,
-      name: tagName,
-    })) as (VotableTagModel & { imageId: number })[];
+  // Fetch from cache
+  const cachedData = await imageTagsCache.fetch(ids);
+
+  // Process cached data
+  const allImageTags: (VotableTagModel & { imageId: number })[] = [];
+  const nsfwLevelArray = nsfwLevel ? Flags.instanceToArray(nsfwLevel) : null;
+
+  for (const imageId of ids) {
+    const cacheItem = cachedData[imageId];
+    if (!cacheItem) continue;
+
+    const imageTags = cacheItem.tags.filter(
+      (tag) => !nsfwLevelArray || nsfwLevelArray.includes(tag.tagNsfwLevel)
+    );
+
+    const hasWDTags = imageTags.some((x) => x.source === TagSource.WD14);
+    const filteredTags = imageTags
+      .filter((x) => {
+        if (x.source === TagSource.Rekognition && hasWDTags) {
+          if (x.tagType === TagType.Moderation) return true;
+          if (alwaysIncludeTags.includes(x.tagName)) return true;
+          return false;
+        }
+        return true;
+      })
+      .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
+        ...tag,
+        imageId,
+        id: tagId,
+        type: tagType,
+        nsfwLevel: tagNsfwLevel,
+        name: tagName,
+      })) as (VotableTagModel & { imageId: number })[];
+
+    allImageTags.push(...filteredTags);
+  }
 
   const userVotes = await dbRead.tagsOnImageVote.findMany({
     where: { imageId: { in: ids }, userId: user.id },
     select: { tagId: true, vote: true },
   });
 
-  for (const tag of tags) {
+  for (const tag of allImageTags) {
     const userVote = userVotes.find((vote) => vote.tagId === tag.id);
     if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
   }
 
-  return tags;
+  return allImageTags;
 }
 
 // TODO - create function for getting model tag votes and then finish abstracting this fuction - replaces `getVotableTags`
@@ -415,6 +428,11 @@ export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput)
   `);
 
   await clearCache(userId, type);
+
+  // Bust image tags cache if voting on images
+  if (type === 'image') {
+    await imageTagsCache.bust(id);
+  }
 };
 
 const MODERATOR_VOTE_WEIGHT = 10;
@@ -467,6 +485,11 @@ export const addTagVotes = async ({
         AND "type" = 'Moderation'
     `);
     if (count > 0) await clearCache(userId, type); // Clear cache if it is
+  }
+
+  // Bust image tags cache if voting on images
+  if (type === 'image') {
+    await imageTagsCache.bust(id);
   }
 };
 // #endregion
@@ -672,11 +695,26 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   const tagSelector = isTagIds ? 'id' : 'name';
   const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
 
+  // Get affected images before deletion (cascade will delete ImageTag records)
+  const affectedImages = await dbWrite.$queryRaw<{ imageId: number }[]>`
+    SELECT DISTINCT "imageId"
+    FROM "ImageTag"
+    WHERE "tagId" IN (
+      SELECT id FROM "Tag" WHERE ${tagSelector} IN (${tagIn})
+    )
+  `;
+
   await dbWrite.$executeRawUnsafe(`
     DELETE
     FROM "Tag"
     WHERE ${tagSelector} IN (${tagIn})
   `);
+
+  // Bust cache for affected images
+  if (affectedImages.length > 0) {
+    const imageIds = affectedImages.map(x => x.imageId);
+    await imageTagsCache.bust(imageIds);
+  }
 };
 
 // unused

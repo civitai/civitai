@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { autoCaptionSchema } from '~/store/training.store';
 
@@ -20,13 +20,13 @@ export const createTrainingRequestDryRunSchema = z.object({
 
 export type MoveAssetInput = z.infer<typeof moveAssetInput>;
 export const moveAssetInput = z.object({
-  url: z.string(), // TODO zod/v4 upgrade, change this back to url (zod bug)
+  url: z.url(),
   modelVersionId: z.number().positive(),
 });
 
 export type AutoTagInput = z.infer<typeof autoTagInput>;
 export const autoTagInput = z.object({
-  url: z.string(), // TODO zod/v4 upgrade, change this back to url (zod bug)
+  url: z.url(),
   modelId: z.number().positive(),
 });
 export type AutoCaptionInput = z.infer<typeof autoCaptionInput>;

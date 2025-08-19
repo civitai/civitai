@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { trackedReasons } from '~/utils/login-helpers';
 
 export const addViewSchema = z.object({
@@ -35,7 +35,7 @@ export type AddViewSchema = z.infer<typeof addViewSchema>;
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
   platform: z.enum(['reddit', 'twitter', 'clipboard']),
-  url: z.string().url().trim().nonempty(),
+  url: z.url().trim().nonempty(),
 });
 
 export type TrackSearchInput = z.infer<typeof trackSearchSchema>;

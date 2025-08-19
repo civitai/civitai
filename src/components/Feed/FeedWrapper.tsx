@@ -1,7 +1,7 @@
 import { Alert } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
