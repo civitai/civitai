@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 

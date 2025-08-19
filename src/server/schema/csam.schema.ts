@@ -1,5 +1,5 @@
 import { CsamReportType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 export type CsamCapabilityType = keyof typeof csamCapabilitiesDictionary;
@@ -37,7 +37,7 @@ export const createCsamReportSchema = z.object({
   userId: z.number(),
   imageIds: z.number().array().optional(),
   details: csamReportDetails.optional(),
-  type: z.nativeEnum(CsamReportType),
+  type: z.enum(CsamReportType),
 });
 
 // #endregion

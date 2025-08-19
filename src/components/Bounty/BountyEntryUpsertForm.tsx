@@ -20,7 +20,7 @@ import { BountyEntryMode, BountyType, Currency } from '~/shared/utils/prisma/enu
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { getBountyCurrency, getMainBountyAmount } from '~/components/Bounty/bounty.utils';

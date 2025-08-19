@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { colorDomains, getRequestDomainColor } from '~/shared/constants/domain.constants';
@@ -89,7 +89,7 @@ export default PublicEndpoint(
     if (!queryResults.success)
       return res
         .status(400)
-        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
+        .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
     const input = queryResults.data;
     const modelVersionId = input.modelVersionId;
     if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');

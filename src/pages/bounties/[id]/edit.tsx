@@ -1,6 +1,6 @@
 import { Center, Container, Loader } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BountyEditForm } from '~/components/Bounty/BountyEditForm';
 import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';

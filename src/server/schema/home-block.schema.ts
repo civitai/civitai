@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
@@ -6,7 +6,7 @@ export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
 const socialBlockTypeSchema = z.enum(['ig-reel', 'ig-post', 'yt-short', 'yt-long', 'tw-post']);
 const socialBlockSchema = z.object({
-  url: z.string().url(),
+  url: z.url(),
   type: socialBlockTypeSchema,
 });
 export type SocialBlockSchema = z.infer<typeof socialBlockSchema>;
@@ -93,7 +93,7 @@ export type UpsertHomeBlockInput = z.infer<typeof upsertHomeBlockInput>;
 export const upsertHomeBlockInput = z.object({
   id: z.number().optional(),
   metadata: homeBlockMetaSchema,
-  type: z.nativeEnum(HomeBlockType).default(HomeBlockType.Collection),
+  type: z.enum(HomeBlockType).default(HomeBlockType.Collection),
   sourceId: z.number().optional(),
   index: z.number().optional(),
 });

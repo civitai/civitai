@@ -18,7 +18,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -84,7 +84,7 @@ const schema = modelVersionUpsertSchema2
         timeframe: z
           .number()
           .refine((v) => EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === v), {
-            message: 'Invalid value',
+            error: 'Invalid value',
           }),
       })
       .nullish(),
@@ -95,7 +95,7 @@ const schema = modelVersionUpsertSchema2
       .nullish(),
   })
   .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
-    message: 'You need to specify at least one trained word',
+    error: 'You need to specify at least one trained word',
     path: ['trainedWords'],
   })
   .refine(
@@ -106,7 +106,7 @@ const schema = modelVersionUpsertSchema2
 
       return true;
     },
-    { message: 'Min strength must be less than max strength', path: ['settings.minStrength'] }
+    { error: 'Min strength must be less than max strength', path: ['settings.minStrength'] }
   )
   .refine(
     (data) => {
@@ -116,7 +116,7 @@ const schema = modelVersionUpsertSchema2
 
       return true;
     },
-    { message: 'Max strength must be greater than min strength', path: ['settings.maxStrength'] }
+    { error: 'Max strength must be greater than min strength', path: ['settings.maxStrength'] }
   )
   .refine(
     (data) => {
@@ -127,7 +127,7 @@ const schema = modelVersionUpsertSchema2
 
       return true;
     },
-    { message: 'Generation price cannot be greater than download price', path: ['generationPrice'] }
+    { error: 'Generation price cannot be greater than download price', path: ['generationPrice'] }
   );
 type Schema = z.infer<typeof schema>;
 

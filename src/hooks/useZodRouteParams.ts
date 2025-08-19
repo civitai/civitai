@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import type { ParsedUrlQueryInput } from 'querystring';
 import { useMemo } from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export function useZodRouteParams<TSchema extends z.ZodObject>(schema: TSchema) {

@@ -1,8 +1,8 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { BlocklistType } from '~/server/common/enums';
 
 export const getBlocklistSchema = z.object({
-  type: z.nativeEnum(BlocklistType),
+  type: z.enum(BlocklistType),
 });
 
 export type UpsertBlocklistSchema = z.infer<typeof upsertBlocklistSchema>;

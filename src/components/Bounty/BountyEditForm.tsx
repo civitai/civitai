@@ -24,11 +24,11 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 const schema = updateBountyInputSchema
   .refine((data) => data.startsAt < data.expiresAt, {
-    message: 'Start date must be before expiration date',
+    error: 'Start date must be before expiration date',
     path: ['startsAt'],
   })
   .refine((data) => data.expiresAt > data.startsAt, {
-    message: 'Expiration date must be after start date',
+    error: 'Expiration date must be after start date',
     path: ['expiresAt'],
   });
 

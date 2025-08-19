@@ -1,6 +1,6 @@
 import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { redis } from '~/server/redis/client';
 import { fetchCacheByPattern } from '~/server/utils/cache-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

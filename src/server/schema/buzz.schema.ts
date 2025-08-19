@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 
 export enum TransactionType {
@@ -70,7 +70,7 @@ export const getUserBuzzAccountResponse = z.object({
 export type GetUserBuzzTransactionsSchema = z.infer<typeof getUserBuzzTransactionsSchema>;
 export const getUserBuzzTransactionsSchema = z.object({
   // accountId: z.number(),
-  type: z.nativeEnum(TransactionType).optional(),
+  type: z.enum(TransactionType).optional(),
   cursor: z.date().optional(),
   start: z.date().nullish(),
   end: z.date().nullish(),
@@ -117,32 +117,33 @@ export const buzzTransactionSchema = z.object({
   // To user id (0 is central bank)
   toAccountType: z.enum(buzzAccountTypes).optional(),
   toAccountId: z.number().optional(),
-  type: z.nativeEnum(TransactionType),
+  type: z.enum(TransactionType),
   amount: z.number().min(1),
   description: z.string().trim().max(100).nonempty().nullish(),
-  details: z.object({}).passthrough().nullish(),
+  details: z.looseObject({}).nullish(),
   entityId: z.number().optional(),
   entityType: z.string().optional(),
   externalTransactionId: z.string().optional(),
 });
 
 export type CreateBuzzTransactionInput = z.infer<typeof createBuzzTransactionInput>;
-export const createBuzzTransactionInput = buzzTransactionSchema.refine(
-  (data) => {
-    if (
-      data.type === TransactionType.Tip &&
-      ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
-    ) {
-      return false;
-    }
-
-    return true;
-  },
-  {
-    message: 'Please provide both the entityId and entityType',
-    params: ['entityId', 'entityType'],
+export const createBuzzTransactionInput = buzzTransactionSchema.superRefine((data, ctx) => {
+  if (
+    data.type === TransactionType.Tip &&
+    ((data.entityId && !data.entityType) || (!data.entityId && data.entityType))
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Please provide both the entityId and entityType',
+      path: ['entityId'],
+    });
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Please provide both the entityId and entityType',
+      path: ['entityType'],
+    });
   }
-);
+});
 
 export type CompleteStripeBuzzPurchaseTransactionInput = z.infer<
   typeof completeStripeBuzzPurchaseTransactionInput

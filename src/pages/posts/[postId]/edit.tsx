@@ -5,7 +5,7 @@ import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 const paramsSchema = z.object({
   postId: z.coerce.number(),

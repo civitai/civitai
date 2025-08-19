@@ -1,7 +1,7 @@
 import { Center, Container, Loader } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import React from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { ArticleUpsertForm } from '~/components/Article/ArticleUpsertForm';
 import { dbRead } from '~/server/db/client';

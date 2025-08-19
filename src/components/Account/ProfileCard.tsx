@@ -11,7 +11,7 @@ import {
   Popover,
 } from '@mantine/core';
 import { IconPencilMinus, IconInfoSquareRounded } from '@tabler/icons-react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { useSession } from 'next-auth/react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

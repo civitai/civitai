@@ -674,7 +674,7 @@ type ImageTagsCacheItem = {
 export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_TAGS,
   idKey: 'imageId',
-  ttl: CacheTTL.hour,
+  ttl: CacheTTL.day,
   staleWhileRevalidate: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;

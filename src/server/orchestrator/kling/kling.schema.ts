@@ -1,6 +1,6 @@
 import type { KlingVideoGenInput } from '@civitai/client';
 import { KlingMode, KlingModel } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   baseVideoGenerationSchema,
@@ -51,7 +51,7 @@ export const klingGenerationConfig = VideoGenerationConfig2({
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt is required',
         path: ['prompt'],
       });

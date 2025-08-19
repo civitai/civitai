@@ -22,7 +22,7 @@ import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
 import { Countdown } from '~/components/Countdown/Countdown';

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
@@ -56,7 +56,7 @@ export default MixedAuthEndpoint(async function handler(
 ) {
   const results = schema.safeParse(req.query);
   if (!results.success)
-    return res.status(400).json({ error: `Invalid id: ${results.error.flatten().fieldErrors.id}` });
+    return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
 
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });

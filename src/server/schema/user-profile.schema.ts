@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';
@@ -24,14 +24,14 @@ export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof Pro
 export type ProfileSectionSchema = z.infer<typeof profileSectionSchema>;
 
 export const profileSectionSchema = z.object({
-  key: z.nativeEnum(ProfileSectionTypeDef),
+  key: z.enum(ProfileSectionTypeDef),
   enabled: z.boolean(),
 });
 
 export type ShowcaseItemSchema = z.infer<typeof showcaseItemSchema>;
 
 export const showcaseItemSchema = z.object({
-  entityType: z.nativeEnum(SearchIndexEntityTypes),
+  entityType: z.enum(SearchIndexEntityTypes),
   entityId: z.number(),
 });
 
@@ -61,7 +61,7 @@ export const userProfileUpdateSchema = z.object({
       z.object({
         id: z.number().optional(),
         url: z.string(),
-        type: z.nativeEnum(LinkType),
+        type: z.enum(LinkType),
       })
     )
     .optional(),
@@ -70,7 +70,7 @@ export const userProfileUpdateSchema = z.object({
       z.object({
         id: z.number().optional(),
         url: z.string(),
-        type: z.nativeEnum(LinkType),
+        type: z.enum(LinkType),
       })
     )
     .optional(),

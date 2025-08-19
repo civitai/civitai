@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
 import { publicProcedure, router } from '~/server/trpc';
 
@@ -7,7 +7,7 @@ const slugSchema = z.object({
     (v) => (Array.isArray(v) ? (v as string[]) : (v as string).split('/')),
     z.array(
       z.string().refine((value) => /^[\w-]+$/.test(value), {
-        message: 'Invalid slug segment',
+        error: 'Invalid slug segment',
       })
     )
   ),
