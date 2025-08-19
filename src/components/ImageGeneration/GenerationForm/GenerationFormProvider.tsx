@@ -90,7 +90,7 @@ const formSchema = baseSchema
     if (data.workflow.startsWith('txt2img')) {
       if (!data.prompt || data.prompt.length === 0) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: 'Prompt cannot be empty',
           path: ['prompt'],
         });
@@ -99,7 +99,7 @@ const formSchema = baseSchema
 
     if (data.prompt.length > 1500) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt cannot be longer than 1500 characters',
         path: ['prompt'],
       });
@@ -126,7 +126,7 @@ const formSchema = baseSchema
         }
 
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message,
           params: { count },
           path: ['prompt'],
@@ -136,7 +136,7 @@ const formSchema = baseSchema
 
     if (data.workflow.startsWith('img2img') && !data.sourceImage) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Image is required',
         path: ['sourceImage'],
       });

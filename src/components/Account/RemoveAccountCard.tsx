@@ -21,7 +21,7 @@ export function RemoveAccountCard() {
     username: z.string().superRefine((val, ctx) => {
       if (val !== user?.username) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: 'username must match',
         });
       }

@@ -28,28 +28,28 @@ const schema = z
   .superRefine((data, ctx) => {
     if (data.action === 'review' && !data.imageId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'imageId is required for action review',
       });
     }
 
     if (data.action === 'review' && !data.challengeId && !data.theme) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'challengeId or theme is required for action review',
       });
     }
 
     if (data.action === 'winners' && !data.challengeId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'collectionId is required for action winners',
       });
     }
 
     if ((data.action === 'article' || data.action === 'collection') && !data.modelId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'modelId is required for action article or collection',
       });
     }

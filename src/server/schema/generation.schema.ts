@@ -144,7 +144,7 @@ function promptAuditRefiner(
     }
 
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       path: ['prompt'],
       message,
       params: { count },

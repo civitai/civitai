@@ -36,7 +36,7 @@ export function VideoGenerationConfig2<
   ).superRefine((data, ctx) => {
     if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.length > 1500) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt cannot be longer than 1500 characters',
         path: ['prompt'],
       });
@@ -48,7 +48,7 @@ export function VideoGenerationConfig2<
       data.negativePrompt.length > 1500
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Negative prompt cannot be longer than 1000 characters',
         path: ['negativePrompt'],
       });

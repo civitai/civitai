@@ -1,6 +1,6 @@
 import { chunk } from 'lodash-es';
 import dayjs from 'dayjs';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
 import { TransactionType } from '~/server/schema/buzz.schema';

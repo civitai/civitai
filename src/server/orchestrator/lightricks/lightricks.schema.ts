@@ -47,14 +47,14 @@ export const lightricksGenerationConfig = VideoGenerationConfig2({
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Image is required',
         path: ['sourceImage'],
       });
     }
     if (data.process === 'txt2vid' && !data.prompt?.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt is required',
         path: ['prompt'],
       });

@@ -11,7 +11,7 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
       return sanitizeHtml(str, options);
     } catch (e) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: (e as any).message,
       });
     }
@@ -27,7 +27,7 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
 //         return sanitizeHtml(val, options);
 //       } catch (e) {
 //         ctx.addIssue({
-//           code: z.ZodIssueCode.custom,
+//           code: 'custom',
 //           message: (e as any).message,
 //         });
 //       }

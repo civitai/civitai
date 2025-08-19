@@ -34,7 +34,7 @@ export const minimaxGenerationConfig = VideoGenerationConfig2({
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt is required',
         path: ['prompt'],
       });
