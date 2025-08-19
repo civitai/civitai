@@ -1,17 +1,17 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/base-model.constants';
+import { generationSamplers } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { booleanString } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
-import { generationSamplers } from '~/shared/constants/generation.constants';
-import { baseModels } from '~/shared/constants/base-model.constants';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.enum(ModelType),
@@ -28,7 +28,7 @@ export const getGenerationResourcesSchema = z.object({
   ids: z.number().array().optional(),
   baseModel: z
     .string()
-    .refine((val) => baseModels.includes(val as BaseModel))
+    .refine((val) => baseModels.includes(val as BaseModel), 'Invalid base model')
     .optional(),
   supported: z.boolean().optional(),
 });
@@ -56,7 +56,7 @@ const generationResourceSchemaBase = z.object({
   maxStrength: z.number().default(2),
   image: imageSchema
     .pick({ url: true, type: true })
-    .extend({ url: z.string().url().or(z.string().uuid()) })
+    .extend({ url: z.url().or(z.string().uuid()) })
     .optional(), // TODO there are more here
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
@@ -144,7 +144,7 @@ function promptAuditRefiner(
     }
 
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       path: ['prompt'],
       message,
       params: { count },
@@ -160,7 +160,7 @@ const sharedGenerationParamsSchema = z.object({
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
-    message: 'invalid sampler',
+    error: 'Invalid sampler',
   }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
   clipSkip: z.coerce.number().default(1),
@@ -247,7 +247,7 @@ export const generateFormSchema = generationFormShapeSchema
 
       return resources.length <= limit;
     },
-    { message: `You have exceed the number of allowed resources`, path: ['resources'] }
+    { error: `You have exceed the number of allowed resources`, path: ['resources'] }
   );
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
@@ -272,7 +272,7 @@ export const generationRequestTestRunSchema = z.object({
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
-    message: 'invalid sampler',
+    error: 'Invalid sampler',
   }),
   resources: z.number().array().nullish(),
   draft: z.boolean().optional(),

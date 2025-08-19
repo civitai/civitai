@@ -75,6 +75,7 @@ import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ReviewTagsInput } from '~/components/Tags/ReviewTagsInput';
+import * as z from 'zod';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -967,7 +968,7 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
       resolvedMessage,
     });
     if (!result.success) {
-      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0]);
+      setError(z.prettifyError(result.error) ?? 'Invalid resolved message');
     } else {
       setError('');
     }

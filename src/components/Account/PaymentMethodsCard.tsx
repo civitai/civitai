@@ -22,7 +22,7 @@ import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMetho
 import type { UserPaymentMethod } from '~/types/router';
 import { booleanString } from '~/utils/zod-helpers';
 import { useRouter } from 'next/router';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';

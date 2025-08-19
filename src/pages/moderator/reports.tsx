@@ -30,7 +30,7 @@ import type {
 import { MantineReactTable } from 'mantine-react-table';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';

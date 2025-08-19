@@ -1,7 +1,7 @@
 import { chunk } from 'lodash-es';
 import type { SearchResponse } from 'meilisearch';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { IMAGES_SEARCH_INDEX, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { metricsSearchClient, searchClient, updateDocs } from '~/server/meilisearch/client';

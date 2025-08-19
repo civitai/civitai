@@ -6,7 +6,7 @@ import {
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -55,7 +55,7 @@ export const createBountyInputSchema = z.object({
     .number()
     .min(constants.bounties.minCreateAmount)
     .max(constants.bounties.maxCreateAmount),
-  currency: z.nativeEnum(Currency),
+  currency: z.enum(Currency),
   expiresAt: stringToDate(
     z
       .date()
@@ -67,10 +67,10 @@ export const createBountyInputSchema = z.object({
   startsAt: z.coerce
     .date()
     .min(dayjs.utc(stripTime(new Date())).toDate(), 'Start date must be in the future'),
-  mode: z.nativeEnum(BountyMode),
-  type: z.nativeEnum(BountyType),
+  mode: z.enum(BountyMode),
+  type: z.enum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
-  entryMode: z.nativeEnum(BountyEntryMode),
+  entryMode: z.enum(BountyEntryMode),
   minBenefactorUnitAmount: z.number().min(1),
   maxBenefactorUnitAmount: z.number().optional(),
   entryLimit: z.number().min(1).optional(),

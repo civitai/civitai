@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import { processBuzzOrder as processBuzzOrderNowPayments } from '~/server/services/nowpayments.service';
 import { processBuzzOrder as processBuzzOrderCoinbase } from '~/server/services/coinbase.service';

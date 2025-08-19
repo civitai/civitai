@@ -1,10 +1,10 @@
 import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export type CreateRedeemableCodeInput = z.infer<typeof createRedeemableCodeSchema>;
 export const createRedeemableCodeSchema = z.object({
   unitValue: z.number().min(1),
-  type: z.nativeEnum(RedeemableCodeType),
+  type: z.enum(RedeemableCodeType),
   expiresAt: z.date().optional(),
   quantity: z.number().min(1).optional(),
   priceId: z.string().optional(),
@@ -22,5 +22,5 @@ export const consumeRedeemableCodeSchema = z.object({
     .trim()
     .length(12)
     .toUpperCase()
-    .regex(/^[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9]{4}$/, { message: 'Invalid code format' }),
+    .regex(/^[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9]{4}$/, { error: 'Invalid code format' }),
 });

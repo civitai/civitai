@@ -4,7 +4,7 @@ import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useFormStorage } from '~/hooks/useFormStorage';
@@ -41,7 +41,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
-  coverImage: imageSchema.refine((data) => !!data.url, { message: 'Please upload a cover image' }),
+  coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
   userNsfwLevel: z.string().optional(),
 });
 const querySchema = z.object({

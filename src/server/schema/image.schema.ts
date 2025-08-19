@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';

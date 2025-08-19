@@ -8,7 +8,7 @@ import type {
   Path,
 } from 'react-hook-form';
 import { FormProvider, useWatch, useFormContext } from 'react-hook-form';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import clsx from 'clsx';
 
 const CustomFormCtx = createContext<{

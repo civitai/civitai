@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client';
 import { getUserByPaddleCustomerId } from '~/server/services/user.service';
