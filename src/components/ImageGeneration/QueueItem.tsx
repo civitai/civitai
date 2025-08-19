@@ -96,7 +96,7 @@ export function QueueItem({
   const { params, resources = [] } = step;
 
   let { images } = step;
-  const failureReason = images.find((x) => x.status === 'failed' && x.reason)?.reason;
+  const failureReason = images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
 
   if (filter && filter.marker) {
     images = images.filter((image) => {
@@ -145,7 +145,7 @@ export function QueueItem({
     .toDate();
 
   const handleCopy = () => {
-    copy([...new Set(images.map((x) => x.jobId))].join('\n'));
+    copy(request.id);
   };
 
   const handleGenerate = () => {
@@ -218,8 +218,8 @@ export function QueueItem({
               )}
             </div>
             <div className="flex gap-1">
-              <SubmitBlockedImagesForReviewButton step={step} />
-              <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
+              <SubmitBlockedImagesForReviewButton step={step} workflowId={request.id} />
+              <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
                 <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
                 </LegacyActionIcon>
@@ -290,25 +290,20 @@ export function QueueItem({
                 [classes.asSidebar]: !features.largerGenerationImages,
               })}
             >
-              {images.map((image) => (
-                <GeneratedImage
-                  key={`${image.id}_${image.jobId}`}
-                  image={image}
-                  request={request}
-                  step={step}
-                />
+              {images.map((image, index) => (
+                <GeneratedImage key={index} image={image} request={request} step={step} />
               ))}
 
               {(pending || processing) && (
                 <TwCard
                   className="items-center justify-center border"
                   style={{
-                    aspectRatio: images[0].aspectRatio ?? images[0].width / images[0].height,
+                    aspectRatio: images[0].aspect,
                   }}
                 >
                   {processing && (
                     <>
-                      {images[0].type === 'video' &&
+                      {/* {images[0].type === 'video' &&
                       images[0].progress &&
                       images[0].progress < 1 ? (
                         <ProgressIndicator progress={images[0].progress} />
@@ -319,7 +314,11 @@ export function QueueItem({
                             Generating
                           </Text>
                         </>
-                      )}
+                      )} */}
+                      <Loader size={24} />
+                      <Text c="dimmed" size="xs" align="center">
+                        Generating
+                      </Text>
                     </>
                   )}
                   {pending &&
@@ -487,7 +486,13 @@ function CancelOrDeleteWorkflow({
   );
 }
 
-function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGeneratedImageStep }) {
+function SubmitBlockedImagesForReviewButton({
+  step,
+  workflowId,
+}: {
+  step: NormalizedGeneratedImageStep;
+  workflowId: string;
+}) {
   const blockedImages = step.images.filter((x) => !!x.blockedReason);
   const currentUser = useCurrentUser();
   if (!blockedImages.length || !currentUser?.username) return null;
@@ -507,7 +512,7 @@ function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGenerate
           (step.params as any).prompt
         )}&Negative%20Prompt=${encodeURIComponent(
           (step.params as any).negativePrompt
-        )}&Job%20IDs=${encodeURIComponent(blockedImages.map((x) => x.jobId).join(','))}`}
+        )}&Workflow%20ID=${workflowId}`}
       >
         <IconFlagQuestion size={20} />
       </LegacyActionIcon>

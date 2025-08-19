@@ -7,15 +7,11 @@ import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { UserTier } from '~/server/schema/user.schema';
-import type {
-  NormalizedGeneratedImage,
-  NormalizedGeneratedImageResponse,
-} from '~/server/services/orchestrator';
+import type { NormalizedGeneratedImageResponse } from '~/server/services/orchestrator';
 import type { WorkflowStatus } from '@civitai/client';
-import { isDefined } from '~/utils/type-guards';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-
-const POLLABLE_STATUSES: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled', 'processing'];
+import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
+import { usePollWorkflows } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 
 type GenerationState = {
   queued: {
@@ -25,7 +21,6 @@ type GenerationState = {
     quantity: number;
     status: WorkflowStatus;
   }[]; // Snackbar
-  latestImage?: NormalizedGeneratedImage; // Snackbar
   queueStatus?: WorkflowStatus; // Snackbar
   requestLimit: number; // Snackbar
   requestsRemaining: number; // Snackbar
@@ -138,22 +133,11 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       : queuedRequests[0]?.status;
 
     const requestsRemaining = limits.queue - queuedRequests.length;
-    const images = steps
-      .flatMap((x) =>
-        x.images.map((image) => (image.completed ? { ...image, completed: image.completed } : null))
-      )
-      .filter(isDefined)
-      .sort((a, b) => b.completed.getTime() - a.completed.getTime());
 
     store.setState((state) => {
-      const latestImage = images.find(
-        (x) => x.completed.getTime() > (state.latestImage?.completed?.getTime() ?? 0)
-      );
-
       return {
         queued: queuedRequests,
         queueStatus,
-        latestImage: latestImage ?? state.latestImage,
         requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
         canGenerate: requestsRemaining > 0 && available,
       };
@@ -177,6 +161,8 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     store.setState({ requestsLoading: isLoading, hasGeneratedImages: images.length > 0 });
   }, [images, isLoading]);
   // #endregion
+
+  // usePollWorkflows();
 
   if (!storeRef.current) storeRef.current = createGenerationStore();
 
