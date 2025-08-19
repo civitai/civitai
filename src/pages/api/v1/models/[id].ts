@@ -25,9 +25,9 @@ const baseUrl = getBaseUrl();
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const parsedParams = schema.safeParse(req.query);
   if (!parsedParams.success)
-    return res
-      .status(400)
-      .json({ error: `Invalid id: ${parsedParams.error.issues[0].input as string}` });
+    return res.status(400).json({
+      error: z.prettifyError(parsedParams.error) ?? `Invalid id`,
+    });
 
   try {
     const { items } = await getModelsWithVersions({

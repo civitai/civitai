@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
+import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -76,6 +77,7 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import src from '@google-cloud/recaptcha-enterprise';
 
 type GetAllPostsRaw = {
   id: number;
@@ -826,7 +828,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
       user,
       message: 'Failure parsing JSON data from external URL.',
       domain: src,
-      issues: detailParse.error.issues,
+      issues: z.flattenError(detailParse.error),
     });
   }
 
