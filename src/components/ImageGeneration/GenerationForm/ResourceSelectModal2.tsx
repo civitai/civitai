@@ -94,10 +94,10 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
@@ -901,7 +901,10 @@ function ResourceSelectCard({
           listenForUpdates={false}
         />
       ),
-      visible: selectSource === 'generation' && data.type === ModelType.Checkpoint,
+      visible:
+        selectSource === 'generation' &&
+        data.type === ModelType.Checkpoint &&
+        features.modelVersionPopularity,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },
     {

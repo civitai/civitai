@@ -35,6 +35,7 @@ import {
 } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
+import clsx from 'clsx';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -82,6 +83,7 @@ import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersio
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import {
   EditUserResourceReviewLight,
@@ -122,8 +124,6 @@ import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
-import clsx from 'clsx';
-import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 
 export function ModelVersionDetails({
   model,
@@ -421,7 +421,8 @@ export function ModelVersionDetails({
           listenForUpdates
         />
       ),
-      visible: canGenerate && features.auctions && model.type === ModelType.Checkpoint,
+      visible:
+        canGenerate && features.modelVersionPopularity && model.type === ModelType.Checkpoint,
     },
     {
       label: 'Reviews',
