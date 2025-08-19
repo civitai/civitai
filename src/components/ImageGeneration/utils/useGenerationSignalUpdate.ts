@@ -8,8 +8,8 @@ import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/common';
-import { useInterval } from '@mantine/hooks';
 import { COMPLETE_STATUSES, POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
+import { useEffect, useRef } from 'react';
 
 type CustomWorkflowStepEvent = Omit<WorkflowStepEvent, '$type'> & { $type: 'step' };
 const debouncer = createDebouncer(100);
@@ -90,12 +90,18 @@ async function updateSignaledWorkflows() {
 }
 
 export function usePollWorkflows() {
-  const interval = useInterval(
-    async () => {
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  function handleClearInterval() {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+  }
+  useEffect(() => {
+    handleClearInterval();
+    intervalRef.current = setInterval(async () => {
       const workflowIds = Object.keys(incompleteWorkflowsDictionary);
       await updateWorkflowsStatus(workflowIds);
-    },
-    60000,
-    { autoInvoke: true }
-  );
+    }, 60000);
+    return handleClearInterval;
+  }, []);
 }

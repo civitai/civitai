@@ -162,7 +162,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   }, [images, isLoading]);
   // #endregion
 
-  // usePollWorkflows();
+  usePollWorkflows();
 
   if (!storeRef.current) storeRef.current = createGenerationStore();
 
