@@ -243,14 +243,6 @@ export const wanGenerationConfig = VideoGenerationConfig2({
       ]);
       const [width, height] = aspectRatios[aspectRatio];
       const model = config.model;
-      console.log({
-        ...values,
-        sourceImage: imageUrls?.[0],
-        provider: 'civitai',
-        width,
-        height,
-        model,
-      });
       return {
         ...values,
         sourceImage: imageUrls?.[0],
