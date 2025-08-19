@@ -287,5 +287,10 @@
   },
   "ct3aMetadata": {
     "initVersion": "6.2.1"
+  },
+  "overrides": {
+    "openai": {
+      "zod": "$zod"
+    }
   }
 }
