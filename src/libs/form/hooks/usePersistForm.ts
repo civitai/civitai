@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef } from 'react';
 import type { FieldValues, Path, UseFormProps, UseFormReturn } from 'react-hook-form';
 import { useForm } from 'react-hook-form';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export type UsePersistFormReturn<TSchema extends z.ZodType<FieldValues, FieldValues>> =
   UseFormReturn<z.core.input<TSchema>, any, z.core.output<TSchema>> & {

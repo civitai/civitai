@@ -1,7 +1,7 @@
 import { Button, CloseButton, Divider, Group, Stack, Text, ThemeIcon, Modal } from '@mantine/core';
 import { IconThumbDown } from '@tabler/icons-react';
 import React from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';

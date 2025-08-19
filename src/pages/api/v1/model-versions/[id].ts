@@ -1,7 +1,7 @@
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
@@ -30,7 +30,7 @@ export default MixedAuthEndpoint(async function handler(
 ) {
   const results = schema.safeParse(req.query);
   if (!results.success)
-    return res.status(400).json({ error: `Invalid id: ${results.error.flatten().fieldErrors.id}` });
+    return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
 
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });

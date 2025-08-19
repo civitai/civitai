@@ -28,7 +28,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import type { SupportedClubEntities, SupportedClubPostEntities } from '~/server/schema/club.schema';
 import { upsertClubPostInput } from '~/server/schema/club.schema';
 import { useMutateClub, useQueryUserContributingClubs } from '~/components/Club/club.utils';
@@ -55,7 +55,7 @@ const formSchema = upsertClubPostInput.refine(
     return true;
   },
   {
-    message: 'Title and description are required',
+    error: 'Title and description are required',
     path: ['title'],
   }
 );

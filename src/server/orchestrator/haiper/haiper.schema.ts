@@ -5,7 +5,7 @@ import {
   seedSchema,
   sourceImageSchema,
 } from './../infrastructure/base.schema';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { promptSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
@@ -49,7 +49,7 @@ export const haiperGenerationConfig = VideoGenerationConfig2({
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt is required',
         path: ['prompt'],
       });

@@ -16,7 +16,7 @@ import { IconAlertCircle, IconArrowLeft, IconTrash } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import React from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';

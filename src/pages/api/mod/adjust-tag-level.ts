@@ -1,6 +1,6 @@
 import { ImageIngestionStatus, TagType } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
 import { batchProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';

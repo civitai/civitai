@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { z } from 'zod';
+import * as z from 'zod';
 import * as zkp2pService from '~/server/services/zkp2p.service';
 
 export type CreateBuzzChargeZkp2p = z.infer<typeof createBuzzChargeZkp2pSchema>;

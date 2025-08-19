@@ -1,7 +1,7 @@
 import { isDev } from '~/env/other';
 import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -91,8 +91,8 @@ const schema = z.object({
   tags: tagSchema.array().nullish(),
   hash: z.string().nullish(),
   vectors: z.array(z.number().array()).nullish(),
-  status: z.nativeEnum(Status),
-  source: z.nativeEnum(TagSource),
+  status: z.enum(Status),
+  source: z.enum(TagSource),
   context: z
     .object({
       movie_rating: z.string().optional(),

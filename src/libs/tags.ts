@@ -1,5 +1,5 @@
 import type { TagSource, TagType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
 import type { NsfwLevel } from '~/server/common/enums';
 

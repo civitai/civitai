@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';

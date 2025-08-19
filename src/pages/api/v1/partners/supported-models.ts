@@ -1,11 +1,11 @@
 import { Prisma } from '@prisma/client';
-import type { Partner } from '~/shared/utils/prisma/models';
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
-import { dbWrite } from '~/server/db/client';
-import * as z from 'zod/v4';
-import { Tracker } from '~/server/clickhouse/client';
 import { chunk } from 'lodash-es';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import * as z from 'zod';
+import { Tracker } from '~/server/clickhouse/client';
+import { dbWrite } from '~/server/db/client';
+import { PartnerEndpoint } from '~/server/utils/endpoint-helpers';
+import type { Partner } from '~/shared/utils/prisma/models';
 
 export const config = {
   api: {
@@ -18,7 +18,7 @@ export const config = {
 const schema = z
   .object({
     modelVersionId: z.preprocess((val) => Number(val), z.number()),
-    runUrl: z.string().url().optional(),
+    runUrl: z.url().optional(),
   })
   .array();
 

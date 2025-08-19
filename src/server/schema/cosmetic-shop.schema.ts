@@ -1,5 +1,5 @@
 import { CosmeticType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 
@@ -8,7 +8,7 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
     name: z.string().optional(),
-    types: z.array(z.nativeEnum(CosmeticType)).optional(),
+    types: z.array(z.enum(CosmeticType)).optional(),
     minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
     archived: z.boolean().optional(),
@@ -88,6 +88,6 @@ export const getPreviewImagesInput = z.object({
 
 export type GetShopInput = z.infer<typeof getShopInput>;
 export const getShopInput = z.object({
-  cosmeticTypes: z.array(z.nativeEnum(CosmeticType)).optional(),
+  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
   sectionId: z.number().optional(),
 });

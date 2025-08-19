@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import type { EventInput } from '~/server/schema/event.schema';

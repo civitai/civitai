@@ -22,7 +22,7 @@ import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-re
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -76,18 +76,18 @@ const schema = modelUpsertSchema
     attestation: z.boolean().refine((data) => !!data, 'Required'),
   })
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
-    message: 'Please select the checkpoint type',
+    error: 'Please select the checkpoint type',
     path: ['checkpointType'],
   })
   .refine((data) => !(data.nsfw && data.poi === 'true'), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => !(data.nsfw && data.sfwOnly), {
-    message:
+    error:
       'This resource is intended to produce mature themes and cannot be used for NSFW generation',
   })
   .refine((data) => !(data.nsfw && data.minor), {
-    message:
+    error:
       'Minor resources cannot be used for NSFW generation. Please revise the content of this listing.',
   });
 

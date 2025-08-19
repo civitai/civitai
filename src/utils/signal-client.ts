@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import type { SignalTopic } from '~/server/common/enums';
 

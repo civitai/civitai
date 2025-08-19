@@ -19,7 +19,7 @@ import archiver from 'archiver';
 import stream from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { PaginationInput } from '~/server/schema/base.schema';
