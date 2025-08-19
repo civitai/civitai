@@ -172,13 +172,16 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
  */
 export const deliverMonthlyCosmetics = async ({
   userIds = [],
+  dateOverride,
   tx,
 }: {
   userIds?: number[];
+  dateOverride?: Date;
   tx?: Prisma.TransactionClient;
 }) => {
   const client = tx ?? dbWrite;
-  const currentDay = new Date().getDate();
+  const date = dateOverride ?? new Date();
+  const currentDay = date.getDate();
 
   await client.$executeRaw`
       with users_affected AS (

@@ -25,9 +25,11 @@ export const deliverPrepaidMembershipBuzz = createJob(
     // Get the current day of the month
     let currentDay = now.date();
     const parseResult = schema.safeParse(ctx.req?.query);
-    if (parseResult.success && parseResult.data.date) {
+    const dateOverride =
+      parseResult.success && parseResult.data.date ? parseResult.data.date : undefined;
+    if (dateOverride) {
       // Override currentDay with the parsed date's day
-      currentDay = parseResult.data.date.getDate();
+      currentDay = dateOverride.getDate();
     }
 
     const data = await dbWrite.$queryRaw<
@@ -136,7 +138,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
     }
 
     // Grant cosmetics for Civitai membership holders
-    await deliverMonthlyCosmetics({});
+    await deliverMonthlyCosmetics({ dateOverride });
 
     console.log(`Delivered buzz to ${data.length} Civitai membership holders`);
   }
