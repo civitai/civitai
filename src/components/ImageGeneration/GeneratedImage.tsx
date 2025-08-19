@@ -256,7 +256,7 @@ export function GeneratedImage({
 
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlocked = !!nsfwLevelError || !!blockedReason;
-  const aspectRatio = isBlocked ? 1 : image.aspectRatio ?? image.width / image.height;
+  const aspectRatio = isBlocked ? 1 : image.aspect;
 
   return (
     <TwCard
@@ -828,9 +828,9 @@ function GeneratedImageWorkflowMenuItems({
                 <IconInfoHexagon size={14} stroke={1.5} />
               )
             }
-            onClick={() => copy(image.jobId)}
+            onClick={() => copy(workflowId)}
           >
-            Copy Job ID
+            Copy Workflow ID
           </Menu.Item>
           {!isBlocked && (
             <Menu.Item

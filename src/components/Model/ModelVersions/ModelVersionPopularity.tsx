@@ -69,12 +69,12 @@ export const ModelVersionPopularity = ({
 
   const { data, isLoading } = trpc.modelVersion.getPopularity.useQuery(
     { id: versionId },
-    { enabled: features.auctions }
+    { enabled: features.modelVersionPopularity }
   );
 
   if (getModelVersionUsesImageGen(versionId)) return <></>;
 
-  if (!features.auctions) return <></>;
+  if (!features.modelVersionPopularity) return <></>;
   // if we want to show this for non checkpoints, simply remove this line
   if (!isCheckpoint) return <></>;
   if (isLoading) return <Loader size="xs" type="bars" />;
