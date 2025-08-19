@@ -1,6 +1,5 @@
-import { Anchor, Progress, Text } from '@mantine/core';
-import { useEffect, useState } from 'react';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { Progress } from '@mantine/core';
+import { useEffect } from 'react';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';

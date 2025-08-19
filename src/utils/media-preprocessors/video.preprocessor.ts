@@ -22,6 +22,8 @@ function getVideoMetadata(video: HTMLVideoElement) {
   };
 }
 
+const errorMessage =
+  'Failed to load video. This may indicate that the file is poorly encoded for use on the web.';
 export const getVideoData = async (src: string) =>
   new Promise<VideoMetadata>((resolve, reject) => {
     const video = document.createElement('video');
@@ -29,16 +31,15 @@ export const getVideoData = async (src: string) =>
       let timedOut = false;
       setTimeout(() => (timedOut = true), 3000);
       function check() {
-        if (timedOut)
-          reject(
-            'Failed to read file. This may indicate that the file is poorly encoded for use on the web.'
-          );
+        if (timedOut) reject(errorMessage);
         else if (video.videoWidth > 0 && video.videoHeight > 0) resolve(getVideoMetadata(video));
         else requestAnimationFrame(check);
       }
       check();
     };
-    video.onerror = (...args) => reject(args);
+    video.onerror = () => {
+      reject(errorMessage);
+    };
     video.src = src;
   });
 
