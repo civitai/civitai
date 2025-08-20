@@ -388,6 +388,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     const subscription = form.watch((watchedValues, { name }) => {
       const baseModel = watchedValues.baseModel;
       const prevBaseModel = prevBaseModelRef.current;
+      const fluxMode = watchedValues.fluxMode;
+
+      if (name === 'fluxMode') {
+        if (fluxMode === fluxKreaAir && baseModel !== 'FluxKrea') {
+          form.setValue('model', getGenerationConfig('FluxKrea').checkpoint);
+        } else if (fluxMode !== fluxKreaAir && baseModel === 'FluxKrea') {
+          form.setValue('model', getGenerationConfig('Flux1').checkpoint);
+        }
+      }
+
       // handle model change to update baseModel value
       if (name !== 'baseModel') {
         if (
@@ -436,8 +446,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (
         watchedValues.baseModel === 'Flux1' &&
         !!watchedValues.resources?.length &&
-        watchedValues.fluxMode !== fluxStandardAir &&
-        watchedValues.fluxMode !== fluxKreaAir
+        fluxMode !== fluxStandardAir &&
+        fluxMode !== fluxKreaAir
       ) {
         form.setValue('fluxMode', fluxStandardAir);
       }

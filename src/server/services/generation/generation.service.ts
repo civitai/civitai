@@ -32,6 +32,7 @@ import {
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
+  fluxKreaAir,
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
@@ -454,6 +455,7 @@ const getModelVersionGenerationData = async ({
       engine,
       process,
       version,
+      fluxMode: baseModel === 'FluxKrea' ? fluxKreaAir : undefined,
     },
   };
 };

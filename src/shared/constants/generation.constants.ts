@@ -250,6 +250,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   if (resourceBaseModels.some((baseModel) => baseModel === 'Pony')) return 'Pony';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SDXL')) return 'SDXL';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1')) return 'Flux1';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'FluxKrea')) return 'FluxKrea';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
     return 'Illustrious';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';
