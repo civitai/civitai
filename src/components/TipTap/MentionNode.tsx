@@ -5,7 +5,7 @@ export const MentionNode = Mention.configure({
   HTMLAttributes: {
     class: classes.mention,
   },
-  renderLabel({ options, node }) {
+  renderText({ options, node }) {
     const label = node.attrs.label ?? node.attrs.id;
     return `${options.suggestion.char ?? ''}${typeof label === 'string' ? label : ''}`;
   },
