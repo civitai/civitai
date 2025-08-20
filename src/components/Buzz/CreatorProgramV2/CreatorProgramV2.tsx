@@ -389,7 +389,7 @@ const BankBuzzCard = () => {
   };
 
   const maxBankable = banked?.cap?.cap
-    ? Math.min(banked.cap.cap - banked.total, buzzAccount.balance)
+    ? Math.floor(Math.min(banked.cap.cap - banked.total, buzzAccount.balance * 10))
     : buzzAccount.balance;
 
   if (isLoading) {
@@ -409,7 +409,7 @@ const BankBuzzCard = () => {
         <div className="flex">
           <NumberInputWrapper
             label="Buzz"
-            labelProps={{ className: 'hidden' }}
+            labelProps={{ className: '!hidden' }}
             leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
             value={toBank ? toBank : undefined}
             min={10000}
@@ -425,6 +425,7 @@ const BankBuzzCard = () => {
               },
             }}
             step={1000}
+            allowDecimal={false}
           />
           <Tooltip label="Bank now!" position="top">
             <LegacyActionIcon
@@ -818,7 +819,7 @@ const WithdrawCashCard = () => {
             <div className="flex">
               <NumberInput
                 label="Cash to Withdraw"
-                labelProps={{ className: 'hidden' }}
+                labelProps={{ className: '!hidden' }}
                 leftSection={<CurrencyIcon currency={Currency.USD} size={18} />}
                 value={toWithdraw}
                 min={MIN_WITHDRAWAL_AMOUNT / 100}

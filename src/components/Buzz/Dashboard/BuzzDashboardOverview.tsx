@@ -326,7 +326,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                               <DaysFromNow date={date} />
                             </Text>
                           </Stack>
-                          <Text c={isDebit ? 'red' : 'green'}>
+                          <Text component="div" c={isDebit ? 'red' : 'green'}>
                             <Group gap={2} wrap="nowrap">
                               <IconBolt size={16} fill="currentColor" />
                               <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
