@@ -1,71 +1,32 @@
 import { Anchor, Input } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { wanDuration, wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
+import { wan22AspectRatios, wan22Resolutions } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
-import { useEffect, useMemo } from 'react';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
-export function WanFormInput() {
+export function Wan22FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
-  const baseModel = form.watch('baseModel');
+  // const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const config = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap];
-  const canPickDuration = config?.provider !== 'fal';
 
-  const availableBaseModels = useMemo(
-    () =>
-      Object.entries(wanBaseModelMap)
-        .filter(([key, value]) => value.process === process)
-        .map(([key, value]) => ({
-          value: key,
-          label: value.label,
-          default: value.default,
-          provider: value.provider,
-        })),
-    [process]
-  );
-
-  useEffect(() => {
-    if (!availableBaseModels.find((x) => x.value === baseModel)) {
-      const defaultModel = availableBaseModels.find((x) => x.default) ?? availableBaseModels[0];
-      if (defaultModel) {
-        form.setValue('baseModel', defaultModel.value);
-      }
-    }
-  }, [availableBaseModels, baseModel]);
-
-  useEffect(() => {
-    if (config?.provider === 'fal') form.setValue('duration', 5);
-  }, [config?.provider]);
-
-  const resources = getGenerationBaseModelResourceOptions(baseModel) ?? [];
+  const baseModelGroup: BaseModelGroup =
+    process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
+  const resources = getGenerationBaseModelResourceOptions(baseModelGroup);
 
   return (
     <>
       <InputVideoProcess name="process" />
-
-      {/* {availableBaseModels.length > 1 && (
-        <InputRadioGroup label="Resolution" name="baseModel">
-          <Group gap="lg">
-            {availableBaseModels.map(({ label, value }) => (
-              <Radio key={value} label={label} value={value} />
-            ))}
-          </Group>
-        </InputRadioGroup>
-      )} */}
-
       {process === 'img2vid' && (
         <div className="-mx-2">
           <InputSourceImageUploadMultiple
@@ -102,31 +63,39 @@ export function WanFormInput() {
         placeholder="Your prompt goes here..."
         autosize
       />
+      <InputTextArea
+        name="negativePrompt"
+        label="Negative Prompt"
+        placeholder="Your negative prompt goes here..."
+        autosize
+      />
       {isTxt2Img && (
         <InputAspectRatioColonDelimited
           name="aspectRatio"
           label="Aspect Ratio"
-          options={config.aspectRatios}
+          options={wan22AspectRatios}
         />
       )}
-      {availableBaseModels.length > 1 && (
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Resolution</Input.Label>
-          <InputSegmentedControl
-            name="baseModel"
-            data={availableBaseModels.map(({ label, value }) => ({ label, value }))}
-          />
-        </div>
-      )}
+      <InputSwitch
+        name="turbo"
+        className="my-2"
+        labelPosition="left"
+        label={
+          <div className="relative flex items-center gap-1">
+            <Input.Label>Turbo Mode</Input.Label>
+            {/* <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Turbo Mode will generate videos faster, and with slightly less quality. Use this for
+              exploring concepts quickly.
+            </InfoPopover> */}
+          </div>
+        }
+      />
 
       <div className="flex flex-col gap-0.5">
-        <Input.Label>Duration</Input.Label>
-        <InputSegmentedControl
-          disabled={!canPickDuration}
-          name="duration"
-          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
-        />
+        <Input.Label>Resolution</Input.Label>
+        <InputSegmentedControl name="resolution" data={[...wan22Resolutions]} />
       </div>
+
       <InputNumberSlider
         name="cfgScale"
         label={
@@ -146,14 +115,38 @@ export function WanFormInput() {
             </InfoPopover>
           </div>
         }
-        min={2}
-        max={6}
+        min={1}
+        max={10}
         step={0.1}
         precision={1}
-        reverse
       />
+
+      <InputNumberSlider
+        name="shift"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Shift</Input.Label>
+            {/* <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover> */}
+          </div>
+        }
+        min={1}
+        max={10}
+        step={1}
+        precision={1}
+      />
+
       <InputSeed name="seed" label="Seed" />
-      <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
     </>
   );
 }

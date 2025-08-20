@@ -1,11 +1,12 @@
 import { WorkflowStatus } from '@civitai/client';
 
-export const POLLABLE_STATUSES: WorkflowStatus[] = [
+export const PENDING_STATUSES: WorkflowStatus[] = [
   WorkflowStatus.UNASSIGNED,
   WorkflowStatus.PREPARING,
   WorkflowStatus.SCHEDULED,
-  WorkflowStatus.PROCESSING,
 ];
+
+export const POLLABLE_STATUSES: WorkflowStatus[] = [...PENDING_STATUSES, WorkflowStatus.PROCESSING];
 
 export const COMPLETE_STATUSES: WorkflowStatus[] = [
   WorkflowStatus.SUCCEEDED,

@@ -10,18 +10,19 @@ import { isDefined } from '~/utils/type-guards';
 import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/common';
 import { COMPLETE_STATUSES, POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { useEffect, useRef } from 'react';
+import { create } from 'zustand';
 
 type CustomWorkflowStepEvent = Omit<WorkflowStepEvent, '$type'> & { $type: 'step' };
 const debouncer = createDebouncer(100);
 let signalStepEventsDictionary: Record<string, CustomWorkflowStepEvent> = {};
-const incompleteWorkflowsDictionary: Record<string, boolean> = {};
+
+export const usePollableWorkflowIdsStore = create<{ ids: string[] }>(() => ({ ids: [] }));
 export function useTextToImageSignalUpdate() {
+  usePollWorkflows();
+
   return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
     if (data.$type === 'step' && data.status !== 'unassigned') {
       signalStepEventsDictionary[data.workflowId] = { ...data };
-      if (POLLABLE_STATUSES.includes(data.status)) {
-        incompleteWorkflowsDictionary[data.workflowId] = true;
-      }
     }
     debouncer(() => updateSignaledWorkflows());
   });
@@ -45,7 +46,11 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
   );
 
   for (const update of updates) {
-    if (!POLLABLE_STATUSES.includes(update.status)) delete incompleteWorkflowsDictionary[update.id];
+    if (!POLLABLE_STATUSES.includes(update.status)) {
+      usePollableWorkflowIdsStore.setState(({ ids }) => ({
+        ids: ids.filter((id) => id !== update.id),
+      }));
+    }
   }
 
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
@@ -89,19 +94,29 @@ async function updateSignaledWorkflows() {
   await updateWorkflowsStatus(workflowIds);
 }
 
-export function usePollWorkflows() {
+function usePollWorkflows() {
+  const hasIds = usePollableWorkflowIdsStore(({ ids }) => ids.length > 0);
+
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   function handleClearInterval() {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
   }
   useEffect(() => {
-    handleClearInterval();
-    intervalRef.current = setInterval(async () => {
-      const workflowIds = Object.keys(incompleteWorkflowsDictionary);
-      await updateWorkflowsStatus(workflowIds);
-    }, 60000);
+    if (!hasIds) {
+      handleClearInterval();
+      return;
+    }
+
+    if (!intervalRef.current) {
+      intervalRef.current = setInterval(async () => {
+        const ids = usePollableWorkflowIdsStore.getState().ids;
+        await updateWorkflowsStatus(ids);
+      }, 60000);
+    }
+
     return handleClearInterval;
-  }, []);
+  }, [hasIds]);
 }

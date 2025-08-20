@@ -111,7 +111,10 @@ export async function submitWorkflow({
   });
 
   if (!data) {
-    const message = handleError(error);
+    const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
+      messages?: string[];
+    };
+    const message = messages?.length ? messages.join(',\n') : handleError(error);
 
     if (!isProd) {
       console.log('----Workflow Error----');
