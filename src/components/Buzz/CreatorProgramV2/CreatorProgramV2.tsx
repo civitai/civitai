@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -152,11 +151,16 @@ export const CreatorProgramV2 = () => {
 const JoinCreatorProgramCard = () => {
   const buzzAccount = useBuzz(undefined, 'user');
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
-  const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
-    buzz: buzzAccount.balance,
-  });
+  // const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
+  //   buzz: buzzAccount.balance,
+  // });
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
-  const isLoading = buzzAccount.balanceLoading || isLoadingRequirements || isLoadingForecast;
+  const isLoading =
+    buzzAccount.balanceLoading || isLoadingRequirements || isLoadingCompensationPool;
+  const forecasted = compensationPool
+    ? getForecastedValue(buzzAccount.balance, compensationPool)
+    : undefined;
 
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -200,7 +204,7 @@ const JoinCreatorProgramCard = () => {
         <h3 className="text-xl font-bold">Join the Creator Program</h3>
 
         <div className="flex gap-1">
-          <p>
+          <Text component="div">
             Your{' '}
             <CurrencyBadge
               currency={Currency.BUZZ}
@@ -209,10 +213,10 @@ const JoinCreatorProgramCard = () => {
             />{' '}
             could be worth{' '}
             <span className="font-bold text-yellow-6">
-              ${numberWithCommas(formatToLeastDecimals(forecast.forecastedEarning))}
+              ${numberWithCommas(formatToLeastDecimals(forecasted ?? 0))}
             </span>
             !
-          </p>
+          </Text>
           <LegacyActionIcon variant="subtle" color="gray" onClick={openEarningEstimateModal}>
             <IconInfoCircle size={14} />
           </LegacyActionIcon>

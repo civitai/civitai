@@ -23,9 +23,7 @@ export const useCompensationPool = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(
     {},
-    {
-      enabled: !!currentUser,
-    }
+    { enabled: !!currentUser }
   );
 
   return {
