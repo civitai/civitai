@@ -21,7 +21,9 @@ export function Wan21FormInput() {
   const resolution = form.watch('resolution');
   // const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const config = wan22BaseModelMap.find((x) => x.resolution === resolution);
+  const config = wan22BaseModelMap.find(
+    (x) => x.resolution === resolution && x.process === process
+  );
   const baseModel = config?.baseModel;
   const canPickDuration = config?.provider !== 'fal';
 
