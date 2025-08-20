@@ -223,7 +223,7 @@ export function getIsHiDream(baseModel?: string) {
 
 export function getIsFlux(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
-  return baseModelSetType === 'Flux1';
+  return baseModelSetType === 'Flux1' || baseModelSetType === 'FluxKrea';
 }
 
 export function getIsFluxStandard(modelId: number) {
