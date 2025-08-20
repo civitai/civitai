@@ -22,7 +22,7 @@ import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationFo
 import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
-import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
+import { WanFormInput } from '~/components/Generation/Video/WanFormInput/WanFormInput';
 import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput';
 import { KlingFormInput } from '~/components/Generation/Video/KlingFormInput';
 import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput';
@@ -115,7 +115,6 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
         data = { ...formData, ...params };
       }
       const validated = config.softValidate(data);
-      console.log({ ...validated, resources });
       form.reset({ ...validated, resources }, { keepDefaultValues: true });
 
       generationStore.clearData();

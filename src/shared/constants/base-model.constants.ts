@@ -349,6 +349,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'OpenAI',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],
   },
+
   {
     group: 'Qwen',
     support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
@@ -386,18 +387,30 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     ],
     partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] }],
   },
-  // {
-  //   group: 'WanVideo-22-T2V-A14B',
-  //   support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 2.2 T2V-A14B'] }],
-  // },
-  // {
-  //   group: 'WanVideo-22-I2V-A14B',
-  //   support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 2.2 I2V-A14B'] }],
-  // },
-  // {
-  //   group: 'WanVideo-22-TI2V-5B',
-  //   support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 2.2 TI2V-5B'] }],
-  // },
+  {
+    group: 'WanVideo-22-T2V-A14B',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B'],
+      },
+    ],
+  },
+  {
+    group: 'WanVideo-22-I2V-A14B',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Wan Video 2.2 I2V-A14B'],
+      },
+    ],
+  },
+  {
+    group: 'WanVideo-22-TI2V-5B',
+    support: [
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 2.2 TI2V-5B'] },
+    ],
+  },
   {
     group: 'Veo3',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],
