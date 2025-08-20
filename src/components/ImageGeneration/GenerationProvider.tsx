@@ -11,7 +11,7 @@ import type { NormalizedGeneratedImageResponse } from '~/server/services/orchest
 import type { WorkflowStatus } from '@civitai/client';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
-import { usePollWorkflows } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
+import { usePollableWorkflowIdsStore } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 
 type GenerationState = {
   queued: {
@@ -97,6 +97,10 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     });
     if (!POLLABLE_STATUSES.includes(request.status)) {
       setTimeout(() => deleteQueueItem(request.id), 3000);
+    } else {
+      usePollableWorkflowIdsStore.setState(({ ids }) => ({
+        ids: [...new Set([...ids, request.id])],
+      }));
     }
   };
 
@@ -161,8 +165,6 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     store.setState({ requestsLoading: isLoading, hasGeneratedImages: images.length > 0 });
   }, [images, isLoading]);
   // #endregion
-
-  usePollWorkflows();
 
   if (!storeRef.current) storeRef.current = createGenerationStore();
 

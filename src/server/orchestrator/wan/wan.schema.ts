@@ -275,6 +275,7 @@ type WithLoras<T extends { resources?: unknown }> = Omit<T, 'resources'> & {
 
 function handleWan21Input(data: WithLoras<Wan21Transformed>) {
   const images = data.images?.map((x) => x.url);
+  const sourceImage = images?.[0];
   if (data.provider === 'civitai') {
     const config = wan22BaseModelMap.find((x) => x.baseModel === data.baseModel);
     const resolution = Number(data.resolution.split('p')[0]);
@@ -291,7 +292,7 @@ function handleWan21Input(data: WithLoras<Wan21Transformed>) {
       width,
       height,
       model,
-      images,
+      sourceImage,
     } as Wan21CivitaiVideoGenInput;
   } else {
     const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
@@ -301,7 +302,7 @@ function handleWan21Input(data: WithLoras<Wan21Transformed>) {
       ...data,
       aspectRatio,
       enablePromptExpansion: false,
-      images,
+      sourceImage,
     } as Wan21FalVideoGenInput;
   }
 }

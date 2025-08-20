@@ -18,7 +18,7 @@ export function WanFormInput() {
 
   return (
     <>
-      <InputRadioGroup name="version" label="Version" className="-mt-2 ">
+      {/* <InputRadioGroup name="version" label="Version" className="-mt-2 ">
         <div className="flex gap-2">
           {wanVersions.map((value) => (
             <Radio.Card key={value} value={value} className="flex items-center gap-3 px-4 py-2">
@@ -27,7 +27,7 @@ export function WanFormInput() {
             </Radio.Card>
           ))}
         </div>
-      </InputRadioGroup>
+      </InputRadioGroup> */}
       {version === 'v2.1' && <Wan21FormInput />}
       {version === 'v2.2' && <Wan22FormInput />}
       {version === 'v2.2-5b' && <Wan225bFormInput />}
