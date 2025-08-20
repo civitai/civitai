@@ -344,6 +344,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
   const canAddFiles = previewItems.length < max;
 
   async function handleDrop(files: File[]) {
+    setError(null);
     const remaining = max - previewItems.length;
     const toUpload = files
       .filter((file) => {
@@ -356,6 +357,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
   }
 
   async function handleDropCapture(e: DragEvent) {
+    setError(null);
     const url = e.dataTransfer.getData('text/uri-list');
     if (!!url?.length && previewItems.length < max) await onChange([url]);
   }
@@ -407,10 +409,15 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   index,
   ...previewItem
 }: ImagePreview & { className?: string; index: number }) {
-  const { missingAiMetadata, removeItem, aspect } = useContext();
+  const { missingAiMetadata, removeItem, aspect, setError } = useContext();
 
-  function handleClick() {
+  function handleRemoveItem() {
     removeItem(index);
+  }
+
+  function handleError() {
+    handleRemoveItem();
+    setError('Failed to load image');
   }
 
   return (
@@ -438,7 +445,12 @@ SourceImageUploadMultiple.Image = function ImagePreview({
           {previewItem.status === 'complete' && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={previewItem.url} className="size-full object-contain" alt="image" />
+              <img
+                src={previewItem.url}
+                className="size-full object-contain"
+                alt="image"
+                onError={handleError}
+              />
               <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/50 px-2 text-white">
                 {previewItem.width} x {previewItem.height}
               </div>
@@ -456,7 +468,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
         variant="filled"
         color="red"
         size="sm"
-        onClick={handleClick}
+        onClick={handleRemoveItem}
       >
         <IconX size={16} />
       </ActionIcon>
