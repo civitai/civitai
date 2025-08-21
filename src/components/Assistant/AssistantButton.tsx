@@ -3,6 +3,7 @@ import { Button } from '@mantine/core';
 import { IconCat, IconMessageChatbot, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { AssistantChat, getAssistantUUID } from '~/components/Assistant/AssistantChat';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -27,7 +28,7 @@ export function AssistantButton({ ...props }: ButtonProps) {
   const color = isApril1() || userPersonality === 'civchan' ? 'pink' : 'blue';
 
   return (
-    <>
+    <IsClient>
       {open && (
         <div className="absolute bottom-full right-0 mb-1">
           <AssistantChat width={WIDTH} height={HEIGHT} />
@@ -42,6 +43,6 @@ export function AssistantButton({ ...props }: ButtonProps) {
       >
         {open ? <IconX size={20} stroke={2.5} /> : <Icon size={20} stroke={2.5} />}
       </Button>
-    </>
+    </IsClient>
   );
 }

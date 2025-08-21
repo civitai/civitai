@@ -393,7 +393,7 @@ const BankBuzzCard = () => {
   };
 
   const maxBankable = banked?.cap?.cap
-    ? Math.floor(Math.min(banked.cap.cap - banked.total, buzzAccount.balance * 10))
+    ? Math.floor(Math.min(banked.cap.cap - banked.total, buzzAccount.balance))
     : buzzAccount.balance;
 
   if (isLoading) {

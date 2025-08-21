@@ -450,14 +450,14 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                           current membership does not apply to join the Creator Program. Consider
                           upgrading to one our supported memberships.
                           <br />
-                          <NextLink href="/pricing">
-                            <Anchor>Upgrade Membership</Anchor>
-                          </NextLink>
+                          <Anchor component={NextLink} href="/pricing">
+                            Upgrade Membership
+                          </Anchor>
                         </p>
                       ) : (
-                        <NextLink href="/pricing">
-                          <Anchor>Become a Civitai Member Now!</Anchor>
-                        </NextLink>
+                        <Anchor component={NextLink} href="/pricing">
+                          Become a Civitai Member Now!
+                        </Anchor>
                       )
                     }
                   />
