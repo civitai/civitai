@@ -356,6 +356,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'HyV1',
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Hunyuan Video'] }],
   },
+  { group: 'Imagen4', support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Imagen4'] }] },
   {
     group: 'OpenAI',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],

@@ -440,8 +440,10 @@ const getModelVersionGenerationData = async ({
       break;
     case 'hunyuan':
       process = 'txt2vid';
+      break;
     case 'veo3':
       process = getVeo3ProcessFromAir(resources[0].air);
+      break;
   }
 
   // TODO - refactor this elsewhere
