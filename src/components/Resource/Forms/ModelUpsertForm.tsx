@@ -618,9 +618,15 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               <InputChipGroup
                 name="availability"
                 onChange={async (v) => {
-                  // @ts-ignore eslint-disable-next-line
-                  const value = v as Availability;
-                  if (value === Availability.Private) {
+                  const selected = Array.isArray(v) ? v[0] : v;
+                  if (!selected) return;
+
+                  const value = selected as Availability;
+                  const isPrivate = value === Availability.Private;
+                  // Set sfwOnly if private
+                  form.setValue('sfwOnly', isPrivate);
+
+                  if (isPrivate) {
                     // Open automatic configurator modal:
                     // event.preventDefault();
                     // event.stopPropagation();
@@ -657,9 +663,6 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       component: PrivateModelAutomaticSetup,
                       props: { ...schema.parse(form.getValues()), modelVersionId },
                     });
-
-                    // Private models only allow sfw generation
-                    form.setValue('sfwOnly', true);
 
                     return;
                   }
