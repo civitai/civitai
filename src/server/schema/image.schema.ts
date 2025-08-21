@@ -245,21 +245,19 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
-  needsReview: z.string().nullish(),
-  reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum([
-    'minor',
-    'poi',
-    'reported',
-    'csam',
-    'blocked',
-    'tag',
-    'newUser',
-    'appeal',
-    'modRule',
-  ]),
+  reviewAction: z.enum(['unblock', 'block']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
+export type ImageModerationUnblockSchema = {
+  ids: number[];
+  moderatorId?: number;
+};
+export type ImageModerationBlockSchema = {
+  ids?: number[];
+  userId?: number;
+  include?: Array<'user-notification' | 'phash-block'>;
+  moderatorId?: number;
+};
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({

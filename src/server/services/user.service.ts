@@ -600,14 +600,15 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
     // For blocked users, we need to use the cache since it's stored differently
     const allBlocked = await BlockedUsers.getCached({ userId: user.id });
     const paginatedIds = allBlocked.slice(skip, skip + take);
-    
+
     // Fetch user details for the paginated blocked users
-    const items = paginatedIds.length > 0 
-      ? await dbRead.user.findMany({
-          where: { id: { in: paginatedIds.map((u) => u.id) } },
-          select: simpleUserSelect,
-        })
-      : [];
+    const items =
+      paginatedIds.length > 0
+        ? await dbRead.user.findMany({
+            where: { id: { in: paginatedIds.map((u) => u.id) } },
+            select: simpleUserSelect,
+          })
+        : [];
 
     return getPagingData({ items, count: allBlocked.length }, limit, page);
   }

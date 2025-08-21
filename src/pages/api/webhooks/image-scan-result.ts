@@ -192,7 +192,7 @@ async function isBlocked(hash: string) {
   const [{ count }] = await clickhouse.$query<{ count: number }>`
     SELECT cast(count() as int) as count
     FROM blocked_images
-    WHERE bitCount(bitXor(hash, ${hash})) < 5
+    WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
   `;
 
   return count > 0;
@@ -825,7 +825,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     { hasRestrictedBaseModel: boolean }[]
   >`
     SELECT EXISTS (
-      SELECT 1 FROM "RestrictedImagesByBaseModel" ribm 
+      SELECT 1 FROM "RestrictedImagesByBaseModel" ribm
       WHERE ribm."imageId" = ${image.id}
     ) as "hasRestrictedBaseModel"
   `;
@@ -1051,14 +1051,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     data: removeEmpty({ ...data, ...moderationRulesImageData }),
     flags,
     reviewKey,
-    tagsForReview:
-      reviewKey === 'minor'
-        ? minorTags
-        : reviewKey === 'poi'
-        ? poiTags
-        : reviewKey === 'tag'
-        ? reviewTags
-        : undefined,
+    tagsForReview: [...minorTags, ...poiTags, ...reviewTags],
     scans: image.scanJobs.scans,
   };
 }

@@ -39,7 +39,7 @@ type ImpersonateModActivity = {
 
 type UserModActivity = {
   entityType: 'user';
-  activity: 'setRewardsEligibility';
+  activity: 'setRewardsEligibility' | 'removeContent';
 };
 
 type ModActivity = {

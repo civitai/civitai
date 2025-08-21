@@ -60,7 +60,9 @@ import type {
   GetMyImagesInput,
   ImageEntityType,
   ImageMetaProps,
+  ImageModerationBlockSchema,
   ImageModerationSchema,
+  ImageModerationUnblockSchema,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageSchema,
@@ -97,7 +99,10 @@ import { getUserCollectionPermissionsById } from '~/server/services/collection.s
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
-import { deleteImagTagsForReviewByImageIds } from '~/server/services/image-review.service';
+import {
+  deleteImagTagsForReviewByImageIds,
+  getImagTagsForReviewByImageIds,
+} from '~/server/services/image-review.service';
 import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -116,7 +121,7 @@ import {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -246,169 +251,193 @@ export const deleteImageById = async ({
   }
 };
 
-type AffectedImage = {
-  id: number;
-  userId: number;
-  nsfwLevel: number;
-  pHash: bigint;
-  postId: number | undefined;
-};
+function getReviewTypeToBlockedReason(reason: string) {
+  switch (reason) {
+    case 'csam':
+      return BlockImageReason.CSAM;
+    case 'newUser':
+      return BlockImageReason.Ownership;
+    case 'minor':
+    case 'poi':
+    case 'reported':
+    case 'blocked':
+    case 'tag':
+    case 'appeal':
+    case 'modRule':
+    default:
+      return BlockImageReason.TOS;
+  }
+}
 
-const reviewTypeToBlockedReason = {
-  csam: BlockImageReason.CSAM,
-  minor: BlockImageReason.TOS,
-  poi: BlockImageReason.TOS,
-  reported: BlockImageReason.TOS,
-  blocked: BlockImageReason.TOS,
-  tag: BlockImageReason.TOS,
-  newUser: BlockImageReason.Ownership,
-  appeal: BlockImageReason.TOS,
-  modRule: BlockImageReason.TOS,
-} as const;
+export async function handleUnblockImages({
+  ids: imageIds,
+  moderatorId,
+}: ImageModerationUnblockSchema) {
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: {
+      id: true,
+      userId: true,
+      pHash: true,
+      postId: true,
+      nsfwLevel: true,
+      blockedFor: true,
+      needsReview: true,
+    },
+  });
+  await Limiter().process(images, async (images) => {
+    const ids = images.map((x) => x.id);
+    const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
+      if (!image.needsReview) image.needsReview = 'null';
+      if (!acc[image.needsReview]) acc[image.needsReview] = [];
+      acc[image.needsReview].push(image.id);
+      return acc;
+    }, {});
 
-export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
-  string,
-  ...string[]
-];
-
-export const moderateImages = async ({
-  ids,
-  needsReview,
-  reviewType,
-  reviewAction,
-  userId,
-  force,
-}: ImageModerationSchema & { userId?: number; force?: boolean }) => {
-  if (reviewAction === 'delete') {
-    const affected = await dbWrite.$queryRaw<AffectedImage[]>`
-      SELECT id, "userId", "nsfwLevel", "pHash", "postId"
-      FROM "Image"
-      WHERE id IN (${Prisma.join(ids)});
-    `;
-
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
-      data: {
-        needsReview: null,
-        ingestion: 'Blocked',
-        nsfwLevel: NsfwLevel.Blocked,
-        blockedFor: BlockedReason.Moderated,
-        updatedAt: new Date(),
-      },
-    });
-
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete });
-
-    for (const img of affected) {
-      await createNotification({
-        userId: img.userId,
-        type: 'tos-violation',
-        category: NotificationCategory.System,
-        key: `tos-violation:image:${uuid()}`,
-        details: {
-          modelName: img.postId ? `post #${img.postId}` : 'a post',
-          entity: 'image',
-          url: `/images/${img.id ?? ''}`,
-        },
-      }).catch();
-    }
-
-    await bulkAddBlockedImages({
-      data: affected
-        .filter((x) => !!x.pHash)
-        .map((x) => ({
-          hash: x.pHash,
-          reason: reviewTypeToBlockedReason[reviewType],
-        })),
-    });
-
-    return affected;
-  } else if (reviewAction === 'removeName') {
-    await removeNameReference(ids);
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
-  } else if (reviewAction === 'mistake') {
-    // Remove needsReview status
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
-      data: {
-        needsReview: null,
-        ingestion: 'Scanned',
-        blockedFor: null,
-        poi: reviewType === 'poi' ? false : undefined,
-        minor: reviewType === 'minor' ? false : undefined,
-      },
-    });
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
-  } else {
-    const isMinor = reviewType === 'minor';
-    // Approve
-    await dbWrite.$queryRaw`
-        UPDATE "Image" SET
-          "needsReview" = ${needsReview},
-          "blockedFor" = NULL,
-          -- Remove ruleId and ruleReason from metadata
-          "metadata" = "metadata" - 'ruleId' - 'ruleReason',
-          "ingestion" = 'Scanned',
-
-          ${
-            isMinor
-              ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
-              : Prisma.sql``
-          }
-          -- if image was created within 72 hrs, set scannedAt to now
-          "scannedAt" = CASE
-              WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
-              ELSE "scannedAt"
-            END
-        WHERE id IN (${Prisma.join(ids)});
-      `;
-
-    // Remove tags that triggered review
-    const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
-
-    // And moderated tags for POI review (since no NSFW allowed)
-    const changeTags = reviewType === 'poi';
-    if (changeTags) {
-      const moderatedTags = await getModeratedTags();
-      tagIds.push(...moderatedTags.map((x) => x.id));
-    }
-
-    // And blocked tags for Blocked Tag review
-    const removeBlockedTags = reviewType === 'tag';
-    if (removeBlockedTags) {
-      const blockedTags = await getBlockedTags();
-      tagIds.push(...blockedTags.map((x) => x.id));
-    }
-
-    const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-        SELECT "imageId", "tagId"
-        FROM "TagsOnImageDetails"
-        WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
-      `;
-
-    if (toUpdate.length && !force) {
-      await upsertTagsOnImageNew(
-        toUpdate.map(({ imageId, tagId }) => ({
+    const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
+    await Promise.all([
+      ...Object.entries(grouped).map(
+        ([needsReview, groupedIds]) => dbWrite.$queryRaw`
+          UPDATE "Image" SET
+            "needsReview" = NULL,
+            "blockedFor" = NULL,
+            "metadata" = "metadata" - 'ruleId' - 'ruleReason', -- Remove ruleId and ruleReason from metadata
+            "ingestion" = 'Scanned',
+            ${needsReview === 'poi' ? Prisma.sql`"poi" = false` : Prisma.sql``}
+            ${
+              needsReview === 'minor'
+                ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+                : Prisma.sql``
+            }
+            "scannedAt" = CASE -- if image was created within 72 hrs, set scannedAt to now
+                WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+                ELSE "scannedAt"
+              END
+          WHERE id IN (${Prisma.join(groupedIds)});
+        `
+      ),
+      upsertTagsOnImageNew(
+        imageTagsForReview.map(({ imageId, tagId }) => ({
           imageId,
           tagId,
           disabled: true,
           needsReview: false,
         }))
-      );
-    } else {
-      await dbWrite.$executeRawUnsafe(
-        `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
+      ),
+    ]);
+    await Promise.all([
+      updateNsfwLevel(ids),
+      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+      deleteImagTagsForReviewByImageIds(ids),
+      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
+    ]);
+
+    if (moderatorId) {
+      await trackModActivity(moderatorId, {
+        entityType: 'image',
+        entityId: ids,
+        activity: 'review',
+      });
+    }
+  });
+  return images;
+}
+
+export async function handleBlockImages({
+  ids: imageIds,
+  userId,
+  include,
+  moderatorId,
+}: ImageModerationBlockSchema) {
+  if (!imageIds?.length && !userId) throw new Error('one of "ids" or "userId" is required');
+  const images = await dbRead.image.findMany({
+    where: { id: imageIds ? { in: imageIds } : undefined, userId },
+    select: {
+      id: true,
+      userId: true,
+      pHash: true,
+      postId: true,
+      nsfwLevel: true,
+      blockedFor: true,
+      needsReview: true,
+    },
+  });
+  await Limiter().process(images, async (images) => {
+    const ids = images.map((x) => x.id);
+    await Promise.all([
+      dbWrite.image.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          needsReview: null,
+          ingestion: 'Blocked',
+          nsfwLevel: NsfwLevel.Blocked,
+          blockedFor: BlockedReason.Moderated,
+          updatedAt: new Date(),
+        },
+      }),
+
+      queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
+    ]);
+    if (include?.includes('phash-block')) {
+      await bulkAddBlockedImages({
+        data: images
+          .map((x) => {
+            if (!x.pHash || !x.blockedFor) return null;
+            return {
+              hash: x.pHash,
+              reason: getReviewTypeToBlockedReason(x.blockedFor),
+            };
+          })
+          .filter(isDefined),
+      });
+    }
+    if (include?.includes('user-notification')) {
+      await Promise.all(
+        images.map((img) =>
+          createNotification({
+            userId: img.userId,
+            type: 'tos-violation',
+            category: NotificationCategory.System,
+            key: `tos-violation:image:${uuid()}`,
+            details: {
+              modelName: img.postId ? `post #${img.postId}` : 'a post',
+              entity: 'image',
+              url: `/images/${img.id ?? ''}`,
+            },
+          }).catch()
+        )
       );
     }
 
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
-  }
-  await Promise.all([
-    // deleteImageForReviewMultiple(ids),
-    deleteImagTagsForReviewByImageIds(ids),
-  ]);
+    if (moderatorId && !!imageIds?.length) {
+      await trackModActivity(moderatorId, {
+        entityType: 'image',
+        entityId: ids,
+        activity: 'review',
+      });
+    }
+  });
 
-  return null;
+  if (moderatorId && userId) {
+    await trackModActivity(moderatorId, {
+      entityType: 'user',
+      entityId: userId,
+      activity: 'removeContent',
+    });
+  }
+
+  return images;
+}
+
+export const moderateImages = async (
+  args: ImageModerationSchema & (ImageModerationUnblockSchema | ImageModerationBlockSchema)
+) => {
+  switch (args.reviewAction) {
+    case 'unblock':
+      return handleUnblockImages(args);
+    case 'block':
+      return handleBlockImages(args);
+  }
 };
 
 export async function updateNsfwLevel(ids: number | number[]) {
@@ -4106,70 +4135,64 @@ type NameReference = {
   name: string;
 };
 
-async function removeNameReference(images: number[]) {
-  const tasks = chunk(images, 500).map((images) => async () => {
-    // Get images to de-reference
-    const [targets, prompts] = await Promise.all([
-      await dbRead.$queryRaw<NameReference[]>`
-        SELECT
-          toi."imageId",
-          t.id as "tagId",
-          t.name
-        FROM "TagsOnImageNew" toi
-        JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
-        JOIN "Tag" t ON t.id = tot."toTagId"
-        JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
-        WHERE toi."imageId" IN (${Prisma.join(images)});
-      `,
-      // Update prompts
-      await dbRead.$queryRaw<{ imageId: number; prompt: string }[]>`
-        SELECT
-          i.id as "imageId",
-          meta->>'prompt' as prompt
-        FROM "Image" i
-        WHERE id IN (${Prisma.join(images)});
-      `,
-    ]);
-    const targetMap = new Map(targets.map((x) => [x.imageId, x]));
+// async function removeNameReference(imageIds: number[]) {
+//   const tasks = chunk(imageIds, 500).map((imageIds) => async () => {
+//     // Get images to de-reference
+//     const [targets, prompts] = await Promise.all([
+//       dbRead.$queryRaw<NameReference[]>`
+//         SELECT
+//           toi."imageId",
+//           t.id as "tagId",
+//           t.name
+//         FROM "TagsOnImageNew" toi
+//         JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
+//         JOIN "Tag" t ON t.id = tot."toTagId"
+//         JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
+//         WHERE toi."imageId" IN (${Prisma.join(imageIds)});
+//       `,
+//       // Update prompts
+//       dbRead.$queryRaw<{ imageId: number; prompt: string }[]>`
+//         SELECT
+//           i.id as "imageId",
+//           meta->>'prompt' as prompt
+//         FROM "Image" i
+//         WHERE id IN (${Prisma.join(imageIds)});
+//       `,
+//     ]);
 
-    // Update prompts
-    for (const x of prompts) {
-      const { name } = targetMap.get(x.imageId) ?? {};
-      if (!name) continue;
+//     // Update prompts
+//     for (const x of prompts) {
+//       const { name } = targets.find((target) => target.imageId === x.imageId) ?? {};
+//       if (!name) continue;
 
-      x.prompt = promptWordReplace(x.prompt, name, 'person');
-    }
+//       x.prompt = promptWordReplace(x.prompt, name, 'person');
+//     }
 
-    const promptsJson = JSON.stringify(prompts);
-    await dbWrite.$executeRaw`
-      WITH updates AS (
-        SELECT
-          CAST(t->>'imageId' as int) as id,
-          t->>'prompt' as prompt
-        FROM json_array_elements(${promptsJson}::json) t
-      )
-      UPDATE "Image" i
-        SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
-          "needsReview" = null,
-          poi = false,
-          ingestion = 'Scanned'::"ImageIngestionStatus",
-          "blockedFor" = null
-      FROM updates t
-      WHERE t.id = i.id;
-    `;
+//     const promptsJson = JSON.stringify(prompts);
+//     await dbWrite.$executeRaw`
+//       WITH updates AS (
+//         SELECT
+//           CAST(t->>'imageId' as int) as id,
+//           t->>'prompt' as prompt
+//         FROM json_array_elements(${promptsJson}::json) t
+//       )
+//       UPDATE "Image" i
+//         SET meta = jsonb_set(meta, '{prompt}', to_jsonb(t.prompt)),
+//           "needsReview" = null,
+//           poi = false,
+//           ingestion = 'Scanned'::"ImageIngestionStatus",
+//           "blockedFor" = null
+//       FROM updates t
+//       WHERE t.id = i.id;
+//     `;
 
-    // Remove tags
-    await dbWrite.$executeRaw`
-      DELETE FROM "TagsOnImageNew" toi
-      USING "TagsOnTags" tot
-      WHERE toi."imageId" IN (${Prisma.join(images)})
-        AND toi."tagId" = tot."toTagId"
-        AND tot."fromTagId" IN (SELECT id FROM "Tag" WHERE name = 'real person');
-    `;
-  });
+//     await upsertTagsOnImageNew(
+//       targets.map(({ tagId, imageId }) => ({ tagId, imageId, disabled: true, needsReview: false }))
+//     );
+//   });
 
-  await limitConcurrency(tasks, 3);
-}
+//   await limitConcurrency(tasks, 3);
+// }
 
 export async function reportCsamImages({
   imageIds,
@@ -4866,26 +4889,47 @@ export function bulkAddBlockedImages({
   });
 }
 
-export async function bulkRemoveBlockedImages({
-  ids,
-  hashes,
-}: {
-  hashes?: bigint[] | number[];
-  ids?: number[];
-}) {
-  if (ids) {
-    const images = await dbWrite.image.findMany({
-      where: { id: { in: ids } },
-      select: { pHash: true },
-    });
+export async function bulkRemoveBlockedImages(hashes: Array<bigint | number>) {
+  if (hashes.length === 0 || !clickhouse) return;
+  const blocked = await clickhouse.$query<{ hash: bigint; reason: string }>`
+    SELECT hash, reason
+    FROM "blocked_images"
+    WHERE hash IN (${hashes.join(',')}) AND disabled = false
+  `;
 
-    hashes = images.map((i) => i.pHash as bigint).filter(isDefined);
-  }
+  const values = blocked.map(({ hash, reason }) => ({
+    hash: Number(hash),
+    reason,
+    disabled: true,
+  }));
 
-  if (!hashes?.length) return;
-
-  return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
+  return await clickhouse.insert({
+    table: 'blocked_images',
+    values,
+    format: 'JSONEachRow',
+  });
 }
+
+// export async function bulkRemoveBlockedImages({
+//   ids,
+//   hashes,
+// }: {
+//   hashes?: bigint[] | number[];
+//   ids?: number[];
+// }) {
+//   if (ids) {
+//     const images = await dbWrite.image.findMany({
+//       where: { id: { in: ids } },
+//       select: { pHash: true },
+//     });
+
+//     hashes = images.map((i) => i.pHash as bigint).filter(isDefined);
+//   }
+
+//   if (!hashes?.length) return;
+
+//   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
+// }
 
 export async function getImagesPendingIngestion() {
   const date = new Date();
