@@ -666,7 +666,7 @@ const reviewConditions: ReviewCondition[] = [
   {
     condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
     reviewer: 'moderators',
-    tags: ['bestiality', 'animal'],
+    tags: ['bestiality'],
   },
   // {
   //   condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),

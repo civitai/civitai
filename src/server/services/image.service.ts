@@ -303,7 +303,7 @@ export async function handleUnblockImages({
             "blockedFor" = NULL,
             "metadata" = "metadata" - 'ruleId' - 'ruleReason', -- Remove ruleId and ruleReason from metadata
             "ingestion" = 'Scanned',
-            ${needsReview === 'poi' ? Prisma.sql`"poi" = false` : Prisma.sql``}
+            ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
                 ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
@@ -381,11 +381,11 @@ export async function handleBlockImages({
     if (include?.includes('phash-block')) {
       await bulkAddBlockedImages({
         data: images
-          .map((x) => {
-            if (!x.pHash || !x.blockedFor) return null;
+          .map(({ pHash, blockedFor }) => {
+            if (!pHash) return null;
             return {
-              hash: x.pHash,
-              reason: getReviewTypeToBlockedReason(x.blockedFor),
+              hash: pHash,
+              reason: getReviewTypeToBlockedReason(blockedFor ?? BlockedReason.Moderated),
             };
           })
           .filter(isDefined),
