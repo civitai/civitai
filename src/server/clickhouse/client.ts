@@ -289,6 +289,37 @@ export class Tracker {
     });
   }
 
+  private async sendMany(
+    table: string,
+    data: object[] | ((args: { session: Session | null; actor: TrackRequest }) => object[])
+  ) {
+    if (!clickhouse) return;
+    await this.resolveSession();
+    const values =
+      typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
+
+    try {
+      await clickhouse.insert({
+        table,
+        values,
+        format: 'JSONEachRow',
+      });
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to track',
+          details: { table, data: JSON.stringify(data) },
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
+    }
+  }
+
   private async track(
     table: string,
     custom: object | ((session: Session | null) => object),
@@ -304,6 +335,23 @@ export class Tracker {
         ...actorMeta,
         ...customData,
       };
+    });
+  }
+
+  private async trackMany(
+    table: string,
+    custom: object[] | ((session: Session | null) => object[]),
+    options?: { skipActorMeta: boolean }
+  ) {
+    const { skipActorMeta = false } = options ?? {};
+
+    await this.sendMany(table, ({ session, actor }) => {
+      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+      const customData = typeof custom === 'function' ? custom(session) : custom;
+      return customData.map((custom) => ({
+        ...actorMeta,
+        ...custom,
+      }));
     });
   }
 
@@ -421,17 +469,19 @@ export class Tracker {
     return this.track('modelFileEvents', values);
   }
 
-  public image(values: {
-    type: ImageActivityType;
-    imageId: number;
-    nsfw: NsfwLevelDeprecated;
-    tags: string[];
-    ownerId: number;
-    tosReason?: string;
-    resources?: number[];
-    userId?: number;
-  }) {
-    return this.track('images', values);
+  public images(
+    values: {
+      type: ImageActivityType;
+      imageId: number;
+      nsfw: NsfwLevelDeprecated;
+      tags: string[];
+      ownerId: number;
+      tosReason?: string;
+      resources?: number[];
+      userId?: number;
+    }[]
+  ) {
+    return this.trackMany('images', values);
   }
 
   public bounty(values: { type: BountyActivity; bountyId: number; userId?: number }) {

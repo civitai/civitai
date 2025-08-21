@@ -67,6 +67,7 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 
 export const moderateImageHandler = async ({
   input,
@@ -76,34 +77,35 @@ export const moderateImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId } = ctx.user;
-    const affected = await moderateImages({ ...input, userId });
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: input.ids,
-      activity: 'review',
+    const images = await moderateImages({
+      ...input,
+      include: ['user-notification', 'phash-block'],
+      moderatorId: ctx.user.id,
     });
-    if (affected) {
-      const ids = affected.map((x) => x.id);
+    if (input.reviewAction === 'block') {
+      const ids = images.map((x) => x.id);
       const imageTags = await getTagNamesForImages(ids);
       const imageResources = await getResourceIdsForImages(ids);
-      for (const { id, userId, nsfwLevel } of affected) {
-        const tags = imageTags[id] ?? [];
-        tags.push(input.reviewType ?? 'other');
-        const resources = imageResources[id] ?? [];
+      await Limiter().process(images, (images) =>
+        ctx.track.images(
+          images.map(({ id, userId, nsfwLevel, needsReview }) => {
+            const tosReason = needsReview ?? 'other';
+            const tags = imageTags[id] ?? [];
+            tags.push(tosReason);
+            const resources = imageResources[id] ?? [];
 
-        await ctx.track.image({
-          type: 'DeleteTOS',
-          imageId: id,
-          nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-          tags,
-          resources,
-          tosReason: input.reviewType ?? 'other',
-          ownerId: userId,
-        });
-      }
-    } else {
-      await bulkRemoveBlockedImages({ ids: input.ids });
+            return {
+              type: 'DeleteTOS',
+              imageId: id,
+              nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
+              tags,
+              resources,
+              tosReason: tosReason,
+              ownerId: userId,
+            };
+          })
+        )
+      );
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -132,13 +134,15 @@ export const deleteImageHandler = async ({
     const image = await deleteImageById(input);
 
     if (image) {
-      await ctx.track.image({
-        type: 'Delete',
-        imageId: input.id,
-        nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-        tags: imageTags.map((x) => x.tagName),
-        ownerId: image.userId,
-      });
+      await ctx.track.images([
+        {
+          type: 'Delete',
+          imageId: input.id,
+          nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+          tags: imageTags.map((x) => x.tagName),
+          ownerId: image.userId,
+        },
+      ]);
     }
 
     return image;
@@ -222,15 +226,17 @@ export const setTosViolationHandler = async ({
 
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);
-    await ctx.track.image({
-      type: 'DeleteTOS',
-      imageId: id,
-      nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-      tags: imageTags[id] ?? [],
-      resources: imageResources[id] ?? [],
-      tosReason: 'manual',
-      ownerId: image.userId,
-    });
+    await ctx.track.images([
+      {
+        type: 'DeleteTOS',
+        imageId: id,
+        nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+        tags: imageTags[id] ?? [],
+        resources: imageResources[id] ?? [],
+        tosReason: 'manual',
+        ownerId: image.userId,
+      },
+    ]);
     return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
