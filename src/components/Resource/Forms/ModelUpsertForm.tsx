@@ -89,6 +89,10 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.nsfw && data.minor), {
     error:
       'Minor resources cannot be used for NSFW generation. Please revise the content of this listing.',
+  })
+  .refine((data) => !(data.availability === Availability.Private && !data.sfwOnly), {
+    error: 'Private models must be set to SFW only.',
+    path: ['sfwOnly'],
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -654,6 +658,9 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                       props: { ...schema.parse(form.getValues()), modelVersionId },
                     });
 
+                    // Private models only allow sfw generation
+                    form.setValue('sfwOnly', true);
+
                     return;
                   }
                 }}
@@ -719,6 +726,7 @@ export const PrivateModelAutomaticSetup = ({
         poi: form.poi === 'true',
         id: form.id as number,
         availability: Availability.Private,
+        sfwOnly: true,
         modelVersionIds: modelVersionId ? [modelVersionId] : undefined,
       });
 

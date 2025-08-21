@@ -1779,6 +1779,8 @@ export const privateModelFromTrainingHandler = async ({
     if (nsfw && sfwOnly)
       throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
 
+    if (!sfwOnly) throw throwBadRequestError('Private models must be set to SFW only.');
+
     // Check tags for multiple categories
     const { tagsOnModels } = input;
     if (tagsOnModels?.length) {
