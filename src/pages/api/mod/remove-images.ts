@@ -12,7 +12,7 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import { Limiter } from '~/server/utils/concurrency-helpers';
 
 const schema = z.object({
-  imageIds: z.array(z.number()),
+  imageIds: z.array(z.number()).optional(),
   userId: z.number().optional(),
   reason: z.string().optional(),
 });
@@ -22,18 +22,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { imageIds, userId, reason } = schema.parse(req.body);
 
-    // Respond immediately with the total count
-    res.status(200).json({
-      images: imageIds.length,
-    });
-
     const tracker = new Tracker(req, res);
     const images = await handleBlockImages({ ids: imageIds, userId });
     await Limiter({ batchSize: 1000 }).process(images, async (images) => {
-      const imageIds = images.map((x) => x.id);
+      const ids = images.map((x) => x.id);
       // Get additional data for this chunk
-      const imageTags = await getTagNamesForImages(imageIds);
-      const imageResources = await getResourceIdsForImages(imageIds);
+      const imageTags = await getTagNamesForImages(ids);
+      const imageResources = await getResourceIdsForImages(ids);
       await tracker.images(
         images.map((image) => ({
           type: 'DeleteTOS',
@@ -46,6 +41,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         }))
       );
     });
+    res.status(200).json({ images: images.length });
   } catch (e) {
     const err = e as Error;
     logToAxiom({
@@ -54,5 +50,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       cause: err.cause,
       stack: err.stack,
     });
+    res.status(500);
   }
 });
