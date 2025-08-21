@@ -349,7 +349,7 @@ export const getSimpleModelsInfiniteSchema = infiniteQuerySchema.extend({
 export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCoverageSchema>;
 export const toggleCheckpointCoverageSchema = z.object({
   id: z.number(),
-  versionId: z.number().nullish(),
+  versionId: z.number(),
 });
 
 export type SetModelCollectionShowcaseInput = z.infer<typeof setModelCollectionShowcaseSchema>;

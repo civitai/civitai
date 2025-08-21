@@ -3557,7 +3557,7 @@ model CoveredCheckpoint {
   model        Model        @relation(fields: [model_id], references: [id], onDelete: Cascade)
   modelVersion ModelVersion @relation(fields: [version_id], references: [id], onDelete: Cascade)
 
-  @@unique([model_id, version_id])
+  @@id([model_id, version_id])
 }
 
 enum ModerationRuleAction {
