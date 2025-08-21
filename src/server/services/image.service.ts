@@ -108,11 +108,6 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
-import {
-  getBlockedTags,
-  getModeratedTags,
-  getTagsNeedingReview,
-} from '~/server/services/system-cache';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
