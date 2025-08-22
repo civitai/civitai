@@ -94,6 +94,8 @@ export type KeyScope = "Read" | "Write" | "Generate";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
+export type DomainColor = "red" | "green" | "blue" | "all";
+
 export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
@@ -1712,6 +1714,7 @@ export interface Announcement {
   content: string;
   emoji: string | null;
   color: string;
+  domain: DomainColor[];
   createdAt: Date;
   updatedAt: Date;
   startsAt: Date | null;

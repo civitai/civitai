@@ -2187,18 +2187,26 @@ model TagEngagement {
   @@id([userId, tagId])
 }
 
+enum DomainColor {
+  red
+  green
+  blue
+  all
+}
+
 model Announcement {
-  id        Int       @id @default(autoincrement())
+  id        Int           @id @default(autoincrement())
   title     String
   content   String
   emoji     String?
-  color     String    @default("blue")
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  color     String        @default("blue")
+  domain    DomainColor[] @default([all])
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
   startsAt  DateTime?
   endsAt    DateTime?
   metadata  Json?
-  disabled  Boolean   @default(false)
+  disabled  Boolean       @default(false)
 }
 
 enum CosmeticType {
