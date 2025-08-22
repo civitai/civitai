@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
-import { FeedLayout } from '~/pages/clubs/[id]/index';
+import { FeedLayout } from '~/pages-old/clubs/[id]/index';
 import { useRouter } from 'next/router';
 import { Group, Stack } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
-import { ArticleSort, ModelSort } from '~/server/common/enums';
+import { SortFilter } from '~/components/Filters';
+import { PostSort } from '~/server/common/enums';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
-import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import { PostsQueryInput } from '../../../server/schema/post.schema';
+import { PostFiltersDropdown } from '../../../components/Post/Infinite/PostFiltersDropdown';
+import type { PostsInfiniteState } from '../../../components/Post/Infinite/PostsInfinite';
+import PostsInfinite from '../../../components/Post/Infinite/PostsInfinite';
+import { PostCard } from '../../../components/Cards/PostCard';
 import { createServerSideProps } from '../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -28,14 +29,14 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const ClubArticles = () => {
+const ClubImagePosts = () => {
   const router = useRouter();
   const { id: stringId } = router.query as {
     id: string;
   };
   const id = Number(stringId);
-  const [filters, setFilters] = useState<Partial<GetInfiniteArticlesSchema>>({
-    sort: ArticleSort.Newest,
+  const [filters, setFilters] = useState<Partial<PostsInfiniteState> & { clubId: number }>({
+    sort: PostSort.Newest,
     period: MetricTimeframe.AllTime,
     clubId: id,
   });
@@ -45,22 +46,21 @@ const ClubArticles = () => {
       <Stack mb="sm">
         <Group justify="space-between" gap={0}>
           <SortFilter
-            type="articles"
-            value={filters.sort as ArticleSort}
-            onChange={(x) => setFilters((f) => ({ ...f, sort: x as ArticleSort }))}
+            type="posts"
+            value={filters.sort as PostSort}
+            onChange={(x) => setFilters((f) => ({ ...f, sort: x as PostSort }))}
           />
           <Group gap="xs">
-            <ArticleFiltersDropdown
+            <PostFiltersDropdown
               query={filters}
-              // @ts-ignore: These are compatible.
               onChange={(updated) => setFilters((f) => ({ ...f, ...updated }))}
             />
           </Group>
         </Group>
       </Stack>
-      <MasonryProvider columnWidth={constants.cardSizes.articles} maxColumnCount={7}>
+      <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
         <MasonryContainer mt="md" p={0}>
-          <ArticlesInfinite
+          <PostsInfinite
             filters={{
               ...filters,
             }}
@@ -71,8 +71,8 @@ const ClubArticles = () => {
   );
 };
 
-ClubArticles.getLayout = function getLayout(page: React.ReactNode) {
+ClubImagePosts.getLayout = function getLayout(page: React.ReactNode) {
   return <FeedLayout>{page}</FeedLayout>;
 };
 
-export default ClubArticles;
+export default ClubImagePosts;

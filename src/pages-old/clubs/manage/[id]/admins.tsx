@@ -7,7 +7,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React from 'react';
-import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
+import { ClubManagementLayout } from '~/pages-old/clubs/manage/[id]/index';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ClubAdminInvitesPaged } from '../../../../components/Club/Infinite/ClubAdminInvitesPaged';
 import { dialogStore } from '../../../../components/Dialog/dialogStore';

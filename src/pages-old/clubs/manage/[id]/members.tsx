@@ -4,22 +4,12 @@ import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import {
-  useClubContributorStatus,
-  useQueryClub,
-  useQueryClubMembership,
-} from '~/components/Club/club.utils';
+import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
-import { trpc } from '~/utils/trpc';
-import { IconPlus } from '@tabler/icons-react';
-import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
+import { ClubManagementLayout } from '~/pages-old/clubs/manage/[id]/index';
 import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembershipInfinite';
-import { ClubResourcesPaged } from '~/components/Club/Infinite/ClubResourcesPaged';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { AddResourceToClubModal } from '~/components/Club/AddResourceToClubModal';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
-import { ClubAddContent } from '../../../../components/Club/ClubAddContent';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -54,10 +44,10 @@ export const getServerSideProps = createServerSideProps({
 
     const isModerator = session.user?.isModerator ?? false;
     const isOwner = club.userId === session.user?.id || isModerator;
-    const canManageResources =
-      clubAdmin?.permissions.includes(ClubAdminPermission.ManageResources) ?? false;
+    const canManageMemberships =
+      clubAdmin?.permissions.includes(ClubAdminPermission.ManageMemberships) ?? false;
 
-    if (!isOwner && !isModerator && !canManageResources)
+    if (!isOwner && !isModerator && !canManageMemberships)
       return {
         redirect: {
           destination: `/clubs/${id}`,
@@ -67,6 +57,9 @@ export const getServerSideProps = createServerSideProps({
 
     if (ssg) {
       await ssg.club.getById.prefetch({ id });
+      await ssg.club.getTiers.prefetch({
+        clubId: id,
+      });
     }
 
     // return {
@@ -84,34 +77,18 @@ export default function ManageClubMembers({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
-  const { isClubAdmin, isOwner } = useClubContributorStatus({ clubId: id });
 
   if (!loading && !club) return <NotFound />;
   if (loading) return <PageLoader />;
 
   return (
     <Stack gap="md">
-      <Title order={2}>Manage Club Resources</Title>
+      <Title order={2}>Manage Members</Title>
       <Text>
-        You can manage your club resources here. You can manage resource tiers, edit, and delete
-        resources. To add new resources, you should go to the resource and use the context menu to{' '}
-        <code>Add to club</code> or use the resource&rsquo;s edit form.
+        You can see who has joined your club, how long they&apos;ve been a member, and the club tier
+        they&apos;re in.
       </Text>
-      {(isOwner || isClubAdmin) && (
-        <Button
-          onClick={() => {
-            dialogStore.trigger({
-              component: ClubAddContent,
-              props: {
-                clubId: id,
-              },
-            });
-          }}
-        >
-          Add new resource
-        </Button>
-      )}
-      <ClubResourcesPaged clubId={id} />
+      <ClubMembershipInfinite clubId={id} />
     </Stack>
   );
 }
