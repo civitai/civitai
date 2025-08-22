@@ -8,11 +8,13 @@ import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.m
 import type { Middleware } from '~/server/middleware/middleware-utils';
 import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
+import { regionRestrictionMiddleware } from '~/server/middleware/region-restriction.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
-// NOTE: order matters! Region blocking should come first
+// NOTE: order matters! Region blocking should come first, then restriction redirect
 const middlewares: Middleware[] = [
   regionBlockMiddleware,
+  regionRestrictionMiddleware,
   apiRegionBlockMiddleware,
   routeGuardsMiddleware,
   apiCacheMiddleware,

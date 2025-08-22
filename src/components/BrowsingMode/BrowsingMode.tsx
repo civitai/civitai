@@ -1,4 +1,14 @@
-import { Group, Text, Stack, Popover, Checkbox, Button, Tooltip, Anchor } from '@mantine/core';
+import {
+  Group,
+  Text,
+  Stack,
+  Popover,
+  Checkbox,
+  Button,
+  Tooltip,
+  Anchor,
+  Indicator,
+} from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
@@ -9,14 +19,19 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
+  const { isRestricted } = useIsRegionRestricted();
+
   return (
     <Popover zIndex={301 + 1} withArrow withinPortal>
       <Popover.Target>
-        <LegacyActionIcon variant="subtle" color="gray">
-          <IconEyeExclamation {...iconProps} />
-        </LegacyActionIcon>
+        <Indicator className="flex items-center" color="red" disabled={!isRestricted}>
+          <LegacyActionIcon variant="subtle" color="gray">
+            <IconEyeExclamation {...iconProps} />
+          </LegacyActionIcon>
+        </Indicator>
       </Popover.Target>
       <Popover.Dropdown p="md" style={{ zIndex: 'calc(var(--dialog-z-index) + 2)' }}>
         <BrowsingModeMenu />
@@ -36,6 +51,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const setState = useBrowsingSettings((x) => x.setState);
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
+  const { isRestricted } = useIsRegionRestricted();
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
@@ -71,6 +87,11 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 <Text c="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />
+              {isRestricted && (
+                <Text c="red" size="xs" inline>
+                  Your content levels are limited by restrictions in your region
+                </Text>
+              )}
               {browsingSettingsAddons.settings.disablePoi && (
                 <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
