@@ -113,7 +113,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';

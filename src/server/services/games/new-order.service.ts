@@ -45,7 +45,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';

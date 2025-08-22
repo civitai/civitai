@@ -75,7 +75,7 @@ import {
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';

@@ -1,5 +1,4 @@
 import type { ButtonProps } from '@mantine/core';
-import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -114,18 +113,4 @@ function StatefulSortFilter({ type, ...props }: StatefulProps) {
 
   const sort = querySort ? querySort : globalSort;
   return <DumbSortFilter type={type} value={sort} onChange={setSort} {...props} />;
-}
-
-export function HeaderSortFilter(props: SortFilterProps) {
-  return (
-    <SortFilter
-      {...props}
-      className={clsx(
-        'h-8 bg-transparent',
-        'text-gray-8 hover:bg-gray-3',
-        'dark:text-white dark:hover:bg-dark-5',
-        props.className
-      )}
-    />
-  );
 }

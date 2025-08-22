@@ -20,7 +20,7 @@ import {
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
 import { throwDbError } from '~/server/utils/errorHandling';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 
 export const getRecommendedResourcesCardDataHandler = async ({

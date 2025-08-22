@@ -46,7 +46,7 @@ import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';

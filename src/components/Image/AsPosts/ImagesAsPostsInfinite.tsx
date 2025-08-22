@@ -40,7 +40,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';

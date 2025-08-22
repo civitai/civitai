@@ -38,7 +38,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
   NewOrderRankType,

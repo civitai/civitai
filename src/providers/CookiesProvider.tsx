@@ -3,8 +3,8 @@ import { useSession } from 'next-auth/react';
 
 import React, { createContext, useContext, useMemo } from 'react';
 import { useIsClient } from '~/providers/IsClientProvider';
-import type { ParsedCookies } from '~/shared/utils';
-import { parseCookies } from '~/shared/utils';
+import type { ParsedCookies } from '~/shared/utils/cookies';
+import { parseCookies } from '~/shared/utils/cookies';
 
 const CookiesCtx = createContext<ParsedCookies | null>(null);
 export const useCookies = () => {

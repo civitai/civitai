@@ -66,7 +66,7 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';

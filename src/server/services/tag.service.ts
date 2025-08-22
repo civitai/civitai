@@ -26,7 +26,7 @@ import {
   ImplicitHiddenImages,
 } from '~/server/services/user-preferences.service';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 

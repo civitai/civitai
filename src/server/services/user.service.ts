@@ -85,7 +85,7 @@ import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type {
   BountyEngagementType,
   CosmeticType,

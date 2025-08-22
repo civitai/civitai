@@ -131,7 +131,7 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   Availability,
