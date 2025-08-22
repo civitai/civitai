@@ -166,6 +166,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
   const allowCommercialUse = form.watch('allowCommercialUse');
+  const availability = form.watch('availability');
+  const isPrivate = availability === Availability.Private;
   const hasPoiInNsfw = nsfw && poi === 'true';
   const hasSfwOnlyNsfw = nsfw && sfwOnly;
   const { isDirty, errors } = form.formState;
@@ -532,7 +534,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={isLocked('nsfw') || poi === 'true' || minor}
+                  disabled={isLocked('nsfw') || poi === 'true' || minor || isPrivate}
                   description={isLockedDescription('category')}
                   onChange={(event) => {
                     if (event.target.checked) {
@@ -557,7 +559,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 <InputCheckbox
                   name="sfwOnly"
                   label="Cannot be used for NSFW generation"
-                  disabled={isLocked('sfwOnly') || nsfw || minor || poi === 'true'}
+                  disabled={isLocked('sfwOnly') || nsfw || minor || poi === 'true' || isPrivate}
                   description={isLockedDescription('sfwOnly')}
                 />
               </Stack>
