@@ -64,7 +64,6 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -75,13 +74,14 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
+// const tooltipProps: Partial<TooltipProps> = {
+//   maw: 300,
+//   multiline: true,
+//   position: 'bottom',
+//   withArrow: true,
+// };
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -97,6 +97,11 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 };
 
 const formSchema = createBountyInputSchema
+  .extend({
+    description: getSanitizedStringSchema().refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty'),
+  })
   .omit({
     images: true,
   })

@@ -1,6 +1,6 @@
 import * as z from 'zod';
-import type { santizeHtmlOptions } from '~/utils/html-helpers';
-import { sanitizeHtml } from '~/utils/html-helpers';
+import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
   z.preprocess((val, ctx) => {

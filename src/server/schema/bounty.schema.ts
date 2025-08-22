@@ -48,9 +48,7 @@ export const bountyDetailsSchema = z.object({
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
-  description: getSanitizedStringSchema().refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  description: z.string().nonempty(),
   unitAmount: z
     .number()
     .min(constants.bounties.minCreateAmount)

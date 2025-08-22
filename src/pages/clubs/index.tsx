@@ -65,7 +65,7 @@ export default function ClubsPage() {
                     }
                   />
                 )}
-                <SortFilter type="clubs" />
+                {/* <SortFilter type="clubs" /> */}
               </Group>
             </Group>
             {query.engagement && (

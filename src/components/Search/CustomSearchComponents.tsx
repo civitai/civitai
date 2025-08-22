@@ -47,7 +47,7 @@ import dayjs from 'dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
-import { getBlockedNsfwWords } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import styles from './CustomSearchComponents.module.scss';
