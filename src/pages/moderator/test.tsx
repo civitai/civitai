@@ -10,7 +10,6 @@ import { getRandomInt } from '~/utils/number-helpers';
 
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { Page } from '~/components/AppLayout/Page';
-import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';

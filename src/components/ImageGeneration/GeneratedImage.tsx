@@ -58,7 +58,6 @@ import {
   getIsHiDream,
   getIsQwen,
   getIsSD3,
-  getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
@@ -92,6 +91,7 @@ import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButt
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '@civitai/client';
+import { getSourceImageFromUrl } from '~/utils/image-utils';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;

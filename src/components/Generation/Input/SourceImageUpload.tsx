@@ -7,7 +7,9 @@ import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/co
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { getImageDimensions, imageToJpegBlob, resizeImage } from '~/utils/image-utils';
+import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
+import { getImageDimensions } from '~/utils/image-utils';
+
 import { uniqBy } from 'lodash-es';
 import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';

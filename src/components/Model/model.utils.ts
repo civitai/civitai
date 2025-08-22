@@ -15,7 +15,6 @@ import type {
   GetAllModelsInput,
   ToggleCheckpointCoverageInput,
 } from '~/server/schema/model.schema';
-import { usernameSchema } from '~/server/schema/user.schema';
 import {
   Availability,
   CheckpointType,
@@ -29,6 +28,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/base-model.constants';
+import { usernameSchema } from '~/shared/zod/username.schema';
 
 const modelQueryParamSchema = z
   .object({

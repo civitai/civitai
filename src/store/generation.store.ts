@@ -7,11 +7,11 @@ import type {
   GenerationResource,
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
-import { getSourceImageFromUrl } from '~/shared/constants/generation.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { getSourceImageFromUrl } from '~/utils/image-utils';
 
 export type RunType = 'run' | 'remix' | 'replay' | 'patch';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';

@@ -1,13 +1,11 @@
-import type { Area } from 'react-easy-crop';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { TagType } from '~/shared/utils/prisma/enums';
-import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser, encodeMetadata } from '~/utils/metadata';
-import { createExifSegmentFromTags } from '~/utils/encoding-helpers';
+
 import {
   isNsfwLevelRestrictedForBaseModel,
   getRestrictedNsfwLevelsForBaseModel,
+  maxUpscaleSize,
 } from '~/server/common/constants';
 import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
 
@@ -69,58 +67,6 @@ export async function getImageDimensions(src: string | Blob | File) {
     width: img.width,
     height: img.height,
   };
-}
-
-export async function imageToJpegBlob(src: string | Blob | File) {
-  const blob = await fetchBlob(src);
-  if (!blob) throw new Error('failed to load image blob');
-
-  if (blob.type === 'image/jpeg') return blob;
-
-  const img = await createImageElement(blob);
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Error resizing image');
-  ctx.drawImage(img, 0, 0);
-
-  return canvasToBlobWithImageExif(canvas, blob);
-}
-
-export async function resizeImage(
-  src: string | Blob | File,
-  options: {
-    maxHeight?: number;
-    maxWidth?: number;
-  } = {}
-) {
-  const file = await fetchBlobAsFile(src);
-  if (!file) throw new Error('failed to load image blob');
-
-  // const url = URL.createObjectURL(blob);
-  const img = await createImageElement(file);
-
-  const { maxWidth = img.width, maxHeight = img.height } = options;
-
-  const { width, height, mutated } = calculateAspectRatioFit(
-    img.width,
-    img.height,
-    maxWidth,
-    maxHeight
-  );
-  if (!mutated) return file;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Error resizing image');
-  ctx.drawImage(img, 0, 0, width, height);
-
-  return canvasToBlobWithImageExif(canvas, file);
 }
 
 /**
@@ -199,129 +145,25 @@ export function isValidAIGeneration(image: ImageForAiVerification) {
   return !hasNsfwTag;
 }
 
-export function getRadianAngle(degreeValue: number) {
-  return (degreeValue * Math.PI) / 180;
-}
-
-/**
- * Returns the new bounding area of a rotated rectangle.
- */
-export function rotateSize(width: number, height: number, rotation: number) {
-  const rotRad = getRadianAngle(rotation);
-
+export function getRoundedWidthHeight({ width, height }: { width: number; height: number }) {
+  const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
+  const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
+  const ratio = Math.min(maxWidth / width, maxHeight / height);
   return {
-    width: Math.abs(Math.cos(rotRad) * width) + Math.abs(Math.sin(rotRad) * height),
-    height: Math.abs(Math.sin(rotRad) * width) + Math.abs(Math.cos(rotRad) * height),
+    width: Math.ceil((width * ratio) / 64) * 64,
+    height: Math.ceil((height * ratio) / 64) * 64,
   };
 }
 
-/**
- * This function was adapted from the one in the ReadMe of https://github.com/DominicTobias/react-image-crop
- */
-export async function getCroppedImg(
-  imageSrc: string,
-  pixelCrop: Area,
-  rotation = 0,
-  flip = { horizontal: false, vertical: false }
-) {
-  const image = await createImageElement(imageSrc);
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-
-  if (!ctx) return;
-
-  const rotRad = getRadianAngle(rotation);
-
-  // calculate bounding box of the rotated image
-  const { width: bBoxWidth, height: bBoxHeight } = rotateSize(image.width, image.height, rotation);
-
-  // set canvas size to match the bounding box
-  canvas.width = bBoxWidth;
-  canvas.height = bBoxHeight;
-
-  // translate canvas context to a central location to allow rotating and flipping around the center
-  ctx.translate(bBoxWidth / 2, bBoxHeight / 2);
-  ctx.rotate(rotRad);
-  ctx.scale(flip.horizontal ? -1 : 1, flip.vertical ? -1 : 1);
-  ctx.translate(-image.width / 2, -image.height / 2);
-
-  // draw rotated image
-  ctx.drawImage(image, 0, 0);
-
-  const croppedCanvas = document.createElement('canvas');
-
-  const croppedCtx = croppedCanvas.getContext('2d');
-
-  if (!croppedCtx) return;
-
-  // Set the size of the cropped canvas
-  croppedCanvas.width = pixelCrop.width;
-  croppedCanvas.height = pixelCrop.height;
-
-  // Draw the cropped image onto the new canvas
-  croppedCtx.drawImage(
-    canvas,
-    pixelCrop.x,
-    pixelCrop.y,
-    pixelCrop.width,
-    pixelCrop.height,
-    0,
-    0,
-    pixelCrop.width,
-    pixelCrop.height
-  );
-
-  const file = await fetchBlobAsFile(imageSrc);
-  if (!file) return;
-
-  const blob = await canvasToBlobWithImageExif(croppedCanvas, file);
-  return blob;
-}
-
-// function copyExifUserComment
-
-async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | Blob | string) {
-  const image = src instanceof File || typeof src === 'string' ? src : blobToFile(src);
-  const parser = await ExifParser(image);
-  const metadata = await parser.getMetadata();
-  const dataUrl = canvas.toDataURL('image/jpeg');
-
-  const exifSegment = createExifSegmentFromTags({
-    artist: parser.exif.Artist,
-    userComment: encodeMetadata(metadata),
-    software: parser.exif.Software,
+export async function getSourceImageFromUrl({ url, upscale }: { url: string; upscale?: boolean }) {
+  return getImageDimensions(url).then(({ width, height }) => {
+    let upscaleWidth: number | undefined;
+    let upscaleHeight: number | undefined;
+    if (upscale) {
+      const upscaled = getRoundedWidthHeight({ width: width * 1.5, height: height * 1.5 });
+      upscaleWidth = upscaled.width;
+      upscaleHeight = upscaled.height;
+    }
+    return { url, upscaleWidth, upscaleHeight, ...getRoundedWidthHeight({ width, height }) };
   });
-  const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
-  const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2); // FFD8
-  const rest = Uint8Array.prototype.slice.call(jpegBytes, 2);
-  const newJpegBytes = new Uint8Array(soi.length + exifSegment.length + rest.length);
-
-  newJpegBytes.set(soi, 0);
-  newJpegBytes.set(exifSegment, soi.length);
-  newJpegBytes.set(rest, soi.length + exifSegment.length);
-
-  return new Blob([newJpegBytes], { type: 'image/jpeg' });
 }
-
-// function CanvasHandler(canvas: HTMLCanvasElement, file?: File | string) {
-//   async function toBlob() {
-//     return new Promise<Blob>((resolve, reject) => {
-//       canvas.toBlob((blob) => {
-//         if (blob) resolve(blob);
-//         else reject('failed to convert canvas to image');
-//       }, 'image/jpeg');
-//     });
-//   }
-//   async function toObjectUrl() {
-//     return await toBlob().then((blob) => URL.createObjectURL(blob));
-//   }
-//   function toBase64() {
-//     return canvas.toDataURL('image/jpeg');
-//   }
-
-//   return {
-//     toBlob,
-//     toObjectUrl,
-//     toBase64,
-//   };
-// }

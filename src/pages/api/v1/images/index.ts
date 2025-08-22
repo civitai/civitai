@@ -7,7 +7,6 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { usernameSchema } from '~/server/schema/user.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -29,6 +28,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { usernameSchema } from '~/shared/zod/username.schema';
 
 export const config = {
   api: {
