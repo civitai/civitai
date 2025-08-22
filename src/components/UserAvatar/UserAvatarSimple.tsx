@@ -79,16 +79,20 @@ export function UserAvatarSimple({
             <EdgeMedia
               src={decoration.data.url}
               anim={anim}
-              original={anim === false ? false : undefined}
+              // original={anim === false ? false : undefined}
               type="image"
               name="user avatar decoration"
               className="absolute left-1/2 top-1/2 z-[2]"
+              loading="lazy"
               style={{
                 maxWidth: 'none',
                 width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                 height: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                 transform: 'translate(-50%, -50%)',
               }}
+              optimized
+              width={96}
+              original={false}
             />
           )}
         </div>
@@ -113,8 +117,11 @@ export function UserAvatarSimple({
                 <EdgeMedia
                   src={badge.data.url}
                   anim={badge.data.animated && anim}
-                  original={badge.data.animated && anim === false ? false : undefined}
+                  original={false}
                   alt={badge.name}
+                  optimized
+                  loading="lazy"
+                  width={96}
                 />
               </div>
             </Tooltip>

@@ -1,7 +1,7 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
 import type { TRPCLink } from '@trpc/client';
-import { httpLink, loggerLink, splitLink } from '@trpc/client';
+import { httpLink, loggerLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
 import superjson from 'superjson';
