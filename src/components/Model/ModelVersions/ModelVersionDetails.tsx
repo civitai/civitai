@@ -36,7 +36,7 @@ import {
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useCallback, useRef } from 'react';

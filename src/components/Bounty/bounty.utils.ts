@@ -1,5 +1,5 @@
 import { hideNotification, showNotification } from '@mantine/notifications';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useMemo } from 'react';
 import produce from 'immer';
 import * as z from 'zod';

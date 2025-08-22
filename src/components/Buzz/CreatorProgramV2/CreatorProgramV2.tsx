@@ -25,7 +25,7 @@ import {
   IconSettings,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
 import React, { useEffect } from 'react';

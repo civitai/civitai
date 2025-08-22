@@ -1,6 +1,6 @@
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

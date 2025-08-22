@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type {
   ChallengePrompts,

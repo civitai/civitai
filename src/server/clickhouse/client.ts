@@ -1,6 +1,6 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { createClient } from '@clickhouse/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import requestIp from 'request-ip';

@@ -51,16 +51,38 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   'edge-media': ['url', 'type', 'filename', 'className'],
 };
 
-export const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
-  'www.youtube.com',
-  'www.instagram.com',
-  'www.strawpoll.com',
-];
-
 export type santizeHtmlOptions = sanitize.IOptions & {
   stripEmpty?: boolean;
 };
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
+  const DEFAULT_ALLOWED_TAGS = [
+    'p',
+    'strong',
+    'em',
+    'u',
+    's',
+    'ul',
+    'ol',
+    'li',
+    'a',
+    'br',
+    'img',
+    'iframe',
+    'div',
+    'code',
+    'pre',
+    'span',
+    'h1',
+    'h2',
+    'h3',
+    'hr',
+    'edge-media',
+  ];
+  const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
+    'www.youtube.com',
+    'www.instagram.com',
+    'www.strawpoll.com',
+  ];
   const { stripEmpty = false, transformTags, ...options } = args ?? {};
   // if (throwOnBlockedDomain) {
   //   const blockedDomains = getBlockedDomains(html);

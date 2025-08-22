@@ -1,5 +1,5 @@
 import { faker } from '@faker-js/faker';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import type { DatabaseError } from 'pg';
 import format from 'pg-format';

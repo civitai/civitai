@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import type { DiscordRole } from '~/server/integrations/discord';

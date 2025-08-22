@@ -1,6 +1,6 @@
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -8,6 +8,7 @@ import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-h
 import type { ImageMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
 import { getJobDate } from '~/server/jobs/job';
+import type { Dayjs } from 'dayjs';
 
 const log = createLogger('metrics:image');
 
@@ -148,7 +149,7 @@ type ImageMetricKey = keyof ImageMetric;
 type TimeframeData = [number, number, number, number, number];
 type ImageMetricContext = MetricProcessorRunContext & {
   updates: Record<number, Record<ImageMetricKey, TimeframeData | number>>;
-  lastViewUpdate: dayjs.Dayjs;
+  lastViewUpdate: Dayjs;
   setLastViewUpdate: () => void;
 };
 const metrics = [

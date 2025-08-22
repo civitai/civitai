@@ -1,5 +1,5 @@
 import { setCookie as sc, deleteCookie } from 'cookies-next';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 export function setCookie(key: string, data: any, expires?: Date) { // eslint-disable-line
   return sc(key, data, {

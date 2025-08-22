@@ -12,12 +12,13 @@ export function lazy<T>(fn: () => T): () => T {
 }
 
 /**
- * Creates a lazily-initialized object/function-like value.
- *
- * The initializer runs only once (on first access/call), and the
- * returned proxy behaves like the real initialized object.
+ * Creates a lazily-initialized object or callable function.
+ * - If the initializer returns a function, the returned proxy is callable.
+ * - Property access and function calls trigger lazy initialization.
  */
-export function lazyProxy<T extends object>(initializer: () => T): T {
+export function lazyProxy<T extends Record<string | symbol, any> | ((...args: any) => any)>(
+  initializer: () => T
+): T {
   let instance: T | null = null;
 
   function init(): T {
@@ -27,21 +28,29 @@ export function lazyProxy<T extends object>(initializer: () => T): T {
     return instance;
   }
 
-  return new Proxy({} as T, {
+  const isFunction = () => typeof init() === 'function';
+
+  return new Proxy(() => undefined as any, {
     get(_target, prop, receiver) {
       return Reflect.get(init(), prop, receiver);
     },
     set(_target, prop, value, receiver) {
       return Reflect.set(init(), prop, value, receiver);
     },
-    apply(_target, thisArg, args) {
-      return Reflect.apply(init() as any, thisArg, args);
-    },
-    construct(_target, args, newTarget) {
-      return Reflect.construct(init() as any, args, newTarget);
-    },
     has(_target, prop) {
       return prop in init();
     },
-  });
+    apply(_target, thisArg, args) {
+      if (!isFunction()) {
+        throw new TypeError('Target is not callable');
+      }
+      return (init() as any).apply(thisArg, args);
+    },
+    construct(_target, args, newTarget) {
+      if (!isFunction()) {
+        throw new TypeError('Target is not constructible');
+      }
+      return Reflect.construct(init() as any, args, newTarget);
+    },
+  }) as T;
 }

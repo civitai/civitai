@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import type { Context } from '~/server/createContext';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';

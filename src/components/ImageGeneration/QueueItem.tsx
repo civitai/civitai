@@ -22,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';

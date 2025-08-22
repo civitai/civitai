@@ -8,7 +8,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { numericString } from '~/utils/zod-helpers';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 const schema = z.object({
   challengeId: numericString(),

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';

@@ -1,6 +1,5 @@
 import type { Dayjs } from 'dayjs';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
+import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -37,8 +36,6 @@ import {
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
-
-dayjs.extend(utc);
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;

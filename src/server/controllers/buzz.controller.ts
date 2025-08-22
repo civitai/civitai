@@ -1,5 +1,5 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';

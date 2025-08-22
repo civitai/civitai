@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';

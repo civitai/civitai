@@ -1,6 +1,6 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import type { Prisma, PrismaClient, User } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import NextAuth, { type NextAuthOptions } from 'next-auth';

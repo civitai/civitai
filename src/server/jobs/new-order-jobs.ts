@@ -1,5 +1,5 @@
 import { removeDuplicates } from '@tiptap/react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
@@ -141,12 +141,12 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     const tuples = batch.map((u) => `(${u.userId},'${u.startAt.toISOString()}')`).join(',');
     const data = await clickhouse.$query<DailyResetQueryResult>`
     WITH u AS (
-      SELECT 
+      SELECT
         arrayJoin([${tuples}]) as user_tuple,
         user_tuple.1 as userId,
         user_tuple.2 as startAt
     )
-    SELECT 
+    SELECT
       knoir."userId",
       SUM(
         -- Make it so we ignore elements before a reset.
@@ -205,7 +205,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
           (value ->> 'fervor')::int as "fervor"
         FROM json_array_elements(${JSON.stringify(batchWithFervor)}::json)
       )
-      UPDATE "NewOrderPlayer" 
+      UPDATE "NewOrderPlayer"
       SET
         "exp" = affected.exp,
         "fervor" = affected.fervor

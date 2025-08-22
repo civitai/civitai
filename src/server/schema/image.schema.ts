@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';

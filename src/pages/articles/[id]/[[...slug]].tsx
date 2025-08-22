@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useMemo } from 'react';

@@ -1,7 +1,8 @@
 import { Box, Group, Paper, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import styles from './PrepaidTimelineProgress.module.scss';
+import type { Dayjs } from 'dayjs';
 
 interface PrepaidMetadata {
   prepaids?: {
@@ -20,8 +21,8 @@ interface TimelineSegment {
   tier: string;
   days: number;
   color: string;
-  startDate: dayjs.Dayjs;
-  endDate: dayjs.Dayjs;
+  startDate: Dayjs;
+  endDate: Dayjs;
   isActive: boolean;
 }
 
@@ -165,11 +166,11 @@ function SegmentTooltip({ segment, segmentPercent, children }: SegmentTooltipPro
 
 interface CalculateTimelineSegmentsParams {
   currentTier: string;
-  currentPeriodStart: dayjs.Dayjs;
-  currentPeriodEnd: dayjs.Dayjs;
+  currentPeriodStart: Dayjs;
+  currentPeriodEnd: Dayjs;
   prepaids: Record<string, number>;
   proratedDays: Record<string, number>;
-  now: dayjs.Dayjs;
+  now: Dayjs;
 }
 
 function calculateTimelineSegments({
