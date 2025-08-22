@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import {
   EXTRACTION_FEES,
   EXTRACTION_PHASE_DURATION,

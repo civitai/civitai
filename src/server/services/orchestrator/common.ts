@@ -54,7 +54,6 @@ import {
   getIsFluxStandard,
   getIsQwen,
   getIsSD3,
-  getRoundedWidthHeight,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -65,6 +64,7 @@ import { parseAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import { getRoundedWidthHeight } from '~/utils/image-utils';
 
 type WorkflowStepAggregate =
   | ComfyStep

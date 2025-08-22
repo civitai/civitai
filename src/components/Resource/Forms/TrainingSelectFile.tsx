@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';

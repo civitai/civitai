@@ -1,7 +1,7 @@
 import { StreamError } from '@clavata/sdk';
 import type { Prisma } from '@prisma/client';
 import nlp from 'compromise';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { ExternalModerationType } from '~/server/common/enums';

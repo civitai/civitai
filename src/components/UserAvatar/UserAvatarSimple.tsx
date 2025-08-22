@@ -13,7 +13,7 @@ import type {
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { getInitials } from '~/utils/string-helpers';
 import classes from './UserAvatarSimple.module.scss';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';

@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isModerator } from '~/server/routers/base.router';
 import type {

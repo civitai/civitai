@@ -4,7 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import classes from './BrowsingLevelsGrouped.module.scss';
 
 export function BrowsingLevelsGrouped({ size, ...props }: GroupProps & { size?: MantineSize }) {

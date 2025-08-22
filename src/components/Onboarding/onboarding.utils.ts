@@ -2,7 +2,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 const onboardingSteps: Record<string, OnboardingSteps[]> = {

@@ -1,7 +1,7 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { Prisma } from '@prisma/client';
 import { createBuzzTransactionMany } from '../services/buzz.service';
 import { TransactionType } from '../schema/buzz.schema';

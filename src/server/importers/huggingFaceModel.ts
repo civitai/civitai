@@ -39,7 +39,7 @@ export const hfModelImporter = createImporter(
 );
 
 // TODO.remove
-export async function importModelFromHuggingFace(
+async function importModelFromHuggingFace(
   { id, siblings, author }: HuggingFaceModel,
   { id: importId, source, userId }: { id?: number; source?: string; userId: number }
 ) {

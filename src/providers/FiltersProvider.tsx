@@ -21,11 +21,11 @@ import {
   ToolSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getChangelogsInput } from '~/server/schema/changelog.schema';
 // import { getInfiniteClubSchema } from '~/server/schema/club.schema';
 import {
   Availability,
+  BountyType,
   CheckpointType,
   ImageGenerationProcess,
   MediaType,
@@ -130,16 +130,12 @@ const bountyFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.enum(BountySort).default(BountySort.EndingSoon),
   status: z.enum(BountyStatus).default(BountyStatus.Open),
-  ...getInfiniteBountySchema.omit({
-    query: true,
-    period: true,
-    sort: true,
-    limit: true,
-    cursor: true,
-    status: true,
-    // TODO.bounty: remove mode from omit once we allow split bounties
-    mode: true,
-  }).shape,
+  types: z.enum(BountyType).array().optional(),
+  nsfw: z.boolean().optional(),
+  engagement: z.enum(constants.bounties.engagementTypes).optional(),
+  userId: z.number().optional(),
+  baseModels: z.enum(baseModels).array().optional(),
+  excludedUserIds: z.number().array().optional(),
 });
 
 // type ClubFilterSchema = z.infer<typeof clubFilterSchema>;

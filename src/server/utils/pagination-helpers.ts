@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
 import type { PaginationInput } from '~/server/schema/base.schema';

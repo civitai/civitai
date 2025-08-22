@@ -5,7 +5,7 @@ import { isEqual } from 'lodash-es';
 import { useCallback, useState } from 'react';
 import type { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import classes from './BrowsingLevelInput.module.scss';
 
 type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {

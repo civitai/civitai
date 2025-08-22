@@ -2,7 +2,6 @@ import { Group, Stack, ThemeIcon, Title } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
-import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';

@@ -19,7 +19,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';

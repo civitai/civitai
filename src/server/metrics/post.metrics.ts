@@ -6,11 +6,12 @@ import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import type { PostMetric } from '~/shared/utils/prisma/models';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { templateHandler } from '~/server/db/db-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getJobDate } from '~/server/jobs/job';
 import { capitalize } from '~/utils/string-helpers';
+import type { Dayjs } from 'dayjs';
 
 const log = createLogger('metrics:post');
 
@@ -265,7 +266,7 @@ type MetricKey = keyof PostMetric;
 type TimeframeData = [number, number, number, number, number];
 type MetricContext = MetricProcessorRunContext & {
   updates: Record<number, Record<MetricKey, TimeframeData | number>>;
-  lastViewUpdate: dayjs.Dayjs;
+  lastViewUpdate: Dayjs;
   setLastViewUpdate: () => void;
 };
 const metrics = [

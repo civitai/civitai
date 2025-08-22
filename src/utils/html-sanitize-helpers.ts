@@ -26,6 +26,12 @@ const DEFAULT_ALLOWED_TAGS = [
   'edge-media',
 ];
 
+const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
+  'www.youtube.com',
+  'www.instagram.com',
+  'www.strawpoll.com',
+];
+
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
   a: ['rel', 'href', 'target'],
   img: ['src', 'alt', 'width', 'height'],
@@ -50,12 +56,6 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   '*': ['id'],
   'edge-media': ['url', 'type', 'filename', 'className'],
 };
-
-export const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
-  'www.youtube.com',
-  'www.instagram.com',
-  'www.strawpoll.com',
-];
 
 export type santizeHtmlOptions = sanitize.IOptions & {
   stripEmpty?: boolean;

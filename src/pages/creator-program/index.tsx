@@ -51,7 +51,7 @@ import {
   openCreatorScoreModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';

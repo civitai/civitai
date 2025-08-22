@@ -17,7 +17,7 @@ import { useQueryEventContributors } from './events.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { UserAvatar } from '../UserAvatar/UserAvatar';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { formatDate } from '~/utils/date-helpers';
 import { Countdown } from '~/components/Countdown/Countdown';
 

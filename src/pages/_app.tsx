@@ -2,14 +2,6 @@
 
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies } from 'cookies-next';
-import dayjs from 'dayjs';
-import duration from 'dayjs/plugin/duration';
-import isBetween from 'dayjs/plugin/isBetween';
-import minMax from 'dayjs/plugin/minMax';
-import relativeTime from 'dayjs/plugin/relativeTime';
-import timezone from 'dayjs/plugin/timezone';
-import utc from 'dayjs/plugin/utc';
-import { registerCustomProtocol } from 'linkifyjs';
 import type { Session, SessionUser } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import { SessionProvider } from 'next-auth/react';
@@ -64,8 +56,8 @@ import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
-import type { ParsedCookies } from '~/shared/utils';
-import { parseCookies } from '~/shared/utils';
+import type { ParsedCookies } from '~/shared/utils/cookies';
+import { parseCookies } from '~/shared/utils/cookies';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
@@ -84,16 +76,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 
-dayjs.extend(duration);
-dayjs.extend(isBetween);
-dayjs.extend(minMax);
-dayjs.extend(relativeTime);
-dayjs.extend(utc);
-dayjs.extend(timezone);
-
-registerCustomProtocol('civitai', true);
 applyNodeOverrides();
-// registerCustomProtocol('urn', true);
 
 type CustomAppProps = {
   Component: CustomNextPage;

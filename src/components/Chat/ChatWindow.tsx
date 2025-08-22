@@ -1,4 +1,5 @@
 import { Grid, useComputedColorScheme } from '@mantine/core';
+import { registerCustomProtocol } from 'linkifyjs';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
 import { useChatContext } from '~/components/Chat/ChatProvider';
@@ -6,6 +7,8 @@ import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+
+registerCustomProtocol('civitai', true);
 
 export function ChatWindow() {
   return (

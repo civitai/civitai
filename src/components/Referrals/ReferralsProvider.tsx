@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
 import { setCookie } from '~/utils/cookies-helpers';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type ReferralsState = {

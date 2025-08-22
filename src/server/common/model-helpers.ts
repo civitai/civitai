@@ -3,7 +3,7 @@ import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import type { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 export const createModelFileDownloadUrl = ({
   versionId,

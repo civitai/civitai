@@ -4,7 +4,7 @@ import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { numericString } from '~/utils/zod-helpers';
 
-function sanitizedNullableString(options: santizeHtmlOptions) {
+export function sanitizedNullableString(options: santizeHtmlOptions) {
   return z
     .string()
     .transform((val, ctx) => {
