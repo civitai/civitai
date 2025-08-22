@@ -1,28 +1,6 @@
 import * as z from 'zod';
 import { isValidDate } from '~/utils/date-helpers';
 
-import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
-import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
-
-export function sanitizedNullableString(options: santizeHtmlOptions) {
-  return z
-    .string()
-    .transform((val, ctx) => {
-      try {
-        if (!val) return;
-        const result = sanitizeHtml(val, options);
-        if (result.length === 0) return null;
-        return result;
-      } catch (e) {
-        ctx.addIssue({
-          code: 'custom',
-          message: (e as any).message,
-        });
-      }
-    })
-    .nullish();
-}
-
 export function coerceStringArray<I extends z.ZodArray<z.ZodString>>(schema?: I) {
   return z.preprocess(
     (val: string | string[]) => (Array.isArray(val) ? val : [val]),
