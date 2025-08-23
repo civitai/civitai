@@ -3085,6 +3085,7 @@ export const privateModelFromTraining = async ({
         ...data,
         availability: Availability.Private,
         status: ModelStatus.Published,
+        sfwOnly: true, // Private models only allow sfw generation
       },
     });
 

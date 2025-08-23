@@ -434,7 +434,7 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi, minor, sfwOnly } = input;
+    const { nsfw, poi, minor, sfwOnly, availability } = input;
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
@@ -444,6 +444,9 @@ export const upsertModelHandler = async ({
 
     if (nsfw && sfwOnly)
       throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+
+    if (availability === Availability.Private && !sfwOnly)
+      throw throwBadRequestError('Private models must be set to SFW only.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
@@ -1778,6 +1781,8 @@ export const privateModelFromTrainingHandler = async ({
 
     if (nsfw && sfwOnly)
       throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+
+    if (!sfwOnly) throw throwBadRequestError('Private models must be set to SFW only.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
