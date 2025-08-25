@@ -2,12 +2,21 @@ import { handleError, invokeImageUploadStepTemplate } from '@civitai/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
-export async function imageUpload({ sourceImage, token }: { sourceImage: string; token: string }) {
+export async function imageUpload({
+  sourceImage,
+  token,
+  allowMatureContent,
+}: {
+  sourceImage: string;
+  token: string;
+  allowMatureContent?: boolean;
+}) {
   const client = createOrchestratorClient(token);
 
   const { data, error } = await invokeImageUploadStepTemplate({
     client,
     body: sourceImage,
+    query: { allowMatureContent },
   }).catch((error) => {
     throw error;
   });
