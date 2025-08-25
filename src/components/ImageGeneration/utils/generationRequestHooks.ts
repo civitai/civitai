@@ -77,10 +77,8 @@ export function useGetTextToImageRequests(
     switch (filters.marker) {
       case GenerationReactType.Favorited:
         return [WORKFLOW_TAGS.FAVORITE];
-
       case GenerationReactType.Liked:
         return [WORKFLOW_TAGS.FEEDBACK.LIKED];
-
       case GenerationReactType.Disliked:
         return [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
       default:

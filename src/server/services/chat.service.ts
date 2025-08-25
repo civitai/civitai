@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';
 import { linkifyOptions } from '~/components/Chat/util';

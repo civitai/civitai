@@ -6,11 +6,8 @@ import {
   IconRestore,
   IconTrash,
   IconUser,
-  IconUserMinus,
-  IconUserOff,
 } from '@tabler/icons-react';
 import React from 'react';
-import type { ImageModerationSchema } from '~/server/schema/image.schema';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import type { ImageContextMenuProps } from '~/components/Image/ContextMenu/ImageMenuItems';
@@ -27,13 +24,11 @@ export function NeedsReviewBadge({ image }: ImageContextMenuProps) {
   const moderateImagesMutation = trpc.image.moderate.useMutation();
   if (!needsReview && ingestion !== 'Blocked') return null;
 
-  const handleModerate = (action: 'accept' | 'delete' | 'removeName' | 'mistake') => {
+  const handleModerate = (action: 'block' | 'unblock') => {
     if (!isModerator) return;
     moderateImagesMutation.mutate({
       ids: [imageId],
-      needsReview: action === 'accept' ? null : undefined,
-      reviewAction: action !== 'accept' ? action : undefined,
-      reviewType: (needsReview as ImageModerationSchema['reviewType']) ?? 'blocked',
+      reviewAction: action,
     });
     imageStore.setImage(imageId, { needsReview: null, ingestion: 'Scanned' });
   };
@@ -69,29 +64,13 @@ export function NeedsReviewBadge({ image }: ImageContextMenuProps) {
           }}
         >
           <Menu.Item
-            onClick={() => handleModerate('accept')}
+            onClick={() => handleModerate('unblock')}
             leftSection={<IconCheck size={14} stroke={1.5} />}
           >
             Approve
           </Menu.Item>
-          {needsReview === 'poi' && (
-            <Menu.Item
-              onClick={() => handleModerate('mistake')}
-              leftSection={<IconUserOff size={14} stroke={1.5} />}
-            >
-              Not POI
-            </Menu.Item>
-          )}
-          {needsReview === 'poi' && (
-            <Menu.Item
-              onClick={() => handleModerate('removeName')}
-              leftSection={<IconUserMinus size={14} stroke={1.5} />}
-            >
-              Remove Name
-            </Menu.Item>
-          )}
           <Menu.Item
-            onClick={() => handleModerate('delete')}
+            onClick={() => handleModerate('block')}
             leftSection={<IconTrash size={14} stroke={1.5} />}
           >
             Reject
@@ -117,7 +96,7 @@ export function NeedsReviewBadge({ image }: ImageContextMenuProps) {
         </Menu.Target>
         <Menu.Dropdown>
           <Menu.Item
-            onClick={() => handleModerate('accept')}
+            onClick={() => handleModerate('unblock')}
             leftSection={<IconRestore size={14} stroke={1.5} />}
           >
             Restore

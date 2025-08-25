@@ -7,7 +7,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useClubContributorStatus, useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
-import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
+import { ClubManagementLayout } from '~/pages-old/clubs/manage/[id]/index';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';

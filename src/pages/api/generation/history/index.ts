@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import fetch from 'node-fetch';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';

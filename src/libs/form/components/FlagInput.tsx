@@ -1,5 +1,5 @@
 import { Checkbox, Input, Stack } from '@mantine/core';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import {
   browsingLevelDescriptions,
   browsingLevels,

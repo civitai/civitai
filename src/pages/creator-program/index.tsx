@@ -51,7 +51,7 @@ import {
   openCreatorScoreModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
@@ -450,14 +450,14 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                           current membership does not apply to join the Creator Program. Consider
                           upgrading to one our supported memberships.
                           <br />
-                          <NextLink href="/pricing">
-                            <Anchor>Upgrade Membership</Anchor>
-                          </NextLink>
+                          <Anchor component={NextLink} href="/pricing">
+                            Upgrade Membership
+                          </Anchor>
                         </p>
                       ) : (
-                        <NextLink href="/pricing">
-                          <Anchor>Become a Civitai Member Now!</Anchor>
-                        </NextLink>
+                        <Anchor component={NextLink} href="/pricing">
+                          Become a Civitai Member Now!
+                        </Anchor>
                       )
                     }
                   />

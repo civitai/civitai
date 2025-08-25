@@ -1,5 +1,5 @@
-import dayjs from 'dayjs';
-import CustomParseFormat from 'dayjs/plugin/customParseFormat';
+import dayjs from '~/shared/utils/dayjs';
+
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -31,8 +31,6 @@ import {
 import { postgresSlugify } from '~/utils/string-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/base-model.constants';
-
-dayjs.extend(CustomParseFormat);
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -349,7 +347,7 @@ export const getSimpleModelsInfiniteSchema = infiniteQuerySchema.extend({
 export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCoverageSchema>;
 export const toggleCheckpointCoverageSchema = z.object({
   id: z.number(),
-  versionId: z.number().nullish(),
+  versionId: z.number(),
 });
 
 export type SetModelCollectionShowcaseInput = z.infer<typeof setModelCollectionShowcaseSchema>;

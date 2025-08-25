@@ -10,7 +10,7 @@
   min-height: 32px;
   height: 32px;
   padding: 0 var(--mantine-spacing-xs);
-  
+
   &::before {
     content: '';
     position: absolute;
@@ -26,21 +26,25 @@
     );
     transition: left 0.5s;
   }
-  
+
   &:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-    
+
     &::before {
       left: 100%;
     }
   }
-  
+
   &:active {
     transform: translateY(0);
   }
 
-  @media (max-width: theme('screens.sm')) {
+
+}
+
+.supportButtonMediaQuery {
+  @container (max-width: theme('screens.sm')) {
     min-height: 28px;
     height: 28px;
     padding: 0 var(--mantine-spacing-xs);
@@ -50,78 +54,78 @@
 
 /* Primary Variant - Blue to Purple Gradient */
 .supportButtonPrimary {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-blue-6) 0%, 
+  background: linear-gradient(135deg,
+    var(--mantine-color-blue-6) 0%,
     var(--mantine-color-violet-6) 100%);
-  
+
   &:hover {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-blue-7) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-blue-7) 0%,
       var(--mantine-color-violet-7) 100%);
   }
 }
 
 /* Gift Variant - Green to Teal Gradient */
 .supportButtonGift {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-green-6) 0%, 
+  background: linear-gradient(135deg,
+    var(--mantine-color-green-6) 0%,
     var(--mantine-color-teal-6) 100%);
-  
+
   &:hover {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-green-7) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-green-7) 0%,
       var(--mantine-color-teal-7) 100%);
   }
 }
 
 /* Heart Variant - Pink to Red Gradient */
 .supportButtonHeart {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-pink-6) 0%, 
+  background: linear-gradient(135deg,
+    var(--mantine-color-pink-6) 0%,
     var(--mantine-color-red-6) 100%);
-  
+
   &:hover {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-pink-7) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-pink-7) 0%,
       var(--mantine-color-red-7) 100%);
   }
 }
 
 /* Sparkle Variant - Yellow to Orange Gradient */
 .supportButtonSparkle {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-yellow-5) 0%, 
+  background: linear-gradient(135deg,
+    var(--mantine-color-yellow-5) 0%,
     var(--mantine-color-orange-6) 100%);
-  
+
   &:hover {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-yellow-6) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-yellow-6) 0%,
       var(--mantine-color-orange-7) 100%);
   }
 }
 
 /* Royal Variant - Purple to Indigo Gradient */
 .supportButtonRoyal {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-violet-6) 0%, 
+  background: linear-gradient(135deg,
+    var(--mantine-color-violet-6) 0%,
     var(--mantine-color-indigo-6) 100%);
-  
+
   &:hover {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-violet-7) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-violet-7) 0%,
       var(--mantine-color-indigo-7) 100%);
   }
 }
 
 /* Premium Variant - Cyan to Teal Gradient */
 .supportButtonPremium {
-  background: linear-gradient(135deg, 
-    var(--mantine-color-cyan-6) 0%, 
+  background: linear-gradient(135deg,
+    var(--mantine-color-cyan-6) 0%,
     var(--mantine-color-teal-6) 100%);
-  
+
   &:hover {
-    background: linear-gradient(135deg, 
-      var(--mantine-color-cyan-7) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-cyan-7) 0%,
       var(--mantine-color-teal-7) 100%);
   }
 }
@@ -131,12 +135,7 @@
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   white-space: nowrap;
-  font-size: 12px;
-  line-height: 1.2;
-  
-  @media (max-width: theme('screens.sm')) {
-    font-size: 11px;
-  }
+  // line-height: 1.2;
 }
 
 /* Button Icon - Clean and Minimal */
@@ -144,12 +143,12 @@
   color: rgba(255, 255, 255, 0.9);
   transition: all 0.2s ease;
   flex-shrink: 0;
-  
+
   .supportButton:hover & {
     color: white;
     transform: scale(1.1);
   }
-  
+
   @media (max-width: theme('screens.sm')) {
     width: 12px;
     height: 12px;
@@ -172,7 +171,7 @@
   backdrop-filter: blur(8px);
   max-width: 240px;
   padding: var(--mantine-spacing-sm);
-  
+
   @media (prefers-color-scheme: dark) {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   }

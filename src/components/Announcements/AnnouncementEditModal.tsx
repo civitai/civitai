@@ -1,6 +1,6 @@
 import type { SelectProps } from '@mantine/core';
 import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRef } from 'react';
 import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';

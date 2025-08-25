@@ -29,7 +29,7 @@ import {
   Tooltip as ChartTooltip,
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { Bar } from 'react-chartjs-2';
 import classes from '~/components/Buzz/buzz.module.scss';

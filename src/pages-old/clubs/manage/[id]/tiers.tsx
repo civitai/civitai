@@ -27,7 +27,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { IconPlus } from '@tabler/icons-react';
-import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
+import { ClubManagementLayout } from '~/pages-old/clubs/manage/[id]/index';
 import { ClubTierUpsertForm } from '~/components/Club/ClubTierUpsertForm';
 import { ClubTierManageItem } from '~/components/Club/ClubTierManageItem';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';

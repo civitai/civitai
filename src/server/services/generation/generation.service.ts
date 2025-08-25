@@ -32,6 +32,7 @@ import {
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
+  fluxKreaAir,
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
@@ -439,8 +440,10 @@ const getModelVersionGenerationData = async ({
       break;
     case 'hunyuan':
       process = 'txt2vid';
+      break;
     case 'veo3':
       process = getVeo3ProcessFromAir(resources[0].air);
+      break;
   }
 
   // TODO - refactor this elsewhere
@@ -454,6 +457,7 @@ const getModelVersionGenerationData = async ({
       engine,
       process,
       version,
+      fluxMode: baseModel === 'FluxKrea' ? fluxKreaAir : undefined,
     },
   };
 };

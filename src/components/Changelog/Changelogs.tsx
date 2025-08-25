@@ -29,7 +29,7 @@ import {
   IconSortDescending,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';

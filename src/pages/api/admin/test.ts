@@ -84,16 +84,16 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // await setExperimentalConfig({ userIds: [5] });
     // const data = await updateCollectionsNsfwLevels([24004]);
 
-    const imageResources = await dbRead.$queryRaw<{ imageId: number }[]>`
-      select * from "ImageResourceNew" where "modelVersionId" = 690425 and detected
-    `;
+    // const imageResources = await dbRead.$queryRaw<{ imageId: number }[]>`
+    //   select * from "ImageResourceNew" where "modelVersionId" = 690425 and detected
+    // `;
 
-    await Limiter({ batchSize: 1, limit: 10 }).process(imageResources, async ([{ imageId }]) => {
-      await refreshImageResources(imageId);
-    });
+    // await Limiter({ batchSize: 1, limit: 10 }).process(imageResources, async ([{ imageId }]) => {
+    //   await refreshImageResources(imageId);
+    // });
 
     // res.status(200).send({ data });
-    res.status(200).send({ ok: true });
+    res.status(200).send({});
   } catch (e) {
     console.log(e);
     res.status(400).end();

@@ -21,7 +21,7 @@ import {
   browsingLevelLabels,
   browsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';

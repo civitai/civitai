@@ -22,8 +22,10 @@ import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import dynamic from 'next/dynamic';
 
-const AutocompleteSearch = dynamic(() =>
-  import('~/components/AutocompleteSearch/AutocompleteSearch').then((x) => x.AutocompleteSearch)
+const AutocompleteSearch = dynamic(
+  () =>
+    import('~/components/AutocompleteSearch/AutocompleteSearch').then((x) => x.AutocompleteSearch),
+  { ssr: false }
 );
 
 const HEADER_HEIGHT = 60;

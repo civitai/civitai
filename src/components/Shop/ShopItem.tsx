@@ -11,7 +11,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { CosmeticType, Currency } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useShopLastViewed } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';

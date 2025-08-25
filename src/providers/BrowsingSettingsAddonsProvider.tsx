@@ -3,7 +3,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { trpc } from '~/utils/trpc';
 
 const BrowsingSettingsAddonsCtx = createContext<{

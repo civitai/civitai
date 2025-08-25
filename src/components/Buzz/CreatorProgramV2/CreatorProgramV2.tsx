@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -26,7 +25,7 @@ import {
   IconSettings,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
 import React, { useEffect } from 'react';
@@ -76,7 +75,7 @@ import {
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';
@@ -152,11 +151,16 @@ export const CreatorProgramV2 = () => {
 const JoinCreatorProgramCard = () => {
   const buzzAccount = useBuzz(undefined, 'user');
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
-  const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
-    buzz: buzzAccount.balance,
-  });
+  // const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
+  //   buzz: buzzAccount.balance,
+  // });
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
-  const isLoading = buzzAccount.balanceLoading || isLoadingRequirements || isLoadingForecast;
+  const isLoading =
+    buzzAccount.balanceLoading || isLoadingRequirements || isLoadingCompensationPool;
+  const forecasted = compensationPool
+    ? getForecastedValue(buzzAccount.balance, compensationPool)
+    : undefined;
 
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -200,7 +204,7 @@ const JoinCreatorProgramCard = () => {
         <h3 className="text-xl font-bold">Join the Creator Program</h3>
 
         <div className="flex gap-1">
-          <p>
+          <Text component="div">
             Your{' '}
             <CurrencyBadge
               currency={Currency.BUZZ}
@@ -209,10 +213,10 @@ const JoinCreatorProgramCard = () => {
             />{' '}
             could be worth{' '}
             <span className="font-bold text-yellow-6">
-              ${numberWithCommas(formatToLeastDecimals(forecast.forecastedEarning))}
+              ${numberWithCommas(formatToLeastDecimals(forecasted ?? 0))}
             </span>
             !
-          </p>
+          </Text>
           <LegacyActionIcon variant="subtle" color="gray" onClick={openEarningEstimateModal}>
             <IconInfoCircle size={14} />
           </LegacyActionIcon>
@@ -389,7 +393,7 @@ const BankBuzzCard = () => {
   };
 
   const maxBankable = banked?.cap?.cap
-    ? Math.min(banked.cap.cap - banked.total, buzzAccount.balance)
+    ? Math.floor(Math.min(banked.cap.cap - banked.total, buzzAccount.balance))
     : buzzAccount.balance;
 
   if (isLoading) {
@@ -409,7 +413,7 @@ const BankBuzzCard = () => {
         <div className="flex">
           <NumberInputWrapper
             label="Buzz"
-            labelProps={{ className: 'hidden' }}
+            labelProps={{ className: '!hidden' }}
             leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
             value={toBank ? toBank : undefined}
             min={10000}
@@ -425,6 +429,7 @@ const BankBuzzCard = () => {
               },
             }}
             step={1000}
+            allowDecimal={false}
           />
           <Tooltip label="Bank now!" position="top">
             <LegacyActionIcon
@@ -818,7 +823,7 @@ const WithdrawCashCard = () => {
             <div className="flex">
               <NumberInput
                 label="Cash to Withdraw"
-                labelProps={{ className: 'hidden' }}
+                labelProps={{ className: '!hidden' }}
                 leftSection={<CurrencyIcon currency={Currency.USD} size={18} />}
                 value={toWithdraw}
                 min={MIN_WITHDRAWAL_AMOUNT / 100}

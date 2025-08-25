@@ -1,6 +1,6 @@
 import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
@@ -69,7 +69,9 @@ export function LoginContent(args: {
       <div className="flex items-center justify-center">
         <Logo className="max-h-10" />
       </div>
-      <Title order={1} className="text-center text-xl font-bold">Sign Up or Log In</Title>
+      <Title order={1} className="text-center text-xl font-bold">
+        Sign Up or Log In
+      </Title>
       {message && (
         <Alert
           py="sm"

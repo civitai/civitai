@@ -4,7 +4,8 @@ import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generat
 import type { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { createVideoEnhancementStep } from '~/server/orchestrator/video-enhancement/video-enhancement';
 import { populateWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
-import { getRoundedWidthHeight, getUpscaleFactor } from '~/shared/constants/generation.constants';
+import { getUpscaleFactor } from '~/shared/constants/generation.constants';
+import { getRoundedWidthHeight } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export async function createWorkflowStep(args: GenerationSchema) {

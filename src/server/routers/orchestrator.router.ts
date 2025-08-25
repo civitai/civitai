@@ -58,7 +58,7 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  return next({ ctx: { ...ctx, user, token } });
+  return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 
 const experimentalMiddleware = middleware(async ({ ctx, next }) => {
@@ -278,7 +278,9 @@ export const orchestratorRouter = router({
   // #region [Image upload]
   imageUpload: orchestratorGuardedProcedure
     .input(z.object({ sourceImage: z.string() }))
-    .mutation(({ ctx, input }) => imageUpload({ token: ctx.token, ...input })),
+    .mutation(({ ctx, input }) =>
+      imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input })
+    ),
   // #endregion
 
   // #region [image training]

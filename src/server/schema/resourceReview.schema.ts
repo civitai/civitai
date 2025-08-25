@@ -1,6 +1,27 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
-import { numericString, sanitizedNullableString } from '~/utils/zod-helpers';
+import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
+import { numericString } from '~/utils/zod-helpers';
+
+export function sanitizedNullableString(options: santizeHtmlOptions) {
+  return z
+    .string()
+    .transform((val, ctx) => {
+      try {
+        if (!val) return;
+        const result = sanitizeHtml(val, options);
+        if (result.length === 0) return null;
+        return result;
+      } catch (e) {
+        ctx.addIssue({
+          code: 'custom',
+          message: (e as any).message,
+        });
+      }
+    })
+    .nullish();
+}
 
 export type GetUserResourceReviewInput = z.infer<typeof getUserResourceReviewSchema>;
 export const getUserResourceReviewSchema = z.object({

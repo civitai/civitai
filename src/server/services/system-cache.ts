@@ -178,41 +178,41 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
   return categories;
 }
 
-export async function getTagsNeedingReview() {
-  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_NEEDING_REVIEW);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+// export async function getTagsNeedingReview() {
+//   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_NEEDING_REVIEW);
+//   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
-  log('getting tags needing review');
-  const tags = await dbWrite.tag.findMany({
-    where: { name: { in: tagsNeedingReview } },
-    select: { id: true, name: true },
-  });
+//   log('getting tags needing review');
+//   const tags = await dbWrite.tag.findMany({
+//     where: { name: { in: tagsNeedingReview } },
+//     select: { id: true, name: true },
+//   });
 
-  await redis.set(REDIS_KEYS.SYSTEM.TAGS_NEEDING_REVIEW, JSON.stringify(tags), {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
+//   await redis.set(REDIS_KEYS.SYSTEM.TAGS_NEEDING_REVIEW, JSON.stringify(tags), {
+//     EX: SYSTEM_CACHE_EXPIRY,
+//   });
 
-  log('got tags needing review');
-  return tags;
-}
+//   log('got tags needing review');
+//   return tags;
+// }
 
-export async function getBlockedTags() {
-  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_BLOCKED);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+// export async function getBlockedTags() {
+//   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_BLOCKED);
+//   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
-  log('getting blocked tags');
-  const tags = await dbWrite.tag.findMany({
-    where: { nsfwLevel: NsfwLevel.Blocked },
-    select: { id: true, name: true },
-  });
+//   log('getting blocked tags');
+//   const tags = await dbWrite.tag.findMany({
+//     where: { nsfwLevel: NsfwLevel.Blocked },
+//     select: { id: true, name: true },
+//   });
 
-  await redis.set(REDIS_KEYS.SYSTEM.TAGS_BLOCKED, JSON.stringify(tags), {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
+//   await redis.set(REDIS_KEYS.SYSTEM.TAGS_BLOCKED, JSON.stringify(tags), {
+//     EX: SYSTEM_CACHE_EXPIRY,
+//   });
 
-  log('got blocked tags');
-  return tags;
-}
+//   log('got blocked tags');
+//   return tags;
+// }
 
 export async function getHomeExcludedTags() {
   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);

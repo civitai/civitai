@@ -9,7 +9,7 @@ import type {
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
 import { ApiError, SubscriptionItemNotification } from '@paddle/paddle-node-sdk';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { constants, HOLIDAY_PROMO_VALUE, specialCosmeticRewards } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';

@@ -1,6 +1,6 @@
 import { trpc } from '~/utils/trpc';
 import type { EventInput } from '~/server/schema/event.schema';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useQueryEvent = ({ event }: EventInput) => {

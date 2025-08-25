@@ -191,7 +191,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       loading: true,
       autoClose: false,
       title: 'Switching accounts...',
-      message: `-> ${user.username} (${user.id})`,
+      message: `-> ${user.username as string} (${user.id})`,
     });
 
     const tokenResp = await fetch(`${impersonateEndpoint}?${QS.stringify({ userId: user.id })}`);
@@ -312,7 +312,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           )}
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
-            <Menu.Item component={Link} href={`/user/${user.username}/manage-categories`}>
+            <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>
               Manage model categories
             </Menu.Item>
           )}

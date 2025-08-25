@@ -7,7 +7,9 @@ import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/co
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { getImageDimensions, imageToJpegBlob, resizeImage } from '~/utils/image-utils';
+import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
+import { getImageDimensions } from '~/utils/image-utils';
+
 import { uniqBy } from 'lodash-es';
 import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';
@@ -148,6 +150,15 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       }
     }, [_value, warnOnMissingAiMetadata, loaded]);
 
+    function handleRemoveItem() {
+      onChange?.();
+    }
+
+    function handleError() {
+      handleRemoveItem();
+      setError('Failed to load image');
+    }
+
     const _error = error ?? inputError;
     const showError = !!_error && _error !== timeoutError;
 
@@ -204,7 +215,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                   color="red"
                   variant="filled"
                   className="absolute right-0 top-0 rounded-md"
-                  onClick={() => handleChange()}
+                  onClick={handleRemoveItem}
                 />
               )}
               {loaded && (

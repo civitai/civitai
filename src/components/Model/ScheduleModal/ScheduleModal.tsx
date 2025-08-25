@@ -1,5 +1,5 @@
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useMemo } from 'react';
 import * as z from 'zod';
 

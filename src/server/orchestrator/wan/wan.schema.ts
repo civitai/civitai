@@ -293,6 +293,7 @@ function handleWan21Input(data: WithLoras<Wan21Transformed>) {
       height,
       model,
       sourceImage,
+      images,
     } as Wan21CivitaiVideoGenInput;
   } else {
     const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
@@ -303,6 +304,7 @@ function handleWan21Input(data: WithLoras<Wan21Transformed>) {
       aspectRatio,
       enablePromptExpansion: false,
       sourceImage,
+      images,
     } as Wan21FalVideoGenInput;
   }
 }

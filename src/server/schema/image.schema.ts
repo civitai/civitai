@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -20,6 +20,7 @@ import {
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
 import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
+import { usernameSchema } from '~/shared/zod/username.schema';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -245,21 +246,19 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
-  needsReview: z.string().nullish(),
-  reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum([
-    'minor',
-    'poi',
-    'reported',
-    'csam',
-    'blocked',
-    'tag',
-    'newUser',
-    'appeal',
-    'modRule',
-  ]),
+  reviewAction: z.enum(['unblock', 'block']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
+export type ImageModerationUnblockSchema = {
+  ids: number[];
+  moderatorId?: number;
+};
+export type ImageModerationBlockSchema = {
+  ids?: number[];
+  userId?: number;
+  include?: Array<'user-notification' | 'phash-block'>;
+  moderatorId?: number;
+};
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
@@ -341,7 +340,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.enum(MediaType)).optional(),
     useIndex: z.boolean().nullish(),
     userId: z.number().optional(),
-    username: zc.usernameValidationSchema.optional(),
+    username: usernameSchema.optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().default(false),
     requiringMeta: z.boolean().optional(),

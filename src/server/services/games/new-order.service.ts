@@ -34,7 +34,7 @@ import type {
 } from '~/server/schema/games/new-order.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
-import { moderateImages, updateImageNsfwLevel } from '~/server/services/image.service';
+import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -45,7 +45,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
@@ -208,14 +208,6 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   return smite;
 }
 
-const damnedReasonToReviewType = {
-  [NewOrderDamnedReason.InappropriateMinors]: 'minor',
-  [NewOrderDamnedReason.RealisticMinors]: 'csam',
-  [NewOrderDamnedReason.DepictsRealPerson]: 'poi',
-  [NewOrderDamnedReason.Bestiality]: 'reported',
-  [NewOrderDamnedReason.Other]: 'reported',
-} as const;
-
 export async function addImageRating({
   playerId,
   imageId,
@@ -295,11 +287,7 @@ export async function addImageRating({
     await valueInQueue.pool.reset({ id: imageId });
 
     if (rating === NsfwLevel.Blocked) {
-      await moderateImages({
-        ids: [imageId],
-        reviewAction: 'delete',
-        reviewType: damnedReason ? damnedReasonToReviewType[damnedReason] : 'reported',
-      });
+      await handleBlockImages({ ids: [imageId] });
     }
 
     await signalClient

@@ -29,14 +29,12 @@ export function ResourceSelectMultipleStandalone({
     ...props.options,
     excludeIds: resourceIds,
   };
+  const stringDependency = JSON.stringify(options);
+  const resourceSelectHandler = useMemo(() => ResourceSelectHandler(options), [stringDependency]);
 
-  const resourceSelectHandler = ResourceSelectHandler(options);
-
-  const stringDependency =
-    JSON.stringify(resourceSelectHandler.types) + JSON.stringify(resourceSelectHandler.baseModels);
   const _values = useMemo(
     () => resourceSelectHandler.getValues(value) ?? [],
-    [value, stringDependency]
+    [value, resourceSelectHandler]
   );
   const valuesRef = useRef(_values);
   valuesRef.current = _values;

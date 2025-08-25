@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -23,9 +23,7 @@ export const useCompensationPool = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(
     {},
-    {
-      enabled: !!currentUser,
-    }
+    { enabled: !!currentUser }
   );
 
   return {

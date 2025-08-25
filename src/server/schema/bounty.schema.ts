@@ -5,20 +5,17 @@ import {
   Currency,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
-import utc from 'dayjs/plugin/utc';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/base-model.constants';
-dayjs.extend(utc);
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -48,9 +45,7 @@ export const bountyDetailsSchema = z.object({
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
-  description: getSanitizedStringSchema().refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  description: z.string().nonempty(),
   unitAmount: z
     .number()
     .min(constants.bounties.minCreateAmount)

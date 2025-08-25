@@ -8,7 +8,7 @@ import {
   BountySort,
   BountyStatus,
   BuzzWithdrawalRequestSort,
-  ClubSort,
+  // ClubSort,
   CollectionSort,
   GenerationReactType,
   GenerationSort,
@@ -21,11 +21,11 @@ import {
   ToolSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getChangelogsInput } from '~/server/schema/changelog.schema';
-import { getInfiniteClubSchema } from '~/server/schema/club.schema';
+// import { getInfiniteClubSchema } from '~/server/schema/club.schema';
 import {
   Availability,
+  BountyType,
   CheckpointType,
   ImageGenerationProcess,
   MediaType,
@@ -130,28 +130,24 @@ const bountyFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.enum(BountySort).default(BountySort.EndingSoon),
   status: z.enum(BountyStatus).default(BountyStatus.Open),
-  ...getInfiniteBountySchema.omit({
-    query: true,
-    period: true,
-    sort: true,
-    limit: true,
-    cursor: true,
-    status: true,
-    // TODO.bounty: remove mode from omit once we allow split bounties
-    mode: true,
-  }).shape,
+  types: z.enum(BountyType).array().optional(),
+  nsfw: z.boolean().optional(),
+  engagement: z.enum(constants.bounties.engagementTypes).optional(),
+  userId: z.number().optional(),
+  baseModels: z.enum(baseModels).array().optional(),
+  excludedUserIds: z.number().array().optional(),
 });
 
-type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
-const clubFilterSchema = z.object({
-  sort: z.enum(ClubSort).default(ClubSort.Newest),
-  ...getInfiniteClubSchema.omit({
-    sort: true,
-    limit: true,
-    cursor: true,
-    nsfw: true,
-  }).shape,
-});
+// type ClubFilterSchema = z.infer<typeof clubFilterSchema>;
+// const clubFilterSchema = z.object({
+//   sort: z.enum(ClubSort).default(ClubSort.Newest),
+//   ...getInfiniteClubSchema.omit({
+//     sort: true,
+//     limit: true,
+//     cursor: true,
+//     nsfw: true,
+//   }).shape,
+// });
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
 const videoFilterSchema = imageFilterSchema;
@@ -199,7 +195,7 @@ type StorageState = {
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
-  clubs: ClubFilterSchema;
+  // clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
   generation: GenerationFilterSchema;
@@ -226,7 +222,7 @@ type StoreState = FilterState & {
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
-  setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
+  // setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
   setGenerationFilters: (filters: Partial<GenerationFilterSchema>) => void;
@@ -246,7 +242,7 @@ const localStorageSchemas: LocalStorageSchema = {
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
-  clubs: { key: 'clubs-filters', schema: clubFilterSchema },
+  // clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
   generation: { key: 'generation-filters', schema: generationFilterSchema },
@@ -323,8 +319,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
-      setClubFilters: (data) =>
-        set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
+      // setClubFilters: (data) =>
+      //   set((state) => handleLocalStorageChange({ key: 'clubs', data, state })),
       setVideoFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
       setThreadFilters: (data) =>
@@ -386,7 +382,7 @@ export function useSetFilters(type: FilterSubTypes) {
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
-          clubs: state.setClubFilters,
+          // clubs: state.setClubFilters,
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,
           generation: state.setGenerationFilters,

@@ -1,7 +1,7 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { ImportStatus } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { processImport } from '~/server/importers/importRouter';
 

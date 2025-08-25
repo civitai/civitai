@@ -4,7 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';

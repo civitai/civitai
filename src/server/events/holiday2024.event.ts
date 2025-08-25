@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { NotificationCategory } from '~/server/common/enums';
 import { cosmeticCache, cosmeticEntityCaches } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';

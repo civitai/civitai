@@ -237,10 +237,6 @@ export function getAirModelLink(identifier: string) {
   return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
 }
 
-export function toBase64(str: string) {
-  return Buffer.from(str).toString('base64');
-}
-
 export function safeDecodeURIComponent(str: string) {
   try {
     return decodeURIComponent(str);

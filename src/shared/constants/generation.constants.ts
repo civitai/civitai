@@ -21,7 +21,6 @@ import {
 } from '~/shared/constants/base-model.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
-import { getImageDimensions } from '~/utils/image-utils';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
@@ -40,29 +39,6 @@ export const generationServiceCookie = {
   name: 'generation-token',
   maxAge: 3600,
 };
-
-export function getRoundedWidthHeight({ width, height }: { width: number; height: number }) {
-  const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
-  const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
-  const ratio = Math.min(maxWidth / width, maxHeight / height);
-  return {
-    width: Math.ceil((width * ratio) / 64) * 64,
-    height: Math.ceil((height * ratio) / 64) * 64,
-  };
-}
-
-export async function getSourceImageFromUrl({ url, upscale }: { url: string; upscale?: boolean }) {
-  return getImageDimensions(url).then(({ width, height }) => {
-    let upscaleWidth: number | undefined;
-    let upscaleHeight: number | undefined;
-    if (upscale) {
-      const upscaled = getRoundedWidthHeight({ width: width * 1.5, height: height * 1.5 });
-      upscaleWidth = upscaled.width;
-      upscaleHeight = upscaled.height;
-    }
-    return { url, upscaleWidth, upscaleHeight, ...getRoundedWidthHeight({ width, height }) };
-  });
-}
 
 // #region [statuses]
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
@@ -223,7 +199,7 @@ export function getIsHiDream(baseModel?: string) {
 
 export function getIsFlux(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
-  return baseModelSetType === 'Flux1';
+  return baseModelSetType === 'Flux1' || baseModelSetType === 'FluxKrea';
 }
 
 export function getIsFluxStandard(modelId: number) {
@@ -250,6 +226,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   if (resourceBaseModels.some((baseModel) => baseModel === 'Pony')) return 'Pony';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SDXL')) return 'SDXL';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1')) return 'Flux1';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'FluxKrea')) return 'FluxKrea';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
     return 'Illustrious';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';

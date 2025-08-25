@@ -49,7 +49,8 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
+import { includesInappropriate, includesPoi } from '~/utils/metadata/audit';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';

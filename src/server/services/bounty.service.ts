@@ -7,7 +7,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import type { ManipulateType } from 'dayjs';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';

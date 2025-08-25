@@ -2,7 +2,8 @@ import type { TypographyStylesProviderProps } from '@mantine/core';
 import { useComputedColorScheme, lighten, darken } from '@mantine/core';
 import { useMemo } from 'react';
 
-import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
+import { needsColorSwap } from '~/utils/html-helpers';
+import { DEFAULT_ALLOWED_ATTRIBUTES, sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';

@@ -1,6 +1,6 @@
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL, constants } from '~/server/common/constants';

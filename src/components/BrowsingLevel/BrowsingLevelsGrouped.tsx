@@ -8,7 +8,7 @@ import {
   browsingLevelLabels,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import classes from './BrowsingLevelsGrouped.module.scss';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 

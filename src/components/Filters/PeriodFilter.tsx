@@ -81,7 +81,7 @@ function StatefulPeriodFilter({ type, disabled, hideMode, variant }: StatefulPro
     useCallback(
       (state) =>
         type !== 'collections' &&
-        type !== 'clubs' &&
+        // type !== 'clubs' &&
         type !== 'threads' &&
         type !== 'generation' &&
         type !== 'tools' &&

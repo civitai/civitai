@@ -300,7 +300,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
               <Table.Tr key={cap.tier}>
                 <Table.Td className="font-bold">{capitalize(cap.tier)} Member</Table.Td>
                 <Table.Td>
-                  <p className="flex">
+                  <p className="flex gap-1">
                     {cap.percentOfPeakEarning
                       ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
                       : ''}
@@ -350,7 +350,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p className="font-bold">
               Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-              {numberWithCommas(banked.cap.cap)}
+              {numberWithCommas(Math.floor(banked.cap.cap))}
             </p>
 
             {banked.cap.cap <= MIN_CAP && (

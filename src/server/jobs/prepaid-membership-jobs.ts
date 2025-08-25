@@ -1,5 +1,5 @@
 import { chunk } from 'lodash-es';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
@@ -325,51 +325,51 @@ export const processPrepaidMembershipTransitions = createJob(
       console.log(`Applying ${membershipUpdates.length} membership updates`);
 
       await dbWrite.$executeRaw`
-        UPDATE "CustomerSubscription" 
-        SET 
-          "productId" = CASE 
-            WHEN (updates.data ->> 'productId') IS NOT NULL 
-            THEN (updates.data ->> 'productId') 
+        UPDATE "CustomerSubscription"
+        SET
+          "productId" = CASE
+            WHEN (updates.data ->> 'productId') IS NOT NULL
+            THEN (updates.data ->> 'productId')
             ELSE "CustomerSubscription"."productId"
           END,
-          "priceId" = CASE 
-            WHEN (updates.data ->> 'priceId') IS NOT NULL 
-            THEN (updates.data ->> 'priceId') 
+          "priceId" = CASE
+            WHEN (updates.data ->> 'priceId') IS NOT NULL
+            THEN (updates.data ->> 'priceId')
             ELSE "CustomerSubscription"."priceId"
           END,
-          "currentPeriodStart" = CASE 
-            WHEN (updates.data ->> 'currentPeriodStart') IS NOT NULL 
-            THEN (updates.data ->> 'currentPeriodStart')::timestamp 
+          "currentPeriodStart" = CASE
+            WHEN (updates.data ->> 'currentPeriodStart') IS NOT NULL
+            THEN (updates.data ->> 'currentPeriodStart')::timestamp
             ELSE "CustomerSubscription"."currentPeriodStart"
           END,
-          "currentPeriodEnd" = CASE 
-            WHEN (updates.data ->> 'currentPeriodEnd') IS NOT NULL 
-            THEN (updates.data ->> 'currentPeriodEnd')::timestamp 
+          "currentPeriodEnd" = CASE
+            WHEN (updates.data ->> 'currentPeriodEnd') IS NOT NULL
+            THEN (updates.data ->> 'currentPeriodEnd')::timestamp
             ELSE "CustomerSubscription"."currentPeriodEnd"
           END,
-          "metadata" = CASE 
-            WHEN (updates.data ->> 'metadata') IS NOT NULL 
-            THEN (updates.data ->> 'metadata')::jsonb 
+          "metadata" = CASE
+            WHEN (updates.data ->> 'metadata') IS NOT NULL
+            THEN (updates.data ->> 'metadata')::jsonb
             ELSE "CustomerSubscription"."metadata"
           END,
-          "status" = CASE 
-            WHEN (updates.data ->> 'status') IS NOT NULL 
-            THEN (updates.data ->> 'status') 
+          "status" = CASE
+            WHEN (updates.data ->> 'status') IS NOT NULL
+            THEN (updates.data ->> 'status')
             ELSE "CustomerSubscription"."status"
           END,
-          "canceledAt" = CASE 
-            WHEN (updates.data ->> 'canceledAt') IS NOT NULL 
-            THEN (updates.data ->> 'canceledAt')::timestamp 
+          "canceledAt" = CASE
+            WHEN (updates.data ->> 'canceledAt') IS NOT NULL
+            THEN (updates.data ->> 'canceledAt')::timestamp
             ELSE "CustomerSubscription"."canceledAt"
           END,
-          "endedAt" = CASE 
-            WHEN (updates.data ->> 'endedAt') IS NOT NULL 
-            THEN (updates.data ->> 'endedAt')::timestamp 
+          "endedAt" = CASE
+            WHEN (updates.data ->> 'endedAt') IS NOT NULL
+            THEN (updates.data ->> 'endedAt')::timestamp
             ELSE "CustomerSubscription"."endedAt"
           END,
           "updatedAt" = NOW()
         FROM (
-          SELECT 
+          SELECT
             (value ->> 'id') AS id,
             value AS data
           FROM json_array_elements(${JSON.stringify(

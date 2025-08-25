@@ -1,2 +1,5 @@
-export * from './useHiddenPreferences';
-export * from './useToggleHiddenPreferences';
+export { useQueryHiddenPreferences, useHiddenPreferencesData } from './useHiddenPreferences';
+export {
+  useToggleHiddenPreferences,
+  useUpdateHiddenPreferences,
+} from './useToggleHiddenPreferences';

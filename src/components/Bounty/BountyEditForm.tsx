@@ -21,8 +21,14 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import classes from './BountyEditForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 const schema = updateBountyInputSchema
+  .extend({
+    description: getSanitizedStringSchema().refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty'),
+  })
   .refine((data) => data.startsAt < data.expiresAt, {
     error: 'Start date must be before expiration date',
     path: ['startsAt'],

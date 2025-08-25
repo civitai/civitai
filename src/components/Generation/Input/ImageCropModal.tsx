@@ -15,7 +15,7 @@ import type { Area, MediaSize, Point } from 'react-easy-crop';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import { getCroppedImg } from '~/utils/image-utils';
+import { getCroppedImg } from '~/shared/utils/canvas-utils';
 
 type AspectRatio = `${number}:${number}`;
 

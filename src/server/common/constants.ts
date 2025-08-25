@@ -756,6 +756,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  FluxKrea: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2068000,
+      name: '',
+      trainedWords: [],
+      baseModel: 'Flux.1 Krea',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 618692,
+        name: 'FLUX',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   Qwen: {
     aspectRatios: commonAspectRatios,
     checkpoint: {

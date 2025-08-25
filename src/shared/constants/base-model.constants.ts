@@ -19,7 +19,7 @@ const baseModelConfig = [
   { name: 'CogVideoX', type: 'image', group: 'CogVideoX' },
   { name: 'Flux.1 S', type: 'image', group: 'Flux1' },
   { name: 'Flux.1 D', type: 'image', group: 'Flux1' },
-  { name: 'Flux.1 Krea', type: 'image', group: 'Flux1' },
+  { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
@@ -329,9 +329,20 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
-        baseModels: ['Flux.1 S', 'Flux.1 D', 'Flux.1 Krea'],
+        baseModels: ['Flux.1 S', 'Flux.1 D'],
       },
     ],
+    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Flux.1 Krea'] }],
+  },
+  {
+    group: 'FluxKrea',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.1 Krea'],
+      },
+    ],
+    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Flux.1 D'] }],
   },
   {
     group: 'Flux1Kontext',
@@ -345,6 +356,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'HyV1',
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Hunyuan Video'] }],
   },
+  { group: 'Imagen4', support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Imagen4'] }] },
   {
     group: 'OpenAI',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],

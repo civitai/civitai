@@ -11,3 +11,4 @@ export declare const supportButtonRoyal: string;
 export declare const supportButtonSparkle: string;
 export declare const supportButtonText: string;
 export declare const supportHoverCard: string;
+export declare const supportButtonMediaQuery: string;

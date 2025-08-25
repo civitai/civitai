@@ -22,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -95,19 +95,8 @@ export function QueueItem({
   const { status } = request;
   const { params, resources = [] } = step;
 
-  let { images } = step;
+  const { images } = step;
   const failureReason = images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
-
-  if (filter && filter.marker) {
-    images = images.filter((image) => {
-      const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-      const feedback = step.metadata?.images?.[image.id]?.feedback;
-
-      if (filter.marker === 'favorited') return isFavorite;
-      else if (filter.marker === 'liked' || filter.marker === 'disliked')
-        return feedback === filter.marker;
-    });
-  }
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
