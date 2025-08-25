@@ -16,8 +16,8 @@ import { IconExternalLink } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
-import { getEnabledVendors, getVendorById, getDefaultVendor } from './vendors';
-import type { Vendor, BuzzCard, Membership } from './vendors';
+import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift-cards/vendors';
+import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
 import classes from './index.module.scss';
 
 // Reusable gift card component
