@@ -59,7 +59,7 @@ const PurchaseOptionsCard = () => {
             Don&apos;t have a code yet?
           </Text>
           <Text size="sm" c="dimmed" mb="md">
-            Purchase redeemable codes for Buzz or Memberships from our store
+            Purchase redeemable codes for Buzz or Memberships
           </Text>
           <Group gap="sm">
             <Button
@@ -74,12 +74,10 @@ const PurchaseOptionsCard = () => {
             </Button>
             <Button
               component="a"
-              href="https://buybuzz.io/"
+              href="/gift-cards"
               variant="outline"
               color="gray"
               size="sm"
-              target="_blank"
-              rel="noopener noreferrer"
               leftSection={<IconGift size={16} />}
             >
               Purchase Codes

@@ -48,6 +48,7 @@ import {
 import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
@@ -362,9 +363,8 @@ export const BuzzPurchaseImproved = ({
 
                     <Group gap="xs" wrap="nowrap" className={classes.giftCardButtons}>
                       <Anchor
-                        href="https://buybuzz.io/"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        component={NextLink}
+                        href="/gift-cards?type=buzz"
                         className={classes.giftCardCta}
                       >
                         <Group gap="xs">
@@ -890,9 +890,8 @@ export const BuzzPurchaseImproved = ({
                               <Text ta="center" size="xs" c="dimmed">
                                 Don&apos;t see a supported payment method?{' '}
                                 <Anchor
-                                  href="https://buybuzz.io/"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
+                                  component={NextLink}
+                                  href="/gift-cards?type=buzz"
                                   size="xs"
                                   className={classes.giftCardLink}
                                 >
