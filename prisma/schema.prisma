@@ -3611,6 +3611,7 @@ model Changelog {
   disabled    Boolean       @default(false)
   titleColor  String?
   sticky      Boolean       @default(false)
+  domain      DomainColor[] @default([all])
 }
 
 model NewOrderPlayer {

@@ -2715,6 +2715,7 @@ export interface Changelog {
   disabled: boolean;
   titleColor: string | null;
   sticky: boolean;
+  domain: DomainColor[];
 }
 
 export interface NewOrderPlayer {
