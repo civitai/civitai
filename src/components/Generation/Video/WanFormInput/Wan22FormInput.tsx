@@ -5,7 +5,11 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
-import { wan22AspectRatios, wan22Resolutions } from '~/server/orchestrator/wan/wan.schema';
+import {
+  maxFalAdditionalResources,
+  wan22AspectRatios,
+  wan22Resolutions,
+} from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
@@ -54,6 +58,7 @@ export function Wan22FormInput() {
             canGenerate: true,
           }}
           buttonLabel="Add additional resource"
+          limit={maxFalAdditionalResources}
         />
       )}
       <InputTextArea

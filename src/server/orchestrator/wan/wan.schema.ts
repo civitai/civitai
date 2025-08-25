@@ -34,6 +34,7 @@ export const wan22AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const wan22Resolutions = ['480p', '720p'] as const;
 export const wan225bAspectRatios = wan21FalAspectRatios;
 export const wan225bResolutions = ['480p', '580p', '720p'] as const;
+export const maxFalAdditionalResources = 2;
 
 type WanVersion = (typeof wanVersions)[number];
 export const wanVersionMap = new Map<WanVersion, BaseModelGroup[]>([
@@ -213,6 +214,24 @@ export const wanGenerationConfig = VideoGenerationConfig2({
         code: 'custom',
         message: 'Prompt is required',
         path: ['prompt'],
+      });
+    }
+
+    let exceedsMaxResources = false;
+    if (
+      data.version === 'v2.1' &&
+      data.resolution === '720p' &&
+      (data.resources ?? []).length > maxFalAdditionalResources
+    )
+      exceedsMaxResources = true;
+    else if (data.version !== 'v2.1' && (data.resources ?? []).length > maxFalAdditionalResources)
+      exceedsMaxResources = true;
+
+    if (exceedsMaxResources) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Maximum number of resources exceeded',
+        path: ['resources'],
       });
     }
   },
