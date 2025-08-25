@@ -338,22 +338,7 @@ export const BuzzPurchase = ({
                         Now selling Buzz Gift Cards
                       </Text>
                       <Group>
-                        <Anchor
-                          href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          size="xs"
-                          c="blue.3"
-                        >
-                          Learn More
-                        </Anchor>
-                        <Anchor
-                          href="https://buybuzz.io/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          size="xs"
-                          c="blue.3"
-                        >
+                        <Anchor href="/gift-cards?type=buzz" size="xs" c="blue.3">
                           Buy Now
                         </Anchor>
                       </Group>
@@ -649,12 +634,7 @@ export const BuzzPurchase = ({
             {liveFeatures.buzzGiftCards && (
               <Text align="center" size="xs" c="dimmed" mt="xs">
                 Don&rsquo;t see a supported payment method?{' '}
-                <Anchor
-                  href="https://buybuzz.io/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  size="xs"
-                >
+                <Anchor href="/gift-cards?type=buzz" size="xs">
                   Buy a gift card!
                 </Anchor>
               </Text>

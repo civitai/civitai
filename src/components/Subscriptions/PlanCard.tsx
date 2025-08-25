@@ -192,7 +192,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     component="a"
                     target="_blank"
-                    href="https://buybuzz.io/collections/memberships"
+                    href="/gift-cards?type=memberships"
                     rel="noopener noreferrer"
                     radius="xl"
                     {...btnProps}
