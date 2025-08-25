@@ -129,6 +129,8 @@ export async function resizeImage(
   options: {
     maxHeight?: number;
     maxWidth?: number;
+    minWidth?: number;
+    minHeight?: number;
   } = {}
 ) {
   const file = await fetchBlobAsFile(src);
@@ -137,7 +139,12 @@ export async function resizeImage(
   // const url = URL.createObjectURL(blob);
   const img = await createImageElement(file);
 
-  const { maxWidth = img.width, maxHeight = img.height } = options;
+  const { maxWidth = img.width, maxHeight = img.height, minWidth, minHeight } = options;
+
+  if (minWidth && img.width < minWidth)
+    throw new Error(`Does not meet minimum width requirement: ${minWidth}px`);
+  if (minHeight && img.height < minHeight)
+    throw new Error(`Does not meet minimum height requirement: ${minHeight}px`);
 
   const { width, height, mutated } = calculateAspectRatioFit(
     img.width,

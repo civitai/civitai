@@ -14,6 +14,7 @@ import {
   isOrchestratorUrl,
   maxOrchestratorImageFileSize,
   maxUpscaleSize,
+  minUploadSize,
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
@@ -212,29 +213,34 @@ export function SourceImageUploadMultiple({
       return copy;
     });
 
-    const response = await uploadOrchestratorImage(src, id);
-    setUploads((items) => {
-      const index = items.findIndex((x) => x.status === 'uploading' && x.url === previewUrl);
-      if (index > -1) {
-        if (response.blockedReason || !response.available || !response.url)
-          items[index] = {
-            status: 'error',
-            url: previewUrl,
-            src,
-            error: response.blockedReason ?? 'Unexpected image upload error',
-            id,
-          };
-        else
-          items[index] = {
-            status: 'complete',
-            url: response.url,
-            width: response.width,
-            height: response.height,
-            id,
-          };
-      }
-      return [...items];
-    });
+    try {
+      const response = await uploadOrchestratorImage(src, id);
+      setUploads((items) => {
+        const index = items.findIndex((x) => x.status === 'uploading' && x.url === previewUrl);
+        if (index > -1) {
+          if (response.blockedReason || !response.available || !response.url)
+            items[index] = {
+              status: 'error',
+              url: previewUrl,
+              src,
+              error: response.blockedReason ?? 'Unexpected image upload error',
+              id,
+            };
+          else
+            items[index] = {
+              status: 'complete',
+              url: response.url,
+              width: response.width,
+              height: response.height,
+              id,
+            };
+        }
+        return [...items];
+      });
+    } catch (e) {
+      setError((e as Error).message);
+      setUploads((items) => items.filter((x) => x.id !== id));
+    }
   }
 
   async function handleCrop(items: (string | Blob | File)[], action: 'add' | 'replace' = 'add') {
@@ -486,6 +492,8 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
     const resized = await resizeImage(src, {
       maxHeight: maxUpscaleSize,
       maxWidth: maxUpscaleSize,
+      minWidth: minUploadSize,
+      minHeight: minUploadSize,
     });
     const jpegBlob = await imageToJpegBlob(resized);
     body = await getBase64(jpegBlob);
