@@ -1,5 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import type {
   AnnouncementMetaSchema,
@@ -11,10 +12,8 @@ import { DomainColor } from '~/shared/utils/prisma/enums';
 
 const domainColors = Object.values(DomainColor);
 const announcementRedisKeys = ['', ...domainColors].map((domain) =>
-  domain
-    ? (`${REDIS_KEYS.CACHES.ANNOUNCEMENTS}:${domain as string}` as const)
-    : REDIS_KEYS.CACHES.ANNOUNCEMENTS
-);
+  domain ? `${REDIS_KEYS.CACHES.ANNOUNCEMENTS}:${domain}` : REDIS_KEYS.CACHES.ANNOUNCEMENTS
+) as RedisKeyTemplateCache[];
 
 export async function upsertAnnouncement(data: UpsertAnnouncementSchema) {
   const result = data.id
@@ -95,17 +94,15 @@ export async function getCurrentAnnouncements({
 }
 
 async function getAnnouncementsCached(domain?: DomainColor) {
-  const cacheKey = domain
+  const cacheKey: RedisKeyTemplateCache = domain
     ? `${REDIS_KEYS.CACHES.ANNOUNCEMENTS}:${domain as string}`
     : REDIS_KEYS.CACHES.ANNOUNCEMENTS;
 
-  // @ts-expect-error - Redis get accepts dynamic keys
   const cached = await redis.get(cacheKey);
   if (cached) return JSON.parse(cached) as AnnouncementDTO[];
 
   const announcements = await getAnnouncements(domain);
 
-  // @ts-expect-error - Redis set accepts dynamic keys
   await redis.set(cacheKey, JSON.stringify(announcements), {
     EX: CacheTTL.day,
   });
