@@ -20,6 +20,58 @@ import { getEnabledVendors, getVendorById, getDefaultVendor } from './vendors';
 import type { Vendor, BuzzCard, Membership } from './vendors';
 import classes from './index.module.scss';
 
+// Reusable gift card component
+interface GiftCardItemProps {
+  title: string;
+  image: string;
+  imageAlt: string;
+  primaryUrl: string;
+  price?: number;
+  className?: string;
+  actions: React.ReactNode;
+}
+
+const GiftCardItem = ({
+  title,
+  image,
+  imageAlt,
+  primaryUrl,
+  price,
+  className,
+  actions,
+}: GiftCardItemProps) => (
+  <Card shadow="sm" padding="lg" radius="md" withBorder className={className}>
+    <Text fw={700} size="lg" ta="center">
+      {title}
+    </Text>
+    <Card.Section p="sm">
+      <UnstyledButton
+        component="a"
+        href={primaryUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ display: 'block' }}
+      >
+        <Image
+          src={image}
+          alt={imageAlt}
+          height={200}
+          fit="contain"
+          style={{ cursor: 'pointer' }}
+        />
+      </UnstyledButton>
+    </Card.Section>
+    <Stack mt="md" gap="sm">
+      {price && (
+        <Text size="xl" fw={700} c="blue" ta="center">
+          ${price}
+        </Text>
+      )}
+      {actions}
+    </Stack>
+  </Card>
+);
+
 export default function GiftCardsPage() {
   const router = useRouter();
   const [selectedVendor, setSelectedVendor] = useState<Vendor | undefined>();
@@ -98,7 +150,7 @@ export default function GiftCardsPage() {
                 <Title order={1} mb="md">
                   Gift Cards & Memberships
                 </Title>
-                <Text color="dimmed" size="lg">
+                <Text c="dimmed" size="lg">
                   Purchase Buzz gift cards and membership packages from our trusted vendors
                 </Text>
               </div>
@@ -141,33 +193,14 @@ export default function GiftCardsPage() {
               <Grid gutter="lg">
                 {selectedVendor.products.buzzCards.map((card) => (
                   <Grid.Col key={card.amount} span={{ base: 12, sm: 6, md: 4 }}>
-                    <Card shadow="sm" padding="lg" radius="md" withBorder className={classes.card}>
-                      <Text fw={700} size="lg" ta="center">
-                        {formatBuzzAmount(card.amount)} Buzz
-                      </Text>
-                      <Card.Section p="sm">
-                        <UnstyledButton
-                          component="a"
-                          href={card.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ display: 'block' }}
-                        >
-                          <Image
-                            src={card.image}
-                            alt={`${formatBuzzAmount(card.amount)} Buzz Gift Card`}
-                            height={200}
-                            fit="contain"
-                            style={{ cursor: 'pointer' }}
-                          />
-                        </UnstyledButton>
-                      </Card.Section>
-                      <Stack mt="md" gap="sm">
-                        {card.price && (
-                          <Text size="xl" fw={700} c="blue" ta="center">
-                            ${card.price}
-                          </Text>
-                        )}
+                    <GiftCardItem
+                      title={`${formatBuzzAmount(card.amount)} Buzz`}
+                      image={card.image}
+                      imageAlt={`${formatBuzzAmount(card.amount)} Buzz Gift Card`}
+                      primaryUrl={card.url}
+                      price={card.price}
+                      className={classes.card}
+                      actions={
                         <Button
                           component="a"
                           href={card.url}
@@ -178,8 +211,8 @@ export default function GiftCardsPage() {
                         >
                           Buy Now
                         </Button>
-                      </Stack>
-                    </Card>
+                      }
+                    />
                   </Grid.Col>
                 ))}
               </Grid>
@@ -195,34 +228,13 @@ export default function GiftCardsPage() {
               <Grid gutter="lg">
                 {selectedVendor.products.memberships.map((membership) => (
                   <Grid.Col key={membership.tier} span={{ base: 12, md: 4 }}>
-                    <Card
-                      shadow="sm"
-                      padding="lg"
-                      radius="md"
-                      withBorder
+                    <GiftCardItem
+                      title={`${membership.tier} Membership`}
+                      image={membership.image}
+                      imageAlt={`${membership.tier} Membership`}
+                      primaryUrl={membership.durations[0]?.url}
                       className={classes.membershipCard}
-                    >
-                      <Text fw={700} size="lg" ta="center">
-                        {membership.tier} Membership
-                      </Text>
-                      <Card.Section p="sm">
-                        <UnstyledButton
-                          component="a"
-                          href={membership.durations[0]?.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ display: 'block' }}
-                        >
-                          <Image
-                            src={membership.image}
-                            alt={`${membership.tier} Membership`}
-                            height={200}
-                            fit="contain"
-                            style={{ cursor: 'pointer' }}
-                          />
-                        </UnstyledButton>
-                      </Card.Section>
-                      <Stack mt="md" gap="md">
+                      actions={
                         <Group gap="xs" grow>
                           {membership.durations.map((duration) => (
                             <Button
@@ -238,8 +250,8 @@ export default function GiftCardsPage() {
                             </Button>
                           ))}
                         </Group>
-                      </Stack>
-                    </Card>
+                      }
+                    />
                   </Grid.Col>
                 ))}
               </Grid>
