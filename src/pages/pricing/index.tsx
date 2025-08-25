@@ -191,6 +191,7 @@ export default function Pricing() {
                     </Text>
                     <Group gap="sm" wrap="nowrap">
                       <Anchor
+                        component={NextLink}
                         href="/gift-cards?type=memberships"
                         className={classes.prepaidButton}
                       >
@@ -231,6 +232,7 @@ export default function Pricing() {
                       )}
                       {liveFeatures.buzzGiftCards && (
                         <Anchor
+                          component={NextLink}
                           size="xs"
                           href="/gift-cards"
                           c="yellow.7"

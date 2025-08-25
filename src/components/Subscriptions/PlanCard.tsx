@@ -190,10 +190,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   </Button>
                 ) : redirectToPrepaidPage ? (
                   <Button
-                    component="a"
-                    target="_blank"
+                    component={Link}
                     href="/gift-cards?type=memberships"
-                    rel="noopener noreferrer"
                     radius="xl"
                     {...btnProps}
                   >
