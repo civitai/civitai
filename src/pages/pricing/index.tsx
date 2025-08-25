@@ -191,9 +191,8 @@ export default function Pricing() {
                     </Text>
                     <Group gap="sm" wrap="nowrap">
                       <Anchor
-                        target="_blank"
-                        href="https://buybuzz.io/collections/memberships"
-                        rel="noopener noreferrer"
+                        component={NextLink}
+                        href="/gift-cards?type=memberships"
                         className={classes.prepaidButton}
                       >
                         <Text size="sm" fw={600}>
@@ -233,10 +232,9 @@ export default function Pricing() {
                       )}
                       {liveFeatures.buzzGiftCards && (
                         <Anchor
+                          component={NextLink}
                           size="xs"
-                          href="https://buybuzz.io/"
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          href="/gift-cards"
                           c="yellow.7"
                         >
                           Buy a Gift Card
