@@ -1,9 +1,9 @@
-import { ActionIcon, Alert, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
+import { Alert, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -13,7 +13,7 @@ import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function NewChat() {
-  const { state, setState } = useChatContext();
+  const selectedUsers = useChatStore((state) => state.selectedUsers);
   const [isCreating, setIsCreating] = useState(false);
   const [acking, setAcking] = useState(false);
   const currentUser = useCurrentUser();
@@ -63,12 +63,11 @@ export function NewChat() {
           return [{ ...data, createdAt: new Date(data.createdAt) }, ...old];
         });
 
-        setState((prev) => ({
-          ...prev,
+        useChatStore.setState({
           isCreating: false,
           selectedUsers: [],
           existingChatId: data.id,
-        }));
+        });
       }
 
       setIsCreating(false);
@@ -102,7 +101,7 @@ export function NewChat() {
       return;
     }
     mutate({
-      userIds: [...state.selectedUsers.map((u) => u.id!), currentUser.id],
+      userIds: [...selectedUsers.map((u) => u.id!), currentUser.id],
     });
   };
 
@@ -143,7 +142,7 @@ export function NewChat() {
           disableInitialSearch
           supportedIndexes={['users']}
           onItemSelected={(_entity, item) => {
-            const newUsers = [...state.selectedUsers, item as SearchIndexDataMap['users'][number]];
+            const newUsers = [...selectedUsers, item as SearchIndexDataMap['users'][number]];
             // TODO make this a constant
             if (newUsers.length > 9) {
               showErrorNotification({
@@ -153,33 +152,32 @@ export function NewChat() {
               });
               return;
             }
-            setState((prev) => ({ ...prev, selectedUsers: newUsers }));
+            useChatStore.setState({ selectedUsers: newUsers });
           }}
           dropdownItemLimit={25}
           showIndexSelect={false}
           startingIndex="users"
           placeholder="Select users"
-          filters={[{ id: currentUser?.id }, ...state.selectedUsers]
+          filters={[{ id: currentUser?.id }, ...selectedUsers]
             .map((x) => `AND NOT id=${x.id}`)
             .join(' ')
             .slice(4)}
         />
       </Box>
       <Box p="sm" style={{ flexGrow: 1 }}>
-        {state.selectedUsers.length === 0 ? (
+        {selectedUsers.length === 0 ? (
           <Center mt="md">
             <Text>Select at least 1 user above</Text>
           </Center>
         ) : (
           <Group>
-            {state.selectedUsers.map((u) => (
+            {selectedUsers.map((u) => (
               <Group key={u.id}>
                 <UserAvatar user={u} size="md" withUsername />
                 <LegacyActionIcon
                   title="Remove user"
                   onClick={() =>
-                    setState((prev) => ({
-                      ...prev,
+                    useChatStore.setState((state) => ({
                       selectedUsers: state.selectedUsers.filter((su) => su.id !== u.id),
                     }))
                   }
@@ -198,13 +196,13 @@ export function NewChat() {
           variant="light"
           color="gray"
           onClick={() => {
-            setState((prev) => ({ ...prev, isCreating: false, selectedUsers: [] }));
+            useChatStore.setState({ isCreating: false, selectedUsers: [] });
           }}
         >
           Cancel
         </Button>
         <Button
-          disabled={isCreating || state.selectedUsers.length === 0 || currentUser?.muted}
+          disabled={isCreating || selectedUsers.length === 0 || currentUser?.muted}
           onClick={handleNewChat}
         >
           Start Chat
