@@ -1,6 +1,4 @@
-import type { InputWrapperProps } from '@mantine/core';
 import {
-  Input,
   Alert,
   useMantineTheme,
   useComputedColorScheme,
@@ -32,6 +30,7 @@ import { IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
+import { create } from 'zustand';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -151,6 +150,7 @@ export function SourceImageUploadMultiple({
     const item = previewItems[index];
 
     if (item.id) {
+      setImageUploading(item.id, false);
       setUploads((state) => state.filter((x) => x.id !== item.id));
       const linkedIdIndex = previewImages?.findIndex((x) => x.linkToId === item.id);
       if (value && linkedIdIndex > -1) {
@@ -203,15 +203,16 @@ export function SourceImageUploadMultiple({
 
   async function handleUpload(src: string | Blob | File, originUrl?: string) {
     const previewUrl = originUrl ?? (typeof src !== 'string' ? URL.createObjectURL(src) : src);
+    const id = getRandomId();
     setUploads((items) => {
       const copy = [...items];
       const index = copy.findIndex((x) => x.url === previewUrl);
       if (index > -1) copy[index].status = 'uploading';
-      else copy.push({ status: 'uploading', url: previewUrl, id: getRandomId() });
+      else copy.push({ status: 'uploading', url: previewUrl, id });
       return copy;
     });
 
-    const response = await uploadOrchestratorImage(src);
+    const response = await uploadOrchestratorImage(src, id);
     setUploads((items) => {
       const index = items.findIndex((x) => x.status === 'uploading' && x.url === previewUrl);
       if (index > -1) {
@@ -221,7 +222,7 @@ export function SourceImageUploadMultiple({
             url: previewUrl,
             src,
             error: response.blockedReason ?? 'Unexpected image upload error',
-            id: getRandomId(),
+            id,
           };
         else
           items[index] = {
@@ -229,7 +230,7 @@ export function SourceImageUploadMultiple({
             url: response.url,
             width: response.width,
             height: response.height,
-            id: getRandomId(),
+            id,
           };
       }
       return [...items];
@@ -477,7 +478,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   );
 };
 
-export async function uploadOrchestratorImage(src: string | Blob | File) {
+export async function uploadOrchestratorImage(src: string | Blob | File, id: string) {
   let body: string;
   if (typeof src === 'string' && isOrchestratorUrl(src)) {
     body = src;
@@ -490,8 +491,17 @@ export async function uploadOrchestratorImage(src: string | Blob | File) {
     body = await getBase64(jpegBlob);
   }
   try {
+    setImageUploading(id, true);
     const response = await fetch('/api/orchestrator/uploadImage', { method: 'POST', body });
-    if (!response.ok) throw new Error(response.statusText);
+    setImageUploading(id, false);
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error(await response.text());
+      } else {
+        throw new Error(response.statusText);
+      }
+    }
     const blob: ImageBlob = await response.json();
     const size = await getImageDimensions(src);
     return { ...blob, ...size };
@@ -507,3 +517,14 @@ export async function uploadOrchestratorImage(src: string | Blob | File) {
 }
 
 export const InputSourceImageUploadMultiple = withController(SourceImageUploadMultiple);
+
+export const useImagesUploadingStore = create<{ uploading: string[] }>(() => ({ uploading: [] }));
+function setImageUploading(id: string, uploading: boolean) {
+  if (uploading) {
+    useImagesUploadingStore.setState((state) => ({ uploading: [...state.uploading, id] }));
+  } else {
+    useImagesUploadingStore.setState((state) => ({
+      uploading: state.uploading.filter((id) => id !== id),
+    }));
+  }
+}

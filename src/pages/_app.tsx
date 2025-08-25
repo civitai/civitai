@@ -90,6 +90,7 @@ type CustomAppProps = {
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
+  allowMatureContent: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -105,6 +106,7 @@ function MyApp(props: CustomAppProps) {
       hasAuthCookie,
       settings,
       region,
+      allowMatureContent,
       ...pageProps
     },
   } = props;
@@ -132,7 +134,13 @@ function MyApp(props: CustomAppProps) {
   );
 
   return (
-    <AppProvider seed={seed} canIndex={canIndex} settings={settings} region={region}>
+    <AppProvider
+      seed={seed}
+      canIndex={canIndex}
+      settings={settings}
+      region={region}
+      allowMatureContent={allowMatureContent}
+    >
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
@@ -283,6 +291,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     (appContext.ctx.req as any)['session'] = session;
   }
   const region = getRegion(request);
+  const allowMatureContent =
+    appContext.ctx.req?.headers.host === env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE;
 
   return {
     pageProps: {
@@ -297,6 +307,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       seed: Date.now(),
       hasAuthCookie,
       region,
+      allowMatureContent,
     },
     ...appProps,
   };

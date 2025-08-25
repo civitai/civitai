@@ -34,6 +34,7 @@ import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
+import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -188,7 +189,9 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const isUploadingImageValue = useIsMutating({
     mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
   });
-  const isUploadingImage = isUploadingImageValue === 1;
+  const isUploadingMultiple = useImagesUploadingStore((state) => state.uploading.length > 0);
+  console.log({ isUploadingMultiple });
+  const isUploadingImage = isUploadingImageValue === 1 || isUploadingMultiple;
   const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
     { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage && canQuery }
