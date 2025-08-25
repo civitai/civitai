@@ -268,7 +268,7 @@ function ResourceSelectModalContent() {
 
   const meiliFilters: string[] = [
     // Default filter for visibility:
-    selectSource === 'auction'
+    selectSource === 'auction' || !currentUser?.id
       ? `availability != ${Availability.Private}`
       : `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
   ];
@@ -322,7 +322,7 @@ function ResourceSelectModalContent() {
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources?.map((r: any) => r.model.id))
+          steps.flatMap(({ resources }) => resources?.map((r) => r.model.id))
         );
         meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }
@@ -598,7 +598,7 @@ function ResourceHitList({
         <div
           className={clsx(
             searchLayoutClasses.grid,
-            'grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
+            '!grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
           )}
         >
           <div className={cardClasses.winnerFirst}>
@@ -714,12 +714,13 @@ const TopRightIcons = ({
         component="a"
         key="lookup-model"
         target="_blank"
+        rel="nofollow noreferrer"
         leftSection={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
         onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`, '_blank');
+          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL as string}${data.id}`, '_blank');
         }}
       >
         Lookup Model
