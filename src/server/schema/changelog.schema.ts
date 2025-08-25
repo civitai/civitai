@@ -1,6 +1,8 @@
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { ChangelogType } from '~/shared/utils/prisma/enums';
+import { ChangelogType, DomainColor } from '~/shared/utils/prisma/enums';
+
+export const domainColorEnum = z.enum(DomainColor);
 
 export type GetChangelogsInput = z.infer<typeof getChangelogsInput>;
 export const getChangelogsInput = infiniteQuerySchema.extend({
@@ -11,6 +13,7 @@ export const getChangelogsInput = infiniteQuerySchema.extend({
   dateAfter: z.date().optional(),
   types: z.enum(ChangelogType).array().optional(),
   tags: z.string().array().optional(),
+  domain: domainColorEnum.optional(),
 });
 
 export type CreateChangelogInput = z.infer<typeof createChangelogInput>;
@@ -28,6 +31,7 @@ export const createChangelogInput = z.object({
   tags: z.string().array().optional(),
   disabled: z.boolean().optional().default(false),
   sticky: z.boolean().optional().default(false),
+  domain: z.array(domainColorEnum).nonempty().default([DomainColor.all]),
 });
 
 export type UpdateChangelogInput = z.infer<typeof updateChangelogInput>;

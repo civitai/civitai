@@ -7,6 +7,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import type { ExtendedUser } from '~/types/next-auth';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 
@@ -221,5 +222,16 @@ export function noEdgeCache(opts?: { authedOnly?: boolean }) {
 
 export const prodOnly = middleware(({ next }) => {
   if (!isProd) throw new TRPCError({ code: 'FORBIDDEN', message: 'Not available in development' });
+  return next();
+});
+
+export const applyRequestDomainColor = middleware(async (options) => {
+  const { next, ctx } = options;
+  const input = options.input as { domain?: string };
+  const domainColor = getRequestDomainColor(ctx.req);
+
+  if (input.domain && input.domain !== domainColor) input.domain = domainColor;
+  else input.domain = domainColor;
+
   return next();
 });

@@ -7,13 +7,16 @@ import type {
   UpdateChangelogInput,
 } from '~/server/schema/changelog.schema';
 import { throwDbError } from '~/server/utils/errorHandling';
+import { DomainColor } from '~/shared/utils/prisma/enums';
 
 export type Changelog = AsyncReturnType<typeof getChangelogs>['items'][number];
 export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: boolean }) => {
-  const { hasFeature, limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags } = input;
+  const { hasFeature, limit, cursor, sortDir, search, dateBefore, dateAfter, types, tags, domain } =
+    input;
 
   const where: Prisma.ChangelogWhereInput = {
     sticky: false,
+    domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
   };
 
   if (!hasFeature) {
@@ -76,6 +79,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
     tags: true,
     disabled: true,
     sticky: true,
+    domain: true,
   });
 
   try {
@@ -101,6 +105,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
 
     const whereSticky: Prisma.ChangelogWhereInput = {
       sticky: true,
+      domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
     };
 
     if (!hasFeature) {
@@ -117,14 +122,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
         : await dbRead.changelog.findMany({
             select,
             where: whereSticky,
-            orderBy: [
-              {
-                effectiveAt: 'desc',
-              },
-              {
-                id: 'desc',
-              },
-            ],
+            orderBy: [{ effectiveAt: 'desc' }, { id: 'desc' }],
           });
 
     const retData = [...stickyItems, ...data];
@@ -169,24 +167,31 @@ export const deleteChangelog = async ({ id }: DeleteChangelogInput) => {
   }
 };
 
-export const getAllTags = async () => {
+export const getAllTags = async (input?: { domain?: DomainColor }) => {
+  const { domain } = input ?? {};
+
   const data = await dbRead.changelog.findMany({
-    select: {
-      tags: true,
-    },
+    select: { tags: true },
     where: {
       disabled: false,
       effectiveAt: { lte: new Date() },
+      domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
     },
   });
 
   return [...new Set(data.flatMap((x) => x.tags ?? []))];
 };
 
-export const getLatestChangelog = async () => {
+export const getLatestChangelog = async (input?: { domain?: DomainColor }) => {
+  const { domain } = input ?? {};
+
   const cl = await dbRead.changelog.findFirst({
     select: { effectiveAt: true },
-    where: { disabled: false, effectiveAt: { lte: new Date() } },
+    where: {
+      disabled: false,
+      effectiveAt: { lte: new Date() },
+      domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
+    },
     orderBy: { effectiveAt: 'desc' },
     // take: 1,
   });
