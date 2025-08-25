@@ -208,6 +208,7 @@ export function UserAvatar({
                     id={avatarUser.id}
                     username={avatarUser.username}
                     image={image}
+                    width={size === 'xl' ? 450 : undefined}
                   />
                 )}
               </Paper>
