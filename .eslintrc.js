@@ -1,27 +1,21 @@
 module.exports = {
+  root: true,
   parser: '@typescript-eslint/parser',
   parserOptions: {
-    project: './tsconfig.json',
+    ecmaVersion: 'latest',
+    sourceType: 'module',
   },
-  plugins: [
-    '@typescript-eslint',
-    'prettier',
-    // 'import',
-  ],
+  plugins: ['@typescript-eslint', 'prettier'],
   extends: [
     'next/core-web-vitals',
-    // 'plugin:@next/next/recommended',
-    'plugin:@typescript-eslint/recommended',
+    'plugin:@typescript-eslint/recommended', // lightweight rules (no type info)
     'plugin:tailwindcss/recommended',
-    // 'plugin:import/recommended',
-    // 'plugin:import/typescript',
     'prettier',
   ],
   rules: {
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
-    // turn on errors for missing imports
-    // 'import/no-unresolved': 'error',
+
     // prettier overrides
     'prettier/prettier': [
       'error',
@@ -32,16 +26,20 @@ module.exports = {
         trailingComma: 'es5',
       },
     ],
+
+    // rule tweaks
     'no-use-before-define': 'off',
     '@typescript-eslint/no-use-before-define': 'off',
-    // allows ignoring ts checks
     '@typescript-eslint/ban-ts-comment': 'off',
-    // allows destructuring to ignore fields
     '@typescript-eslint/no-unused-vars': ['warn', { ignoreRestSiblings: true }],
     '@typescript-eslint/no-namespace': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/consistent-type-imports': ['error'],
-    '@typescript-eslint/restrict-template-expressions': ['error', { allowBoolean: true }],
+    '@typescript-eslint/restrict-template-expressions': [
+      'error',
+      { allowBoolean: true },
+    ],
+
     'tailwindcss/no-custom-classname': [
       'warn',
       {
@@ -49,15 +47,20 @@ module.exports = {
       },
     ],
   },
-  // settings: {
-  //   'import/parsers': {
-  //     '@typescript-eslint/parser': ['.ts', '.tsx']
-  //   },
-  //   'import/resolver': {
-  //     typescript: {
-  //       // always try to resolve types under `<root>@types` directory even it doesn't contain any source code, like `@types/unist`
-  //       alwaysTryTypes: true,
-  //     }
-  //   }
-  // }
+
+  overrides: [
+    {
+      files: ['*.ts', '*.tsx'],
+      parserOptions: {
+        project: './tsconfig.json',
+      },
+      // extends: ['plugin:@typescript-eslint/recommended-requiring-type-checking'],
+      rules: {
+        // put only the rules that *need* type info here
+        // example:
+        // '@typescript-eslint/no-floating-promises': 'error',
+        // '@typescript-eslint/no-misused-promises': 'error',
+      },
+    },
+  ],
 };
