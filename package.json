@@ -184,6 +184,7 @@
     "react-blurhash": "^0.2.0",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.3.1",
+    "react-draggable": "^4.5.0",
     "react-easy-crop": "^5.4.1",
     "react-highlight-within-textarea": "^3.2.1",
     "react-hook-form": "^7.59.0",

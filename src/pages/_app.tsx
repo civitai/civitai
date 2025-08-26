@@ -11,6 +11,7 @@ import Head from 'next/head';
 import type { ReactElement } from 'react';
 import React from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
+import { AdLayerMockupProvider } from '~/components/Ads/AdLayerMockup/AdLayerMockupProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
@@ -184,6 +185,8 @@ function MyApp(props: CustomAppProps) {
                                                         <DialogProvider />
                                                         <RoutedDialogProvider />
                                                       </CustomModalsProvider>
+                                                      {/* Ad Layer Mockup - Enable with ?adLayerMockup=true or on /demo/ad-layer */}
+                                                      <AdLayerMockupProvider />
                                                     </BaseLayout>
                                                   </AuctionContextProvider>
                                                 </ToursProvider>

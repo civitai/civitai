@@ -54,13 +54,13 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     rel: 'nofollow noreferrer',
     children: 'Status',
   },
-  {
-    key: 'wiki',
-    href: '/wiki',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
-    children: 'Wiki',
-  },
+  // {
+  //   key: 'wiki',
+  //   href: '/wiki',
+  //   target: '_blank',
+  //   rel: 'nofollow noreferrer',
+  //   children: 'Wiki',
+  // },
   {
     key: 'education',
     href: '/education',
@@ -74,11 +74,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     color: 'blue',
     children: 'Creators',
   },
-  {
-    key: 'careers',
-    href: '/content/careers',
-    children: 'Careers',
-  },
+  // {
+  //   key: 'careers',
+  //   href: '/content/careers',
+  //   children: 'Careers',
+  // },
   {
     key: '2257',
     href: '/content/2257',
