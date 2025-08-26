@@ -27,6 +27,7 @@ import {
   IconExternalLink,
 } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
+import { Fragment } from 'react';
 import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
@@ -52,7 +53,9 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
-import { BuzzZkp2pOnrampButton } from '~/components/Buzz/BuzzZkp2pOnrampButton';
+import { BuzzZkp2pButton } from '~/components/Buzz/BuzzZkp2pButton';
+import { getAvailablePaymentMethods } from '~/components/Buzz/zkp2p-config';
+import { useAppContext } from '~/providers/AppProvider';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -249,6 +252,7 @@ export const BuzzPurchaseImproved = ({
   const features = useFeatureFlags();
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
+  const { region } = useAppContext();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
@@ -263,6 +267,11 @@ export const BuzzPurchaseImproved = ({
     ? customAmount * 10
     : selectedPrice?.buzzAmount ?? (selectedPrice?.unitAmount ?? 0) * 10;
   const liveFeatures = useLiveFeatureFlags();
+  
+  const availableZkp2pMethods = useMemo(() => {
+    if (!features.zkp2pPayments) return [];
+    return getAvailablePaymentMethods(region?.countryCode);
+  }, [features.zkp2pPayments, region?.countryCode]);
 
   // Calculate total buzz including bonuses
   const buzzCalculation = useBuzzPurchaseCalculation(buzzAmount);
@@ -815,15 +824,16 @@ export const BuzzPurchaseImproved = ({
                       {/* Payment Methods */}
                       <div>
                         <Group gap="sm" wrap="wrap">
-                          {features.zkp2pPayments && (
-                            <BuzzZkp2pOnrampButton
-                              unitAmount={unitAmount}
+                          {availableZkp2pMethods.map(({ method, ...config }) => (
+                            <BuzzZkp2pButton
+                              key={method}
+                              method={method}
+                              config={config}
+                              amount={unitAmount}
                               buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
-                              onPurchaseSuccess={onPurchaseSuccess}
                               disabled={!ctaEnabled}
-                              purchaseSuccessMessage={purchaseSuccessMessage}
                             />
-                          )}
+                          ))}
 
                           {features.coinbasePayments && (
                             <>
