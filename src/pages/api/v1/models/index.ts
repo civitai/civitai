@@ -16,6 +16,7 @@ import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
@@ -24,6 +25,7 @@ import { Flags } from '~/shared/utils/flags';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient } from '~/server/meilisearch/client';
 import { isDefined } from '~/utils/type-guards';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 type Metadata = {
   currentPage?: number;
@@ -66,7 +68,11 @@ export default MixedAuthEndpoint(async function handler(
 
   const parsedParams = modelsEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
-  const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
+
+  // Check if request is from restricted region and override browsing level
+  const region = getRegion(req);
+  let browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
 
   // Handle pagination
   const { limit, page, cursor, query, ids: queryIds, ...data } = parsedParams.data;
