@@ -16,7 +16,7 @@ import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type Ctx = { token: string; userId: number; experimental?: boolean };
+type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent: boolean };
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
@@ -41,6 +41,7 @@ export async function generate({
   creatorTip = 0,
   tags = [],
   experimental,
+  allowMatureContent,
   isGreen,
   ...args
 }: GenerationSchema & Ctx & { isGreen?: boolean }) {
@@ -96,6 +97,7 @@ export async function generate({
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
       nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   });
 
@@ -108,7 +110,11 @@ export async function whatIf(args: GenerationSchema & Ctx) {
 
   const workflow = await submitWorkflow({
     token: args.token,
-    body: { steps: [step], experimental: args.experimental },
+    body: {
+      steps: [step],
+      experimental: args.experimental,
+      allowMatureContent: args.allowMatureContent,
+    },
     query: { whatif: true },
   });
 

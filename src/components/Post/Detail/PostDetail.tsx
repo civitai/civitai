@@ -150,7 +150,7 @@ export function PostDetailContent({ postId }: Props) {
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
-  const sidebarEnabled = useContainerSmallerThan(1500);
+  const sidebarEnabled = true;
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
@@ -187,7 +187,7 @@ export function PostDetailContent({ postId }: Props) {
         isLoading={!!(post?.collectionId && isLoadingPostCollection)}
       >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
-        <RenderAdUnitOutstream minContainerWidth={1600} />
+        <RenderAdUnitOutstream minContainerWidth={1964} />
         <ReactionSettingsProvider
           settings={{
             hideReactions: collectionItems.some((ci) =>
@@ -441,7 +441,7 @@ export function PostDetailContent({ postId }: Props) {
               </Stack>
             </div>
             <div
-              className="relative hidden w-[336px] flex-col gap-3 @lg:my-3 @lg:flex @[1500px]:hidden "
+              className="relative hidden w-[336px] flex-col gap-3 @lg:my-3 @lg:flex"
               // style={scrollHeight < 600 ? { display: 'none' } : undefined}
             >
               <div className="sticky left-0 top-0 ">
