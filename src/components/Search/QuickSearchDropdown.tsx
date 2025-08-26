@@ -1,10 +1,10 @@
 import type { AutocompleteProps } from '@mantine/core';
-import { Group, Select, Stack, Text } from '@mantine/core';
+import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Configure, InstantSearch, useSearchBox } from 'react-instantsearch';
+import { InstantSearch, useSearchBox } from 'react-instantsearch';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
 import { CollectionsSearchItem } from '~/components/AutocompleteSearch/renderItems/collections';
@@ -19,7 +19,6 @@ import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/searc
 
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
-import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IndexToLabel } from '~/components/Search/useSearchState';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -217,7 +216,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
 
   const items = useMemo(() => {
     const items = filtered.map((hit) => ({
-      key: String(hit.id),
+      // key: String(hit.id),
       hit,
       value: String(hit.id),
       label:
