@@ -3,7 +3,7 @@ import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InstantSearch, useSearchBox } from 'react-instantsearch';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { BountiesSearchItem } from '~/components/AutocompleteSearch/renderItems/bounties';
@@ -200,6 +200,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  const isSubmittingOptionRef = useRef(false);
   const availableIndexes = supportedIndexes ?? [];
 
   const indexName = results?.index
@@ -310,12 +311,22 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         defaultValue={query}
         value={search}
         data={items}
-        onChange={setSearch}
+        onChange={(value) => {
+          // Ignore onChange events that happen during option submission
+          if (isSubmittingOptionRef.current) {
+            isSubmittingOptionRef.current = false;
+            return;
+          }
+          setSearch(value);
+        }}
         onClear={() => setSearch('')}
         // onBlur={() => (!isMobile ? onClear?.() : undefined)}
         onOptionSubmit={(value) => {
           const item = getItemFromValue(value);
           if (item) {
+            // Set flag before calling onItemSelected to prevent onChange from overwriting
+            isSubmittingOptionRef.current = true;
+
             onItemSelected(
               {
                 entityId: item.hit.id,

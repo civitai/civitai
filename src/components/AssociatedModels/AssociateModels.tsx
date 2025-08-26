@@ -2,19 +2,7 @@ import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { ComboboxItem } from '@mantine/core';
-import {
-  Stack,
-  Text,
-  Card,
-  Group,
-  Button,
-  ActionIcon,
-  Center,
-  Loader,
-  Alert,
-  Badge,
-  Box,
-} from '@mantine/core';
+import { Stack, Text, Card, Group, Button, Center, Loader, Alert, Badge, Box } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -142,7 +130,9 @@ export function AssociateModels({
         <QuickSearchDropdown
           supportedIndexes={['models', 'articles']}
           onItemSelected={handleSelect}
-          filters={onlyMe && currentUser ? `user.username='${currentUser.username}'` : undefined}
+          filters={
+            onlyMe && currentUser?.username ? `user.username='${currentUser.username}'` : undefined
+          }
           rightSectionWidth={100}
           rightSection={
             <Button variant="light" onClick={toggleSearchMode} size="compact-xs">
