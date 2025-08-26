@@ -6,20 +6,15 @@ export function useIsRegionBlocked() {
   const { region } = useAppContext();
 
   const regionStatus = useMemo(() => {
-    // Check the user's region using the currentUser region info
-    const regionInfo = region;
-    if (regionInfo) {
+    if (region) {
       return {
-        isBlocked: isRegionBlocked(regionInfo),
-        isPendingBlock: isRegionPendingBlock(regionInfo),
+        isBlocked: isRegionBlocked(region),
+        isPendingBlock: isRegionPendingBlock(region),
       };
     }
 
-    // If no region info available, assume not blocked
-    return {
-      isBlocked: false,
-      isPendingBlock: false,
-    };
+    // If no region info available, assume not blocked or restricted
+    return { isBlocked: false, isPendingBlock: false };
   }, [region]);
 
   return regionStatus;
