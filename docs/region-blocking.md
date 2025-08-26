@@ -1,12 +1,22 @@
-# Region Blocking Implementation
+# Region Blocking and Restriction Implementation
 
-This document describes the region blocking mechanism implemented for Civitai to restrict access based on user geographic location with support for scheduled blocking dates.
+This document describes the region blocking and restriction mechanisms implemented for Civitai to control access based on user geographic location with support for scheduled effective dates.
 
 ## Overview
 
-The region blocking system prevents users from specific countries/regions from accessing the Civitai platform due to legal requirements (e.g., UK's Online Safety Act). The system now supports:
+The region system prevents or limits access to the Civitai platform due to legal requirements. The system supports two types of regional controls:
 
-- **Date-based blocking**: Configure when restrictions will take effect
+### Blocked Regions
+
+Complete access restriction - users cannot access the site at all.
+
+### Restricted Regions
+
+Limited feature access - users can access the site but with reduced functionality.
+
+Both systems support:
+
+- **Date-based activation**: Configure when restrictions will take effect
 - **Warning notifications**: Alert users before restrictions become active
 - **Dynamic modal warnings**: Redis-backed modal dialogs with region-specific content
 
@@ -14,16 +24,13 @@ The region blocking system prevents users from specific countries/regions from a
 
 ### 1. Middleware
 
-- **`region-block.middleware.ts`**: Blocks web traffic from restricted regions (date-aware)
-- **`api-region-block.middleware.ts`**: Blocks API access from restricted regions (date-aware)
+- **`region-block.middleware.ts`**: Blocks web traffic from blocked regions (date-aware)
+- **`region-restriction.middleware.ts`**: Redirects restricted regions to civitai.green domain
+- **`api-region-block.middleware.ts`**: Blocks API access from blocked regions (date-aware)
 
 ### 2. Utilities
 
-- **`region-blocking.ts`**: Core utilities for determining if a region is blocked or pending block
-  - `isRegionBlocked()`: Check if region is currently blocked
-  - `isRegionPendingBlock()`: Check if region will be blocked in future
-  - `getDaysUntilRegionBlock()`: Calculate days remaining
-  - `getRegionBlockDate()`: Get effective date for region
+- **`region-blocking.ts`**: Core utilities for determining region status with DRY architecture. Contains several helper and core functions to handle region blocking and restriction, including status checking, date calculations, and effective date retrieval.
 
 ### 3. Pages
 
@@ -32,20 +39,22 @@ The region blocking system prevents users from specific countries/regions from a
 
 ### 4. Hooks & Components
 
-- **`useIsRegionBlocked.ts`**: React hook for client-side region detection
-- **`useRegionBlockWarning.ts`**: React hook for showing warning notifications
+- **`useIsRegionBlocked.ts`**: React hook for client-side region blocking detection
+- **`useIsRegionRestricted.ts`**: React hook specifically for region restriction status
+- **`useRegionBlockWarning.ts`**: React hook for showing warning notifications using dialogStore pattern
+- **`useRegionRedirectDetection.ts`**: React hook that automatically detects region-based redirects and triggers modal using dialogStore
 - **`RegionWarningModal.tsx`**: Dynamic modal component that fetches content from Redis
+- **`RegionRedirectModal.tsx`**: Modal component to inform users about region redirects
 
 ### 5. Content Management
 
-- **`content.service.ts`**: Server-side service for managing markdown content in Redis
-  - `getMarkdownContent()`: Retrieve markdown content by key
-- **`content.router.ts`**: tRPC router for content operations
 - **Redis Content Storage**: Dynamic content management using `REDIS_SYS_KEYS.CONTENT.REGION_WARNING`
 
 ## Configuration
 
 ### Environment Variables
+
+#### Blocked Regions (Complete Access Restriction)
 
 Set the `REGION_BLOCK_CONFIG` environment variable to configure blocked regions with effective dates:
 
@@ -55,9 +64,19 @@ REGION_BLOCK_CONFIG=GB:2025-07-24,FR:2025-08-01
 
 **Format**: `REGION:YYYY-MM-DD,REGION:YYYY-MM-DD`
 
-If not set, defaults to `GB:2025-07-24,UK:2025-07-24` (United Kingdom effective July 24, 2025).
+If not set, defaults are configured in `src/utils/region-blocking.ts`
 
-**Legacy Support**: The old `RESTRICTED_REGIONS` environment variable is still supported but deprecated.
+#### Restricted Regions (Limited Features)
+
+Set the `REGION_RESTRICTION_CONFIG` environment variable to configure restricted regions with effective dates:
+
+```bash
+REGION_RESTRICTION_CONFIG=DE:2025-08-15,US:CA:2025-09-01
+```
+
+**Format**: Same as block config - `REGION:YYYY-MM-DD,REGION:YYYY-MM-DD`
+
+If not set, defaults are configured in `src/utils/region-blocking.ts`
 
 ### Cloudflare Integration
 
@@ -107,18 +126,34 @@ Your markdown content here with **bold** text for emphasis...
 3. **Date Checking**: Compares current date with configured effective dates
 4. **Access Control**:
    - **Before effective date**: Show warning modals with region-specific content
-   - **After effective date**: Block access completely
+   - **After effective date for blocked regions**: Block access completely
+   - **After effective date for restricted regions**: Limit features and functionality
    - Web requests from blocked regions → Redirect to `/region-blocked`
    - API requests from blocked regions → Return 451 status code
-5. **Display**: Users see appropriate messaging based on blocking status and content from Redis
+   - Restricted regions → Continue with limited feature set
+5. **Display**: Users see appropriate messaging based on status and content from Redis
 
 ## New Features
 
-### Date-Based Blocking
+### Date-Based Controls
 
-- Configure specific dates when restrictions take effect
-- Gradual rollout: warnings before actual blocking
+- Configure specific dates when restrictions take effect for both blocking and restriction
+- Gradual rollout: warnings before actual blocking/restriction
 - All times are in UTC (end of day)
+
+### Dual Control System
+
+- **Complete blocking**: For regions requiring full access restriction
+- **Feature limitation**: For regions requiring reduced functionality while maintaining access
+- **Separate configuration**: Block and restriction configs are independent
+
+### Region Restriction Redirect
+
+- **Automatic redirect**: Users from restricted regions are automatically redirected to the green domain (civitai.green)
+- **Transparent experience**: The redirect maintains the same URL path and query parameters
+- **User notification**: A modal informs users about the redirect and explains the content limitations
+- **Headers**: Redirect includes `x-region-redirect: true` and `x-redirect-reason: region-restriction` headers
+- **Query parameter**: Adds `region-redirect=true` to the URL for frontend detection
 
 ### Warning System
 
@@ -133,6 +168,15 @@ Your markdown content here with **bold** text for emphasis...
 - **Region-specific**: Content keys formatted as `system:content:region-warning:{countryCode}`
 - **Markdown support**: Full markdown rendering with custom component styling
 - **Support integration**: Region-blocked page includes contact link to support@civitai.com
+
+### Feature Flags Integration
+
+The region system integrates with the feature flags service to enable region-based feature toggling:
+
+**Region Availability Types**:
+
+- `restricted`: Feature only available in restricted regions
+- `nonRestricted`: Feature only available in non-restricted regions
 
 ## Testing
 
@@ -168,10 +212,13 @@ curl http://localhost:3000/api/region-status
 
 **Response includes**:
 
-- Current blocking status
-- Pending block status
+- Current blocking status (`isBlocked`)
+- Current restriction status (`isRestricted`)
+- Pending block status (`isPendingBlock`)
+- Pending restriction status (`isPendingRestriction`)
 - Days until block (if applicable)
-- Effective date information
+- Days until restriction (if applicable)
+- Effective date information for both blocks and restrictions
 
 ## File Structure
 
@@ -197,6 +244,7 @@ src/
 │       └── region-status.ts
 ├── hooks/
 │   ├── useIsRegionBlocked.ts
+│   ├── useIsRegionRestricted.ts
 │   └── useRegionBlockWarning.ts
 ├── components/
 │   ├── AppLayout/
@@ -224,19 +272,26 @@ src/
 
 ### Region Configuration
 
-To add or remove blocked regions:
+To add or remove blocked or restricted regions:
 
-1. Update the `REGION_BLOCK_CONFIG` environment variable
-2. Format: `REGION:YYYY-MM-DD,REGION:YYYY-MM-DD`
-3. Redeploy the application
-4. No code changes required
+1. **For blocked regions**: Update the `REGION_BLOCK_CONFIG` environment variable
+2. **For restricted regions**: Update the `REGION_RESTRICTION_CONFIG` environment variable
+3. Format: `REGION:YYYY-MM-DD,REGION:YYYY-MM-DD`
+4. Redeploy the application
+5. No code changes required
 
 **Examples:**
 
-- Single region: `REGION_BLOCK_CONFIG=GB:2025-07-24`
-- Multiple regions: `REGION_BLOCK_CONFIG=GB:2025-07-24,FR:2025-08-01,DE:2025-09-15`
-- US state specific: `REGION_BLOCK_CONFIG=US:CA:2025-07-24` (for California)
-- Mixed configuration: `REGION_BLOCK_CONFIG=GB:2025-07-24,US:CA:2025-08-01,US:NY:2025-09-15`
+- **Blocked regions**: `REGION_BLOCK_CONFIG=GB:2025-07-24,FR:2025-08-01`
+- **Restricted regions**: `REGION_RESTRICTION_CONFIG=DE:2025-08-15,IT:2025-09-01`
+- **US state specific**: `REGION_RESTRICTION_CONFIG=US:CA:2025-07-24` (for California)
+- **Mixed configuration**:
+  - `REGION_BLOCK_CONFIG=GB:2025-07-24`
+  - `REGION_RESTRICTION_CONFIG=DE:2025-08-15,FR:2025-09-01,US:NY:2025-10-15`
+
+### Default Configurations
+
+If no environment variables are set, defaults are configured in `src/utils/region-blocking.ts`
 
 ### Content Management
 
@@ -267,9 +322,3 @@ We're deeply disappointed to announce that access to Civitai will be restricted 
 We recommend downloading any important content before access is restricted.`,
 });
 ```
-
-## Performance Impact
-
-- Minimal overhead: Single header check per request
-- No database queries or external API calls
-- Leverages Cloudflare's existing geolocation data

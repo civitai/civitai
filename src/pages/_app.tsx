@@ -278,7 +278,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   });
 
   const session = token?.user ? { user: token.user as SessionUser } : null;
-  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host });
+  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
 
   const settings = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,

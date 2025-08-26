@@ -12,6 +12,7 @@ import { getAllImages, getAllImagesIndex } from '~/server/services/image.service
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { baseModels } from '~/shared/constants/base-model.constants';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -19,6 +20,7 @@ import {
   NsfwLevelDeprecated,
   nsfwLevelMapDeprecated,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
@@ -95,7 +97,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       ({ skip } = getPagination(limit, page));
     }
 
-    const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    // Check if request is from restricted region and override browsing level
+    const region = getRegion(req);
+    let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
+
     const fn = data.modelId || data.imageId ? getAllImages : getAllImagesIndex;
 
     const features = getFeatureFlags({ user: session?.user, req });
