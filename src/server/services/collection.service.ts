@@ -987,10 +987,12 @@ export type CollectionItemExpanded = {
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
+  useLogicalReplica = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
+  useLogicalReplica?: boolean;
 }) => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -1124,8 +1126,6 @@ export const getCollectionItemsByCollectionId = async ({
 
   const imageIds = collectionItems.map((item) => item.imageId).filter(isDefined);
 
-  const features = getFeatureFlags({ user });
-
   const images =
     imageIds.length > 0
       ? await getAllImages({
@@ -1142,7 +1142,7 @@ export const getCollectionItemsByCollectionId = async ({
           includeBaseModel: true,
           pending: forReview,
           withMeta: false,
-          useLogicalReplica: features.logicalReplica,
+          useLogicalReplica,
         })
       : { items: [] };
 

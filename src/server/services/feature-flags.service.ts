@@ -145,7 +145,7 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 type FeatureAccessContext = {
   user?: SessionUser;
   host?: string;
-  req?: NextApiRequest | IncomingMessage;
+  req: NextApiRequest | IncomingMessage;
 };
 const hasFeature = (
   key: FeatureFlagKey,
