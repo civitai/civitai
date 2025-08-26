@@ -1249,7 +1249,7 @@ export const getAllImages = async (
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
               ${Prisma.join(engines)}
             ]::text[])
@@ -2404,7 +2404,7 @@ export const getImage = async ({
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
               ${Prisma.join(engines)}
             ]::text[])
@@ -2676,7 +2676,7 @@ export const getImagesForModelVersion = async ({
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
               ${Prisma.join(engines)}
             ]::text[])
@@ -2894,7 +2894,7 @@ export const getImagesForPosts = async ({
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
                 ${Prisma.join(engines)}
               ]::text[])
@@ -4751,7 +4751,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
   let process: string | undefined | null = undefined;
   let hasControlNet = false;
   if (meta) {
-    if ('civitaiResources' in meta) onSite = true;
+    if ('civitaiResources' in meta && !('Version' in meta)) onSite = true;
     else if ('engine' in meta && meta.engine === 'openai') onSite = true;
     else if ('engine' in meta) {
       process = meta.process ?? meta.type;

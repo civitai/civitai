@@ -1,4 +1,3 @@
-import { unescape } from 'lodash-es';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
 import type { SDResource } from '~/utils/metadata/base.metadata';
