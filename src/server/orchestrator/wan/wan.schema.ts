@@ -33,7 +33,7 @@ export const wan22InterpolatorModels = ['none', 'film', 'rife'] as const;
 export const wan22AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const wan22Resolutions = ['480p', '720p'] as const;
 export const wan225bAspectRatios = wan21FalAspectRatios;
-export const wan225bResolutions = ['480p', '580p', '720p'] as const;
+export const wan225bResolutions = ['580p', '720p'] as const;
 export const maxFalAdditionalResources = 2;
 
 type WanVersion = (typeof wanVersions)[number];
@@ -125,7 +125,7 @@ type Wan22Schema = z.infer<typeof wan22Schema>;
 const wan22Schema = baseSchema.extend({
   version: z.literal('v2.2'),
   negativePrompt: negativePromptSchema,
-  resolution: z.enum(wan22Resolutions).catch('480p'),
+  resolution: z.enum(wan22Resolutions).catch(wan22Resolutions[0]),
   shift: z.number().default(8).catch(8),
   interpolatorModel: z.enum(wan22InterpolatorModels).optional(),
   useTurbo: z.boolean().optional(),
@@ -135,7 +135,7 @@ type Wan225bSchema = z.infer<typeof wan225bSchema>;
 const wan225bSchema = baseSchema.extend({
   version: z.literal('v2.2-5b'),
   negativePrompt: negativePromptSchema,
-  resolution: z.enum(wan225bResolutions).catch('480p'),
+  resolution: z.enum(wan225bResolutions).catch(wan225bResolutions[0]),
   draft: z.boolean().optional(),
   steps: z.number().catch(40),
   aspectRatio: z.enum(wan225bAspectRatios).optional().catch('1:1'),
