@@ -110,7 +110,10 @@ const tagMap = {
   userComment: {
     tag: 0x9286,
     type: 7,
-    encoder: (value: string | string[]) => encodeUserCommentUTF16BE(value as string),
+    encoder: (value: Int32Array | string | string[]) => {
+      if (value instanceof Int32Array) return new Uint8Array(value.buffer);
+      return encodeUserCommentUTF16BE(value as string);
+    },
   },
   software: {
     tag: 0x0131,
