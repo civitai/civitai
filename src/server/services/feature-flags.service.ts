@@ -4,6 +4,8 @@ import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { getDisplayName } from '~/utils/string-helpers';
+import type { RegionInfo } from '~/server/utils/region-blocking';
+import { getRegion } from '~/server/utils/region-blocking';
 
 // --------------------------
 // Feature Availability
@@ -125,7 +127,12 @@ const featureFlags = createFeatureFlags({
   coinbasePayments: ['public'],
   coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
-  zkp2pPayments: ['mod'],
+  zkp2pPayments: {
+    availability: ['public'],
+    regions: {
+      include: ['US'], // US-only initially
+    },
+  },
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
   logicalReplica: ['public'],
@@ -149,7 +156,8 @@ const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext
 ) => {
-  const { availability } = featureFlags[key];
+  const feature = featureFlags[key];
+  const { availability } = feature;
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
@@ -196,12 +204,47 @@ const hasFeature = (
     }
   }
 
-  return envRequirement && serverMatch && (grantedAccess || roleAccess);
+  // Check basic access first
+  const hasBasicAccess = envRequirement && serverMatch && (grantedAccess || roleAccess);
+  if (!hasBasicAccess) return false;
+
+  // Check region restrictions if they exist
+  if (feature.regions) {
+    // Try to get region from request
+    let region: RegionInfo | undefined;
+    if (req) {
+      region = getRegion(req as any);
+    }
+    // If no region info available, deny access when geo restrictions are in place
+    if (!region?.countryCode) {
+      return false;
+    }
+
+    const { include, exclude } = feature.regions;
+    const countryCode = region.countryCode?.toUpperCase();
+
+    // Check include list (whitelist)
+    if (include && include.length > 0) {
+      if (!countryCode || !include.includes(countryCode)) {
+        return false;
+      }
+    }
+
+    // Check exclude list (blacklist)
+    if (exclude && exclude.length > 0) {
+      if (countryCode && exclude.includes(countryCode)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;
 export const getFeatureFlags = (ctx: FeatureAccessContext) => {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
+
   return keys.reduce<FeatureAccess>((acc, key) => {
     acc[key] = hasFeature(key, ctx);
     return acc;
@@ -210,6 +253,7 @@ export const getFeatureFlags = (ctx: FeatureAccessContext) => {
 
 export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
   const obj = {} as FeatureAccess & { features: FeatureAccess };
+
   for (const key in featureFlags) {
     Object.defineProperty(obj, key, {
       get() {
@@ -234,28 +278,40 @@ export const toggleableFeatures = Object.entries(featureFlags)
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;
+
+type GeoRestrictions = {
+  include?: string[]; // Whitelist regions (country codes)
+  exclude?: string[]; // Blacklist regions (country codes)
+};
+
 type FeatureFlag = {
   displayName: string;
   description?: string;
   availability: FeatureAvailability[];
   toggleable: boolean;
   default?: boolean;
+  regions?: GeoRestrictions; // Optional geo restrictions
 };
 
-function createFeatureFlags<T extends Record<string, FeatureFlag | FeatureAvailability[]>>(
-  flags: T
-) {
+// Simplified: Support either simple arrays or objects with any FeatureFlag properties
+type FeatureFlagInput =
+  | FeatureAvailability[]  // Legacy format: ['public']
+  | Partial<FeatureFlag> & { availability: FeatureAvailability[] };  // Object with at least availability
+
+function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };
   const envOverrides = getEnvOverrides();
 
   for (const [key, value] of Object.entries(flags)) {
-    if (Array.isArray(value))
-      features[key as keyof T] = {
-        availability: value,
-        toggleable: false,
-        displayName: getDisplayName(key),
-      };
-    else features[key as keyof T] = value;
+    // Convert arrays to object format for consistency
+    const flagData = Array.isArray(value) ? { availability: value } : value;
+    
+    // Build the feature flag with defaults for missing properties
+    features[key as keyof T] = {
+      displayName: getDisplayName(key),  // Default display name
+      toggleable: false,                  // Default not toggleable
+      ...flagData,                        // Spread all provided properties (overrides defaults)
+    } as FeatureFlag;
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
