@@ -12,7 +12,7 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React from 'react';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -23,7 +23,6 @@ import { isDefined } from '~/utils/type-guards';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
-  const { setState } = useChatContext();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
@@ -175,7 +174,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
           </Menu.Dropdown>
         </Menu>
       )}
-      <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+      <LegacyActionIcon onClick={() => useChatStore.setState({ open: false })}>
         <IconX />
       </LegacyActionIcon>
     </Group>

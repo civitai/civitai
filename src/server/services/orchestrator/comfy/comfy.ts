@@ -113,10 +113,11 @@ export async function createComfy(
     token: string;
     experimental?: boolean;
     isGreen?: boolean;
+    allowMatureContent: boolean;
   }
 ) {
   const step = await createComfyStep(args);
-  const { user, tips, params, experimental, isGreen } = args;
+  const { user, tips, params, experimental, isGreen, allowMatureContent } = args;
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
@@ -137,6 +138,7 @@ export async function createComfy(
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
       nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   })) as TextToImageResponse;
 

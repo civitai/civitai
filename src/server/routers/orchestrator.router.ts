@@ -146,11 +146,14 @@ export const orchestratorRouter = router({
   // #endregion
 
   // #region [generated images]
-  queryGeneratedImages: orchestratorProcedure
-    .input(workflowQuerySchema)
-    .query(({ ctx, input }) =>
-      queryGeneratedImageWorkflows({ ...input, token: ctx.token, user: ctx.user })
-    ),
+  queryGeneratedImages: orchestratorProcedure.input(workflowQuerySchema).query(({ ctx, input }) =>
+    queryGeneratedImageWorkflows({
+      ...input,
+      token: ctx.token,
+      user: ctx.user,
+      allowMatureContent: ctx.allowMatureContent,
+    })
+  ),
   generateImage: orchestratorGuardedProcedure
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
@@ -162,6 +165,7 @@ export const orchestratorRouter = router({
           experimental: ctx.experimental,
           batchAll: ctx.batchAll,
           isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.allowMatureContent,
         };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
@@ -202,6 +206,7 @@ export const orchestratorRouter = router({
           user: ctx.user,
           token: ctx.token,
           batchAll: ctx.batchAll,
+          allowMatureContent: ctx.allowMatureContent,
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
@@ -262,7 +267,13 @@ export const orchestratorRouter = router({
     .input(generationSchema)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) =>
-      whatIf({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
+      whatIf({
+        ...input,
+        userId: ctx.user.id,
+        token: ctx.token,
+        experimental: ctx.experimental,
+        allowMatureContent: ctx.allowMatureContent,
+      })
     ),
   generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
     generate({

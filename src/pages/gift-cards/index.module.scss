@@ -1,3 +1,29 @@
+.headerSection {
+  position: relative;
+}
+
+.promoNotification {
+  // On desktop: position to the right of section headers
+  @media (min-width: 769px) {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 1rem;
+    z-index: 10;
+    max-width: fit-content;
+  }
+
+  // On mobile: normal flow with better spacing
+  @media (max-width: 768px) {
+    margin-top: 1.5rem;
+
+    // Position close button absolutely on mobile
+    & > div {
+      position: relative;
+    }
+  }
+}
+
 .card {
   height: 100%;
   display: flex;

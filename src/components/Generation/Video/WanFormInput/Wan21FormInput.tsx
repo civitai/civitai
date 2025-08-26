@@ -5,7 +5,11 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
-import { wanDuration, wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import {
+  wanDuration,
+  wan22BaseModelMap,
+  maxFalAdditionalResources,
+} from '~/server/orchestrator/wan/wan.schema';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { useEffect, useMemo } from 'react';
@@ -55,6 +59,8 @@ export function Wan21FormInput() {
 
   const resources = baseModel ? getGenerationBaseModelResourceOptions(baseModel) : [];
 
+  console.log({ config });
+
   return (
     <>
       <InputVideoProcess name="process" />
@@ -85,6 +91,7 @@ export function Wan21FormInput() {
             canGenerate: true,
           }}
           buttonLabel="Add additional resource"
+          limit={config?.provider === 'fal' ? maxFalAdditionalResources : undefined}
         />
       )}
       <InputTextArea

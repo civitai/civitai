@@ -147,7 +147,7 @@ export function GeneratedImage({
       dialogStore.trigger({
         id: 'generated-image',
         component: GeneratedImageLightbox,
-        props: { image, request },
+        props: { image },
       });
     }
   };
@@ -460,15 +460,9 @@ function BlockedBlock({
   );
 }
 
-export function GeneratedImageLightbox({
-  image,
-  request,
-}: {
-  image: NormalizedGeneratedImage;
-  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-}) {
+export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedImage }) {
   const dialog = useDialogContext();
-  const { steps } = useGetTextToImageRequestsImages();
+  const { requests, steps } = useGetTextToImageRequestsImages();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -485,6 +479,7 @@ export function GeneratedImageLightbox({
       .filter((x) => x.status === 'succeeded')
       .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
+  const workflows = requests?.map(({ steps, ...workflow }) => workflow) ?? [];
 
   const [slide, setSlide] = useState(() => {
     const initialSlide = images.findIndex((item) => item.id === image.id);
@@ -512,22 +507,26 @@ export function GeneratedImageLightbox({
         >
           <Embla.Viewport>
             <Embla.Container className="flex" style={{ height: 'calc(100vh - 84px)' }}>
-              {images.map((image, index) => (
-                <Embla.Slide
-                  key={`${image.workflowId}_${image.id}`}
-                  index={index}
-                  className="flex flex-[0_0_100%] items-center justify-center"
-                >
-                  {image.url && index === slide && (
-                    <GeneratedImage
-                      image={image} // TODO - fix this
-                      request={request}
-                      step={image.step}
-                      isLightbox
-                    />
-                  )}
-                </Embla.Slide>
-              ))}
+              {images.map((image, index) => {
+                const request = workflows.find((x) => x.id === image.workflowId);
+                if (!request) return null;
+                return (
+                  <Embla.Slide
+                    key={`${image.workflowId}_${image.id}`}
+                    index={index}
+                    className="flex flex-[0_0_100%] items-center justify-center"
+                  >
+                    {image.url && index === slide && (
+                      <GeneratedImage
+                        image={image}
+                        request={request}
+                        step={image.step}
+                        isLightbox
+                      />
+                    )}
+                  </Embla.Slide>
+                );
+              })}
             </Embla.Container>
           </Embla.Viewport>
         </Embla>

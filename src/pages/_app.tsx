@@ -22,7 +22,6 @@ import {
   BrowsingLevelProviderOptional,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 // import ChadGPT from '~/components/ChadGPT/ChadGPT';
-import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
@@ -179,14 +178,12 @@ function MyApp(props: CustomAppProps) {
                                                   <AuctionContextProvider>
                                                     <BaseLayout>
                                                       {isProd && <TrackPageView />}
-                                                      <ChatContextProvider>
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
-                                                      </ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
                                                     </BaseLayout>
                                                   </AuctionContextProvider>
                                                 </ToursProvider>

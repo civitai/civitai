@@ -36,7 +36,7 @@ import produce from 'immer';
 import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -80,7 +80,7 @@ type StatusKeys = keyof typeof statusMap;
 type StatusValues = (typeof statusMap)[StatusKeys];
 
 export function ChatList() {
-  const { state, setState } = useChatContext();
+  const existingChatId = useChatStore((state) => state.existingChatId);
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
@@ -179,12 +179,12 @@ export function ChatList() {
   useEffect(() => {
     if (!data) return;
     const activeStatus = data
-      .find((d) => d.id === state.existingChatId)
+      .find((d) => d.id === existingChatId)
       ?.chatMembers?.find((cm) => cm.userId === currentUser?.id)?.status;
     if (!activeStatus) return;
     const defaultActiveTab = statusMap[activeStatus];
     setActiveTab(defaultActiveTab);
-  }, [currentUser?.id, data, state.existingChatId]);
+  }, [currentUser?.id, data, existingChatId]);
 
   useEffect(() => {
     if (!data) return;
@@ -267,14 +267,14 @@ export function ChatList() {
             styles={{ section: { marginRight: 6 } }}
             leftSection={<IconCirclePlus size={18} />}
             onClick={() => {
-              setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
+              useChatStore.setState({ isCreating: true, existingChatId: undefined });
             }}
           >
             New
           </Button>
 
           {isMobile && (
-            <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+            <LegacyActionIcon onClick={() => useChatStore.setState({ open: false })}>
               <IconX />
             </LegacyActionIcon>
           )}
@@ -354,13 +354,13 @@ export function ChatList() {
                     component={div}
                     wrap="nowrap"
                     className={clsx(styles.selectChat, {
-                      [styles.selectedChat]: d.id === state.existingChatId,
+                      [styles.selectedChat]: d.id === existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ type: 'spring', duration: 0.4 }}
                     onClick={() => {
-                      setState((prev) => ({ ...prev, existingChatId: d.id }));
+                      useChatStore.setState({ existingChatId: d.id });
                     }}
                   >
                     <Indicator

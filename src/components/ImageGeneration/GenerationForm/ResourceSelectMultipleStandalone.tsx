@@ -1,4 +1,4 @@
-import { Accordion, Button, Text, Anchor, Badge } from '@mantine/core';
+import { Accordion, Button, Text, Anchor, Badge, Input } from '@mantine/core';
 import type { ResourceSelectMultipleProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import {
@@ -16,13 +16,15 @@ import { useEffect, useMemo, useRef } from 'react';
 export function ResourceSelectMultipleStandalone({
   value = [],
   onChange,
+  error,
   ...props
 }: ResourceSelectMultipleProps) {
   const status = useGenerationStatus();
+  const limit = props.limit ?? status.limits.resources;
   const resources = value;
   const currentUser = useCurrentUser();
   const resourceIds = !!value?.length ? value.map((x) => x.id) : [];
-  const atLimit = resourceIds.length >= status.limits.resources;
+  const atLimit = resourceIds.length >= limit;
   // const [opened, setOpened] = useState(false);
 
   const options = {
@@ -50,89 +52,92 @@ export function ResourceSelectMultipleStandalone({
   }, [_values]);
 
   return (
-    <PersistentAccordion
-      storeKey="generation-form-resources"
-      classNames={{
-        item: classes.accordionItem,
-        control: classes.accordionControl,
-        content: classes.accordionContent,
-      }}
-      transitionDuration={0}
-    >
-      <Accordion.Item value="resources" className="border-b-0">
-        <Accordion.Control>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-1">
-              <Text size="sm" fw={590}>
-                Additional Resources
-              </Text>
-              {!!resources?.length && (
-                <Badge className="font-semibold">
-                  {resources.length}/{status.limits.resources}
-                </Badge>
+    <div className="flex flex-col gap-1">
+      <PersistentAccordion
+        storeKey="generation-form-resources"
+        classNames={{
+          item: classes.accordionItem,
+          control: classes.accordionControl,
+          content: classes.accordionContent,
+        }}
+        transitionDuration={0}
+      >
+        <Accordion.Item value="resources" className="border-b-0">
+          <Accordion.Control>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1">
+                <Text size="sm" fw={590}>
+                  Additional Resources
+                </Text>
+                {!!resources?.length && (
+                  <Badge className="font-semibold">
+                    {resources.length}/{limit}
+                  </Badge>
+                )}
+
+                <Button
+                  component="span"
+                  size="compact-sm"
+                  variant="light"
+                  onClick={(e: React.MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    resourceSelectHandler
+                      .select({
+                        title: props.buttonLabel,
+                        selectSource: props.selectSource,
+                        excludedIds: resources?.map((x) => x.id),
+                      })
+                      .then((resource) => {
+                        if (!resource) return;
+                        onChange?.(
+                          resourceSelectHandler.getValues([...(resources ?? []), resource])
+                        );
+                      });
+                  }}
+                  radius="xl"
+                  ml="auto"
+                  disabled={atLimit}
+                  classNames={{ inner: 'flex gap-1' }}
+                >
+                  <IconPlus size={16} />
+                  <Text size="sm" fw={500}>
+                    Add
+                  </Text>
+                </Button>
+              </div>
+
+              {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                <Text size="xs">
+                  <Link legacyBehavior href="/pricing" passHref>
+                    <Anchor
+                      color="yellow"
+                      rel="nofollow"
+                      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                    >
+                      Become a member
+                    </Anchor>
+                  </Link>{' '}
+                  <Text inherit span>
+                    to use more resources at once
+                  </Text>
+                </Text>
               )}
-
-              <Button
-                component="span"
-                size="compact-sm"
-                variant="light"
-                onClick={(e: React.MouseEvent) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  resourceSelectHandler
-                    .select({
-                      title: props.buttonLabel,
-                      selectSource: props.selectSource,
-                      excludedIds: resources?.map((x) => x.id),
-                    })
-                    .then((resource) => {
-                      if (!resource) return;
-                      onChange?.(resourceSelectHandler.getValues([...(resources ?? []), resource]));
-                    });
-                }}
-                radius="xl"
-                ml="auto"
-                disabled={atLimit}
-                classNames={{ inner: 'flex gap-1' }}
-              >
-                <IconPlus size={16} />
-                <Text size="sm" fw={500}>
-                  Add
-                </Text>
-              </Button>
             </div>
-
-            {atLimit && (!currentUser || currentUser.tier === 'free') && (
-              <Text size="xs">
-                <Link legacyBehavior href="/pricing" passHref>
-                  <Anchor
-                    color="yellow"
-                    rel="nofollow"
-                    onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                  >
-                    Become a member
-                  </Anchor>
-                </Link>{' '}
-                <Text inherit span>
-                  to use more resources at once
-                </Text>
-              </Text>
-            )}
-          </div>
-        </Accordion.Control>
-        <Accordion.Panel classNames={{ content: 'p-0' }}>
-          <ResourceSelectMultiple
-            {...props}
-            value={value}
-            onChange={onChange}
-            // modalOpened={opened}
-            // onCloseModal={() => setOpened(false)}
-            options={options}
-            hideButton
-          />
-        </Accordion.Panel>
-      </Accordion.Item>
-    </PersistentAccordion>
+          </Accordion.Control>
+          <Accordion.Panel classNames={{ content: 'p-0' }}>
+            <ResourceSelectMultiple
+              {...props}
+              value={value}
+              onChange={onChange}
+              options={options}
+              hideButton
+            />
+          </Accordion.Panel>
+        </Accordion.Item>
+      </PersistentAccordion>
+      {error && <Input.Error>{error}</Input.Error>}
+    </div>
   );
 }
 

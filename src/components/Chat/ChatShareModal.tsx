@@ -26,7 +26,7 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React, { useEffect, useState } from 'react';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ChatListMessage } from '~/types/router';
@@ -40,7 +40,6 @@ export default function ChatShareModal(props: { message: string }) {
   const dialog = useDialogContext();
 
   const currentUser = useCurrentUser();
-  const { setState } = useChatContext();
   const queryUtils = trpc.useUtils();
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const [searchInput, setSearchInput] = useState<string>('');
@@ -107,7 +106,7 @@ export default function ChatShareModal(props: { message: string }) {
           ];
         })
       );
-      setState((prev) => ({ ...prev, existingChatId: selectedChat, open: true }));
+      useChatStore.setState({ existingChatId: selectedChat, open: true });
       dialog.onClose();
       setIsSending(false);
     },

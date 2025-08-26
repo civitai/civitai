@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import { trpc } from '~/utils/trpc';
 
 export const useAnnouncementsStore = create<{
@@ -22,14 +23,20 @@ export function dismissAnnouncements(ids: number | number[]) {
 
 export function useGetAnnouncements() {
   const dismissed = useAnnouncementsStore((state) => state.dismissed);
-  const { data, ...rest } = trpc.announcement.getAnnouncements.useQuery(undefined, {
-    onSettled: (data) => {
-      if (!data?.length) return;
-      const announcementIds = data.map((x) => x.id);
-      const newDismissed = dismissed.filter((dismissedId) => announcementIds.includes(dismissedId));
-      useAnnouncementsStore.setState({ dismissed: newDismissed });
-    },
-  });
+  const domainColor = useDomainColor();
+  const { data, ...rest } = trpc.announcement.getAnnouncements.useQuery(
+    { domain: domainColor },
+    {
+      onSettled: (data) => {
+        if (!data?.length) return;
+        const announcementIds = data.map((x) => x.id);
+        const newDismissed = dismissed.filter((dismissedId) =>
+          announcementIds.includes(dismissedId)
+        );
+        useAnnouncementsStore.setState({ dismissed: newDismissed });
+      },
+    }
+  );
 
   const announcements = useMemo(
     () =>
