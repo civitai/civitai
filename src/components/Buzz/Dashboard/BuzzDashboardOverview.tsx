@@ -29,12 +29,16 @@ import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/us
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
+import { USDCPurchasePrompt } from '~/components/Buzz/USDCPurchasePrompt';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from '~/components/Buzz/buzz.module.scss';
 import Link from 'next/link';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { CryptoTransactions } from '~/components/Account/CryptoTransactions';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -51,6 +55,7 @@ const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
 export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
   // If this ever changes, that'd be awesome. But for now, we need to do this.
   const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
@@ -220,6 +225,9 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                   </Popover>
                 </Group>
 
+                {/* USDC Purchase Prompt - Show when user has USDC available */}
+                <USDCPurchasePrompt userId={accountId} />
+
                 {/* Top Up Card - Show when buzz is low */}
                 <BuzzTopUpCard
                   accountId={accountId}
@@ -297,12 +305,30 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 { label: 'Blue', value: 'generation' },
               ]}
             />
-            <Anchor component={Link} href="/user/transactions" size="xs">
-              <Group gap={2}>
-                <IconArrowRight size={18} />
-                <span>View all</span>
-              </Group>
-            </Anchor>
+            <Group justify="space-between">
+              <Anchor component={Link} href="/user/transactions" size="xs">
+                <Group gap={2}>
+                  <IconArrowRight size={18} />
+                  <span>View all</span>
+                </Group>
+              </Anchor>
+              {features.coinbaseOnramp && (
+                <Anchor
+                  size="xs"
+                  onClick={() => {
+                    dialogStore.trigger({
+                      component: CryptoTransactions,
+                    });
+                  }}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <Group gap={2}>
+                    <IconArrowRight size={18} />
+                    <span>Crypto transactions</span>
+                  </Group>
+                </Anchor>
+              )}
+            </Group>
             {transactions.length ? (
               <ScrollArea.Autosize mah={480} mt="md" key={transactionType}>
                 <Stack gap={8} mr={14}>

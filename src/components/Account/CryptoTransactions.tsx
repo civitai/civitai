@@ -1,6 +1,5 @@
 import {
   Center,
-  Divider,
   Group,
   Loader,
   LoadingOverlay,
@@ -11,46 +10,27 @@ import {
   Title,
   Pagination,
   ThemeIcon,
-  Button,
 } from '@mantine/core';
-import Decimal from 'decimal.js';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useState } from 'react';
-import {
-  useQueryPaginatedUserTransactionHistory,
-  useCoinbaseOnrampBalance,
-  useMutateCoinbase,
-} from '~/components/Coinbase/util';
+import { useQueryPaginatedUserTransactionHistory } from '~/components/Coinbase/util';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { USDCPurchasePrompt } from '~/components/Buzz/USDCPurchasePrompt';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const CryptoTransactions = () => {
   const dialog = useDialogContext();
-  const { processUserPendingTransactions, processingUserPendingTransactions } = useMutateCoinbase();
+  const currentUser = useCurrentUser();
   const [page, setPage] = useState(1);
   const { isLoading, items, pagination, isRefetching } = useQueryPaginatedUserTransactionHistory({
     limit: 5,
     page,
   });
-
-  const { data, isLoading: isLoadingBalance } = useCoinbaseOnrampBalance();
-  const balance = data?.balance ? new Decimal(data.balance).toNumber() : 0;
-
-  const handleProcessPendingTransactions = async () => {
-    if (processingUserPendingTransactions || isLoadingBalance) {
-      return;
-    }
-
-    try {
-      await processUserPendingTransactions();
-    } catch (error) {
-      console.error('Error processing pending transactions:', error);
-    }
-  };
 
   return (
     <Modal {...dialog} size="xl" withCloseButton={true} radius="md">
@@ -65,40 +45,8 @@ export const CryptoTransactions = () => {
           </Text>
         </Stack>
 
-        {/* Outstanding Balance Section */}
-        {balance >= 2 && (
-          <Stack
-            gap="md"
-            p="lg"
-            style={{
-              backgroundColor: 'var(--mantine-color-teal-1)',
-              borderRadius: 'var(--mantine-radius-md)',
-              border: '2px solid var(--mantine-color-teal-4)',
-            }}
-          >
-            <Group gap="sm" align="center">
-              <Text size="sm" fw={600} c="teal.8">
-                Outstanding Balance
-              </Text>
-              <CurrencyBadge currency={Currency.USD} unitAmount={balance * 100} />
-            </Group>
-            <Text size="sm" c="dark.6" fw={500} lh={1.4}>
-              You have an outstanding balance in your account that failed to convert to Buzz. Click
-              below to process pending transactions and convert this balance to Buzz.
-            </Text>
-            <Button
-              loading={processingUserPendingTransactions}
-              onClick={() => handleProcessPendingTransactions()}
-              color="teal"
-              disabled={isLoadingBalance}
-              size="sm"
-              fw={500}
-              style={{ alignSelf: 'flex-start' }}
-            >
-              Process Pending Transactions
-            </Button>
-          </Stack>
-        )}
+        {/* USDC Purchase Prompt - Reuse the same component */}
+        <USDCPurchasePrompt userId={currentUser?.id} />
 
         {/* Transactions Section */}
         {isLoading ? (
