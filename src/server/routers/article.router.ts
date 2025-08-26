@@ -48,7 +48,7 @@ export const articleRouter = router({
   upsert: guardedProcedure
     .input(upsertArticleInput)
     .use(isFlagProtected('articleCreate'))
-    // .use(rateLimit(articleRateLimits))
+    .use(rateLimit(articleRateLimits))
     .mutation(upsertArticleHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
