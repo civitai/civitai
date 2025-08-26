@@ -16,6 +16,7 @@ import { IconExternalLink } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
+import { PromoNotification } from '~/components/PromoNotification/PromoNotification';
 import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift-cards/vendors';
 import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
 import classes from './index.module.scss';
@@ -144,7 +145,7 @@ export default function GiftCardsPage() {
       />
       <Container size="xl" py="xl">
         <Stack gap="xl">
-          <div>
+          <div className={classes.headerSection}>
             <Group justify="space-between" align="flex-start" wrap="wrap">
               <div>
                 <Title order={1} mb="md">
@@ -182,6 +183,17 @@ export default function GiftCardsPage() {
                 )}
               </Stack>
             </Group>
+            
+            {/* Promo Notification - positioned absolutely on desktop, normal flow on mobile */}
+            {selectedVendor.promo && (
+              <div className={classes.promoNotification}>
+                <PromoNotification
+                  vendorId={selectedVendor.id}
+                  vendorName={selectedVendor.displayName}
+                  promo={selectedVendor.promo}
+                />
+              </div>
+            )}
           </div>
 
           {/* Buzz Gift Cards Section */}

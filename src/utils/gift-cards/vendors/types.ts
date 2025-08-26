@@ -23,12 +23,21 @@ export interface VendorProducts {
   memberships: Membership[];
 }
 
+export interface VendorPromo {
+  code: string;
+  discount: string;
+  message?: string;
+  startDate: Date;
+  endDate: Date;
+}
+
 export interface Vendor {
   id: string;
   name: string;
   displayName: string;
   enabled: boolean;
   products: VendorProducts;
+  promo?: VendorPromo;
 }
 
 export type VendorRegistry = Record<string, Vendor>;
