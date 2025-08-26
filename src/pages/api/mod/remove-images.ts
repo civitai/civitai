@@ -14,16 +14,17 @@ import { Limiter } from '~/server/utils/concurrency-helpers';
 const schema = z.object({
   imageIds: z.array(z.number()).optional(),
   userId: z.number().optional(),
+  moderatorId: z.number().optional(),
   reason: z.string().optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds, userId, reason } = schema.parse(req.body);
+    const { imageIds, userId, reason, moderatorId } = schema.parse(req.body);
 
     const tracker = new Tracker(req, res);
-    const images = await handleBlockImages({ ids: imageIds, userId });
+    const images = await handleBlockImages({ ids: imageIds, userId, moderatorId });
     await Limiter({ batchSize: 1000 }).process(images, async (images) => {
       const ids = images.map((x) => x.id);
       // Get additional data for this chunk
