@@ -5,6 +5,10 @@ import { IconAlertCircle } from '@tabler/icons-react';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { trackZkp2pEvent, generateZkp2pSessionId } from '~/utils/zkp2p-tracking';
+import Script from 'next/script';
+
+// const ZKP2P_IFRAME_HOST = 'https://zkp2p.civitai.com';
+const ZKP2P_IFRAME_HOST = 'http://localhost:3001';
 
 export default function Zkp2pPurchasePage() {
   const router = useRouter();
@@ -40,6 +44,10 @@ export default function Zkp2pPurchasePage() {
     });
   };
 
+  const startPeerAuthHook = () => {
+    (window as any).setupParent();
+  };
+
   useEffect(() => {
     if (!amount || !paymentMethod) {
       setError('Missing required parameters');
@@ -59,7 +67,7 @@ export default function Zkp2pPurchasePage() {
     localStorage.setItem('zkp2p_pending', JSON.stringify(pendingTransaction));
 
     const handleMessage = async (event: MessageEvent) => {
-      if (event.origin !== 'https://zkp2p.civitai.com') {
+      if (event.origin !== ZKP2P_IFRAME_HOST) {
         return;
       }
 
@@ -137,7 +145,7 @@ export default function Zkp2pPurchasePage() {
     paymentMethod,
     explain: (explain === 'true').toString(),
   });
-  const iframeUrl = `https://zkp2p.civitai.com/onramp?${iframeParams.toString()}`;
+  const iframeUrl = `${ZKP2P_IFRAME_HOST}/onramp?${iframeParams.toString()}`;
 
   return (
     <>
@@ -145,7 +153,8 @@ export default function Zkp2pPurchasePage() {
         title="Complete Your Payment | Civitai"
         description="Complete your Buzz purchase securely through ZKP2P"
       />
-      <div className="relative w-full h-full min-h-[600px]">
+      <Script src={`${ZKP2P_IFRAME_HOST}/parent-proxy.js`} onLoad={startPeerAuthHook} />
+      <div className="relative w-full h-full min-h-[600px] -mt-4">
         {loading && (
           <Center className="absolute inset-0 z-10">
             <div className="text-center">
