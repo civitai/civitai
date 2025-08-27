@@ -9,6 +9,7 @@ import {
   wan225bResolutions,
   wan225bAspectRatios,
   maxFalAdditionalResources,
+  wanDuration,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
@@ -99,6 +100,14 @@ export function Wan225bFormInput() {
       <div className="flex flex-col gap-0.5">
         <Input.Label>Resolution</Input.Label>
         <InputSegmentedControl name="resolution" data={[...wan225bResolutions]} />
+      </div>
+
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+        />
       </div>
 
       <InputNumberSlider
