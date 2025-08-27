@@ -29,7 +29,10 @@ import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/us
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
-import { USDCPurchasePrompt } from '~/components/Buzz/USDCPurchasePrompt';
+import {
+  USDCPurchasePrompt,
+  useUSDCPurchasePromptVisibility,
+} from '~/components/Buzz/USDCPurchasePrompt';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
@@ -56,6 +59,7 @@ const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   const theme = useMantineTheme();
   const features = useFeatureFlags();
+  const { shouldShow: shouldShowUSDCPrompt } = useUSDCPurchasePromptVisibility(accountId);
   // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
   // If this ever changes, that'd be awesome. But for now, we need to do this.
   const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
@@ -228,14 +232,16 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 {/* USDC Purchase Prompt - Show when user has USDC available */}
                 <USDCPurchasePrompt userId={accountId} />
 
-                {/* Top Up Card - Show when buzz is low */}
-                <BuzzTopUpCard
-                  accountId={accountId}
-                  variant="banner"
-                  message="Need more Buzz?"
-                  showBalance={false}
-                  btnLabel="Top up"
-                />
+                {/* Top Up Card - Show when buzz is low and no USDC prompt */}
+                {!shouldShowUSDCPrompt && (
+                  <BuzzTopUpCard
+                    accountId={accountId}
+                    variant="banner"
+                    message="Need more Buzz?"
+                    showBalance={false}
+                    btnLabel="Top up"
+                  />
+                )}
 
                 <SegmentedControl
                   value={reportFilters.window}

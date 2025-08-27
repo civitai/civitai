@@ -6,9 +6,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { trackZkp2pEvent, generateZkp2pSessionId } from '~/utils/zkp2p-tracking';
 import Script from 'next/script';
+import { env } from '~/env/client';
 
-// const ZKP2P_IFRAME_HOST = 'https://zkp2p.civitai.com';
-const ZKP2P_IFRAME_HOST = 'http://localhost:3001';
+const ZKP2P_IFRAME_HOST = env.NEXT_PUBLIC_ZKP2P_IFRAME_HOST || 'http://localhost:3001';
 
 export default function Zkp2pPurchasePage() {
   const router = useRouter();
