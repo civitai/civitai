@@ -67,9 +67,10 @@ export const processScheduledPublishing = createJob(
       -- Update last version of scheduled models
       UPDATE "Model" SET "lastVersionAt" = ${now}
       WHERE id IN (
-        SELECT
+        SELECT DISTINCT
           mv."modelId"
         FROM "ModelVersion" mv
+        JOIN "Post" p ON p."modelVersionId" = mv.id
         WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
       );`;
 

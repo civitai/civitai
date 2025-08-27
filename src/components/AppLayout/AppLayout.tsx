@@ -18,6 +18,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
+import { useZkp2pPendingTransaction } from '~/hooks/useZkp2pPendingTransaction';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 
 let shownReadonly = false;
@@ -50,6 +51,7 @@ export function AppLayout({
   const isMounted = useIsMounted();
   const features = useFeatureFlags();
   useRegionWarning();
+  useZkp2pPendingTransaction();
   useRegionRedirectDetection();
 
   useEffect(() => {
