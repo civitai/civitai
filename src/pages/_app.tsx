@@ -278,6 +278,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   });
 
   const session = token?.user ? { user: token.user as SessionUser } : null;
+  const region = getRegion(request);
   const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
 
   const settings = await fetch(`${baseUrl as string}/api/user/settings`, {
@@ -287,7 +288,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   }
-  const region = getRegion(request);
   const allowMatureContent =
     appContext.ctx.req?.headers.host === env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE;
 
