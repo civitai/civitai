@@ -58,7 +58,8 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
+  return next({ ctx: { ...ctx, user, token, allowMatureContent: true } });
+  // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 
 const experimentalMiddleware = middleware(async ({ ctx, next }) => {
@@ -164,7 +165,7 @@ export const orchestratorRouter = router({
           token: ctx.token,
           experimental: ctx.experimental,
           batchAll: ctx.batchAll,
-          isGreen: ctx.features.isGreen,
+          // isGreen: ctx.features.isGreen,
           allowMatureContent: ctx.allowMatureContent,
         };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
@@ -281,7 +282,8 @@ export const orchestratorRouter = router({
       userId: ctx.user.id,
       token: ctx.token,
       experimental: ctx.experimental,
-      isGreen: ctx.features.isGreen,
+      // isGreen: ctx.features.isGreen,
+      allowMatureContent: ctx.allowMatureContent,
     })
   ),
   // #endregion
