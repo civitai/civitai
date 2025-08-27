@@ -11,8 +11,9 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 
 const grantSubscriptionSchema = z.object({
-  userId: z.number(),
+  userId: z.coerce.number(),
   period: z.enum(['month', 'year']),
+  unitValue: z.coerce.number().default(1),
   tier: z.enum(['bronze', 'silver', 'gold']),
 });
 
@@ -21,7 +22,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
 
   try {
     const input = grantSubscriptionSchema.parse(req.body);
-    const { userId, period, tier } = input;
+    const { userId, period, unitValue, tier } = input;
 
     // Check if user has an active subscription
     const existingSubscription = await dbWrite.customerSubscription.findFirst({
@@ -63,6 +64,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
         prices: {
           where: {
             active: true,
+            interval: period,
           },
         },
       },
@@ -86,7 +88,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
           priceId: price.id,
           status: 'active',
           currentPeriodStart: now.toDate(),
-          currentPeriodEnd: now.add(1, period).toDate(),
+          currentPeriodEnd: now.add(unitValue, period).toDate(),
           cancelAtPeriodEnd: true,
           cancelAt: null,
           metadata: {},
@@ -101,7 +103,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
 
     // Create a redeemable code and consume it for new subscription
     const codes = await createRedeemableCodes({
-      unitValue: 1, // 1 month or 1 year
+      unitValue,
       type: RedeemableCodeType.Membership,
       quantity: 1,
       priceId: price.id,
