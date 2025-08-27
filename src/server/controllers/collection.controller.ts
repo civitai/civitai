@@ -68,6 +68,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -461,9 +462,11 @@ export const collectionItemsInfiniteHandler = async ({
   // Safeguard against missing items that might be in collection but return null.
   // due to preferences and/or other statuses.
   const limit = 2 * input.limit;
+  const features = getFeatureFlags({ user: ctx.user, req: ctx.req });
   let collectionItems = await getCollectionItemsByCollectionId({
     input: { ...input, limit },
     user: ctx.user,
+    useLogicalReplica: features.logicalReplica,
   });
 
   let nextCursor: number | undefined;
