@@ -45,6 +45,7 @@ import {
   InputCheckbox,
   InputCreatableMultiSelect,
   InputDatePicker,
+  InputMultiSelect,
   InputRTE,
   InputSelect,
   InputText,
@@ -55,7 +56,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { createChangelogInput } from '~/server/schema/changelog.schema';
 import type { Changelog } from '~/server/services/changelog.service';
-import { ChangelogType } from '~/shared/utils/prisma/enums';
+import { ChangelogType, DomainColor } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -316,6 +317,7 @@ const defaultValues: SchemaType = {
   tags: [],
   disabled: false,
   sticky: false,
+  domain: [DomainColor.all],
 };
 
 const CreateChangelog = ({
@@ -350,6 +352,7 @@ const CreateChangelog = ({
             link: existing.link ?? undefined,
             cta: existing.cta ?? undefined,
             titleColor: existing.titleColor ?? 'blue',
+            domain: existing.domain ?? [DomainColor.all],
           }
         : defaultValues
     );
@@ -468,6 +471,20 @@ const CreateChangelog = ({
                 data={allTagData}
                 loading={loadingTagData}
                 placeholder="Tags..."
+                clearable
+              />
+              <InputMultiSelect
+                name="domain"
+                label="Domain"
+                description="Select which server domains this changelog should appear on"
+                data={[
+                  { value: 'red', label: 'Red Server' },
+                  { value: 'green', label: 'Green Server' },
+                  { value: 'blue', label: 'Blue Server' },
+                  { value: 'all', label: 'All Servers' },
+                ]}
+                placeholder="Select domains..."
+                searchable
                 clearable
               />
               <InputText name="link" label="Link" placeholder="Link to commit/article..." />

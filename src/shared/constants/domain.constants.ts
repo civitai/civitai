@@ -8,7 +8,7 @@ export const colorDomains = {
 export type ColorDomain = keyof typeof colorDomains;
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
-  const { host } = req.headers;
+  const { host } = req?.headers ?? {};
   if (!host) return undefined;
   for (const [color, domain] of Object.entries(colorDomains)) {
     if (host === domain) return color as ColorDomain;

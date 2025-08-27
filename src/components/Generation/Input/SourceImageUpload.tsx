@@ -3,7 +3,11 @@ import { Input, CloseButton, Alert } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { forwardRef, useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/constants';
+import {
+  maxOrchestratorImageFileSize,
+  maxUpscaleSize,
+  minUploadSize,
+} from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
@@ -91,11 +95,14 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
         const resized = await resizeImage(src, {
           maxHeight: maxUpscaleSize,
           maxWidth: maxUpscaleSize,
+          minWidth: minUploadSize,
+          minHeight: minUploadSize,
         });
         const jpegBlob = await imageToJpegBlob(resized);
         const base64 = await getBase64(jpegBlob);
         if (base64) handleChange(base64);
       } catch (e) {
+        setError((e as Error).message);
         setLoading(false);
       }
     }

@@ -114,10 +114,11 @@ export async function createTextToImage(
     experimental?: boolean;
     batchAll?: boolean;
     isGreen?: boolean;
+    allowMatureContent: boolean;
   }
 ) {
   const step = await createTextToImageStep(args);
-  const { params, tips, user, experimental, isGreen } = args;
+  const { params, tips, user, experimental, isGreen, allowMatureContent } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
   const workflow = (await submitWorkflow({
@@ -136,6 +137,7 @@ export async function createTextToImage(
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
       nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   })) as TextToImageResponse;
 

@@ -48,9 +48,10 @@ export async function createImageGen(
     token: string;
     experimental?: boolean;
     isGreen?: boolean;
+    allowMatureContent: boolean;
   }
 ) {
-  const { tips, user, experimental, isGreen } = args;
+  const { tips, user, experimental, isGreen, allowMatureContent } = args;
   if (!args.params.engine)
     throw new Error(`cannot generate with $type:'imageGen' without specifying an engine`);
   const config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
@@ -68,6 +69,7 @@ export async function createImageGen(
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
       nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   })) as TextToImageResponse;
 

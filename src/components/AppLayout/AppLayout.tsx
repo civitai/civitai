@@ -19,6 +19,7 @@ import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useZkp2pPendingTransaction } from '~/hooks/useZkp2pPendingTransaction';
+import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 
 let shownReadonly = false;
 const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
@@ -51,6 +52,7 @@ export function AppLayout({
   const features = useFeatureFlags();
   useRegionWarning();
   useZkp2pPendingTransaction();
+  useRegionRedirectDetection();
 
   useEffect(() => {
     if (isMounted() && !features.canWrite && !shownReadonly) {

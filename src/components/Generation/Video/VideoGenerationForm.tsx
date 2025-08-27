@@ -190,7 +190,6 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
     mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
   });
   const isUploadingMultiple = useImagesUploadingStore((state) => state.uploading.length > 0);
-  console.log({ isUploadingMultiple });
   const isUploadingImage = isUploadingImageValue === 1 || isUploadingMultiple;
   const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
     { $type: 'videoGen', data: query as Record<string, any> },

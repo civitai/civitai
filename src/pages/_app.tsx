@@ -22,7 +22,6 @@ import {
   BrowsingLevelProviderOptional,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 // import ChadGPT from '~/components/ChadGPT/ChadGPT';
-import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
@@ -179,14 +178,12 @@ function MyApp(props: CustomAppProps) {
                                                   <AuctionContextProvider>
                                                     <BaseLayout>
                                                       {isProd && <TrackPageView />}
-                                                      <ChatContextProvider>
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
-                                                      </ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
                                                     </BaseLayout>
                                                   </AuctionContextProvider>
                                                 </ToursProvider>
@@ -281,7 +278,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   });
 
   const session = token?.user ? { user: token.user as SessionUser } : null;
-  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host });
+  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
 
   const settings = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,

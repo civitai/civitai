@@ -5,6 +5,12 @@ export const kinguinVendor: Vendor = {
   name: 'Kinguin',
   displayName: 'Kinguin',
   enabled: true,
+  promo: {
+    code: 'HEIST',
+    discount: '6% off',
+    startDate: new Date('2025-08-25T22:00:00Z'),
+    endDate: new Date('2025-09-01T21:59:00Z'),
+  },
   products: {
     buzzCards: [
       {

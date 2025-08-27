@@ -375,6 +375,10 @@ export const BuzzPurchaseImproved = ({
                         component={NextLink}
                         href="/gift-cards?type=buzz"
                         className={classes.giftCardCta}
+                        onClick={() => {
+                          // Basiaclly makes it so the modal closes out.
+                          onCancel?.();
+                        }}
                       >
                         <Group gap="xs">
                           <Text size="sm" fw={600}>

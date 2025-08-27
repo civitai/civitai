@@ -1,5 +1,5 @@
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser, encodeMetadata } from '~/utils/metadata';
+import { ExifParser } from '~/utils/metadata';
 import { createExifSegmentFromTags } from '~/utils/encoding-helpers';
 import { createImageElement, calculateAspectRatioFit } from '~/utils/image-utils';
 import type { Area } from 'react-easy-crop';
@@ -7,12 +7,12 @@ import type { Area } from 'react-easy-crop';
 async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | Blob | string) {
   const image = src instanceof File || typeof src === 'string' ? src : blobToFile(src);
   const parser = await ExifParser(image);
-  const metadata = await parser.getMetadata();
+  const userComment = parser.exif.userComment ?? '';
   const dataUrl = canvas.toDataURL('image/jpeg');
 
   const exifSegment = createExifSegmentFromTags({
     artist: parser.exif.Artist,
-    userComment: encodeMetadata(metadata),
+    userComment,
     software: parser.exif.Software,
   });
   const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
@@ -129,6 +129,8 @@ export async function resizeImage(
   options: {
     maxHeight?: number;
     maxWidth?: number;
+    minWidth?: number;
+    minHeight?: number;
   } = {}
 ) {
   const file = await fetchBlobAsFile(src);
@@ -137,7 +139,12 @@ export async function resizeImage(
   // const url = URL.createObjectURL(blob);
   const img = await createImageElement(file);
 
-  const { maxWidth = img.width, maxHeight = img.height } = options;
+  const { maxWidth = img.width, maxHeight = img.height, minWidth, minHeight } = options;
+
+  if (minWidth && img.width < minWidth)
+    throw new Error(`Does not meet minimum width requirement: ${minWidth}px`);
+  if (minHeight && img.height < minHeight)
+    throw new Error(`Does not meet minimum height requirement: ${minHeight}px`);
 
   const { width, height, mutated } = calculateAspectRatioFit(
     img.width,

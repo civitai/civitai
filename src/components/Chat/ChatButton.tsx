@@ -1,13 +1,13 @@
-import { ActionIcon, Indicator } from '@mantine/core';
+import { Indicator } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 export function ChatButton() {
-  const { state, setState } = useChatContext();
+  const open = useChatStore((state) => state.open);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -35,9 +35,9 @@ export function ChatButton() {
         withBorder
       >
         <LegacyActionIcon
-          variant={state.open ? 'filled' : 'subtle'}
+          variant={open ? 'filled' : 'subtle'}
           color="gray"
-          onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
+          onClick={() => useChatStore.setState((state) => ({ open: !state.open }))}
           data-testid="open-chat"
         >
           <IconMessage2 />

@@ -1,14 +1,17 @@
-import type { IncomingHttpHeaders } from 'http';
+import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
+import type { NextApiRequest } from 'next';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
+const regionAvailability = ['restricted', 'nonRestricted'] as const;
 type ServerAvailability = keyof typeof serverDomainMap;
 export const serverDomainMap = {
   green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
@@ -21,6 +24,7 @@ const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTi
 type RoleAvailability = (typeof roleAvailablity)[number];
 const featureAvailability = [
   ...envAvailability,
+  ...regionAvailability,
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
@@ -103,7 +107,8 @@ const featureFlags = createFeatureFlags({
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: ['public', 'blue', 'red'],
+  canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
+  isRestrictedRegion: ['restricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
@@ -121,7 +126,7 @@ const featureFlags = createFeatureFlags({
   changelogEdit: ['granted'],
   annualMemberships: ['public'],
   disablePayments: ['public'],
-  prepaidMemberships: ['granted'],
+  prepaidMemberships: ['public'],
   coinbasePayments: ['public'],
   coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
@@ -140,10 +145,7 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 type FeatureAccessContext = {
   user?: SessionUser;
   host?: string;
-  req?: {
-    headers: IncomingHttpHeaders;
-    // url?: string;
-  };
+  req: NextApiRequest | IncomingMessage;
 };
 const hasFeature = (
   key: FeatureFlagKey,
@@ -179,6 +181,29 @@ const hasFeature = (
     if (!serverMatch) return false;
   }
 
+  // Check region availability
+  let regionMatch = true;
+  const regionRequirements = availability.filter((x) =>
+    regionAvailability.includes(x as (typeof regionAvailability)[number])
+  );
+  if (regionRequirements.length > 0 && req) {
+    const region = getRegion(req);
+    const isRestricted = isRegionRestricted(region);
+
+    regionMatch = regionRequirements.some((requirement) => {
+      const matches =
+        requirement === 'restricted'
+          ? isRestricted
+          : requirement === 'nonRestricted'
+          ? !isRestricted
+          : false;
+      return matches;
+    });
+
+    // if region doesn't match, return false regardless of other availability flags
+    if (!regionMatch) return false;
+  }
+
   // Check granted access
   const grantedAccess = availability.includes('granted')
     ? !!user?.permissions?.includes(key)
@@ -196,7 +221,7 @@ const hasFeature = (
     }
   }
 
-  return envRequirement && serverMatch && (grantedAccess || roleAccess);
+  return envRequirement && serverMatch && regionMatch && (grantedAccess || roleAccess);
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;

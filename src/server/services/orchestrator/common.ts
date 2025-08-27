@@ -684,7 +684,11 @@ export type GeneratedImageWorkflowModel = AsyncReturnType<
 export async function queryGeneratedImageWorkflows({
   user,
   ...props
-}: Parameters<typeof queryWorkflows>[0] & { token: string; user?: SessionUser }) {
+}: Parameters<typeof queryWorkflows>[0] & {
+  token: string;
+  user?: SessionUser;
+  allowMatureContent: boolean;
+}) {
   const { nextCursor, items } = await queryWorkflows(props);
 
   return {

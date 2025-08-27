@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Group, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -15,16 +15,14 @@ export function ChatUserButton({
   user: Partial<UserWithCosmetics>;
   label?: string;
 } & ButtonProps) {
-  const { setState } = useChatContext();
   const theme = useMantineTheme();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
 
   const handleClick = () => {
-    setState((prev) => ({
-      ...prev,
-      open: !prev.open,
+    useChatStore.setState((state) => ({
+      open: !state.open,
       isCreating: true,
       existingChatId: undefined,
       selectedUsers: [user],
