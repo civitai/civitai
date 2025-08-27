@@ -23,7 +23,7 @@ const log = async (data: MixedObject) => {
 export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number }) => {
   const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
   const successUrl =
-    `${env.NEXTAUTH_URL}/payment/coinbase?` + new URLSearchParams([['orderId', orderId]]);
+    `${env.NEXTAUTH_URL || ''}/payment/coinbase?` + new URLSearchParams([['orderId', orderId]]);
 
   const charge = await coinbaseCaller.createCharge({
     name: `Buzz purchase`,
@@ -39,7 +39,7 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
       internalOrderId: orderId,
     },
     redirect_url: successUrl,
-    cancel_url: env.NEXTAUTH_URL,
+    cancel_url: env.NEXTAUTH_URL || '',
   });
 
   if (!charge) {
@@ -51,7 +51,7 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
 
 export const createBuzzOrderOnramp = async (input: CreateBuzzCharge & { userId: number }) => {
   // const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
-  const redirectUrl = `${env.NEXTAUTH_URL}/payment/coinbase`;
+  const redirectUrl = `${env.NEXTAUTH_URL || ''}/payment/coinbase`;
 
   const dollarAmount = new Decimal(input.unitAmount + COINBASE_FIXED_FEE).dividedBy(100).toNumber();
   const wallet = await getWalletForUser(input.userId);
@@ -312,77 +312,42 @@ export const processUserPendingTransactions = async (userId: number) => {
     return;
   }
 
-  const transactions = await dbWrite.cryptoTransaction.findMany({
-    where: {
+  // Use the wallet balance to determine how much Buzz to send
+  const usdcAmount = balance.balance;
+  const buzzAmount = Math.floor(usdcAmount * 1000); // 1 USDC = 1000 Buzz
+
+  // Generate a unique key for this transaction
+  const transactionKey = `manual-process-${userId}-${new Date().getTime()}`;
+
+  // First, send the USDC from the wallet
+  const isComplete = await wallet.sendUSDC(usdcAmount, transactionKey);
+  if (!isComplete) {
+    throw new Error(`Failed to send USDC for userId: ${userId}`);
+  }
+
+  // Create a transaction record for tracking
+  await dbWrite.cryptoTransaction.create({
+    data: {
+      key: transactionKey,
       userId,
-      status: {
-        in: [
-          CryptoTransactionStatus.WaitingForRamp,
-          CryptoTransactionStatus.RampSuccess,
-          CryptoTransactionStatus.WaitingForSweep,
-        ],
-      },
-    },
-    orderBy: {
-      createdAt: 'desc',
+      status: CryptoTransactionStatus.Complete,
+      amount: usdcAmount,
+      note: 'Manual processing of wallet balance',
     },
   });
 
-  transactions.sort((a, b) => {
-    const statusOrder = [
-      CryptoTransactionStatus.WaitingForSweep,
-      CryptoTransactionStatus.RampSuccess,
-      CryptoTransactionStatus.WaitingForRamp,
-    ];
-
-    const aIndex = statusOrder.indexOf(a.status as any);
-    const bIndex = statusOrder.indexOf(b.status as any);
-
-    // If status is not found, put it at the end
-    return (
-      (aIndex === -1 ? statusOrder.length : aIndex) - (bIndex === -1 ? statusOrder.length : bIndex)
-    );
+  // Grant the buzz to the user
+  await grantBuzzPurchase({
+    amount: buzzAmount,
+    userId,
+    externalTransactionId: transactionKey,
+    provider: 'coinbase-onramp',
+    transactionKey,
   });
 
-  let remainingBalance = new Decimal(balance.balance);
-
-  // Attempts to process each transaction in order
-  for (const transaction of transactions) {
-    // Check if the transaction can be completed
-    if (remainingBalance.greaterThanOrEqualTo(transaction.amount)) {
-      await getTransactionStatusByKey({ userId, key: transaction.key });
-      remainingBalance = remainingBalance.sub(transaction.amount);
-    } else {
-      console.log(
-        `Insufficient balance for transaction ${transaction.key}. Needed: ${
-          transaction.amount
-        }, Available: ${remainingBalance.toNumber()}`
-      );
-
-      if (remainingBalance.lessThanOrEqualTo(0)) {
-        console.log(`No remaining balance to process further transactions for userId: ${userId}`);
-        break; // No more balance to process further transactions
-      }
-    }
-  }
-
-  // We do greater than 2 because Coinbase has a minimum size of $2 for transactions
-  if (remainingBalance.greaterThan(2)) {
-    console.log(`Remaining balance after processing transactions: ${remainingBalance.toString()}`);
-    const key = `remaining-${userId}-${new Date().getTime()}`;
-    // Add new transaction for remaining balance:
-    const transaction = await dbWrite.cryptoTransaction.create({
-      data: {
-        userId,
-        key,
-        amount: remainingBalance.toNumber(),
-        status: CryptoTransactionStatus.WaitingForSweep,
-        note: `Remaining balance after processing transactions: ${remainingBalance.toString()}`,
-      },
-    });
-
-    await getTransactionStatusByKey({ userId, key: transaction.key });
-  }
+  console.log(
+    `Successfully processed ${usdcAmount} USDC -> ${buzzAmount} Buzz for userId: ${userId}`
+  );
 
   const updatedBalance = await getUserWalletBalance(userId);
   return {
