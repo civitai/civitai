@@ -15,7 +15,7 @@ interface USDCPurchasePromptProps {
 // Hook to check if USDC prompt should show (for other components to use)
 export const useUSDCPurchasePromptVisibility = (userId?: number) => {
   const [shouldShow, setShouldShow] = useState(false);
-  
+
   const { data: transactions, isLoading: isLoadingTransactions } =
     trpc.coinbase.getPaginatedUserTransactions.useQuery(
       {
@@ -89,12 +89,7 @@ export const USDCPurchasePrompt = ({ userId }: USDCPurchasePromptProps) => {
   }
 
   return (
-    <Card
-      className={classes.usdcCard}
-      padding="md"
-      radius="md"
-      withBorder
-    >
+    <Card className={classes.usdcCard} padding="md" radius="md" withBorder>
       <Group justify="space-between" wrap="nowrap">
         <Group gap="sm" wrap="nowrap">
           <ThemeIcon

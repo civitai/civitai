@@ -832,6 +832,7 @@ export const BuzzPurchaseImproved = ({
                               amount={unitAmount / 100}
                               buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                               disabled={!ctaEnabled}
+                              onRedirect={onCancel} // Close modal on redirect
                             />
                           ))}
 

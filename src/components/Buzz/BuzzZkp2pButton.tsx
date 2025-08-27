@@ -10,9 +10,17 @@ type Props = {
   amount: number;
   buzzAmount: number;
   disabled?: boolean;
+  onRedirect?: () => void;
 };
 
-export function BuzzZkp2pButton({ method, config, amount, buzzAmount, disabled = false }: Props) {
+export function BuzzZkp2pButton({
+  method,
+  config,
+  amount,
+  buzzAmount,
+  disabled = false,
+  onRedirect,
+}: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const isSupported = useMemo(() => isBrowserSupported(), []);
@@ -41,6 +49,7 @@ export function BuzzZkp2pButton({ method, config, amount, buzzAmount, disabled =
     });
 
     router.push(`/purchase/zkp2p?${params.toString()}`);
+    onRedirect?.();
   };
 
   const Icon = config.icon;
