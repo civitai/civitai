@@ -1,11 +1,11 @@
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
-import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL, constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { pgDbRead } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -20,6 +20,7 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { stringifyAIR } from '~/shared/utils/air';
+import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -620,20 +621,20 @@ export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
   key: REDIS_KEYS.CACHES.IMAGE_METRICS,
   idKey: 'imageId',
   lookupFn: async (ids) => {
-    const imageMetric = await dbRead.entityMetricImage.findMany({
-      where: { imageId: { in: ids } },
-      select: {
-        imageId: true,
-        reactionLike: true,
-        reactionHeart: true,
-        reactionLaugh: true,
-        reactionCry: true,
-        // reactionTotal: true,
-        comment: true,
-        collection: true,
-        buzz: true,
-      },
-    });
+    const query = `
+      SELECT 
+        "imageId",
+        "reactionLike",
+        "reactionHeart",
+        "reactionLaugh",
+        "reactionCry",
+        "comment",
+        "collection",
+        "buzz"
+      FROM "EntityMetricImage"
+      WHERE "imageId" = ANY($1::int[])
+    `;
+    const { rows: imageMetric } = await pgDbRead.query<ImageMetricLookup>(query, [ids]);
     return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
   },
   ttl: CacheTTL.sm,
