@@ -7,7 +7,6 @@ import { isDev } from '~/env/other';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RegionInfo } from '~/server/utils/region-blocking';
-import { getRegion } from '~/server/utils/region-blocking';
 
 // --------------------------
 // Feature Availability
@@ -154,6 +153,81 @@ type FeatureAccessContext = {
   host?: string;
   req: NextApiRequest | IncomingMessage;
 };
+
+/**
+ * Unified region access checking that combines global restrictions with feature-specific controls
+ * Priority order: Global restrictions > Feature excludes > Feature includes
+ */
+function checkRegionAccess(
+  feature: FeatureFlag,
+  availability: FeatureAvailability[],
+  req?: NextApiRequest | IncomingMessage
+): boolean {
+  // Check if feature has any region requirements
+  const regionRequirements = availability.filter((x) =>
+    regionAvailability.includes(x as (typeof regionAvailability)[number])
+  );
+  const hasFeatureRegions = !!feature.regions;
+
+  // If no region requirements at all, allow access
+  if (regionRequirements.length === 0 && !hasFeatureRegions) {
+    return true;
+  }
+
+  // Get region info (only once)
+  let region: RegionInfo | undefined;
+  if (req) {
+    region = getRegion(req);
+  }
+
+  // If region info is required but not available, deny access
+  if ((regionRequirements.length > 0 || hasFeatureRegions) && !region?.countryCode) {
+    return hasFeatureRegions ? false : true; // Only deny if feature has specific geo restrictions
+  }
+
+  if (!region) return true; // Should not happen at this point, but safe fallback
+
+  const isGloballyRestricted = isRegionRestricted(region);
+  const countryCode = region.countryCode?.toUpperCase();
+
+  // Check global region availability requirements (restricted/nonRestricted)
+  if (regionRequirements.length > 0) {
+    const globalMatch = regionRequirements.some((requirement) => {
+      return requirement === 'restricted'
+        ? isGloballyRestricted
+        : requirement === 'nonRestricted'
+        ? !isGloballyRestricted
+        : false;
+    });
+
+    // If global requirements are not met, deny access
+    if (!globalMatch) return false;
+  }
+
+  // Check feature-specific region restrictions
+  if (hasFeatureRegions && countryCode) {
+    const { include, exclude } = feature.regions!;
+
+    // CRITICAL: Global restrictions always override feature includes
+    // If region is globally restricted, deny access regardless of feature includes
+    if (isGloballyRestricted && include && include.includes(countryCode)) {
+      return false;
+    }
+
+    // Check exclude list (blacklist) - always deny if in exclude
+    if (exclude && exclude.length > 0 && exclude.includes(countryCode)) {
+      return false;
+    }
+
+    // Check include list (whitelist) - only allow if in include list when list exists
+    if (include && include.length > 0) {
+      return include.includes(countryCode);
+    }
+  }
+
+  return true;
+}
+
 const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext
@@ -189,29 +263,6 @@ const hasFeature = (
     if (!serverMatch) return false;
   }
 
-  // Check region availability
-  let regionMatch = true;
-  const regionRequirements = availability.filter((x) =>
-    regionAvailability.includes(x as (typeof regionAvailability)[number])
-  );
-  if (regionRequirements.length > 0 && req) {
-    const region = getRegion(req);
-    const isRestricted = isRegionRestricted(region);
-
-    regionMatch = regionRequirements.some((requirement) => {
-      const matches =
-        requirement === 'restricted'
-          ? isRestricted
-          : requirement === 'nonRestricted'
-          ? !isRestricted
-          : false;
-      return matches;
-    });
-
-    // if region doesn't match, return false regardless of other availability flags
-    if (!regionMatch) return false;
-  }
-
   // Check granted access
   const grantedAccess = availability.includes('granted')
     ? !!user?.permissions?.includes(key)
@@ -229,39 +280,13 @@ const hasFeature = (
     }
   }
 
-  // Check basic access first
+  // Check basic access (env, server, roles) before region checks
   const hasBasicAccess = envRequirement && serverMatch && (grantedAccess || roleAccess);
   if (!hasBasicAccess) return false;
 
-  // Check region restrictions if they exist
-  if (feature.regions) {
-    // Try to get region from request
-    let region: RegionInfo | undefined;
-    if (req) {
-      region = getRegion(req as any);
-    }
-    // If no region info available, deny access when geo restrictions are in place
-    if (!region?.countryCode) {
-      return false;
-    }
-
-    const { include, exclude } = feature.regions;
-    const countryCode = region.countryCode?.toUpperCase();
-
-    // Check include list (whitelist)
-    if (include && include.length > 0) {
-      if (!countryCode || !include.includes(countryCode)) {
-        return false;
-      }
-    }
-
-    // Check exclude list (blacklist)
-    if (exclude && exclude.length > 0) {
-      if (countryCode && exclude.includes(countryCode)) {
-        return false;
-      }
-    }
-  }
+  // Check region access
+  const regionAccess = checkRegionAccess(feature, availability, req);
+  if (!regionAccess) return false;
 
   return true;
 };
@@ -320,8 +345,8 @@ type FeatureFlag = {
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties
 type FeatureFlagInput =
-  | FeatureAvailability[]  // Legacy format: ['public']
-  | Partial<FeatureFlag> & { availability: FeatureAvailability[] };  // Object with at least availability
+  | FeatureAvailability[] // Legacy format: ['public']
+  | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
 
 function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };
@@ -333,9 +358,9 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Build the feature flag with defaults for missing properties
     features[key as keyof T] = {
-      displayName: getDisplayName(key),  // Default display name
-      toggleable: false,                  // Default not toggleable
-      ...flagData,                        // Spread all provided properties (overrides defaults)
+      displayName: getDisplayName(key), // Default display name
+      toggleable: false, // Default not toggleable
+      ...flagData, // Spread all provided properties (overrides defaults)
     } as FeatureFlag;
 
     // Apply ENV overrides
