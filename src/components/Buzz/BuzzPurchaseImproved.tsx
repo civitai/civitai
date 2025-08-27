@@ -270,7 +270,7 @@ export const BuzzPurchaseImproved = ({
 
   const availableZkp2pMethods = useMemo(() => {
     if (!features.zkp2pPayments) return [];
-    return getAvailablePaymentMethods(region?.countryCode);
+    return getAvailablePaymentMethods(region?.countryCode || undefined);
   }, [features.zkp2pPayments, region?.countryCode]);
 
   // Calculate total buzz including bonuses

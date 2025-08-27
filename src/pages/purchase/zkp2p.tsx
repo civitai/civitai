@@ -71,29 +71,34 @@ export default function Zkp2pPurchasePage() {
         return;
       }
 
-      const { type, data } = event.data;
+      // Handle zkp2p-onramp message format
+      if (event.data?.source === 'zkp2p-onramp' && event.data?.event) {
+        const eventType = event.data.event;
+        const eventData = event.data.data;
 
-      switch (type) {
-        case 'flow:started':
-          setLoading(false);
-          break;
-        case 'flow:step':
-          console.log('ZKP2P step:', data);
-          break;
-        case 'flow:completed':
-          localStorage.removeItem('zkp2p_pending');
-          await trackEvent('success');
-          break;
-        case 'flow:error':
-          const errorMsg = data?.message || 'An error occurred during payment';
-          setError(errorMsg);
-          localStorage.removeItem('zkp2p_pending');
-          await trackEvent('error', errorMsg);
-          break;
-        case 'flow:return-home':
-          localStorage.removeItem('zkp2p_pending');
-          router.push('/');
-          break;
+        switch (eventType) {
+          case 'flow:started':
+            setLoading(false);
+            break;
+          case 'flow:step':
+            // console.log('ZKP2P step:', eventData);
+            break;
+          case 'flow:completed':
+            localStorage.removeItem('zkp2p_pending');
+            await trackEvent('success');
+            break;
+          case 'flow:error':
+            const errorMsg = eventData?.message || 'An error occurred during payment';
+            setError(errorMsg);
+            localStorage.removeItem('zkp2p_pending');
+            await trackEvent('error', errorMsg);
+            break;
+          case 'flow:return-home':
+            localStorage.removeItem('zkp2p_pending');
+            router.push('/');
+            break;
+        }
+        return;
       }
     };
 
