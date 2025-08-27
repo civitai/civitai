@@ -752,13 +752,16 @@ function formatWorkflowStepOutput({
       height = params.height;
 
       if (!width || !height) {
-        const image = params.sourceImage ?? params.images?.[0];
-        if (image) {
-          width = image.width;
-          height = image.height;
+        if (params.aspectRatio) {
+          const split = params.aspectRatio.split(':').map(Number);
+          width = split[0];
+          height = split[1];
         } else {
-          width = 512;
-          height = 512;
+          const image = params.sourceImage ?? params.images?.[0];
+          if (image) {
+            width = image.width;
+            height = image.height;
+          }
         }
       }
 
@@ -779,6 +782,12 @@ function formatWorkflowStepOutput({
         }
       }
     }
+
+    if (!width || !height) {
+      width = 512;
+      height = 512;
+    }
+
     if (!aspect) aspect = width / height;
     return {
       ...restItem,
