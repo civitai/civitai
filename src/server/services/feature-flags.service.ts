@@ -163,6 +163,11 @@ function checkRegionAccess(
   availability: FeatureAvailability[],
   req?: NextApiRequest | IncomingMessage
 ): boolean {
+  // Bypass all region checks in dev mode
+  if (isDev) {
+    return true;
+  }
+
   // Check if feature has any region requirements
   const regionRequirements = availability.filter((x) =>
     regionAvailability.includes(x as (typeof regionAvailability)[number])
