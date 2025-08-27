@@ -257,7 +257,6 @@ export async function consumeRedeemableCode({
               });
             } else if (consumedTierOrder > membershipTierOrder) {
               const now = dayjs();
-              console.log({ x: dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') });
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
                 Number(
