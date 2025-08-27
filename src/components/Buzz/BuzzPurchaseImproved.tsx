@@ -267,7 +267,7 @@ export const BuzzPurchaseImproved = ({
     ? customAmount * 10
     : selectedPrice?.buzzAmount ?? (selectedPrice?.unitAmount ?? 0) * 10;
   const liveFeatures = useLiveFeatureFlags();
-  
+
   const availableZkp2pMethods = useMemo(() => {
     if (!features.zkp2pPayments) return [];
     return getAvailablePaymentMethods(region?.countryCode);
@@ -829,7 +829,7 @@ export const BuzzPurchaseImproved = ({
                               key={method}
                               method={method}
                               config={config}
-                              amount={unitAmount}
+                              amount={unitAmount / 100}
                               buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
                               disabled={!ctaEnabled}
                             />

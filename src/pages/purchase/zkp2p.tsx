@@ -4,6 +4,7 @@ import { Container, Center, Loader, Text, Alert } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Meta } from '~/components/Meta/Meta';
+import { trackZkp2pEvent, generateZkp2pSessionId } from '~/utils/zkp2p-tracking';
 
 export default function Zkp2pPurchasePage() {
   const router = useRouter();
@@ -11,11 +12,32 @@ export default function Zkp2pPurchasePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sessionIdRef = useRef<string>('');
+  const hasTrackedRef = useRef<{ success?: boolean; error?: boolean; abandoned?: boolean }>({});
 
-  const { amount, buzzAmount, paymentMethod } = router.query as {
+  const { amount, buzzAmount, paymentMethod, sessionId, explain } = router.query as {
     amount?: string;
     buzzAmount?: string;
     paymentMethod?: string;
+    sessionId?: string;
+    explain?: string;
+  };
+
+  const trackEvent = async (
+    eventType: 'success' | 'error' | 'abandoned',
+    errorMessage?: string
+  ) => {
+    // Prevent duplicate tracking
+    if (hasTrackedRef.current[eventType]) return;
+    hasTrackedRef.current[eventType] = true;
+
+    await trackZkp2pEvent({
+      sessionId: sessionIdRef.current,
+      eventType,
+      paymentMethod: paymentMethod as any,
+      usdAmount: parseFloat(amount || '0'),
+      buzzAmount: parseInt(buzzAmount || '0', 10),
+      errorMessage,
+    });
   };
 
   useEffect(() => {
@@ -25,7 +47,7 @@ export default function Zkp2pPurchasePage() {
       return;
     }
 
-    sessionIdRef.current = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    sessionIdRef.current = sessionId || generateZkp2pSessionId();
 
     const pendingTransaction = {
       sessionId: sessionIdRef.current,
@@ -36,7 +58,7 @@ export default function Zkp2pPurchasePage() {
     };
     localStorage.setItem('zkp2p_pending', JSON.stringify(pendingTransaction));
 
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = async (event: MessageEvent) => {
       if (event.origin !== 'https://zkp2p.civitai.com') {
         return;
       }
@@ -52,10 +74,13 @@ export default function Zkp2pPurchasePage() {
           break;
         case 'flow:completed':
           localStorage.removeItem('zkp2p_pending');
+          await trackEvent('success');
           break;
         case 'flow:error':
-          setError(data?.message || 'An error occurred during payment');
+          const errorMsg = data?.message || 'An error occurred during payment';
+          setError(errorMsg);
           localStorage.removeItem('zkp2p_pending');
+          await trackEvent('error', errorMsg);
           break;
         case 'flow:return-home':
           localStorage.removeItem('zkp2p_pending');
@@ -66,6 +91,24 @@ export default function Zkp2pPurchasePage() {
 
     window.addEventListener('message', handleMessage);
 
+    // Track abandonment on page unload
+    const handleBeforeUnload = () => {
+      if (!hasTrackedRef.current.success && !hasTrackedRef.current.error) {
+        trackZkp2pEvent(
+          {
+            sessionId: sessionIdRef.current,
+            eventType: 'abandoned',
+            paymentMethod: paymentMethod as any,
+            usdAmount: parseFloat(amount || '0'),
+            buzzAmount: parseInt(buzzAmount || '0', 10),
+          },
+          { useBeacon: true }
+        );
+        hasTrackedRef.current.abandoned = true;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     setTimeout(() => {
       if (loading) {
         setLoading(false);
@@ -74,8 +117,9 @@ export default function Zkp2pPurchasePage() {
 
     return () => {
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [amount, paymentMethod, buzzAmount, loading, router]);
+  }, [amount, paymentMethod, buzzAmount, sessionId, loading, router]);
 
   if (!amount || !paymentMethod) {
     return (
@@ -87,7 +131,13 @@ export default function Zkp2pPurchasePage() {
     );
   }
 
-  const iframeUrl = `https://zkp2p.civitai.com/onramp?usdcAmount=${amount}&currency=usd&paymentMethod=${paymentMethod}`;
+  const iframeParams = new URLSearchParams({
+    usdcAmount: amount,
+    currency: 'usd',
+    paymentMethod,
+    explain: (explain === 'true').toString(),
+  });
+  const iframeUrl = `https://zkp2p.civitai.com/onramp?${iframeParams.toString()}`;
 
   return (
     <>
@@ -95,17 +145,10 @@ export default function Zkp2pPurchasePage() {
         title="Complete Your Payment | Civitai"
         description="Complete your Buzz purchase securely through ZKP2P"
       />
-      <div
-        style={{
-          position: 'relative',
-          width: '100%',
-          height: 'calc(100vh - var(--header-height) - var(--footer-height))',
-          minHeight: '600px',
-        }}
-      >
+      <div className="relative w-full h-full min-h-[600px]">
         {loading && (
-          <Center style={{ position: 'absolute', inset: 0, zIndex: 10 }}>
-            <div>
+          <Center className="absolute inset-0 z-10">
+            <div className="text-center">
               <Loader size="lg" />
               <Text mt="md">Loading payment interface...</Text>
             </div>
@@ -122,12 +165,7 @@ export default function Zkp2pPurchasePage() {
           <iframe
             ref={iframeRef}
             src={iframeUrl}
-            style={{
-              width: '100%',
-              height: '100%',
-              border: 0,
-              display: loading ? 'none' : 'block',
-            }}
+            className={`w-full h-full border-0 ${loading ? 'hidden' : 'block'}`}
             allow="clipboard-write"
             title="ZKP2P Payment"
           />
