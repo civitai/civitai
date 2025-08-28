@@ -13,7 +13,10 @@ export function WanFormInput() {
 
   useLayoutEffect(() => {
     const values = form.getValues();
-    form.reset({ ...wanGenerationConfig.softValidate(values) });
+    form.reset({
+      ...wanGenerationConfig.softValidate(values),
+      resources: values.resources, // included to keep extra data from being stripped by the schema validation
+    });
   }, [version]);
 
   return (
