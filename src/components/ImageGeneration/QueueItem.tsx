@@ -173,6 +173,10 @@ export function QueueItem({
     step.metadata.params && 'engine' in step.metadata.params
       ? (step.metadata.params.engine as string)
       : undefined;
+  const version =
+    step.metadata.params && 'version' in step.metadata.params
+      ? (step.metadata.params.version as string)
+      : undefined;
 
   const queuePosition = images[0]?.queuePosition;
 
@@ -267,7 +271,7 @@ export function QueueItem({
                   size="sm"
                   classNames={{ label: 'overflow-hidden' }}
                 >
-                  {engine}
+                  {`${engine}${version ? ` ${version}` : ''}`}
                 </Badge>
               )}
             </div>
