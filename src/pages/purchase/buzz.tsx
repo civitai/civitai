@@ -93,7 +93,7 @@ export default function PurchaseBuzz() {
   }
 
   return (
-    <Container size="xl" mb="lg">
+    <Container size="xl" mb="lg" pt="sm">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
           <Stack gap={0}>
