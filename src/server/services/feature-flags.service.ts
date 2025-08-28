@@ -132,7 +132,7 @@ const featureFlags = createFeatureFlags({
   coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
   zkp2pPayments: {
-    availability: ['mod'],
+    availability: ['mod', 'granted'],
     regions: {
       include: ['US'], // US-only initially
     },
