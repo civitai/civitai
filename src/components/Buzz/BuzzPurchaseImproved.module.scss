@@ -323,8 +323,14 @@
 }
 
 .bonusBreakdown {
-  background: light-dark(var(--mantine-color-yellow-0), var(--mantine-color-dark-8));
-  border: none;
+  background: light-dark(
+    rgba(var(--mantine-color-yellow-6-rgb), 0.08),
+    rgba(var(--mantine-color-yellow-6-rgb), 0.15)
+  );
+  border: 1px solid light-dark(
+    rgba(var(--mantine-color-yellow-6-rgb), 0.2),
+    rgba(var(--mantine-color-yellow-6-rgb), 0.3)
+  );
 
   // Mobile improvements
   @container (max-width: theme('screens.md')) {
@@ -332,65 +338,7 @@
   }
 }
 
-.benefitsBreakdown {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mantine-spacing-sm);
-
-  // Mobile stacking and spacing
-  @container (max-width: theme('screens.xs')) {
-    gap: var(--mantine-spacing-xs);
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-  }
-}
-
-.benefitRow {
-  // Mobile-specific layout improvements
-  @container (max-width: theme('screens.xs')) {
-    flex-direction: column !important;
-    align-items: flex-start !important;
-    gap: var(--mantine-spacing-xs) !important;
-    padding: var(--mantine-spacing-sm);
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    margin-bottom: var(--mantine-spacing-xs);
-
-    // Add a subtle separator instead of borders
-    &:not(:last-child) {
-      border-bottom: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
-      padding-bottom: var(--mantine-spacing-sm);
-    }
-  }
-}
-
-.benefitInfo {
-  // Mobile text improvements
-  @container (max-width: theme('screens.xs')) {
-    width: 100%;
-
-    div {
-      text-align: left;
-    }
-
-    .mantine-Text-root {
-      line-height: 1.4;
-      word-break: break-word;
-    }
-  }
-}
-
-.benefitBadge {
-  // Mobile badge positioning
-  @container (max-width: theme('screens.xs')) {
-    align-self: flex-end;
-    margin-top: 0;
-    font-size: var(--mantine-font-size-xs);
-  }
-}
+// Removed old complex benefit breakdown styles - now using simpler inline styles
 
 .membershipInfo {
   // Mobile membership info
