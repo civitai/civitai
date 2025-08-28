@@ -42,12 +42,13 @@ export const getServerSideProps = createServerSideProps({
 const schema = z.object({
   returnUrl: z.string().optional(),
   minBuzzAmount: z.coerce.number().optional(),
+  success: z.string().optional(),
 });
 
 export default function PurchaseBuzz() {
   const router = useRouter();
-  const { returnUrl, minBuzzAmount } = schema.parse(router.query);
-  const [success, setSuccess] = useState<boolean>(false);
+  const { returnUrl, minBuzzAmount, success: successParam } = schema.parse(router.query);
+  const [success, setSuccess] = useState<boolean>(successParam === 'true');
 
   const handlePurchaseSuccess = () => {
     if (returnUrl) {
@@ -108,12 +109,6 @@ export default function PurchaseBuzz() {
           </Stack>
         </Alert>
       )}
-      <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
-        <Group gap="xs" wrap="nowrap" justify="center">
-          <CurrencyIcon currency={Currency.BUZZ} size={24} />
-          <Title order={2}>Buy Buzz now</Title>
-        </Group>
-      </Alert>
       <BuzzPurchaseImproved
         onPurchaseSuccess={handlePurchaseSuccess}
         minBuzzAmount={minBuzzAmount}

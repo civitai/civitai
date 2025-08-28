@@ -75,26 +75,54 @@ The onramp flow accepts the following URL parameters:
 The iframe can communicate status updates to the parent window via postMessage:
 
 ```javascript
-// Listen for status updates in parent window (civitai.com)
+// Listen for status updates in parent window
 window.addEventListener('message', (event) => {
-  // Only accept messages from the ZKP2P iframe
+  // Verify the message source
   if (event.origin !== 'https://zkp2p.civitai.com') return;
 
-  const { type, data } = event.data;
+  // Messages follow this format
+  if (event.data?.source === 'zkp2p-onramp' && event.data?.event) {
+    const eventType = event.data.event;
+    const eventData = event.data.data;
 
-  switch(type) {
-    case 'flow:started':
-      console.log('User started the flow');
-      break;
-    case 'flow:step':
-      console.log('User reached step:', data.step);
-      break;
-    case 'flow:completed':
-      console.log('Flow completed successfully');
-      break;
-    case 'flow:error':
-      console.error('Flow error:', data.error);
-      break;
+    switch(eventType) {
+      case 'flow:started':
+        // Flow initialized
+        console.log('User started the flow');
+        break;
+
+      case 'flow:step':
+        // User reached a specific step
+        console.log('User reached step:', eventData.step);
+        // Possible steps:
+        // - 'checking-intent': Setting up exchange
+        // - 'payment': Showing payment details
+        // - 'authenticating': Checking transactions
+        // - 'selecting': User selecting transaction
+        // - 'verifying': Generating proof
+        // - 'success': USDC received
+        // - 'canceling': Canceling transaction
+        // - 'canceled': Transaction canceled
+        // - 'purchase': Purchasing Buzz
+        // - 'purchase-success': Buzz received
+        break;
+
+      case 'flow:completed':
+        // Entire flow completed successfully
+        console.log('Flow completed successfully');
+        break;
+
+      case 'flow:error':
+        // Error occurred during flow
+        console.error('Flow error:', eventData.message);
+        break;
+
+      case 'flow:return-home':
+        // User clicked "Go Home" button
+        console.log('User wants to return home');
+        // Handle navigation as needed
+        break;
+    }
   }
 });
 ```

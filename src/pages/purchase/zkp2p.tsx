@@ -67,6 +67,7 @@ export default function Zkp2pPurchasePage() {
     localStorage.setItem('zkp2p_pending', JSON.stringify(pendingTransaction));
 
     const handleMessage = async (event: MessageEvent) => {
+      // Verify the message source
       if (event.origin !== ZKP2P_IFRAME_HOST) {
         return;
       }
@@ -76,27 +77,70 @@ export default function Zkp2pPurchasePage() {
         const eventType = event.data.event;
         const eventData = event.data.data;
 
+        console.log('ZKP2P Event:', eventType, eventData);
+
         switch (eventType) {
           case 'flow:started':
+            // Flow initialized
+            console.log('User started the flow');
             setLoading(false);
             break;
+            
           case 'flow:step':
-            // console.log('ZKP2P step:', eventData);
+            // User reached a specific step
+            console.log('User reached step:', eventData?.step);
+            // Possible steps:
+            // - 'checking-intent': Setting up exchange
+            // - 'payment': Showing payment details
+            // - 'authenticating': Checking transactions
+            // - 'selecting': User selecting transaction
+            // - 'verifying': Generating proof
+            // - 'success': USDC received
+            // - 'canceling': Canceling transaction
+            // - 'canceled': Transaction canceled
+            // - 'purchase': Purchasing Buzz
+            // - 'purchase-success': Buzz received
+            
+            // Handle specific step actions if needed
+            if (eventData?.step === 'success' || eventData?.step === 'purchase-success') {
+              // Handle successful USDC receipt or Buzz purchase
+              localStorage.removeItem('zkp2p_pending');
+              await trackEvent('success');
+            } else if (eventData?.step === 'canceled') {
+              // Handle canceled transaction
+              localStorage.removeItem('zkp2p_pending');
+              router.push('/purchase/buzz');
+            }
             break;
+            
           case 'flow:completed':
+            // Entire flow completed successfully
+            console.log('Flow completed successfully');
             localStorage.removeItem('zkp2p_pending');
             await trackEvent('success');
+            // Navigate back to purchase page or show success
+            router.push('/purchase/buzz?success=true');
             break;
+            
           case 'flow:error':
+            // Error occurred during flow
             const errorMsg = eventData?.message || 'An error occurred during payment';
+            console.error('Flow error:', errorMsg);
             setError(errorMsg);
             localStorage.removeItem('zkp2p_pending');
             await trackEvent('error', errorMsg);
             break;
+            
           case 'flow:return-home':
+            // User clicked "Go Home" button
+            console.log('User wants to return home');
             localStorage.removeItem('zkp2p_pending');
-            router.push('/');
+            // Navigate to homepage or purchase page
+            router.push('/purchase/buzz');
             break;
+            
+          default:
+            console.log('Unknown ZKP2P event:', eventType);
         }
         return;
       }
