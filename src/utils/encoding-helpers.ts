@@ -5,60 +5,86 @@ import { isDefined } from '~/utils/type-guards';
  * @param buffer - The input Uint8Array with big-endian byte order.
  * @returns A new Uint8Array with little-endian byte order.
  */
-export function swapByteOrder(buffer: Uint8Array): Uint8Array {
-  const swapped = new Uint8Array(buffer.length);
-  for (let i = 0; i < buffer.length; i += 2) {
-    swapped[i] = buffer[i + 1];
-    swapped[i + 1] = buffer[i];
-  }
-  return swapped;
-}
+// export function swapByteOrder(buffer: Uint8Array): Uint8Array {
+//   const swapped = new Uint8Array(buffer.length);
+//   for (let i = 0; i < buffer.length; i += 2) {
+//     swapped[i] = buffer[i + 1];
+//     swapped[i + 1] = buffer[i];
+//   }
+//   return swapped;
+// }
 
 /**
  * Remove Unicode header bytes if present.
  * @param buffer - The input Uint8Array.
  * @returns A new Uint8Array without BOM or header bytes.
  */
-const unicodeHeader = new Uint8Array([85, 78, 73, 67, 79, 68, 69, 0]);
-export function removeUnicodeHeader(buffer: Uint8Array): Uint8Array {
-  if (buffer.length < unicodeHeader.length) return buffer;
+// const unicodeHeader = new Uint8Array([85, 78, 73, 67, 79, 68, 69, 0]);
+// export function removeUnicodeHeader(buffer: Uint8Array): Uint8Array {
+//   if (buffer.length < unicodeHeader.length) return buffer;
 
-  // Check for BOM (Byte Order Mark) for big-endian UTF-16 (0xFEFF) and remove it if present
-  for (let i = 0; i < unicodeHeader.length; i++) {
-    if (buffer[i] !== unicodeHeader[i]) return buffer;
-  }
-  return buffer.slice(unicodeHeader.length);
-}
+//   // Check for BOM (Byte Order Mark) for big-endian UTF-16 (0xFEFF) and remove it if present
+//   for (let i = 0; i < unicodeHeader.length; i++) {
+//     if (buffer[i] !== unicodeHeader[i]) return buffer;
+//   }
+//   return buffer.slice(unicodeHeader.length);
+// }
 
 /**
  * Decode a big-endian UTF-16 (Unicode) encoded buffer to a string.
  * @param buffer - The input Uint8Array with big-endian byte order.
  * @returns The decoded string.
  */
-const decoder = new TextDecoder('utf-16le');
-export function decodeBigEndianUTF16(buffer: Uint8Array): string {
-  // Remove BOM or unwanted header bytes if present
-  const bufferWithoutBOM = removeUnicodeHeader(buffer);
-  // Swap the byte order from big-endian to little-endian
-  const littleEndianBuffer = swapByteOrder(bufferWithoutBOM);
-  // Use TextDecoder to decode the little-endian buffer
-  const result = decoder.decode(littleEndianBuffer);
+// const decoder = new TextDecoder('utf-16le');
+// export function decodeUserComment(buffer: Uint8Array): string {
+//   // Remove BOM or unwanted header bytes if present
+//   const bufferWithoutBOM = removeUnicodeHeader(buffer);
+//   // Swap the byte order from big-endian to little-endian
+//   const littleEndianBuffer = swapByteOrder(bufferWithoutBOM);
+//   // Use TextDecoder to decode the little-endian buffer
+//   const result = decoder.decode(littleEndianBuffer);
+
+//   return result;
+// }
+
+export function decodeUTF32LE(buffer: Uint8Array): string {
+  let result = '';
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+
+  for (let i = 0; i + 3 < buffer.byteLength; i += 4) {
+    const codePoint = view.getUint32(i, true); // little-endian
+    if (codePoint === 0) continue; // skip nulls/padding
+    result += String.fromCodePoint(codePoint);
+  }
 
   return result;
 }
 
-const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0
-export function encodeUserCommentUTF16LE(str: string) {
-  const encoded = [];
-  for (let i = 0; i < str.length; i++) {
-    const code = str.charCodeAt(i);
-    encoded.push(code & 0xff); // low byte
-    encoded.push((code >> 8) & 0xff); // high byte
-  }
-  return new Uint8Array(prefix.concat(encoded));
+export function decodeUserComment(buffer: Uint8Array): string {
+  if (buffer.length < 8) return '';
+
+  const header = new TextDecoder('ascii').decode(buffer.subarray(0, 8));
+  const content = buffer.subarray(8); // skip the "UNICODE\0" header
+
+  if (header.startsWith('ASCII')) return new TextDecoder('ascii').decode(content);
+  if (header.startsWith('UTF8')) return new TextDecoder('utf-8').decode(content);
+
+  // For UNICODE header (old and new images), decode as UTF-32LE
+  return decodeUTF32LE(content);
 }
 
-export function encodeUserCommentUTF16BE(str: string) {
+const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0
+// function encodeUserCommentUTF16LE(str: string) {
+//   const encoded = [];
+//   for (let i = 0; i < str.length; i++) {
+//     const code = str.charCodeAt(i);
+//     encoded.push(code & 0xff); // low byte
+//     encoded.push((code >> 8) & 0xff); // high byte
+//   }
+//   return new Uint8Array(prefix.concat(encoded));
+// }
+
+function encodeUserCommentUTF16BE(str: string) {
   const encoded = [];
   for (let i = 0; i < str.length; i++) {
     const code = str.charCodeAt(i);
