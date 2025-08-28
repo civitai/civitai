@@ -30,6 +30,7 @@ const baseModelConfig = [
   { name: 'LTXV', type: 'video', group: 'LTXV', engine: 'lightricks' },
   { name: 'Lumina', type: 'image', group: 'Lumina' },
   { name: 'Mochi', type: 'image', group: 'Mochi' },
+  { name: 'Nano Banana', type: 'image', group: 'NanoBanana', hidden: true },
   { name: 'NoobAI', type: 'image', group: 'NoobAI', ecosystem: 'sdxl' },
   { name: 'ODOR', type: 'image', group: 'ODOR', hidden: true },
   { name: 'OpenAI', type: 'image', group: 'OpenAI', hidden: true },

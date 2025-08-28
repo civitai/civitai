@@ -550,6 +550,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
   OpenAI: baseLicenses['openai'],
+  'Nano Banana': baseLicenses['imagen4'],
   Imagen4: baseLicenses['imagen4'],
   'Veo 3': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
