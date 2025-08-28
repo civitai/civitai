@@ -133,19 +133,23 @@ export default defineNextConfig(
         });
       }
 
-      // Allow Kinguin checkout iframe on purchase pages, deny elsewhere
+      // Allow Kinguin checkout iframe on gift cards page - NO X-Frame-Options header
+      // Minimal CSP that only restricts frame-src to allow Kinguin
       headers.push({
-        source: '/purchase/kinguin',
+        source: '/gift-cards',
         headers: [
           { 
             key: 'Content-Security-Policy', 
-            value: "frame-src 'self' https://www.kinguin.net https://checkout.kinguin.net https://*.kinguin.net;" 
+            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;" 
           }
+          // NOTE: Intentionally NO X-Frame-Options header as per Kinguin's documentation
+          // NOTE: Only setting frame-src, letting other resources use browser defaults
         ],
       });
       
+      // Apply X-Frame-Options to all pages EXCEPT gift-cards
       headers.push({
-        source: '/(.*)?',
+        source: '/((?!gift-cards).*)',
         headers: [{ key: 'X-Frame-Options', value: 'DENY' }],
       });
 
