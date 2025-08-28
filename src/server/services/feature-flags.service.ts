@@ -4,9 +4,9 @@ import type { NextApiRequest } from 'next';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
+import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
-import type { RegionInfo } from '~/server/utils/region-blocking';
 
 // --------------------------
 // Feature Availability
@@ -132,7 +132,7 @@ const featureFlags = createFeatureFlags({
   coinbaseOnramp: ['mod'],
   nowpaymentPayments: [],
   zkp2pPayments: {
-    availability: ['public'],
+    availability: ['mod'],
     regions: {
       include: ['US'], // US-only initially
     },
