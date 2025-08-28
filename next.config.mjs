@@ -133,8 +133,19 @@ export default defineNextConfig(
         });
       }
 
+      // Allow Kinguin checkout iframe on purchase pages, deny elsewhere
       headers.push({
-        source: '/:path*',
+        source: '/purchase/kinguin',
+        headers: [
+          { 
+            key: 'Content-Security-Policy', 
+            value: "frame-src 'self' https://www.kinguin.net https://checkout.kinguin.net https://*.kinguin.net;" 
+          }
+        ],
+      });
+      
+      headers.push({
+        source: '/(.*)?',
         headers: [{ key: 'X-Frame-Options', value: 'DENY' }],
       });
 

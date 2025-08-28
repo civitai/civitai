@@ -1,4 +1,5 @@
 import {
+  Alert,
   Button,
   Card,
   Container,
@@ -12,7 +13,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
+import { IconExternalLink, IconCheck } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -20,6 +21,27 @@ import { PromoNotification } from '~/components/PromoNotification/PromoNotificat
 import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift-cards/vendors';
 import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
 import classes from './index.module.scss';
+
+// Utility function to extract Kinguin product ID from URL
+function extractKinguinProductId(url: string): string | null {
+  try {
+    const match = url.match(/category\/(\d+)\//); 
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Helper to create purchase URL for different vendors
+function createPurchaseUrl(vendor: Vendor, url: string, productName: string): string {
+  if (vendor.id === 'kinguin') {
+    const productId = extractKinguinProductId(url);
+    if (productId) {
+      return `/purchase/kinguin?productId=${productId}&productType=gift-card&productName=${encodeURIComponent(productName)}`;
+    }
+  }
+  return url;
+}
 
 // Reusable gift card component
 interface GiftCardItemProps {
@@ -113,6 +135,9 @@ export default function GiftCardsPage() {
   const showBuzzCards = !typeFilter || typeFilter === 'buzz';
   const showMemberships = !typeFilter || typeFilter === 'memberships';
 
+  // Check for purchase success
+  const purchaseSuccess = router.query.purchase === 'success';
+
   if (!selectedVendor) {
     return (
       <>
@@ -196,6 +221,13 @@ export default function GiftCardsPage() {
             )}
           </div>
 
+          {/* Purchase Success Notification */}
+          {purchaseSuccess && (
+            <Alert icon={<IconCheck size={16} />} title="Purchase Successful!" color="green" mb="xl">
+              Your gift card purchase has been completed successfully. You should receive your gift card code via email shortly.
+            </Alert>
+          )}
+
           {/* Buzz Gift Cards Section */}
           {showBuzzCards && selectedVendor.products.buzzCards.length > 0 && (
             <div>
@@ -213,16 +245,26 @@ export default function GiftCardsPage() {
                       price={card.price}
                       className={classes.card}
                       actions={
-                        <Button
-                          component="a"
-                          href={card.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          rightIcon={<IconExternalLink size={16} />}
-                          fullWidth
-                        >
-                          Buy Now
-                        </Button>
+                        selectedVendor.id === 'kinguin' ? (
+                          <Button
+                            component="a"
+                            href={createPurchaseUrl(selectedVendor, card.url, `${formatBuzzAmount(card.amount)} Buzz`)}
+                            fullWidth
+                          >
+                            Buy Now
+                          </Button>
+                        ) : (
+                          <Button
+                            component="a"
+                            href={card.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            rightIcon={<IconExternalLink size={16} />}
+                            fullWidth
+                          >
+                            Buy Now
+                          </Button>
+                        )
                       }
                     />
                   </Grid.Col>
@@ -248,19 +290,31 @@ export default function GiftCardsPage() {
                       className={classes.membershipCard}
                       actions={
                         <Group gap="xs" grow>
-                          {membership.durations.map((duration) => (
-                            <Button
-                              key={duration.months}
-                              component="a"
-                              href={duration.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              rightIcon={<IconExternalLink size={16} />}
-                            >
-                              {duration.months} Month{duration.months > 1 ? 's' : ''}
-                              {duration.price && ` - $${duration.price}`}
-                            </Button>
-                          ))}
+                          {membership.durations.map((duration) => {
+                            const productName = `${membership.tier} Membership - ${duration.months} Month${duration.months > 1 ? 's' : ''}`;
+                            return selectedVendor.id === 'kinguin' ? (
+                              <Button
+                                key={duration.months}
+                                component="a"
+                                href={createPurchaseUrl(selectedVendor, duration.url, productName)}
+                              >
+                                {duration.months} Month{duration.months > 1 ? 's' : ''}
+                                {duration.price && ` - $${duration.price}`}
+                              </Button>
+                            ) : (
+                              <Button
+                                key={duration.months}
+                                component="a"
+                                href={duration.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                rightIcon={<IconExternalLink size={16} />}
+                              >
+                                {duration.months} Month{duration.months > 1 ? 's' : ''}
+                                {duration.price && ` - $${duration.price}`}
+                              </Button>
+                            );
+                          })}
                         </Group>
                       }
                     />
