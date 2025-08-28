@@ -33,7 +33,7 @@ export const wan22InterpolatorModels = ['none', 'film', 'rife'] as const;
 export const wan22AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const wan22Resolutions = ['480p', '720p'] as const;
 export const wan225bAspectRatios = wan21FalAspectRatios;
-export const wan225bResolutions = ['480p', '580p', '720p'] as const;
+export const wan225bResolutions = ['580p', '720p'] as const;
 export const maxFalAdditionalResources = 2;
 
 type WanVersion = (typeof wanVersions)[number];
@@ -115,31 +115,36 @@ const baseSchema = z.object({
 });
 
 type Wan21Schema = z.infer<typeof wan21Schema>;
-const wan21Schema = baseSchema.extend({
+const wan21Schema = z.object({
+  ...baseSchema.shape,
   version: z.literal('v2.1'),
   // baseModel: z.enum(baseModelGroups),
   resolution: z.enum(['480p', '720p']).catch('480p'),
   aspectRatio: z.enum(wan21CivitaiAspectRatios).optional().catch('1:1'),
 });
 type Wan22Schema = z.infer<typeof wan22Schema>;
-const wan22Schema = baseSchema.extend({
+const wan22Schema = z.object({
+  ...baseSchema.shape,
   version: z.literal('v2.2'),
   negativePrompt: negativePromptSchema,
-  resolution: z.enum(wan22Resolutions).catch('480p'),
+  resolution: z.enum(wan22Resolutions).catch(wan22Resolutions[0]),
   shift: z.number().default(8).catch(8),
   interpolatorModel: z.enum(wan22InterpolatorModels).optional(),
   useTurbo: z.boolean().optional(),
   aspectRatio: z.enum(wan22AspectRatios).optional().catch('1:1'),
+  frameRate: z.literal(24).optional().catch(24),
 });
 type Wan225bSchema = z.infer<typeof wan225bSchema>;
-const wan225bSchema = baseSchema.extend({
+const wan225bSchema = z.object({
+  ...baseSchema.shape,
   version: z.literal('v2.2-5b'),
   negativePrompt: negativePromptSchema,
-  resolution: z.enum(wan225bResolutions).catch('480p'),
+  resolution: z.enum(wan225bResolutions).catch(wan225bResolutions[0]),
   draft: z.boolean().optional(),
   steps: z.number().catch(40),
   aspectRatio: z.enum(wan225bAspectRatios).optional().catch('1:1'),
   shift: z.number().default(8).catch(8),
+  frameRate: z.literal(24).optional().catch(24),
 });
 
 const schema = z.discriminatedUnion('version', [wan21Schema, wan22Schema, wan225bSchema]);
