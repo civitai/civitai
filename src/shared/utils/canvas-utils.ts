@@ -1,13 +1,26 @@
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser } from '~/utils/metadata';
-import { createExifSegmentFromTags } from '~/utils/encoding-helpers';
+import { encodeMetadata, ExifParser } from '~/utils/metadata';
+import {
+  createExifSegmentFromTags,
+  encodeUserCommentUTF16BE,
+  isEncoded,
+} from '~/utils/encoding-helpers';
 import { createImageElement, calculateAspectRatioFit } from '~/utils/image-utils';
 import type { Area } from 'react-easy-crop';
 
 async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | Blob | string) {
   const image = src instanceof File || typeof src === 'string' ? src : blobToFile(src);
   const parser = await ExifParser(image);
-  const userComment = parser.exif.userComment ?? '';
+  let userComment =
+    parser.exif.userComment && isEncoded(parser.exif.userComment)
+      ? parser.exif.userComment
+      : undefined;
+  if (!userComment) {
+    const meta = await parser.getMetadata();
+    if (Object.keys(meta).length > 0) {
+      userComment = encodeUserCommentUTF16BE(encodeMetadata(meta));
+    }
+  }
   const dataUrl = canvas.toDataURL('image/jpeg');
 
   const exifSegment = createExifSegmentFromTags({
