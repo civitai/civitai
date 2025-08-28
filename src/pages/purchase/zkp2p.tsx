@@ -85,7 +85,7 @@ export default function Zkp2pPurchasePage() {
             console.log('User started the flow');
             setLoading(false);
             break;
-            
+
           case 'flow:step':
             // User reached a specific step
             console.log('User reached step:', eventData?.step);
@@ -100,7 +100,7 @@ export default function Zkp2pPurchasePage() {
             // - 'canceled': Transaction canceled
             // - 'purchase': Purchasing Buzz
             // - 'purchase-success': Buzz received
-            
+
             // Handle specific step actions if needed
             if (eventData?.step === 'success' || eventData?.step === 'purchase-success') {
               // Handle successful USDC receipt or Buzz purchase
@@ -109,19 +109,16 @@ export default function Zkp2pPurchasePage() {
             } else if (eventData?.step === 'canceled') {
               // Handle canceled transaction
               localStorage.removeItem('zkp2p_pending');
-              router.push('/purchase/buzz');
             }
             break;
-            
+
           case 'flow:completed':
             // Entire flow completed successfully
             console.log('Flow completed successfully');
             localStorage.removeItem('zkp2p_pending');
             await trackEvent('success');
-            // Navigate back to purchase page or show success
-            router.push('/purchase/buzz?success=true');
             break;
-            
+
           case 'flow:error':
             // Error occurred during flow
             const errorMsg = eventData?.message || 'An error occurred during payment';
@@ -130,15 +127,15 @@ export default function Zkp2pPurchasePage() {
             localStorage.removeItem('zkp2p_pending');
             await trackEvent('error', errorMsg);
             break;
-            
+
           case 'flow:return-home':
             // User clicked "Go Home" button
             console.log('User wants to return home');
             localStorage.removeItem('zkp2p_pending');
             // Navigate to homepage or purchase page
-            router.push('/purchase/buzz');
+            router.push('/');
             break;
-            
+
           default:
             console.log('Unknown ZKP2P event:', eventType);
         }
