@@ -88,11 +88,11 @@ export function Wan22FormInput() {
         labelPosition="left"
         label={
           <div className="relative flex items-center gap-1">
-            <Input.Label>Turbo Mode</Input.Label>
-            {/* <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-              Turbo Mode will generate videos faster, and with slightly less quality. Use this for
+            <Input.Label>Draft Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Draft Mode will generate videos faster, and with slightly less quality. Use this for
               exploring concepts quickly.
-            </InfoPopover> */}
+            </InfoPopover>
           </div>
         }
       />
