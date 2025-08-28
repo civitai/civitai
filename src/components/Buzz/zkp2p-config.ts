@@ -1,6 +1,7 @@
 import {
   IconBrandCashapp,
   IconBrandPaypal,
+  IconBrandRevolut,
   IconBuildingBank,
   IconCurrencyDollar,
 } from '@tabler/icons-react';
@@ -13,6 +14,37 @@ export type PaymentMethodConfig = {
   description?: string;
 };
 
+// EU member states ISO 3166-1 alpha-2 country codes
+const EU_COUNTRY_CODES = [
+  'AT', // Austria
+  'BE', // Belgium
+  'BG', // Bulgaria
+  'HR', // Croatia
+  'CY', // Cyprus
+  'CZ', // Czech Republic
+  'DK', // Denmark
+  'EE', // Estonia
+  'FI', // Finland
+  'FR', // France
+  'DE', // Germany
+  'GR', // Greece
+  'HU', // Hungary
+  'IE', // Ireland
+  'IT', // Italy
+  'LV', // Latvia
+  'LT', // Lithuania
+  'LU', // Luxembourg
+  'MT', // Malta
+  'NL', // Netherlands
+  'PL', // Poland
+  'PT', // Portugal
+  'RO', // Romania
+  'SK', // Slovakia
+  'SI', // Slovenia
+  'ES', // Spain
+  'SE', // Sweden
+];
+
 export const ZKP2P_PAYMENT_METHODS: Record<string, PaymentMethodConfig> = {
   venmo: {
     regions: ['US'],
@@ -21,13 +53,12 @@ export const ZKP2P_PAYMENT_METHODS: Record<string, PaymentMethodConfig> = {
     description: 'Pay with Venmo',
   },
   cashapp: {
-    regions: ['US'],
+    regions: ['US', 'GB'],
     icon: IconBrandCashapp,
     label: 'Cash App',
     description: 'Pay with Cash App',
   },
   paypal: {
-    regions: ['US', 'EU', 'GB', 'CA', 'AU'],
     icon: IconBrandPaypal,
     label: 'PayPal',
     description: 'Pay with PayPal',
@@ -39,14 +70,13 @@ export const ZKP2P_PAYMENT_METHODS: Record<string, PaymentMethodConfig> = {
     description: 'Pay with Zelle',
   },
   wise: {
-    regions: ['EU', 'GB', 'CA', 'AU', 'JP', 'US'],
-    icon: IconCurrencyDollar,
+    icon: IconBuildingBank,
     label: 'Wise',
     description: 'Pay with Wise',
   },
   revolut: {
-    regions: ['EU', 'GB'],
-    icon: IconCurrencyDollar,
+    regions: [...EU_COUNTRY_CODES, 'GB', 'US', 'AU', 'NZ', 'JP', 'SG', 'CH'],
+    icon: IconBrandRevolut,
     label: 'Revolut',
     description: 'Pay with Revolut',
   },
@@ -63,13 +93,13 @@ export function getAvailablePaymentMethods(countryCode?: string) {
 
 export function isBrowserSupported() {
   if (typeof navigator === 'undefined') return false;
-  
+
   const userAgent = navigator.userAgent.toLowerCase();
   const isDesktop = !/mobile|android|iphone|ipad/i.test(userAgent);
   const isChromium =
     /chrome|chromium|crios/.test(userAgent) ||
     /edg/.test(userAgent) ||
     /brave/.test(userAgent);
-  
+
   return isDesktop && isChromium;
 }
