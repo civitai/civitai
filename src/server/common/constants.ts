@@ -931,6 +931,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  NanoBanana: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2154472,
+      name: 'Nano Banana',
+      trainedWords: [],
+      baseModel: 'NanoBanana',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1903424,
+        name: `Google Nano Banana`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
 
   Other: {
     aspectRatios: commonAspectRatios,

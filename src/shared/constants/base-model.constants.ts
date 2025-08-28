@@ -362,7 +362,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'OpenAI',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['OpenAI'] }],
   },
-
+  {
+    group: 'NanoBanana',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Nano Banana'] }],
+  },
   {
     group: 'Qwen',
     support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
