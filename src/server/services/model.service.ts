@@ -127,6 +127,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { Flags } from '~/shared/utils/flags';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -265,9 +266,14 @@ export const getModelsRaw = async ({
 
   // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
   let searchModelIds: number[] = [];
-  if (query && searchClient) {
+  if (query && searchClient && (!ids || ids.length === 0)) {
     const request: SearchParams = {
       limit: take ?? 100,
+      filter: [
+        browsingLevel
+          ? `nsfwLevel IN [${Flags.instanceToArray(browsingLevel).join(',')}]`
+          : undefined,
+      ].filter(isDefined),
     };
 
     const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
@@ -708,9 +714,8 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
+    nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
     models.pop(); //Remove excess model
-    // Use final item as cursor to grab next page
-    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
