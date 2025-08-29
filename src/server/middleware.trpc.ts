@@ -100,8 +100,9 @@ export type RateLimit = {
   limit: number;
   period: number; // seconds
   userReq?: (user: ExtendedUser) => boolean;
+  errorMessage?: string;
 };
-export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
+export function rateLimit(rateLimits?: RateLimit | RateLimit[]) {
   if (!rateLimits) rateLimits = { limit: 10, period: CacheTTL.md };
   if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
 
@@ -129,18 +130,33 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
     const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 
-    // Check if user can proceed
-    const canProceed = validLimits.every(({ limit, period }) => {
+    // Check if user can proceed and find the failing limit
+    let failedLimit: RateLimit | undefined = undefined;
+    let canProceed = true;
+
+    for (const rateLimitRule of validLimits) {
+      const { limit, period } = rateLimitRule;
+      if (limit === 0) {
+        failedLimit = rateLimitRule;
+        canProceed = false;
+        break;
+      }
+
       const cutoff = Date.now() - period! * 1000;
       const relevantAttempts = attempts.filter((x) => x > cutoff).length;
-      return relevantAttempts <= limit!;
-    });
+      if (relevantAttempts > limit!) {
+        failedLimit = rateLimitRule;
+        canProceed = false;
+        break;
+      }
+    }
 
     // Throw if rate limit exceeded
-    if (!canProceed) {
+    if (!canProceed && failedLimit) {
+      const errorMessage = failedLimit.errorMessage ?? `You're doing that too much...`;
       throw new TRPCError({
         code: 'TOO_MANY_REQUESTS',
-        message: `You're doing that too much...`,
+        message: errorMessage,
       });
     }
 

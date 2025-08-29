@@ -47,3 +47,8 @@
     box-shadow: var(--mantine-shadow-lg);
   }
 }
+
+.giftCardEnhanced {
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6)) !important;
+  border-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-4)) !important;
+}

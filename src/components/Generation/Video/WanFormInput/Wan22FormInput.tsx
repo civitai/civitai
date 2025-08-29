@@ -9,6 +9,7 @@ import {
   maxFalAdditionalResources,
   wan22AspectRatios,
   wan22Resolutions,
+  wanDuration,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
@@ -87,11 +88,11 @@ export function Wan22FormInput() {
         labelPosition="left"
         label={
           <div className="relative flex items-center gap-1">
-            <Input.Label>Turbo Mode</Input.Label>
-            {/* <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-              Turbo Mode will generate videos faster, and with slightly less quality. Use this for
+            <Input.Label>Draft Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Draft Mode will generate videos faster, and with slightly less quality. Use this for
               exploring concepts quickly.
-            </InfoPopover> */}
+            </InfoPopover>
           </div>
         }
       />
@@ -99,6 +100,14 @@ export function Wan22FormInput() {
       <div className="flex flex-col gap-0.5">
         <Input.Label>Resolution</Input.Label>
         <InputSegmentedControl name="resolution" data={[...wan22Resolutions]} />
+      </div>
+
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+        />
       </div>
 
       <InputNumberSlider

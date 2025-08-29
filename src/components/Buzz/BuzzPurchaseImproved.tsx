@@ -207,15 +207,15 @@ const RedeemableCodesSection = () => {
                   Alternative Payment Method
                 </Text>
                 <Text size="xs" c="dimmed">
-                <Anchor
-                  component={NextLink}
-                  href="/gift-cards?type=buzz"
-                  size="xs"
-                  className={classes.giftCardLink}
-                >
-                  Purchase redeemable codes
-                </Anchor>
-                  {' '}for yourself or as gifts
+                  <Anchor
+                    component={NextLink}
+                    href="/gift-cards?type=buzz"
+                    size="xs"
+                    className={classes.giftCardLink}
+                  >
+                    Purchase redeemable codes
+                  </Anchor>{' '}
+                  for yourself or as gifts
                 </Text>
               </>
             ) : (
@@ -602,61 +602,120 @@ export const BuzzPurchaseImproved = ({
                           </Group>
                         </Accordion.Control>
                         <Accordion.Panel>
-                          <div className={classes.bulkTable}>
-                            <Stack gap="xs">
-                              {buzzBulkBonusMultipliers.map(([min, multiplier]) => {
-                                const bonusPercent = Math.round((multiplier - 1) * 100);
-                                const totalAmount = Math.floor(min * multiplier);
-                                const bonusAmount = totalAmount - min;
-
-                                return (
-                                  <Group
-                                    key={min}
-                                    justify="space-between"
-                                    wrap="nowrap"
-                                    className={classes.bulkRow}
-                                    p="sm"
-                                  >
-                                    <div>
-                                      <Group gap="xs" wrap="nowrap">
-                                        <CurrencyIcon size={16} currency={Currency.BUZZ} />
-                                        <Text size="sm" fw={600}>
-                                          {numberWithCommas(min)}
-                                        </Text>
-                                        <Text size="sm" c="dimmed">
-                                          →
-                                        </Text>
-                                        <CurrencyIcon
-                                          size={16}
-                                          currency={Currency.BUZZ}
-                                          type="generation"
-                                        />
-                                        <Text size="sm" fw={600} c="blue.6">
-                                          {numberWithCommas(totalAmount)}
-                                        </Text>
-                                      </Group>
-
-                                      {bonusPercent > 0 && (
-                                        <Text size="xs" c="dimmed" mt={2}>
-                                          +{numberWithCommas(bonusAmount)} bonus Blue Buzz
-                                        </Text>
-                                      )}
-                                    </div>
-
-                                    {bonusPercent > 0 ? (
-                                      <Badge variant="light" color="blue" size="sm">
-                                        +{bonusPercent}%
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="light" color="gray" size="sm">
-                                        Base
-                                      </Badge>
+                          <Stack gap="sm">
+                            {/* Bonus Stacking Explanation */}
+                            <Card padding="sm" radius="sm" bg="blue.0" withBorder>
+                              <Stack gap={4}>
+                                <Text size="sm" fw={600} c="dark.6">
+                                  How bonuses work:
+                                </Text>
+                                <Text size="xs" c="dark.5" lh={1.4}>
+                                  Membership and bulk purchase bonuses{' '}
+                                  <Text span fw={600}>
+                                    don&apos;t stack
+                                  </Text>
+                                  . Your membership bonus (Yellow Buzz) takes priority over bulk
+                                  bonuses.
+                                  {buzzAmount &&
+                                    (membershipBonusPercent > 0 || bulkBonusPercent > 0) && (
+                                      <>
+                                        {' '}
+                                        For your {numberWithCommas(buzzAmount)} Buzz purchase:
+                                        {membershipBonusPercent > 0 && bulkBonusPercent > 0 ? (
+                                          <>
+                                            {' '}
+                                            with {bulkBonusPercent}% bulk + {membershipBonusPercent}
+                                            % membership bonus, you get{' '}
+                                            {numberWithCommas(
+                                              Math.floor(
+                                                buzzAmount *
+                                                  Math.max(membershipMultiplier, bulkMultiplier) -
+                                                  buzzAmount
+                                              )
+                                            )}{' '}
+                                            total bonus (
+                                            {numberWithCommas(buzzCalculation.yellowBuzzBonus)}{' '}
+                                            Yellow +{' '}
+                                            {numberWithCommas(buzzCalculation.blueBuzzBonus)} Blue).
+                                          </>
+                                        ) : membershipBonusPercent > 0 ? (
+                                          <>
+                                            {' '}
+                                            you get{' '}
+                                            {numberWithCommas(buzzCalculation.yellowBuzzBonus)}{' '}
+                                            bonus Yellow Buzz from your {membershipBonusPercent}%
+                                            membership.
+                                          </>
+                                        ) : bulkBonusPercent > 0 ? (
+                                          <>
+                                            {' '}
+                                            you get{' '}
+                                            {numberWithCommas(buzzCalculation.blueBuzzBonus)} bonus
+                                            Blue Buzz from the {bulkBonusPercent}% bulk discount.
+                                          </>
+                                        ) : null}
+                                      </>
                                     )}
-                                  </Group>
-                                );
-                              })}
-                            </Stack>
-                          </div>
+                                </Text>
+                              </Stack>
+                            </Card>
+
+                            <div className={classes.bulkTable}>
+                              <Stack gap="xs">
+                                {buzzBulkBonusMultipliers.map(([min, multiplier]) => {
+                                  const bonusPercent = Math.round((multiplier - 1) * 100);
+                                  const totalAmount = Math.floor(min * multiplier);
+                                  const bonusAmount = totalAmount - min;
+
+                                  return (
+                                    <Group
+                                      key={min}
+                                      justify="space-between"
+                                      wrap="nowrap"
+                                      className={classes.bulkRow}
+                                      p="sm"
+                                    >
+                                      <div>
+                                        <Group gap="xs" wrap="nowrap">
+                                          <CurrencyIcon size={16} currency={Currency.BUZZ} />
+                                          <Text size="sm" fw={600}>
+                                            {numberWithCommas(min)}
+                                          </Text>
+                                          <Text size="sm" c="dimmed">
+                                            →
+                                          </Text>
+                                          <CurrencyIcon
+                                            size={16}
+                                            currency={Currency.BUZZ}
+                                            type="generation"
+                                          />
+                                          <Text size="sm" fw={600} c="blue.6">
+                                            {numberWithCommas(totalAmount)}
+                                          </Text>
+                                        </Group>
+
+                                        {bonusPercent > 0 && (
+                                          <Text size="xs" c="dimmed" mt={2}>
+                                            +{numberWithCommas(bonusAmount)} bonus Blue Buzz
+                                          </Text>
+                                        )}
+                                      </div>
+
+                                      {bonusPercent > 0 ? (
+                                        <Badge variant="light" color="blue" size="sm">
+                                          +{bonusPercent}%
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="light" color="gray" size="sm">
+                                          Base
+                                        </Badge>
+                                      )}
+                                    </Group>
+                                  );
+                                })}
+                              </Stack>
+                            </div>
+                          </Stack>
                         </Accordion.Panel>
                       </Accordion.Item>
                     </Accordion>
@@ -677,7 +736,10 @@ export const BuzzPurchaseImproved = ({
                                 You Pay:
                               </Text>
                               <Text size="xl" fw={700} className={classes.totalAmount}>
-                                ${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}
+                                $
+                                {formatCurrencyForDisplay(unitAmount, undefined, {
+                                  decimals: false,
+                                })}
                               </Text>
                             </Group>
 
@@ -686,7 +748,12 @@ export const BuzzPurchaseImproved = ({
                                 You Get:
                               </Text>
                               <div>
-                                <Group gap="xs" justify="flex-start" align="center" className="-mt-1">
+                                <Group
+                                  gap="xs"
+                                  justify="flex-start"
+                                  align="center"
+                                  className="-mt-1"
+                                >
                                   {buzzCalculation.hasBonus && !buzzCalculation.isLoading ? (
                                     <>
                                       <CurrencyIcon currency={Currency.BUZZ} size={20} />
@@ -694,7 +761,7 @@ export const BuzzPurchaseImproved = ({
                                         size="xl"
                                         fw={600}
                                         c="white"
-                                        className="-mt-1 -ml-2"
+                                        className="-ml-2 -mt-1"
                                         style={{ opacity: 0.5 }}
                                       >
                                         {numberWithCommas(buzzAmount)}
@@ -710,7 +777,7 @@ export const BuzzPurchaseImproved = ({
                                   ) : (
                                     <>
                                       <CurrencyIcon currency={Currency.BUZZ} size={20} />
-                                      <Text size="xl" fw={700} c="yellow.6" className="-mt-1 -ml-2">
+                                      <Text size="xl" fw={700} c="yellow.6" className="-ml-2 -mt-1">
                                         {numberWithCommas(buzzCalculation.totalBuzz ?? 0)}
                                       </Text>
                                     </>
@@ -722,14 +789,17 @@ export const BuzzPurchaseImproved = ({
                                   <Stack gap={2} mt={2}>
                                     {buzzCalculation.yellowBuzzBonus > 0 && membershipTier && (
                                       <Text size="xs" c="dimmed">
-                                        +{numberWithCommas(buzzCalculation.yellowBuzzBonus)} bonus Buzz with {membershipBonusPercent}% {membershipTier} member bonus
+                                        +{numberWithCommas(buzzCalculation.yellowBuzzBonus)} bonus
+                                        Buzz with {membershipBonusPercent}% {membershipTier} member
+                                        bonus
                                       </Text>
                                     )}
 
                                     {buzzCalculation.blueBuzzBonus > 0 && (
                                       <Group gap={4}>
                                         <Text size="xs" c="dimmed">
-                                          +{numberWithCommas(buzzCalculation.blueBuzzBonus)} bonus Blue Buzz from bulk purchase
+                                          +{numberWithCommas(buzzCalculation.blueBuzzBonus)} bonus
+                                          Blue Buzz from bulk purchase
                                         </Text>
                                         <Tooltip
                                           label="Blue Buzz can only be used for generations"
@@ -833,9 +903,7 @@ export const BuzzPurchaseImproved = ({
                       {liveFeatures.buzzGiftCards && <RedeemableCodesSection />}
 
                       {/* Footer Info */}
-                      {(features.nowpaymentPayments ||
-                        features.coinbasePayments ||
-                        onCancel) && (
+                      {(features.nowpaymentPayments || features.coinbasePayments || onCancel) && (
                         <>
                           <Stack gap="xs" mt="xs">
                             {(features.nowpaymentPayments || features.coinbasePayments) && (

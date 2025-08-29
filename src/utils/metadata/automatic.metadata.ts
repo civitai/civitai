@@ -1,5 +1,5 @@
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
+import { decodeUserComment } from '~/utils/encoding-helpers';
 import type { SDResource } from '~/utils/metadata/base.metadata';
 import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
 import { parseAIR } from '~/utils/string-helpers';
@@ -94,7 +94,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     if (exif?.parameters) {
       generationDetails = exif.parameters;
     } else if (exif?.userComment) {
-      generationDetails = decodeBigEndianUTF16(exif.userComment);
+      generationDetails = decodeUserComment(exif.userComment);
     }
 
     if (generationDetails?.includes('Steps: ')) {

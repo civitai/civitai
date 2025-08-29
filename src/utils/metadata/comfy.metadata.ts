@@ -7,7 +7,7 @@ import type {
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';
-import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
+import { decodeUserComment } from '~/utils/encoding-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -33,7 +33,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       exif.prompt = comfyJson;
       exif.workflow = comfyJson;
       if (exif.userComment) {
-        const extrasJson = decodeBigEndianUTF16(exif.userComment);
+        const extrasJson = decodeUserComment(exif.userComment);
         try {
           exif.extraMetadata = JSON.parse(extrasJson)?.extraMetadata;
           // Fix for bad json
@@ -50,7 +50,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     if (exif?.parameters) {
       generationDetails = exif.parameters;
     } else if (exif?.userComment) {
-      generationDetails = decodeBigEndianUTF16(exif.userComment);
+      generationDetails = decodeUserComment(exif.userComment);
     }
 
     if (generationDetails) {
