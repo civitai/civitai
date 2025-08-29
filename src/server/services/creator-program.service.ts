@@ -239,6 +239,7 @@ async function getPoolValue(month?: Date) {
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
+      OR (type = 'redeemable' AND description LIKE 'Redeemed code KG-%')
     )
     AND fromAccountId = 0
     AND externalTransactionId NOT LIKE 'renewalBonus:%'
