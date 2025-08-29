@@ -253,7 +253,13 @@ async function updateImage(
           rankType: NewOrderRankType.Knight,
         };
 
-        if (flags.nsfw) queueDetails.priority = 2;
+        // Sampling logic: Only include 5% of NSFW images to reduce queue congestion
+        let shouldAddToQueue = true;
+        if (flags.nsfw) {
+          queueDetails.priority = 2;
+          // Use image ID for deterministic sampling (5% inclusion rate)
+          shouldAddToQueue = id % 20 === 0; // 1/20 = 5%
+        }
 
         if (reviewKey) {
           data.needsReview = reviewKey;
@@ -261,7 +267,12 @@ async function updateImage(
 
           if (reviewKey === 'minor') queueDetails.priority = 1;
           if (reviewKey === 'poi') queueDetails.priority = 2;
-        } else {
+
+          // Always add images needing review regardless of sampling
+          shouldAddToQueue = true;
+        }
+
+        if (shouldAddToQueue) {
           // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
           await addImageToQueue({
             imageIds: id,
