@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Group, Text, Title } from '@mantine/core';
 import { IconAlertCircle, IconX } from '@tabler/icons-react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 declare global {
   interface Window {
@@ -55,6 +56,7 @@ export function KinguinCheckout({
   sdkError,
   kinguinCheckoutSDK,
 }: KinguinCheckoutProps) {
+  const currentUser = useCurrentUser();
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const checkoutInitialized = useRef(false);
 
@@ -86,6 +88,7 @@ export function KinguinCheckout({
       },
       language: 'en',
       currency: 'USD',
+      email: currentUser?.email || undefined,
     };
 
     try {
