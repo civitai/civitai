@@ -257,7 +257,7 @@ export default function GiftCardsPage() {
           <div className={classes.headerSection}>
             <Group justify="space-between" align="flex-start" wrap="wrap">
               <div>
-                <Title order={1} mb="md">
+                <Title order={1} mb="sm">
                   Gift Cards & Memberships
                 </Title>
                 <Text c="dimmed" size="lg">

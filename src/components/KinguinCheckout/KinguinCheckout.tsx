@@ -88,7 +88,8 @@ export function KinguinCheckout({
       },
       language: 'en',
       currency: 'USD',
-      email: currentUser?.email || undefined,
+      // TODO: Add email support later. A problem from Kinguin side is preventing this from working properly.
+      // email: currentUser?.email || undefined,
     };
 
     try {
