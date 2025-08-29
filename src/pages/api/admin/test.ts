@@ -94,7 +94,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // });
 
     // res.status(200).send({ data });
-    await removeBlockedImagesRecursive(undefined, undefined, 100);
+    // await removeBlockedImagesRecursive(undefined, undefined, 10000);
     res.status(200).send({});
   } catch (e) {
     console.log(e);
