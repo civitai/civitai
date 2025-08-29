@@ -1,6 +1,5 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { createClient } from '@clickhouse/client';
-import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import requestIp from 'request-ip';
@@ -12,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
   BountyEngagementType,
@@ -597,7 +597,7 @@ export class Tracker {
     valid?: boolean;
   }) {
     return this.track(
-      'moderationRequests',
+      'moderationRequest',
       { ...values, createdAt: new Date() },
       { skipActorMeta: true }
     );
