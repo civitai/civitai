@@ -30,6 +30,7 @@ interface GiftCardItemProps {
   price?: number;
   className?: string;
   actions: React.ReactNode;
+  type?: 'buzz' | 'membership';
 }
 
 const GiftCardItem = ({
@@ -40,38 +41,92 @@ const GiftCardItem = ({
   price,
   className,
   actions,
-}: GiftCardItemProps) => (
-  <Card shadow="sm" padding="lg" radius="md" withBorder className={className}>
-    <Text fw={700} size="lg" ta="center">
-      {title}
-    </Text>
-    <Card.Section p="sm">
-      <UnstyledButton
-        component="a"
-        href={primaryUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ display: 'block' }}
-      >
-        <Image
-          src={image}
-          alt={imageAlt}
-          height={200}
-          fit="contain"
-          style={{ cursor: 'pointer' }}
-        />
-      </UnstyledButton>
-    </Card.Section>
-    <Stack mt="md" gap="sm">
-      {price && (
-        <Text size="xl" fw={700} c="blue" ta="center">
-          ${price}
+  type,
+}: GiftCardItemProps) => {
+  const isMembership = type === 'membership';
+
+  return (
+    <Card
+      shadow="lg"
+      padding="lg"
+      radius="md"
+      withBorder
+      className={`${className ?? ''} ${classes.giftCardEnhanced}`}
+      style={{
+        position: 'relative',
+        transition: 'all 0.3s ease',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Subtle top accent */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: '3px',
+          background:
+            'linear-gradient(90deg, var(--mantine-color-blue-6), var(--mantine-color-cyan-5), var(--mantine-color-violet-6))',
+        }}
+      />
+
+      <Stack gap="md">
+        <Text
+          fw={600}
+          size="lg"
+          ta="center"
+          style={{
+            color: 'var(--mantine-color-text)',
+          }}
+        >
+          {title}
         </Text>
-      )}
-      {actions}
-    </Stack>
-  </Card>
-);
+
+        <Card.Section p="sm">
+          <UnstyledButton
+            component="a"
+            href={primaryUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'block',
+            }}
+          >
+            <Image
+              src={image}
+              alt={imageAlt}
+              height={200}
+              fit="contain"
+              style={{ cursor: 'pointer' }}
+            />
+          </UnstyledButton>
+        </Card.Section>
+
+        <Stack gap="sm">
+          {price && (
+            <Text
+              size="xl"
+              fw={700}
+              ta="center"
+              style={{
+                background:
+                  'linear-gradient(135deg, var(--mantine-color-blue-4), var(--mantine-color-cyan-4))',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+                filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3))',
+              }}
+            >
+              ${price}
+            </Text>
+          )}
+          {actions}
+        </Stack>
+      </Stack>
+    </Card>
+  );
+};
 
 export default function GiftCardsPage() {
   const router = useRouter();
@@ -255,6 +310,7 @@ export default function GiftCardsPage() {
                       primaryUrl={card.url}
                       price={card.price}
                       className={classes.card}
+                      type="buzz"
                       actions={
                         <Button
                           component="a"
@@ -263,6 +319,14 @@ export default function GiftCardsPage() {
                           rel="noopener noreferrer"
                           rightSection={<IconExternalLink size={16} />}
                           fullWidth
+                          size="md"
+                          style={{
+                            background:
+                              'linear-gradient(135deg, var(--mantine-color-yellow-5), var(--mantine-color-orange-6))',
+                            border: 'none',
+                            boxShadow: '0 2px 8px rgba(255, 193, 7, 0.3)',
+                            transition: 'all 0.2s ease',
+                          }}
                         >
                           Buy Now
                         </Button>
@@ -289,6 +353,7 @@ export default function GiftCardsPage() {
                       imageAlt={`${membership.tier} Membership`}
                       primaryUrl={membership.durations[0]?.url}
                       className={classes.membershipCard}
+                      type="membership"
                       actions={
                         <Group gap="xs" grow>
                           {membership.durations.map((duration) => (
@@ -299,6 +364,14 @@ export default function GiftCardsPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               rightSection={<IconExternalLink size={16} />}
+                              size="sm"
+                              style={{
+                                background:
+                                  'linear-gradient(135deg, var(--mantine-color-violet-6), var(--mantine-color-indigo-6))',
+                                border: 'none',
+                                boxShadow: '0 2px 8px rgba(139, 69, 219, 0.3)',
+                                transition: 'all 0.2s ease',
+                              }}
                             >
                               {duration.months} Month{duration.months > 1 ? 's' : ''}
                               {duration.price && ` - $${duration.price}`}

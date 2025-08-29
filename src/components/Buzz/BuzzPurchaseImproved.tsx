@@ -612,7 +612,7 @@ export const BuzzPurchaseImproved = ({
                                 <Text size="xs" c="dark.5" lh={1.4}>
                                   Membership and bulk purchase bonuses{' '}
                                   <Text span fw={600}>
-                                    don't stack
+                                    don&apos;t stack
                                   </Text>
                                   . Your membership bonus (Yellow Buzz) takes priority over bulk
                                   bonuses.
