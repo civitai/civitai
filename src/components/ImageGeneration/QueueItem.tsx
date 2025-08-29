@@ -96,7 +96,9 @@ export function QueueItem({
   const { params, resources = [] } = step;
 
   const { images } = step;
-  const failureReason = images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
+  const failureReason = step.errors
+    ? step.errors.join(',\n')
+    : images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
