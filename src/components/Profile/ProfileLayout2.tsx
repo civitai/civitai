@@ -34,54 +34,55 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
     : user?.image && user.image.startsWith('http')
     ? user.image
     : undefined;
-  const metaSchema = user
-    ? {
-        '@context': 'https://schema.org',
-        '@type': 'ProfilePage',
-        name: `${user.username} Creator Profile`,
-        description: `Learn more about ${user.username} on Civitai.`,
-        primaryImageOfPage: {
-          '@type': 'ImageObject',
-          contentUrl: userMetaImage,
-        },
-        mainEntity: {
-          '@type': 'Person',
-          name: user.username,
-          image: userMetaImage,
-          url: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`,
-          interactionStatistic: stats
-            ? [
-                {
-                  '@type': 'InteractionCounter',
-                  interactionType: 'http://schema.org/FollowAction',
-                  userInteractionCount: stats.followerCountAllTime,
-                },
-                {
-                  '@type': 'InteractionCounter',
-                  interactionType: 'http://schema.org/LikeAction',
-                  userInteractionCount: stats.thumbsUpCountAllTime,
-                },
-                {
-                  '@type': 'InteractionCounter',
-                  interactionType: 'http://schema.org/DownloadAction',
-                  userInteractionCount: stats.downloadCountAllTime,
-                },
-              ]
-            : undefined,
-          aggregateRating: stats
-            ? {
-                '@type': 'AggregateRating',
-                ratingValue: stats.ratingAllTime.toFixed(2),
-                ratingCount: stats.ratingCountAllTime,
-              }
-            : undefined,
-        },
-      }
-    : undefined;
+  const metaSchema =
+    user && user.username
+      ? {
+          '@context': 'https://schema.org',
+          '@type': 'ProfilePage',
+          name: `${user.username} Creator Profile`,
+          description: `Learn more about ${user.username} on Civitai.`,
+          primaryImageOfPage: {
+            '@type': 'ImageObject',
+            contentUrl: userMetaImage,
+          },
+          mainEntity: {
+            '@type': 'Person',
+            name: user.username,
+            image: userMetaImage,
+            url: `${env.NEXT_PUBLIC_BASE_URL as string}/user/${username}`,
+            interactionStatistic: stats
+              ? [
+                  {
+                    '@type': 'InteractionCounter',
+                    interactionType: 'http://schema.org/FollowAction',
+                    userInteractionCount: stats.followerCountAllTime,
+                  },
+                  {
+                    '@type': 'InteractionCounter',
+                    interactionType: 'http://schema.org/LikeAction',
+                    userInteractionCount: stats.thumbsUpCountAllTime,
+                  },
+                  {
+                    '@type': 'InteractionCounter',
+                    interactionType: 'http://schema.org/DownloadAction',
+                    userInteractionCount: stats.downloadCountAllTime,
+                  },
+                ]
+              : undefined,
+            aggregateRating: stats
+              ? {
+                  '@type': 'AggregateRating',
+                  ratingValue: stats.ratingAllTime.toFixed(2),
+                  ratingCount: stats.ratingCountAllTime,
+                }
+              : undefined,
+          },
+        }
+      : undefined;
 
   return (
     <>
-      {user && stats ? (
+      {user && user.username && stats ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
           description={`Average Rating: ${stats.ratingAllTime.toFixed(1)} (${abbreviateNumber(
@@ -92,14 +93,14 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
             stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           images={user.profilePicture}
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/${pathname}`, rel: 'canonical' }]}
           schema={metaSchema}
         />
       ) : (
         <Meta
           title="Creator Profile | Civitai"
           description="Learn more about this awesome creator on Civitai."
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/${pathname}`, rel: 'canonical' }]}
         />
       )}
       {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}
