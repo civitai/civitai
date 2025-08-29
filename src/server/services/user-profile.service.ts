@@ -51,7 +51,12 @@ export const getUserWithProfile = async ({
   id,
   tx,
   isModerator,
-}: GetUserProfileSchema & { tx?: Prisma.TransactionClient; isModerator?: boolean }) => {
+  sessionUserId,
+}: GetUserProfileSchema & {
+  tx?: Prisma.TransactionClient;
+  isModerator?: boolean;
+  sessionUserId?: number;
+}) => {
   const dbClient = tx ?? dbWrite;
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
@@ -89,6 +94,10 @@ export const getUserWithProfile = async ({
 
     const { profile } = user;
     const userMeta = (user.meta ?? {}) as UserMeta;
+    const coverImage = profile?.coverImage;
+    const coverNeedsReview =
+      coverImage?.needsReview || coverImage?.ingestion === ImageIngestionStatus.Blocked;
+    const sameUser = sessionUserId === user.id;
 
     return {
       ...user,
@@ -103,14 +112,15 @@ export const getUserWithProfile = async ({
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
         profileSectionsSettings: (profile?.profileSectionsSettings ?? []) as ProfileSectionSchema[],
         showcaseItems: (profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
-        coverImage: profile?.coverImage
-          ? {
-              ...profile.coverImage,
-              meta: profile.coverImage.meta as ImageMetaProps | null,
-              metadata: profile.coverImage.metadata as MixedObject,
-              tags: profile.coverImage.tags.map((t) => t.tag),
-            }
-          : null,
+        coverImage:
+          coverImage && (isModerator || sameUser || !coverNeedsReview)
+            ? {
+                ...coverImage,
+                meta: coverImage.meta as ImageMetaProps | null,
+                metadata: coverImage.metadata as MixedObject,
+                tags: coverImage.tags.map((t) => t.tag),
+              }
+            : null,
       },
     };
   };
