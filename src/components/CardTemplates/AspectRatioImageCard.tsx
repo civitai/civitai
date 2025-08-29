@@ -57,8 +57,8 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   cosmetic?: ContentDecorationCosmetic['data'];
   className?: string;
   image?: ImageProps;
-  header?: React.ReactNode;
-  footer?: React.ReactNode;
+  header?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
+  footer?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
   footerGradient?: boolean;
   onSite?: boolean;
   routedDialog?: RoutedDialogProps<T>;
@@ -154,8 +154,13 @@ export function AspectRatioImageCard<T extends DialogKey>({
                     </LinkOrClick>
                     <div className={styles.header}>
                       <ImageGuard2.BlurToggle className={styles.chip} />
-                      {header}
+                      {typeof header === 'function' ? header({ safe }) : header}
                     </div>
+                    {footer && (
+                      <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>
+                        {typeof footer === 'function' ? footer({ safe }) : footer}
+                      </div>
+                    )}
                   </>
                 )}
               </ImageGuard2>
@@ -171,13 +176,17 @@ export function AspectRatioImageCard<T extends DialogKey>({
                     <Text c="dimmed">No Image</Text>
                   </div>
                 </LinkOrClick>
-                {header && <div className={styles.header}>{header}</div>}
+                {header && (
+                  <div className={styles.header}>
+                    {typeof header === 'function' ? header({}) : header}
+                  </div>
+                )}
+                {footer && (
+                  <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>
+                    {typeof footer === 'function' ? footer({}) : footer}
+                  </div>
+                )}
               </>
-            )}
-            {footer && (
-              <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>
-                {footer}
-              </div>
             )}
             {onSite && <OnsiteIndicator isRemix={isRemix} />}
           </>
