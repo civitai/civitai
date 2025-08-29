@@ -80,7 +80,7 @@ export function KinguinCheckout({
       productUrlAttribute: 'data-product-url',
       iframeId: 'kinguin-checkout-iframe',
       iframeWidth: '100%',
-      iframeHeight: 'auto',
+      iframeHeight: '1500px',
       popupWidth: 900,
       popupHeight: 1000,
       translations: {
