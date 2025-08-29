@@ -113,6 +113,25 @@ export default function GiftCardsPage() {
   const showBuzzCards = !typeFilter || typeFilter === 'buzz';
   const showMemberships = !typeFilter || typeFilter === 'memberships';
 
+  // Handle type filter changes
+  const handleTypeChange = (value: string) => {
+    const newQuery = { ...router.query };
+    if (value === 'all') {
+      delete newQuery.type;
+    } else {
+      newQuery.type = value;
+    }
+
+    router.push(
+      {
+        pathname: '/gift-cards',
+        query: newQuery,
+      },
+      undefined,
+      { shallow: true }
+    );
+  };
+
   if (!selectedVendor) {
     return (
       <>
@@ -156,34 +175,58 @@ export default function GiftCardsPage() {
                 </Text>
               </div>
 
-              {/* Vendor Selector */}
-              <Stack gap="xs" align="flex-end">
-                <Text size="xs" c="dimmed" fw={700}>
-                  Vendor
-                </Text>
-                {enabledVendors.length <= 3 ? (
-                  <SegmentedControl
-                    value={selectedVendor.id}
-                    onChange={handleVendorChange}
-                    data={enabledVendors.map((v) => ({
-                      label: v.displayName,
-                      value: v.id,
-                    }))}
-                  />
-                ) : (
-                  <Select
-                    value={selectedVendor.id}
-                    onChange={(value) => value && handleVendorChange(value)}
-                    data={enabledVendors.map((v) => ({
-                      label: v.displayName,
-                      value: v.id,
-                    }))}
-                    style={{ width: 200 }}
-                  />
-                )}
+              <Stack gap="sm" align="flex-end">
+                {/* Controls Row */}
+                <Group gap="xl" wrap="nowrap">
+                  {/* Type Selector */}
+                  <Stack gap="xs">
+                    <Text size="xs" c="dimmed" fw={700}>
+                      Show
+                    </Text>
+                    <SegmentedControl
+                      value={typeFilter || 'all'}
+                      onChange={handleTypeChange}
+                      data={[
+                        { label: 'All', value: 'all' },
+                        { label: 'Buzz Cards', value: 'buzz' },
+                        { label: 'Memberships', value: 'memberships' },
+                      ]}
+                      size="sm"
+                    />
+                  </Stack>
+
+                  {/* Vendor Selector */}
+                  <Stack gap="xs" align="center">
+                    <Text size="xs" c="dimmed" fw={700}>
+                      Vendor
+                    </Text>
+                    {enabledVendors.length <= 3 ? (
+                      <SegmentedControl
+                        value={selectedVendor.id}
+                        onChange={handleVendorChange}
+                        data={enabledVendors.map((v) => ({
+                          label: v.displayName,
+                          value: v.id,
+                        }))}
+                        size="sm"
+                      />
+                    ) : (
+                      <Select
+                        value={selectedVendor.id}
+                        onChange={(value) => value && handleVendorChange(value)}
+                        data={enabledVendors.map((v) => ({
+                          label: v.displayName,
+                          value: v.id,
+                        }))}
+                        size="sm"
+                        style={{ width: 180 }}
+                      />
+                    )}
+                  </Stack>
+                </Group>
               </Stack>
             </Group>
-            
+
             {/* Promo Notification - positioned absolutely on desktop, normal flow on mobile */}
             {selectedVendor.promo && (
               <div className={classes.promoNotification}>
@@ -218,7 +261,7 @@ export default function GiftCardsPage() {
                           href={card.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          rightIcon={<IconExternalLink size={16} />}
+                          rightSection={<IconExternalLink size={16} />}
                           fullWidth
                         >
                           Buy Now
@@ -255,7 +298,7 @@ export default function GiftCardsPage() {
                               href={duration.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              rightIcon={<IconExternalLink size={16} />}
+                              rightSection={<IconExternalLink size={16} />}
                             >
                               {duration.months} Month{duration.months > 1 ? 's' : ''}
                               {duration.price && ` - $${duration.price}`}
