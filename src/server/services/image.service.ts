@@ -7,7 +7,7 @@ import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -106,7 +106,7 @@ import {
 import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
-import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
+import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -148,42 +148,14 @@ import {
 import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
-import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { baseS3Client, imageS3Client } from '~/utils/s3-client';
+import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
-export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
-  const otherImagesWithSameUrl = await dbRead.image.findFirst({
-    select: { id: true },
-    where: {
-      url: url,
-      id: { not: id },
-    },
-  });
-
-  return !!otherImagesWithSameUrl;
-};
-
 export async function purgeResizeCache({ url }: { url: string }) {
-  // TODO Remove after fallback bucket is deprecated
-  if (env.S3_IMAGE_CACHE_BUCKET_OLD) {
-    const { items } = await baseS3Client.listObjects({
-      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
-      prefix: url,
-    });
-    const keys = items.map((x) => x.Key).filter(isDefined);
-    if (keys.length) {
-      await baseS3Client.deleteManyObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
-        keys,
-      });
-    }
-  }
-
   // Purge from new cache bucket
   const { items } = await imageS3Client.listObjects({
     bucket: env.S3_IMAGE_CACHE_BUCKET,
@@ -195,6 +167,29 @@ export async function purgeResizeCache({ url }: { url: string }) {
       bucket: env.S3_IMAGE_CACHE_BUCKET,
       keys,
     });
+  }
+}
+
+export async function deleteImageFromS3({ id, url }: { id: number; url: string }) {
+  if (!env.DATABASE_IS_PROD) return;
+
+  try {
+    const otherImagesWithSameUrl = await dbWrite.image.findFirst({
+      select: { id: true },
+      where: {
+        url: url,
+        id: { not: id },
+      },
+    });
+
+    if (!!otherImagesWithSameUrl) return;
+
+    await withRetries(() =>
+      imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
+    );
+    await purgeResizeCache({ url: url });
+  } catch (e) {
+    // do nothing
   }
 }
 
@@ -210,41 +205,58 @@ export const deleteImageById = async ({
     });
     if (!image) return;
 
-    try {
-      if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-        // TODO Remove after fallback bucket is deprecated
-        if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
-          await withRetries(() =>
-            baseS3Client.deleteObject({
-              bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD as string,
-              key: image.url,
-            })
-          );
-        await withRetries(() =>
-          imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url })
-        );
-        await purgeResizeCache({ url: image.url });
-      }
-    } catch {
-      // Ignore errors
-    }
+    await Promise.all([
+      deleteImageFromS3({ id, url: image.url }),
+      queueImageSearchIndexUpdate({
+        ids: [id],
+        action: SearchIndexUpdateQueueAction.Delete,
+      }),
+      ...(updatePost && image.postId
+        ? [
+            updatePostNsfwLevel(image.postId),
+            bustCachesForPosts(image.postId),
+            postMetrics.queueUpdate(image.postId),
+          ]
+        : []),
+    ]);
 
-    await queueImageSearchIndexUpdate({
-      ids: [id],
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-
-    // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
-    if (updatePost && image.postId) {
-      await updatePostNsfwLevel(image.postId);
-      await bustCachesForPost(image.postId);
-      postMetrics.queueUpdate(image.postId);
-    }
     return image;
   } catch {
     // Ignore errors
   }
 };
+
+export async function deleteImages(ids: number[], updatePosts = true) {
+  const images = await Limiter({ batchSize: 100 }).process(ids, async (ids) => {
+    const results = await dbWrite.$queryRaw<
+      { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
+    >`
+      DELETE FROM "Image"
+      WHERE id IN (${Prisma.join(ids)})
+      RETURNING id, url, "postId", "nsfwLevel", "userId"
+    `;
+    const imageIds = results.map((x) => x.id);
+    const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
+
+    await Promise.all([
+      queueImageSearchIndexUpdate({
+        ids: imageIds,
+        action: SearchIndexUpdateQueueAction.Delete,
+      }),
+      updatePostNsfwLevel(idsForPostUpdate),
+      bustCachesForPosts(idsForPostUpdate),
+      postMetrics.queueUpdate(idsForPostUpdate),
+    ]);
+
+    return results;
+  });
+  await Limiter({ batchSize: 10 }).process(
+    images,
+    async (results) =>
+      await Promise.all(results.map(({ id, url }) => deleteImageFromS3({ id, url })))
+  );
+  return images;
+}
 
 function getReviewTypeToBlockedReason(reason: string) {
   switch (reason) {
@@ -2765,7 +2777,7 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
   );
 }
 
-export async function deleteImagesForModelVersionCache(modelVersionId: number) {
+export async function deleteImagesForModelVersionCache(modelVersionId: number | number[]) {
   await imagesForModelVersionsCache.bust(modelVersionId);
 }
 
