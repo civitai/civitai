@@ -61,7 +61,9 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
           onClick={copy}
           className={`${classes.promoNotification} flex cursor-pointer items-center justify-between`}
         >
-          <div className={`${classes.promoContent} flex flex-1 items-center justify-between flex-wrap gap-2`}>
+          <div
+            className={`${classes.promoContent} flex flex-1 flex-wrap items-center justify-between gap-2`}
+          >
             {/* Description */}
             <Text size="sm" fw={500} className={classes.promoText}>
               {message}
@@ -89,19 +91,18 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
               >
                 <Countdown endTime={promo.endDate} refreshIntervalMs={60000} format="short" />
               </Badge>
+              <CloseButton
+                size="sm"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  handleDismiss();
+                }}
+                aria-label="Dismiss"
+                variant="transparent"
+                className={classes.promoCloseButton}
+              />
             </div>
           </div>
-
-          <CloseButton
-            size="sm"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              handleDismiss();
-            }}
-            aria-label="Dismiss"
-            variant="transparent"
-            className={classes.promoCloseButton}
-          />
         </Paper>
       )}
     </CopyButton>
