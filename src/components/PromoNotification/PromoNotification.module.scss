@@ -1,0 +1,85 @@
+.promoNotification {
+  // Base styling handled by Mantine Paper component
+}
+
+.promoContent {
+  // Flex layout handled by Tailwind classes
+}
+
+.promoBadge {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  
+  // Override all variant styling
+  &[data-variant] {
+    background: transparent !important;
+    border: none !important;
+  }
+}
+
+.promoText {
+  color: white !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.promoCodeBadge {
+  background: rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: var(--mantine-radius-md) !important;
+  height: 28px !important;
+  display: flex !important;
+  align-items: center !important;
+  
+  // Override all variant and color styling
+  &[data-variant] {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  }
+  
+  // Label styling
+  .mantine-Badge-label {
+    font-weight: 700 !important;
+    font-size: 0.875rem !important;
+    color: white !important;
+  }
+}
+
+.promoIcon {
+  color: white !important;
+}
+
+.promoCountdownBadge {
+  background: rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: var(--mantine-radius-md) !important;
+  height: 28px !important;
+  display: flex !important;
+  align-items: center !important;
+  
+  // Override all variant styling
+  &[data-variant] {
+    background: rgba(0, 0, 0, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  }
+  
+  // Label styling
+  .mantine-Badge-label {
+    color: white !important;
+    font-weight: 600 !important;
+  }
+}
+
+.promoCloseButton {
+  color: white !important;
+  
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    color: white !important;
+  }
+  
+  // Icon styling
+  svg {
+    color: white !important;
+  }
+}

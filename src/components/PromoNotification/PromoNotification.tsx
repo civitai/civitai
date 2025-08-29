@@ -1,21 +1,10 @@
-import {
-  CloseButton,
-  Group,
-  Text,
-  CopyButton,
-  ActionIcon,
-  Paper,
-  Badge
-} from '@mantine/core';
+import { CloseButton, Group, Text, CopyButton, ActionIcon, Paper, Badge } from '@mantine/core';
 import { IconClock, IconCopy, IconCheck } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { Countdown } from '~/components/Countdown/Countdown';
 import type { VendorPromo } from '~/utils/gift-cards/vendors/types';
-import {
-  isPromoActive,
-  isPromoDismissed,
-  dismissPromo,
-} from '~/utils/gift-cards/promo-utils';
+import { isPromoActive, isPromoDismissed, dismissPromo } from '~/utils/gift-cards/promo-utils';
+import classes from './PromoNotification.module.scss';
 
 interface PromoNotificationProps {
   vendorId: string;
@@ -61,67 +50,60 @@ export function PromoNotification({ vendorId, vendorName, promo }: PromoNotifica
   const message = promo.message || `${promo.discount} on ${vendorName} purchases`;
 
   return (
-    <Paper
-      shadow="sm"
-      radius="md"
-      px="md"
-      py="xs"
-      withBorder
-      className='flex items-center justify-between'
-    >
-      <div className="flex flex-wrap flex-1 items-center gap-2">
-          <Badge
-            size="xs"
-            color="green"
-            variant="dot"
-            className="bg-transparent border-none p-0"
-          />
-          <Text size="sm" fw={500}>
-            {message}
-          </Text>
+    <CopyButton value={promo.code} timeout={2000}>
+      {({ copied, copy }) => (
+        <Paper
+          shadow="sm"
+          radius="md"
+          px="md"
+          py="xs"
+          withBorder
+          onClick={copy}
+          className={`${classes.promoNotification} flex cursor-pointer items-center justify-between`}
+        >
+          <div className={`${classes.promoContent} flex flex-1 items-center justify-between flex-wrap gap-2`}>
+            {/* Description */}
+            <Text size="sm" fw={500} className={classes.promoText}>
+              {message}
+            </Text>
 
-          <CopyButton value={promo.code} timeout={2000}>
-            {({ copied, copy }) => (
+            {/* Code & Time */}
+            <div className="flex items-center gap-3">
               <Badge
                 size="lg"
-                variant={copied ? 'light' : 'default'}
-                color={copied ? 'green' : 'gray'}
+                variant="transparent"
                 leftSection={
-                  <ActionIcon
-                    variant="transparent"
-                    size="xs"
-                    color={copied ? 'green' : 'gray'}
-                  >
+                  <ActionIcon variant="transparent" size="xs" className={classes.promoIcon}>
                     {copied ? <IconCheck size={12} /> : <IconCopy size={12} />}
                   </ActionIcon>
                 }
-                onClick={copy}
-                className="cursor-pointer transition-all duration-200"
-                styles={{
-                  label: { fontWeight: 700, fontSize: '0.875rem' }
-                }}
+                className={`${classes.promoCodeBadge} transition-all duration-200`}
               >
                 {promo.code}
               </Badge>
-            )}
-          </CopyButton>
 
-          <Badge
-            variant="light"
-            color="orange"
-            leftSection={<IconClock size={14} />}
-            className="bg-transparent font-medium"
-          >
-            <Countdown endTime={promo.endDate} refreshIntervalMs={60000} format="short" />
-          </Badge>
-        </div>
+              <Badge
+                variant="transparent"
+                leftSection={<IconClock size={14} className={classes.promoIcon} />}
+                className={classes.promoCountdownBadge}
+              >
+                <Countdown endTime={promo.endDate} refreshIntervalMs={60000} format="short" />
+              </Badge>
+            </div>
+          </div>
 
-        <CloseButton
-          size="sm"
-          onClick={handleDismiss}
-          aria-label="Dismiss"
-          variant="subtle"
-        />
-    </Paper>
+          <CloseButton
+            size="sm"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              handleDismiss();
+            }}
+            aria-label="Dismiss"
+            variant="transparent"
+            className={classes.promoCloseButton}
+          />
+        </Paper>
+      )}
+    </CopyButton>
   );
 }

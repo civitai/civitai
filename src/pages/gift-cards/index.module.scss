@@ -3,24 +3,84 @@
 }
 
 .promoNotification {
-  // On desktop: position to the right of section headers
+  // Full width layout with proper spacing
+  width: 100%;
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  
+  // Center the notification content
+  display: flex;
+  justify-content: center;
+  
+  // On desktop: slightly less top margin
   @media (min-width: 769px) {
-    position: absolute;
-    top: 100%;
-    right: 0;
     margin-top: 1rem;
-    z-index: 10;
-    max-width: fit-content;
+    margin-bottom: 2rem;
   }
 
-  // On mobile: normal flow with better spacing
-  @media (max-width: 768px) {
-    margin-top: 1.5rem;
-
-    // Position close button absolutely on mobile
-    & > div {
-      position: relative;
+  // Enhanced styling for the notification content
+  & > div {
+    width: 100%;
+    max-width: none;
+    position: relative;
+    overflow: hidden;
+    
+    // Subtle gradient background
+    background: linear-gradient(135deg, 
+      var(--mantine-color-blue-6) 0%, 
+      var(--mantine-color-cyan-6) 100%);
+    
+    // Enhanced shadow and border
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1), 
+                0 2px 8px rgba(59, 130, 246, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--mantine-radius-md);
+    
+    // Subtle animation
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    
+    // Subtle hover effect
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 25px rgba(0, 0, 0, 0.12),
+                  0 3px 12px rgba(59, 130, 246, 0.2),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
+    
+    // Animated gradient overlay
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.1),
+        transparent
+      );
+      transition: left 0.6s ease;
+      z-index: 1;
+    }
+    
+    // Shine effect on hover
+    &:hover::before {
+      left: 100%;
+    }
+    
+    // Ensure content is above the shine effect
+    & > * {
+      position: relative;
+      z-index: 2;
+    }
+    
+    // Override text colors for better contrast on gradient
+    color: white;
+    
+    // Keep badges and text clean for readability - no glassmorphism
   }
 }
 
