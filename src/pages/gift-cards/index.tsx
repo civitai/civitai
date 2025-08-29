@@ -137,12 +137,12 @@ export default function GiftCardsPage() {
   const router = useRouter();
   const [selectedVendor, setSelectedVendor] = useState<Vendor | undefined>();
   const enabledVendors = getEnabledVendors();
-  
+
   // Kinguin checkout states
   const [showKinguinCheckout, setShowKinguinCheckout] = useState(false);
   const [kinguinProductUrl, setKinguinProductUrl] = useState<string>('');
   const [kinguinProductName, setKinguinProductName] = useState<string>('');
-  
+
   // Load Kinguin SDK when vendor is Kinguin
   const kinguinSDK = useKinguinSDK(selectedVendor?.id === 'kinguin');
 
@@ -168,7 +168,7 @@ export default function GiftCardsPage() {
       if (showKinguinCheckout) {
         closeKinguinCheckout();
       }
-      
+
       setSelectedVendor(vendor);
       router.push(
         {
@@ -251,8 +251,7 @@ export default function GiftCardsPage() {
         title="Gift Cards | Civitai"
         description="Purchase Civitai Buzz gift cards and membership packages"
       />
-      
-      
+
       <Container size="xl" py="xl">
         <Stack gap="xl">
           <div className={classes.headerSection}>
@@ -332,8 +331,14 @@ export default function GiftCardsPage() {
 
           {/* Purchase Success Notification */}
           {purchaseSuccess && !showKinguinCheckout && (
-            <Alert icon={<IconCheck size={16} />} title="Purchase Successful!" color="green" mb="xl">
-              Your gift card purchase has been completed successfully. You should receive your gift card code via email shortly.
+            <Alert
+              icon={<IconCheck size={16} />}
+              title="Purchase Successful!"
+              color="green"
+              mb="xl"
+            >
+              Your gift card purchase has been completed successfully. You should receive your gift
+              card code via email shortly.
             </Alert>
           )}
 
@@ -369,16 +374,15 @@ export default function GiftCardsPage() {
                           actions={
                             selectedVendor.id === 'kinguin' ? (
                               <Button
-                                onClick={() => handleKinguinPurchase(card.url, `${formatBuzzAmount(card.amount)} Buzz`)}
+                                onClick={() =>
+                                  handleKinguinPurchase(
+                                    card.url,
+                                    `${formatBuzzAmount(card.amount)} Buzz`
+                                  )
+                                }
                                 fullWidth
                                 size="md"
-                                style={{
-                                  background:
-                                    'linear-gradient(135deg, var(--mantine-color-yellow-5), var(--mantine-color-orange-6))',
-                                  border: 'none',
-                                  boxShadow: '0 2px 8px rgba(255, 193, 7, 0.3)',
-                                  transition: 'all 0.2s ease',
-                                }}
+                                className={classes.buzzButton}
                               >
                                 Buy Now
                               </Button>
@@ -391,13 +395,7 @@ export default function GiftCardsPage() {
                                 rightSection={<IconExternalLink size={16} />}
                                 fullWidth
                                 size="md"
-                                style={{
-                                  background:
-                                    'linear-gradient(135deg, var(--mantine-color-yellow-5), var(--mantine-color-orange-6))',
-                                  border: 'none',
-                                  boxShadow: '0 2px 8px rgba(255, 193, 7, 0.3)',
-                                  transition: 'all 0.2s ease',
-                                }}
+                                className={classes.buzzButton}
                               >
                                 Buy Now
                               </Button>
@@ -429,19 +427,15 @@ export default function GiftCardsPage() {
                           actions={
                             <Group gap="xs" grow>
                               {membership.durations.map((duration) => {
-                                const productName = `${membership.tier} Membership - ${duration.months} Month${duration.months > 1 ? 's' : ''}`;
+                                const productName = `${membership.tier} Membership - ${
+                                  duration.months
+                                } Month${duration.months > 1 ? 's' : ''}`;
                                 return selectedVendor.id === 'kinguin' ? (
                                   <Button
                                     key={duration.months}
                                     onClick={() => handleKinguinPurchase(duration.url, productName)}
                                     size="sm"
-                                    style={{
-                                      background:
-                                        'linear-gradient(135deg, var(--mantine-color-violet-6), var(--mantine-color-indigo-6))',
-                                      border: 'none',
-                                      boxShadow: '0 2px 8px rgba(139, 69, 219, 0.3)',
-                                      transition: 'all 0.2s ease',
-                                    }}
+                                    className={classes.membershipButton}
                                   >
                                     {duration.months} Month{duration.months > 1 ? 's' : ''}
                                     {duration.price && ` - $${duration.price}`}
@@ -455,13 +449,7 @@ export default function GiftCardsPage() {
                                     rel="noopener noreferrer"
                                     rightSection={<IconExternalLink size={16} />}
                                     size="sm"
-                                    style={{
-                                      background:
-                                        'linear-gradient(135deg, var(--mantine-color-violet-6), var(--mantine-color-indigo-6))',
-                                      border: 'none',
-                                      boxShadow: '0 2px 8px rgba(139, 69, 219, 0.3)',
-                                      transition: 'all 0.2s ease',
-                                    }}
+                                    className={classes.membershipButton}
                                   >
                                     {duration.months} Month{duration.months > 1 ? 's' : ''}
                                     {duration.price && ` - $${duration.price}`}

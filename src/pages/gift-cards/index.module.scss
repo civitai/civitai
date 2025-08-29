@@ -52,3 +52,29 @@
   background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6)) !important;
   border-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-4)) !important;
 }
+
+.buzzButton {
+  background: linear-gradient(135deg, var(--mantine-color-yellow-5), var(--mantine-color-orange-6));
+  border: none;
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: linear-gradient(135deg, var(--mantine-color-yellow-6), var(--mantine-color-orange-7));
+    box-shadow: 0 4px 12px rgba(255, 193, 7, 0.4);
+    transform: translateY(-1px);
+  }
+}
+
+.membershipButton {
+  background: linear-gradient(135deg, var(--mantine-color-violet-6), var(--mantine-color-indigo-6));
+  border: none;
+  box-shadow: 0 2px 8px rgba(139, 69, 219, 0.3);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: linear-gradient(135deg, var(--mantine-color-violet-7), var(--mantine-color-indigo-7));
+    box-shadow: 0 4px 12px rgba(139, 69, 219, 0.4);
+    transform: translateY(-1px);
+  }
+}
