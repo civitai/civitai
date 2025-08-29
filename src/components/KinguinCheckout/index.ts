@@ -1,0 +1,1 @@
+export { KinguinCheckout } from './KinguinCheckout';
