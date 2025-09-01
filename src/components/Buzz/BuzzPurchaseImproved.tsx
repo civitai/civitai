@@ -53,7 +53,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
-import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
 import { BuzzZkp2pButton } from '~/components/Buzz/BuzzZkp2pButton';
 import { getAvailablePaymentMethods } from '~/components/Buzz/zkp2p-config';
 import { useAppContext } from '~/providers/AppProvider';
@@ -852,30 +851,13 @@ export const BuzzPurchaseImproved = ({
                           ))}
 
                           {features.coinbasePayments && (
-                            <>
-                              {features.coinbaseOnramp && (
-                                <>
-                                  {['default', 'international'].map((type) => (
-                                    <BuzzCoinbaseOnrampButton
-                                      key={type}
-                                      unitAmount={unitAmount}
-                                      buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
-                                      onPurchaseSuccess={onPurchaseSuccess}
-                                      disabled={!ctaEnabled}
-                                      purchaseSuccessMessage={purchaseSuccessMessage}
-                                      type={type as 'default' | 'international'}
-                                    />
-                                  ))}
-                                </>
-                              )}
-                              <BuzzCoinbaseButton
-                                unitAmount={unitAmount}
-                                buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
-                                onPurchaseSuccess={onPurchaseSuccess}
-                                disabled={!ctaEnabled}
-                                purchaseSuccessMessage={purchaseSuccessMessage}
-                              />
-                            </>
+                            <BuzzCoinbaseButton
+                              unitAmount={unitAmount}
+                              buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
+                              onPurchaseSuccess={onPurchaseSuccess}
+                              disabled={!ctaEnabled}
+                              purchaseSuccessMessage={purchaseSuccessMessage}
+                            />
                           )}
 
                           {features.nowpaymentPayments && (

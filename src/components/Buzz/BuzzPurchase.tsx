@@ -56,7 +56,6 @@ import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
-import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -574,35 +573,13 @@ export const BuzzPurchase = ({
             />
             <div className="flex flex-col gap-3 md:flex-row">
               {features.coinbasePayments && (
-                <>
-                  {features.coinbaseOnramp && (
-                    <>
-                      <BuzzCoinbaseOnrampButton
-                        unitAmount={unitAmount}
-                        buzzAmount={buzzAmount}
-                        onPurchaseSuccess={onPurchaseSuccess}
-                        disabled={!ctaEnabled}
-                        purchaseSuccessMessage={purchaseSuccessMessage}
-                      />
-
-                      <BuzzCoinbaseOnrampButton
-                        unitAmount={unitAmount}
-                        buzzAmount={buzzAmount}
-                        onPurchaseSuccess={onPurchaseSuccess}
-                        disabled={!ctaEnabled}
-                        purchaseSuccessMessage={purchaseSuccessMessage}
-                        type="international"
-                      />
-                    </>
-                  )}
-                  <BuzzCoinbaseButton
-                    unitAmount={unitAmount}
-                    buzzAmount={buzzAmount}
-                    onPurchaseSuccess={onPurchaseSuccess}
-                    disabled={!ctaEnabled}
-                    purchaseSuccessMessage={purchaseSuccessMessage}
-                  />
-                </>
+                <BuzzCoinbaseButton
+                  unitAmount={unitAmount}
+                  buzzAmount={buzzAmount}
+                  onPurchaseSuccess={onPurchaseSuccess}
+                  disabled={!ctaEnabled}
+                  purchaseSuccessMessage={purchaseSuccessMessage}
+                />
               )}
               {features.nowpaymentPayments && (
                 <BuzzNowPaymentsButton

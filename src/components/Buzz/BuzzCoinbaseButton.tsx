@@ -12,7 +12,7 @@ export const BuzzCoinbaseButton = ({
   unitAmount: number;
   buzzAmount: number;
 }) => {
-  const { createBuzzOrder, creatingBuzzOrder, creatingBuzzOrderOnramp } = useMutateCoinbase();
+  const { createBuzzOrder, creatingBuzzOrder } = useMutateCoinbase();
   const { isLoading: checkingHealth, healthy } = useCoinbaseStatus();
 
   if (!checkingHealth && !healthy) {
@@ -33,8 +33,8 @@ export const BuzzCoinbaseButton = ({
   return (
     <Stack gap={0}>
       <Button
-        disabled={disabled || creatingBuzzOrder || creatingBuzzOrderOnramp}
-        loading={creatingBuzzOrder || creatingBuzzOrderOnramp}
+        disabled={disabled || creatingBuzzOrder}
+        loading={creatingBuzzOrder}
         onClick={handleClick}
         size="md"
         radius="md"
