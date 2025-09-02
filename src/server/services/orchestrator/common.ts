@@ -382,6 +382,11 @@ export async function parseGenerateImageInput({
   //   };
   // }
 
+  let operation: string | undefined;
+  if (isQwen) {
+    operation = params.sourceImage ? 'editImage' : 'createImage';
+  }
+
   return {
     resources: [model, ...additionalResources, vae, ...resourcesToInject].filter(isDefined),
     params: removeEmpty({
@@ -394,6 +399,7 @@ export async function parseGenerateImageInput({
       // temp?
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
+      operation,
     }),
     // priority: getUserPriority(status, user),
   };

@@ -512,7 +512,6 @@ export function GenerationFormContent() {
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
-              isQwen ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
@@ -530,7 +529,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen) || isOpenAI || isFluxKontext;
+              (features.image && !isFlux && !isSD3) || isOpenAI || isFluxKontext || isQwen;
             const disableCfgScale = isFluxUltra;
             const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableSteps = isFluxUltra || isFluxKontext;
