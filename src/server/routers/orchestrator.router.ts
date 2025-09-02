@@ -50,9 +50,21 @@ import {
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
-import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  middleware,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getFlagged, getReasons, getConsumerStrikes } from '../http/orchestrator/flagged-consumers';
+import {
+  getFlaggedConsumersSchema,
+  getFlaggedReasonsSchema,
+  getFlaggedConsumerStrikesSchema,
+} from '~/server/schema/orchestrator/flagged-consumers.schema';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -317,4 +329,14 @@ export const orchestratorRouter = router({
       if (ctx.testing) return false;
       return await reportProhibitedRequestHandler({ ctx, input });
     }),
+
+  getFlaggedConsumers: moderatorProcedure
+    .input(getFlaggedConsumersSchema)
+    .query(({ input }) => getFlagged(input)),
+  getFlaggedReasons: moderatorProcedure
+    .input(getFlaggedReasonsSchema)
+    .query(({ input }) => getReasons(input)),
+  getFlaggedConsumerStrikes: moderatorProcedure
+    .input(getFlaggedConsumerStrikesSchema)
+    .query(({ input }) => getConsumerStrikes(input)),
 });
