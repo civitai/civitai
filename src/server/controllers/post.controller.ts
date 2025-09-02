@@ -89,11 +89,6 @@ export const createPostHandler = async ({
     const { ip, fingerprint } = ctx;
     const today = new Date();
 
-    // Prevent creating posts with publishedAt in the past
-    if (input.publishedAt && dayjs(input.publishedAt).isBefore(today)) {
-      throw throwBadRequestError('You cannot create a post to be published in the past');
-    }
-
     const post = await createPost({ userId: ctx.user.id, ...input });
     const isPublished = !!post.publishedAt;
     const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
@@ -160,11 +155,6 @@ export const updatePostHandler = async ({
     const today = new Date();
     if (input.publishedAt && post?.publishedAt && dayjs(post.publishedAt).isBefore(today)) {
       throw throwBadRequestError('You cannot reschedule a post that is already published');
-    }
-
-    // Prevent setting publishedAt to past dates
-    if (input.publishedAt && dayjs(input.publishedAt).isBefore(today)) {
-      throw throwBadRequestError('You cannot schedule a post to be published in the past');
     }
 
     const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
