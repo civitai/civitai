@@ -82,12 +82,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -131,7 +126,6 @@ import {
   getHiDreamResourceFromPrecisionAndVariant,
   getHiDreamResourceFromVersionId,
   hiDreamPrecisions,
-  hiDreamVariants,
   hiDreamVariantsPrecisionMap,
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
