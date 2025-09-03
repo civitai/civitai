@@ -119,6 +119,8 @@ function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
+const KONO_NSFW_SAMPLING_RATE = 20;
+
 export default WebhookEndpoint(async function imageTags(req, res) {
   if (req.method === 'GET' && req.query.imageId) {
     const imageId = Number(req.query.imageId);
@@ -253,7 +255,13 @@ async function updateImage(
           rankType: NewOrderRankType.Knight,
         };
 
-        if (flags.nsfw) queueDetails.priority = 2;
+        // Sampling logic: Only include 5% of NSFW images to reduce queue congestion
+        let shouldAddToQueue = true;
+        if (flags.nsfw) {
+          queueDetails.priority = 2;
+          // Use image ID for deterministic sampling (5% inclusion rate)
+          shouldAddToQueue = id % KONO_NSFW_SAMPLING_RATE === 0; // 1/20 = 5%
+        }
 
         if (reviewKey) {
           data.needsReview = reviewKey;
@@ -261,7 +269,12 @@ async function updateImage(
 
           if (reviewKey === 'minor') queueDetails.priority = 1;
           if (reviewKey === 'poi') queueDetails.priority = 2;
-        } else {
+
+          // Always add images needing review regardless of sampling
+          shouldAddToQueue = true;
+        }
+
+        if (shouldAddToQueue) {
           // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
           await addImageToQueue({
             imageIds: id,

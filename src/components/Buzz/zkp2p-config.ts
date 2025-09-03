@@ -97,9 +97,7 @@ export function isBrowserSupported() {
   const userAgent = navigator.userAgent.toLowerCase();
   const isDesktop = !/mobile|android|iphone|ipad/i.test(userAgent);
   const isChromium =
-    /chrome|chromium|crios/.test(userAgent) ||
-    /edg/.test(userAgent) ||
-    /brave/.test(userAgent);
+    /chrome|chromium|crios/.test(userAgent) || /edg/.test(userAgent) || /brave/.test(userAgent);
 
   return isDesktop && isChromium;
 }

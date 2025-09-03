@@ -77,7 +77,6 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
-import src from '@google-cloud/recaptcha-enterprise';
 
 type GetAllPostsRaw = {
   id: number;

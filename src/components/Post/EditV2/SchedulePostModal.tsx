@@ -3,11 +3,20 @@ import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 
-const minDate = new Date();
+const minDate = dayjs().add(POST_MINIMUM_SCHEDULE_MINUTES, 'minutes').toDate();
 const maxDate = dayjs().add(3, 'month').toDate();
 
-const schema = z.object({ date: z.date().min(minDate).max(maxDate) });
+const schema = z.object({
+  date: z
+    .date()
+    .min(
+      minDate,
+      `Schedule date must be at least ${POST_MINIMUM_SCHEDULE_MINUTES} minutes in the future`
+    )
+    .max(maxDate),
+});
 
 export function SchedulePostModal({
   onSubmit,
