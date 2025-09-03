@@ -18,6 +18,7 @@ export async function getStaticContent({ slug }: { slug: string[] }) {
     return {
       title: frontmatter.title as string,
       description: frontmatter.description as string,
+      lastmod: frontmatter.lastmod ? new Date(frontmatter.lastmod) : undefined,
       content,
     };
   } catch {

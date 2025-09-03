@@ -1,4 +1,4 @@
-import { Container, Title } from '@mantine/core';
+import { Container, Stack, Text, Title } from '@mantine/core';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
@@ -12,6 +12,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { formatDate } from '~/utils/date-helpers';
 
 // Helper function to sanitize slug segments
 function sanitizeSlug(slug: string | string[] | undefined): string[] {
@@ -61,7 +62,7 @@ export default function ContentPage({
   if (slug.length === 0 || isLoading) return <PageLoader />;
   if (!content) return null;
 
-  const { title, description, content: markdownContent } = content;
+  const { title, description, lastmod, content: markdownContent } = content;
 
   const slugString = slug.join('/');
 
@@ -75,9 +76,14 @@ export default function ContentPage({
         ]}
       />
       <Container size="md" pt="sm">
-        <Title order={1} mb="sm">
-          {title}
-        </Title>
+        <Stack mb="lg" gap={0}>
+          <Title order={1}>{title}</Title>
+          {lastmod ? (
+            <Text c="dimmed" size="sm">
+              Last modified: {formatDate(lastmod)}
+            </Text>
+          ) : null}
+        </Stack>
         <TypographyStylesWrapper>
           <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{markdownContent}</CustomMarkdown>
         </TypographyStylesWrapper>

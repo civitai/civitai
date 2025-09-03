@@ -17,20 +17,20 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { SetUserSettingsInput } from '~/server/schema/user.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { formatDate } from '~/utils/date-helpers';
 
-export const TosModal = ({
+export default function TosModal({
   onAccepted,
   slug,
-  key,
+  fieldKey,
 }: {
   onAccepted: () => Promise<void>;
   slug: string;
-  key: keyof SetUserSettingsInput;
-}) => {
+  fieldKey: keyof SetUserSettingsInput;
+}) {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const [loading, setLoading] = useState(false);
@@ -42,9 +42,9 @@ export const TosModal = ({
 
   const updateUserSettings = trpc.user.setSettings.useMutation({
     async onSuccess(res) {
-      queryUtils.user.getSettings.setData(undefined, res as any);
+      queryUtils.user.getSettings.setData(undefined, (old) => ({ ...old, ...res }));
     },
-    onError(_error, _payload, context) {
+    onError() {
       showErrorNotification({
         title: 'Failed to accept ToS',
         error: new Error('Something went wrong, please try again later.'),
@@ -53,15 +53,10 @@ export const TosModal = ({
   });
 
   const handleConfirm = async () => {
-    if (!acceptedCoC) {
-      return;
-    }
-
+    if (!acceptedCoC) return;
     setLoading(true);
 
-    await updateUserSettings.mutate({
-      [key]: new Date(),
-    });
+    updateUserSettings.mutate({ [fieldKey]: new Date() });
 
     handleClose();
     await onAccepted();
@@ -79,8 +74,15 @@ export const TosModal = ({
         <Stack gap="md">
           {data?.title && (
             <>
-              <Title order={2}>{data?.title}</Title>
-              <Divider mx="-lg" my="md" />
+              <Stack gap={0}>
+                <Title order={2}>{data?.title}</Title>
+                {data.lastmod ? (
+                  <Text size="sm" c="dimmed">
+                    Last modified: {formatDate(data.lastmod)}
+                  </Text>
+                ) : null}
+              </Stack>
+              <Divider mx="-lg" />
             </>
           )}
           <ScrollArea.Autosize mah={500}>
@@ -118,4 +120,4 @@ export const TosModal = ({
       )}
     </Modal>
   );
-};
+}

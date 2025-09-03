@@ -1,4 +1,21 @@
 
+#!/bin/sh
+
+# Check if tos.md is being modified
+if git diff --cached --name-only | grep -q "src/static-content/tos.md"; then
+  echo "ToS file detected in commit, updating lastmod date..."
+  
+  # Update the lastmod field in frontmatter (format: YYYY-MM-DD)
+  DATE=$(date +"%Y-%m-%d")
+  sed -i.bak "s/^lastmod: .*/lastmod: $DATE/" src/static-content/tos.md
+  rm -f src/static-content/tos.md.bak
+  
+  # Stage the updated file
+  git add src/static-content/tos.md
+  
+  echo "ToS lastmod updated to: $DATE"
+fi
+
 #branch="$(git rev-parse --abbrev-ref HEAD)"
 #if [ "$branch" != "main" ]; then
 #	exit 0

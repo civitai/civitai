@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
-import { publicProcedure, router } from '~/server/trpc';
+import { getUserSettings } from '~/server/services/user.service';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 const slugSchema = z.object({
   slug: z.preprocess(
@@ -18,4 +19,16 @@ export const contentRouter = router({
   getMarkdown: publicProcedure
     .input(z.object({ key: z.string() }))
     .query(({ input }) => getMarkdownContent(input)),
+  checkTosUpdate: protectedProcedure.query(async ({ ctx }) => {
+    const tos = await getStaticContent({ slug: ['tos'] });
+    const userSettings = await getUserSettings(ctx.user.id);
+    const userTosLastSeen = userSettings.tosLastSeenDate;
+    const tosLastMod = tos.lastmod ? new Date(tos.lastmod) : undefined;
+
+    return {
+      hasUpdate: !userTosLastSeen || (tosLastMod && tosLastMod > userTosLastSeen),
+      lastmod: tosLastMod,
+      userLastSeen: userTosLastSeen,
+    };
+  }),
 });
