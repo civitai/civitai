@@ -531,8 +531,8 @@ async function processImageRating({
     const rating = Number(ratings[0].split('-')[1]);
 
     if (rating !== currentNsfwLevel && !processed && !!currentNsfwLevel) {
-      // Raise to templars because the diff is more than 1 level down
-      if (rating < currentNsfwLevel && Flags.distance(rating, currentNsfwLevel) > 1) {
+      // Raise to templars because rating is lower than current level
+      if (rating < currentNsfwLevel && Flags.distance(rating, currentNsfwLevel) >= 1) {
         movedQueue = true;
         await addImageToQueue({
           imageIds: imageId,
