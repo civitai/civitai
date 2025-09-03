@@ -11,6 +11,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { createJob } from './job';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -86,15 +87,18 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ...relatedEntities.modelVersionIds,
     ]);
     const modelIds = uniq([...jobQueueIds.modelIds, ...relatedEntities.modelIds]);
-    // const collectionIds = uniq([...jobQueueIds.collectionIds, ...relatedEntities.collectionIds]);
+    const collectionIds = uniq([...jobQueueIds.collectionIds, ...relatedEntities.collectionIds]);
 
-    // await enqueueJobs(
-    //   collectionIds.map((entityId) => ({
-    //     entityId,
-    //     entityType: EntityType.Collection,
-    //     type: JobQueueType.UpdateNsfwLevel,
-    //   }))
-    // );
+    // Only enqueue collection jobs if there are related collections to update
+    if (collectionIds.length > 0) {
+      await enqueueJobs(
+        collectionIds.map((entityId) => ({
+          entityId,
+          entityType: EntityType.Collection,
+          type: JobQueueType.UpdateNsfwLevel,
+        }))
+      );
+    }
 
     await updateNsfwLevels({
       postIds,
@@ -103,7 +107,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       bountyEntryIds,
       modelVersionIds,
       modelIds,
-      collectionIds: [],
+      collectionIds: [], // Collections processed by separate job
     });
 
     const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
@@ -133,23 +137,53 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
 
 const updateNsfwLevelsCollectionsJob = createJob(
   'update-nsfw-levels-collections',
-  '*/5 * * * *',
+  '*/10 * * * *', // Reduced frequency to every 10 minutes
   async (e) => {
-    const jobQueue = await dbRead.jobQueue.findMany({
-      where: { type: JobQueueType.UpdateNsfwLevel, entityType: EntityType.Collection },
-    });
-    const collectionIds = jobQueue.map((x) => x.entityId);
-
-    await Limiter({ batchSize: 50, limit: 10 }).process(collectionIds, async (batchIds) => {
-      await updateCollectionsNsfwLevels(batchIds);
-      await dbWrite.jobQueue.deleteMany({
+    try {
+      // Process smaller batches more frequently to avoid timeouts
+      const jobQueue = await dbRead.jobQueue.findMany({
         where: {
           type: JobQueueType.UpdateNsfwLevel,
           entityType: EntityType.Collection,
-          entityId: { in: batchIds },
         },
+        take: 500, // Limit total items per run
+        orderBy: { createdAt: 'asc' }, // Process oldest items first
       });
-    });
+
+      if (!jobQueue.length) return;
+
+      const collectionIds = jobQueue.map((x) => x.entityId);
+
+      // Smaller batch size for more granular processing
+      await Limiter({ batchSize: 20, limit: 3 }).process(collectionIds, async (batchIds) => {
+        try {
+          await updateCollectionsNsfwLevels(batchIds);
+          await dbWrite.jobQueue.deleteMany({
+            where: {
+              type: JobQueueType.UpdateNsfwLevel,
+              entityType: EntityType.Collection,
+              entityId: { in: batchIds },
+            },
+          });
+        } catch (error: any) {
+          logToAxiom({
+            type: 'error',
+            name: 'update-nsfw-levels-collections-batch',
+            message: error.message,
+            data: { batchIds, batchSize: batchIds.length },
+          });
+          // Continue processing other batches even if one fails
+          console.error('Failed to update collection batch:', batchIds, error);
+        }
+      });
+    } catch (error: any) {
+      logToAxiom({
+        type: 'error',
+        name: 'update-nsfw-levels-collections',
+        message: error.message,
+      });
+      throw error;
+    }
   }
 );
 
