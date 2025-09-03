@@ -62,16 +62,6 @@ export const qwenConfig = ImageGenConfig({
       if (match) model = match;
     }
 
-    console.log({
-      ...params,
-      engine: params.engine,
-      prompt: params.prompt,
-      image: params.sourceImage,
-      operation: params.sourceImage ? 'editImage' : 'createImage',
-      model,
-      quantity: params.quantity,
-    });
-
     return schema.parse({
       ...params,
       operation: params.sourceImage ? 'editImage' : 'createImage',
