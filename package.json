@@ -137,6 +137,7 @@
     "clsx": "^2.1.1",
     "compromise": "^14.14.4",
     "cookies-next": "^2.1.1",
+    "cybertipline-tools": "^0.1.0",
     "dayjs": "^1.11.12",
     "decimal.js": "^10.5.0",
     "discord.js": "^14.7.1",
