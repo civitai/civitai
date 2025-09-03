@@ -22,11 +22,11 @@ export const getServerProxySSGHelpers = async (
       features,
       track: new Tracker(),
       ip: null as any,
-      res: null as any,
+      res: ctx.res as any,
       cache: null as any,
-      req: null as any,
+      req: ctx.req as any,
       fingerprint: null as any,
-      // Can't properly get region because we don't have a proper request here
+      // Now we can properly get domain from the request
     },
     transformer: superjson,
   });

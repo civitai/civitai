@@ -14,7 +14,7 @@ const slugSchema = z.object({
 });
 
 export const contentRouter = router({
-  get: publicProcedure.input(slugSchema).query(({ input }) => getStaticContent(input)),
+  get: publicProcedure.input(slugSchema).query(({ input, ctx }) => getStaticContent({ ...input, ctx })),
   getMarkdown: publicProcedure
     .input(z.object({ key: z.string() }))
     .query(({ input }) => getMarkdownContent(input)),
