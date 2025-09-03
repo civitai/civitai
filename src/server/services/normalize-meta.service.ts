@@ -1,7 +1,8 @@
 import {
   wanBaseModelGroupIdMap,
-  wan22BaseModelMap,
+  wan21BaseModelMap,
   getWan21ResolutionFromBaseModel,
+  wanGeneralBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
 import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
@@ -125,10 +126,10 @@ function processWanVideoGenMeta(data: WanVideoGenMeta) {
     }
   }
 
-  const match = wan22BaseModelMap.find((x) => x.baseModel === data.baseModel);
+  const match = wanGeneralBaseModelMap.find((x) => x.baseModel === data.baseModel);
   if (match) {
     if (!data.process) data.process = match.process;
-    if (!data.resolution) data.resolution = match.resolution;
+    if (!data.resolution && 'resolution' in match) data.resolution = match.resolution;
   }
 
   data.version = getWanVersion(baseModel);

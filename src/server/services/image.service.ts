@@ -227,7 +227,7 @@ export const deleteImageById = async ({
 };
 
 export async function deleteImages(ids: number[], updatePosts = true) {
-  const images = await Limiter({ batchSize: 100 }).process(ids, async (ids) => {
+  const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`
@@ -248,13 +248,16 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       postMetrics.queueUpdate(idsForPostUpdate),
     ]);
 
+    await Limiter({ batchSize: 5 }).process(
+      results,
+      async (results) =>
+        await Promise.all(results.map(({ id, url }) => deleteImageFromS3({ id, url })))
+    );
+    if (isDev) console.log(`Batch ${batchIndex}: Deleted ${results.length} images`);
+
     return results;
   });
-  await Limiter({ batchSize: 10 }).process(
-    images,
-    async (results) =>
-      await Promise.all(results.map(({ id, url }) => deleteImageFromS3({ id, url })))
-  );
+
   return images;
 }
 

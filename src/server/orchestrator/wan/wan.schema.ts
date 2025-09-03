@@ -6,6 +6,7 @@ import type {
   Wan22FalImageToVideoInput,
   Wan22FalTextToVideoInput,
 } from '@civitai/client';
+import { uniqBy } from 'lodash-es';
 import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -65,7 +66,7 @@ export const wanBaseModelGroupIdMap: Partial<Record<BaseModelGroup, number>> = {
   WanVideo14B_I2V_720p: 1501344,
 };
 
-export const wan22BaseModelMap = [
+export const wan21BaseModelMap = [
   {
     baseModel: 'WanVideo14B_T2V',
     process: 'txt2vid',
@@ -95,8 +96,18 @@ export const wan22BaseModelMap = [
   },
 ] as const;
 
+export const wanGeneralBaseModelMap = [
+  ...wan21BaseModelMap.map(({ baseModel, process, resolution }) => ({
+    baseModel,
+    process,
+    resolution,
+  })),
+  { baseModel: 'WanVideo-22-T2V-A14B', process: 'txt2vid' },
+  { baseModel: 'WanVideo-22-I2V-A14B', process: 'img2vid' },
+];
+
 export function getWan21ResolutionFromBaseModel(baseModel: BaseModelGroup) {
-  const match = wan22BaseModelMap.find((x) => x.baseModel === baseModel);
+  const match = wan21BaseModelMap.find((x) => x.baseModel === baseModel);
   return match?.resolution;
 }
 
@@ -241,7 +252,9 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     }
   },
   inputFn: ({ resources, ...rest }) => {
-    const loras = resources?.map(({ air, strength }) => ({ air, strength }));
+    const loras = resources
+      ?.filter((x) => !Object.values(baseModelResourceMap).some((y) => x.id === y.id))
+      ?.map(({ air, strength }) => ({ air, strength }));
     const data = { ...rest, loras };
     switch (data.version) {
       case 'v2.1':
@@ -258,7 +271,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
 
 type Wan21Transformed = ReturnType<typeof handleTransformWan21Schema>;
 function handleTransformWan21Schema(data: Wan21Schema) {
-  const processMatches = wan22BaseModelMap.filter((x) => x.process === data.process);
+  const processMatches = wan21BaseModelMap.filter((x) => x.process === data.process);
   const match = processMatches.find((x) => x.resolution === data.resolution) ?? processMatches[0];
   const baseModel = match.baseModel;
 
@@ -281,16 +294,36 @@ function handleTransformWan21Schema(data: Wan21Schema) {
   };
 }
 
+const baseModelResourceMap = {
+  'WanVideo-22-T2V-A14B': {
+    id: 2114154,
+    air: 'urn:air:wanvideo-22-t2v-a14b:checkpoint:civitai:1817671@2114154',
+    strength: 1,
+  },
+  'WanVideo-22-I2V-A14B': {
+    id: 2114157,
+    air: 'urn:air:wanvideo-22-i2v-a14b:checkpoint:civitai:1817671@2114157',
+    strength: 1,
+  },
+  'WanVideo-22-TI2V-5B': {
+    id: 2114110,
+    air: 'urn:air:wanvideo-22-ti2v-5b:checkpoint:civitai:1817671@2114110',
+    strength: 1,
+  },
+};
+
 type Wan22Transformed = ReturnType<typeof handleTransformWan22Schema>;
 function handleTransformWan22Schema(data: Wan22Schema) {
   const baseModel = data.process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
-  return { ...data, baseModel };
+  const checkpoint = baseModelResourceMap[baseModel];
+  return { ...data, baseModel, resources: uniqBy([checkpoint, ...(data.resources ?? [])], 'id') };
 }
 
 type Wan225bTransformed = ReturnType<typeof handleTransformWan225bSchema>;
 function handleTransformWan225bSchema(data: Wan225bSchema) {
   const baseModel = 'WanVideo-22-TI2V-5B';
-  return { ...data, baseModel };
+  const checkpoint = baseModelResourceMap[baseModel];
+  return { ...data, baseModel, resources: uniqBy([checkpoint, ...(data.resources ?? [])], 'id') };
 }
 
 type WithLoras<T extends { resources?: unknown }> = Omit<T, 'resources'> & {
@@ -301,7 +334,7 @@ function handleWan21Input(data: WithLoras<Wan21Transformed>) {
   const images = data.images?.map((x) => x.url);
   const sourceImage = images?.[0];
   if (data.provider === 'civitai') {
-    const config = wan22BaseModelMap.find((x) => x.baseModel === data.baseModel);
+    const config = wan21BaseModelMap.find((x) => x.baseModel === data.baseModel);
     const resolution = Number(data.resolution.split('p')[0]);
     const aspectRatios = getResolutionsFromAspectRatios(resolution, [...wan21CivitaiAspectRatios]);
     const aspectRatio = findClosestAspectRatio(data.images?.[0] ?? data.aspectRatio ?? '1:1', [
