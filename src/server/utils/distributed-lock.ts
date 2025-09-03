@@ -24,7 +24,7 @@ export class DistributedLock {
   }
 
   async acquire(): Promise<boolean> {
-    if (!redis) return true; // Fallback when Redis is not available
+    if (!redis) return false; // Fallback when Redis is not available
 
     this.lockValue = `${Date.now()}-${Math.random()}`;
 
@@ -44,7 +44,7 @@ export class DistributedLock {
         }
       } catch (error) {
         handleLogError(error as Error, `Failed to acquire lock: ${this.lockKey}`);
-        return true; // Fallback to allow operation if Redis fails
+        return false; // Fallback to prevent operation if Redis fails
       }
     }
 
