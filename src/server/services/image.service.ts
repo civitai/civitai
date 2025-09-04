@@ -1450,6 +1450,7 @@ export const getAllImages = async (
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
         modelVersionIds: [], // TODO doing this basically just for TS
         modelVersionIdsManual: [],
+        publishedAt: i.publishedAt ? i.sortAt : undefined,
         user: {
           id: creatorId,
           username,
@@ -1632,7 +1633,7 @@ export const getAllImagesIndex = async (
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
       metadata: { ...metadata, width: sr.width, height: sr.height },
-      publishedAt: !publishedAtUnix ? undefined : sr.sortAt,
+      publishedAt: publishedAtUnix ? sr.sortAt : undefined,
       //
       user: {
         id: sr.userId,

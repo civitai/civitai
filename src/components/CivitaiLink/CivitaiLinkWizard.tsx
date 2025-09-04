@@ -1,17 +1,17 @@
 import {
+  AspectRatio,
+  Button,
+  CopyButton,
+  Divider,
+  Flex,
+  Group,
+  Loader,
+  Modal,
   Stack,
   Stepper,
-  Group,
-  Button,
   Text,
-  CopyButton,
-  Loader,
-  Tooltip,
   Title,
-  Divider,
-  AspectRatio,
-  Flex,
-  Modal,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconCheck,
@@ -22,12 +22,12 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-registry';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
-import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-registry';
+import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
 
 export default function CivitaiLinkWizardModal() {
   const dialog = useDialogContext();
@@ -131,22 +131,6 @@ export default function CivitaiLinkWizardModal() {
               <PlanBenefitList
                 useDefaultBenefits={false}
                 benefits={[
-                  {
-                    content: (
-                      <Text
-                        component="a"
-                        c="blue.4"
-                        td="underline"
-                        href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
-                        target="_blank"
-                        rel="nofollow noreferrer"
-                      >
-                        Automatic 1111 SD Web UI
-                      </Text>
-                    ),
-                    icon: <IconCircleCheck size={18} />,
-                    iconColor: 'green',
-                  },
                   {
                     content: (
                       <Text
