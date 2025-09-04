@@ -17,7 +17,7 @@ import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems] = await Promise.all([
+  const [images, connections, articles] = await Promise.all([
     dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: { postId: true },
@@ -30,10 +30,10 @@ async function getImageConnectedEntities(imageIds: number[]) {
       where: { coverId: { in: imageIds } },
       select: { id: true },
     }),
-    dbRead.collectionItem.findMany({
-      where: { imageId: { in: imageIds } },
-      select: { collectionId: true },
-    }),
+    // dbRead.collectionItem.findMany({
+    //   where: { imageId: { in: imageIds } },
+    //   select: { collectionId: true },
+    // }),
   ]);
 
   return {
@@ -45,25 +45,25 @@ async function getImageConnectedEntities(imageIds: number[]) {
     bountyEntryIds: connections
       .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
       .map((x) => x.entityId),
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    // collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
 async function getPostConnectedEntities(postIds: number[]) {
-  const [posts, collectionItems] = await Promise.all([
+  const [posts] = await Promise.all([
     dbRead.post.findMany({
       where: { id: { in: postIds } },
       select: { modelVersionId: true },
     }),
-    dbRead.collectionItem.findMany({
-      where: { postId: { in: postIds } },
-      select: { collectionId: true },
-    }),
+    // dbRead.collectionItem.findMany({
+    //   where: { postId: { in: postIds } },
+    //   select: { collectionId: true },
+    // }),
   ]);
 
   return {
     modelVersionIds: posts.map((x) => x.modelVersionId).filter(isDefined),
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    // collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -79,24 +79,24 @@ async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
 }
 
 async function getModelConnectedEntities(modelIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { modelId: { in: modelIds } },
-    select: { collectionId: true },
-  });
+  // const collectionItems = await dbRead.collectionItem.findMany({
+  //   where: { modelId: { in: modelIds } },
+  //   select: { collectionId: true },
+  // });
 
   return {
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: [], // collectionItems.map((x) => x.collectionId),
   };
 }
 
 async function getArticleConnectedEntities(articleIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { articleId: { in: articleIds } },
-    select: { collectionId: true },
-  });
+  // const collectionItems = await dbRead.collectionItem.findMany({
+  //   where: { articleId: { in: articleIds } },
+  //   select: { collectionId: true },
+  // });
 
   return {
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: [], // collectionItems.map((x) => x.collectionId),
   };
 }
 
