@@ -10,13 +10,14 @@ import { trpc } from '~/utils/trpc';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import { isApril1 } from '~/utils/date-helpers';
 
-const assistantMap: { [p in UserAssistantPersonality]: string | undefined } = {
-  civbot: env.NEXT_PUBLIC_GPTT_UUID,
-  civchan: env.NEXT_PUBLIC_GPTT_UUID_ALT ?? env.NEXT_PUBLIC_GPTT_UUID,
-};
+export const getAssistantUUID = (personality: UserAssistantPersonality, isGreen?: boolean) => {
+  const baseUUID = isGreen
+    ? env.NEXT_PUBLIC_GPTT_UUID_GREEN ?? env.NEXT_PUBLIC_GPTT_UUID
+    : env.NEXT_PUBLIC_GPTT_UUID;
+  const altUUID = env.NEXT_PUBLIC_GPTT_UUID_ALT ?? baseUUID;
 
-export const getAssistantUUID = (personality: UserAssistantPersonality) => {
-  return isApril1() ? assistantMap['civchan'] : assistantMap[personality];
+  const selectedUUID = personality === 'civchan' ? altUUID : baseUUID;
+  return isApril1() ? altUUID : selectedUUID;
 };
 
 export function AssistantChat({
@@ -35,9 +36,9 @@ export function AssistantChat({
     enabled: !!currentUser,
   });
 
-  const gpttUUID = getAssistantUUID(assistantPersonality ?? 'civbot');
+  const gpttUUID = getAssistantUUID(assistantPersonality ?? 'civbot', features.isGreen);
 
-  if (!currentUser || !features.assistant) return null;
+  if (!currentUser || !features.assistant || !gpttUUID) return null;
 
   return (
     <Card
