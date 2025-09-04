@@ -91,16 +91,9 @@ export function KinguinCheckout({
     }
 
     const isSafari = isSafariBrowser();
-    console.log('KinguinCheckout: Initializing checkout', {
-      isSafari,
-      userAgent: typeof window !== 'undefined' ? window.navigator.userAgent : 'undefined',
-      productId,
-      productUrl,
-    });
 
     // For Safari, redirect directly to product page to avoid iframe issues
     if (isSafari) {
-      console.log('KinguinCheckout: Safari detected - redirecting directly to product page');
       const productPageUrl = buildKinguinUrl(productId);
       window.open(productPageUrl, '_blank');
       setSafariRedirected(true);
@@ -133,24 +126,12 @@ export function KinguinCheckout({
       setTimeout(() => {
         const productElement = document.querySelector('.kinguin-product-button') as HTMLElement;
         if (productElement) {
-          console.log('KinguinCheckout: Clicking product element', { isSafari });
           productElement.click();
 
           // Add iframe monitoring after clicking
           setTimeout(() => {
             const iframe = document.getElementById('kinguin-checkout-iframe') as HTMLIFrameElement;
             if (iframe) {
-              console.log('KinguinCheckout: Iframe found', {
-                isSafari,
-                iframeSrc: iframe.src,
-                iframeLoaded: iframe.contentDocument !== null,
-              });
-
-              // Add load and error event listeners
-              iframe.addEventListener('load', () => {
-                console.log('KinguinCheckout: Iframe loaded successfully', { isSafari });
-              });
-
               iframe.addEventListener('error', (event) => {
                 console.error('KinguinCheckout: Iframe failed to load', {
                   isSafari,
@@ -169,7 +150,6 @@ export function KinguinCheckout({
               // Monitor for iframe content issues
               try {
                 iframe.onload = () => {
-                  console.log('KinguinCheckout: Iframe onload fired', { isSafari });
                   try {
                     // Try to access iframe content (will fail for cross-origin)
                     const iframeDoc = iframe.contentDocument;
@@ -179,24 +159,21 @@ export function KinguinCheckout({
                       );
                     }
                   } catch (e) {
-                    console.log('KinguinCheckout: Expected cross-origin access restriction', {
+                    console.error('KinguinCheckout: Expected cross-origin access restriction', {
                       isSafari,
-                      error: e.message,
+                      error: e as any,
                     });
                   }
                 };
               } catch (e) {
                 console.error('KinguinCheckout: Error setting up iframe monitoring', {
                   isSafari,
-                  error: e,
+                  error: e as any,
                 });
               }
             } else {
               console.error('KinguinCheckout: Iframe not found after product click', { isSafari });
               if (isSafari) {
-                console.log(
-                  'KinguinCheckout: Safari blocked iframe creation - redirecting to product page'
-                );
                 const productPageUrl = buildKinguinUrl(productId);
                 window.open(productPageUrl, '_blank');
               }
