@@ -372,6 +372,77 @@ export function jsonbArrayFrom(data: any): string {
   return `'${JSON.stringify(data)}'::jsonb`;
 }
 
+const DEFAULT_LOCK_TIMEOUT_MS = 250; // 250-500ms is a good default
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_BACKOFF_MS = 150;
+
+function isLockTimeout(err: any) {
+  // Postgres codes: 55P03 = lock_not_available (incl. lock_timeout), 57014 = query_canceled
+  return (
+    err?.code === '55P03' || err?.code === '57014' || /lock timeout/i.test(String(err?.message))
+  );
+}
+
+export interface RetryLockOptions {
+  lockTimeoutMs?: number;
+  maxRetries?: number;
+  backoffMs?: number;
+}
+
+/**
+ * Executes a Prisma transaction with automatic retry on lock timeout.
+ * This helps avoid long waits when tables are locked by setting a short timeout
+ * and retrying with exponential backoff.
+ *
+ * @param dbClient - Prisma database client
+ * @param transaction - The transaction function to execute
+ * @param options - Configuration options for retry behavior
+ * @returns The result of the transaction
+ *
+ * @example
+ * await retryLock(dbWrite, async (tx) => {
+ *   await tx.$queryRaw`
+ *     INSERT INTO "MyTable" (col1, col2) VALUES ${values}
+ *     ON CONFLICT (col1) DO UPDATE SET col2 = EXCLUDED.col2
+ *   `;
+ * });
+ */
+export async function retryLock<T>(
+  dbClient: any,
+  transaction: (tx: any) => Promise<T>,
+  options: RetryLockOptions = {}
+): Promise<T> {
+  const {
+    lockTimeoutMs = DEFAULT_LOCK_TIMEOUT_MS,
+    maxRetries = DEFAULT_MAX_RETRIES,
+    backoffMs = DEFAULT_BACKOFF_MS,
+  } = options;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await dbClient.$transaction(async (tx: any) => {
+        // Set lock timeout for this transaction
+        // Parameters aren't allowed in SET, so inline literal is safe here
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+
+        // Execute the actual transaction
+        return await transaction(tx);
+      });
+    } catch (err: any) {
+      if (isLockTimeout(err) && attempt < maxRetries) {
+        // Exponential backoff before retry
+        const backoff = backoffMs * attempt;
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  // This should never be reached due to the throw in the catch block
+  throw new Error('Max retries exceeded');
+}
+
 export const dbKV = {
   get: async function <T>(key: string, defaultValue?: T) {
     const stored = await dbWrite.keyValue.findUnique({ where: { key } });
