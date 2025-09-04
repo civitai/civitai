@@ -2,11 +2,11 @@ import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { permaDeleteModelById } from '~/server/services/model.service';
 import { dbRead } from '~/server/db/client';
-import { booleanString } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const schema = z
   .object({
-    ids: z.coerce.number().array().optional(),
+    ids: commaDelimitedNumberArray().optional(),
     userId: z.coerce.number().optional(),
     dryRun: booleanString().default(true),
   })
@@ -15,7 +15,12 @@ const schema = z
   });
 
 export default WebhookEndpoint(async function permaDeleteModels(req, res) {
-  const { ids, userId, dryRun } = schema.parse(req.query);
+  const result = schema.safeParse(req.query);
+  if (!result.success) {
+    return res.status(400).json({ success: false, errors: z.flattenError(result.error) });
+  }
+
+  const { ids, userId, dryRun } = result.data;
 
   const whereClause = {
     poi: true,
