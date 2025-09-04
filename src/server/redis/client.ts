@@ -464,6 +464,9 @@ export const REDIS_SYS_KEYS = {
      */
     REGION_WARNING: 'system:content:region-warning',
   },
+  CACHES: {
+    IMAGE_EXISTS: 'feed:image:exists',
+  },
 } as const;
 
 // Cached data

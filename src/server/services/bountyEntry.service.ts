@@ -7,7 +7,11 @@ import type {
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
-import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
+import {
+  createEntityImages,
+  invalidateManyImageExistence,
+  updateEntityImages,
+} from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -384,7 +388,11 @@ export const deleteBountyEntry = async ({
       });
 
       await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-      await tx.image.deleteMany({ where: { id: { in: images.map((i) => i.imageId) } } });
+      const imageIds = images.map((i) => i.imageId);
+      await Promise.all([
+        tx.image.deleteMany({ where: { id: { in: imageIds } } }),
+        invalidateManyImageExistence(imageIds),
+      ]);
 
       return deletedBountyEntry;
     },
