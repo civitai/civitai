@@ -49,7 +49,7 @@ export const BuzzNowPaymentsButton = ({
         fw={500}
         fullWidth
       >
-        Pay with Crypto{' '}
+        NowPayments (Crypto){' '}
         {!!unitAmount
           ? `- $${formatCurrencyForDisplay(unitAmount + NOW_PAYMENTS_FIXED_FEE, undefined, {
               decimals: false,
