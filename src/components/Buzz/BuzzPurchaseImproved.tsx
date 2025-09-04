@@ -26,6 +26,7 @@ import {
   IconTrendingUp,
   IconTicket,
   IconExternalLink,
+  IconUsers,
 } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Fragment } from 'react';
@@ -164,14 +165,11 @@ const BuzzPurchasePaymentButton = ({
       radius="md"
       variant="light"
       color="yellow"
-      leftSection={<IconBolt size={18} />}
+      leftSection={<IconCreditCard size={18} />}
       fw={500}
     >
       {features.disablePayments ? (
-        <Group gap="xs" wrap="nowrap">
-          <IconCreditCard size={16} />
-          <span>Credit Card</span>
-        </Group>
+        <span>Credit Card</span>
       ) : (
         <Group gap="sm">
           <Text size="sm" fw={500}>
@@ -196,7 +194,7 @@ const RedeemableCodesSection = () => {
     <Card padding="md" radius="md" mt="sm" withBorder>
       <Stack gap="sm">
         <Group gap="sm">
-          <ThemeIcon size="sm" variant="light" color="gray" radius="sm">
+          <ThemeIcon size="md" variant="light" color="gray" radius="sm">
             <IconTicket size={16} />
           </ThemeIcon>
           <div style={{ flex: 1 }}>
@@ -838,18 +836,6 @@ export const BuzzPurchaseImproved = ({
                       {/* Payment Methods */}
                       <div>
                         <Group gap="sm" wrap="wrap">
-                          {availableZkp2pMethods.map(({ method, ...config }) => (
-                            <BuzzZkp2pButton
-                              key={method}
-                              method={method}
-                              config={config}
-                              amount={unitAmount / 100}
-                              buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
-                              disabled={!ctaEnabled}
-                              onRedirect={onCancel} // Close modal on redirect
-                            />
-                          ))}
-
                           {features.coinbasePayments && (
                             <BuzzCoinbaseButton
                               unitAmount={unitAmount}
@@ -880,6 +866,48 @@ export const BuzzPurchaseImproved = ({
                           />
                         </Group>
                       </div>
+
+                      {/* Peer-to-Peer Payment Methods Section */}
+                      {availableZkp2pMethods.length > 0 && (
+                        <Card padding="md" radius="md" mt="sm" withBorder>
+                          <Stack gap="sm">
+                            <Group gap="sm">
+                              <ThemeIcon size="md" variant="light" color="gray" radius="sm">
+                                <IconUsers size={16} />
+                              </ThemeIcon>
+                              <div style={{ flex: 1 }}>
+                                <Text size="sm" fw={500}>
+                                  Peer-to-Peer Payment Methods
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  Secure, private, and instant peer-to-peer checkout. Powered by <a href="https://zkp2p.xyz" target="_blank" className={classes.giftCardLink}>ZKP2P</a> -{' '}
+                                  <Anchor
+                                    href="https://education.civitai.com/civitais-guide-to-buzz-purchases-via-zkp2p/"
+                                    size="xs"
+                                    className={classes.giftCardLink}
+                                  >
+                                    Learn More
+                                  </Anchor>
+                                </Text>
+                              </div>
+                            </Group>
+
+                            <Group gap="sm" wrap="wrap">
+                              {availableZkp2pMethods.map(({ method, ...config }) => (
+                                <BuzzZkp2pButton
+                                  key={method}
+                                  method={method}
+                                  config={config}
+                                  amount={unitAmount / 100}
+                                  buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
+                                  disabled={!ctaEnabled}
+                                  onRedirect={onCancel}
+                                />
+                              ))}
+                            </Group>
+                          </Stack>
+                        </Card>
+                      )}
 
                       {/* Alternative Payment Section */}
                       {liveFeatures.buzzGiftCards && <RedeemableCodesSection />}
