@@ -82,12 +82,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -131,7 +126,6 @@ import {
   getHiDreamResourceFromPrecisionAndVariant,
   getHiDreamResourceFromVersionId,
   hiDreamPrecisions,
-  hiDreamVariants,
   hiDreamVariantsPrecisionMap,
 } from '~/shared/orchestrator/hidream.config';
 import classes from './GenerationForm2.module.scss';
@@ -512,7 +506,6 @@ export function GenerationFormContent() {
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
-              isQwen ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
@@ -530,7 +523,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen) || isOpenAI || isFluxKontext;
+              (features.image && !isFlux && !isSD3) || isOpenAI || isFluxKontext || isQwen;
             const disableCfgScale = isFluxUltra;
             const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableSteps = isFluxUltra || isFluxKontext;
