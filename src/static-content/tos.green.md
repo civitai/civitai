@@ -1,10 +1,11 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2025-09-04
 ---
 
-Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
+Last Updated: 09/03/2025
+
+Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.green](https://civitai.green), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
 PLEASE READ THE FOLLOWING TERMS CAREFULLY:
 BY CLICKING “I ACCEPT,” OR BY DOWNLOADING, INSTALLING, OR OTHERWISE ACCESSING OR USING THE SERVICE, YOU AGREE THAT YOU HAVE READ AND UNDERSTOOD, AND, AS A CONDITION TO YOUR USE OF THE SERVICE, YOU AGREE TO BE BOUND BY, THE FOLLOWING TERMS AND CONDITIONS, INCLUDING CIVITAI’S PRIVACY POLICY (TOGETHER, THESE “TERMS”). IF YOU ARE NOT ELIGIBLE, OR DO NOT AGREE TO THE TERMS, THEN YOU DO NOT HAVE OUR PERMISSION TO USE THE SERVICE. YOUR USE OF THE SERVICE, AND CIVITAI’S PROVISION OF THE SERVICE TO YOU, CONSTITUTES AN AGREEMENT BY CIVITAI AND BY YOU TO BE BOUND BY THESE TERMS.
@@ -95,70 +96,55 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   Prohibited Content Includes (but is not limited to):
 
-- (a) Content that uses, reproduces, or is based on the likeness of real people - living or deceased - including public figures, celebrities, influencers, and private individuals, in any context.
+- (a) Adult content and services, including but not limited to:
+  - Pornography and other mature audience content (including literature, imagery, and other media) depicting nudity or explicit sexual acts
+  - Any content depicting genitalia or female nipples/areolas in a sexual context
+  - Sexually explicit or suggestive content, including sexual intercourse, masturbation, or other sexual activities
+  - Content intended to cause sexual arousal or that depicts sexual situations
+  - Adult entertainment services or sexually oriented content of any kind
 
-- (b) Content involving minors (under 18) in any sexualized context or context that insinuates, or portrays sexual intent, including but not limited to:
+- (b) Content that uses, reproduces, or is based on the likeness of real people - living or deceased - including public figures, celebrities, influencers, and private individuals, in any context.
 
-  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting minors](/safety).
-  - "Loli", "Lolicon", "Shota", or "Shotacon" content.
-  - Photorealistic minors in any context.
+- (c) Content involving minors (under 18), including:
 
-- (c) Illegal or violent activities, including:
+  - Photorealistic depictions of minors in any context.
+  - Content depicting minors in dangerous, harmful, or inappropriate situations.
+  - Any content that could endanger or exploit minors.
 
-  - Depictions of incest, including sexual activity between immediate or close biological family members.
+- (d) Illegal or violent activities, including:
+
   - Child abuse, exploitation, or endangerment.
-  - Rape, sexual violence, or domestic abuse.
   - Depictions of human death, brutal violence, or graphic injuries.
-  - Bestiality.
+  - Content promoting or depicting illegal activities.
+  - Violence, threats, or harassment targeting individuals or groups.
 
-- (d) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
+- (e) Content promoting dangerous or illegal substances, including:
 
-  - Weapons aimed at or pointed toward individuals.
-  - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
-  - Vomit.
+  - Promotion or depiction of illegal narcotics or controlled substances.
+  - Content encouraging drug abuse or illegal pharmaceutical distribution.
+  - Instructions for creating or obtaining illegal substances.
 
-- (e) Content depicting sexual activity while in a mind-altered state, including;
-
-  - Being drunk, drugged, under hypnosis, or mind control.
-
-- (f) The depiction of the following bodily excretions and related content, regardless of context;
-
-  - Urine.
-  - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
-  - Menstruation.
-  - Smegma.
-  - Diapers.
-
-- (g) Self-harm, body image disorders, or promotion of dangerous behavior:
+- (f) Self-harm, body image disorders, or promotion of dangerous behavior:
 
   - Cutting, mutilation, or suicide themes.
   - Depictions of anorexia, bulimia, or other disordered eating.
 
-- (h) Content that promotes hate, harm, or extremist ideologies, including:
+- (g) Content that promotes hate, harm, or extremist ideologies, including:
 
   - Hate speech or imagery targeting groups or individuals.
   - Extremist propaganda or incitement to violence.
 
-- (i) Misleading or impersonated content:
+- (h) Misleading or impersonated content:
 
   - Falsely labeled content claiming to be from another creator.
   - Impersonation of real individuals or creators.
   - Bounties requesting likenesses of real people, living or deceased.
 
-- (j) Nudity-manipulating tools or AI workflows:
-  - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
-
 Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
-
-In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
-
-- (k) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
-
-  - Such content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
-10. **Communications**
+1.  **Communications**
 
 - 10.1 **Push Notifications.** When you install our app on your mobile device, you agree to receive push notifications, which are messages an app sends you on your mobile device when you are not in the app. You can turn off notifications by visiting your mobile device’s “settings” page.
 

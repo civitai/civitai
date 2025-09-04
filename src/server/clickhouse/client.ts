@@ -596,11 +596,7 @@ export class Tracker {
     date: Date;
     valid?: boolean;
   }) {
-    return this.track(
-      'moderationRequest',
-      { ...values, createdAt: new Date() },
-      { skipActorMeta: true }
-    );
+    return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
   }
 
   public zkp2pPayment(values: {
@@ -611,6 +607,10 @@ export class Tracker {
     buzzAmount: number;
     errorMessage?: string;
   }) {
-    return this.track('zkp2p_payment_events', { ...values, timestamp: new Date() });
+    return this.track(
+      'zkp2p_payment_events',
+      { ...values, timestamp: new Date() },
+      { skipActorMeta: true }
+    );
   }
 }
