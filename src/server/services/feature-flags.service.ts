@@ -289,7 +289,16 @@ const hasFeature = (
   const hasBasicAccess = envRequirement && serverMatch && (grantedAccess || roleAccess);
   if (!hasBasicAccess) return false;
 
-  // Check region access
+  // Mod and granted users bypass region restrictions
+  const isMod = user?.isModerator;
+  const hasGrantedPermission = grantedAccess;
+
+  if (isMod || hasGrantedPermission) {
+    // Avoids the double region check for mods/granted users
+    return true;
+  }
+
+  // Check region access for regular users
   const regionAccess = checkRegionAccess(feature, availability, req);
   if (!regionAccess) return false;
 

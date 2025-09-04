@@ -165,7 +165,6 @@ const BuzzPurchasePaymentButton = ({
       radius="md"
       variant="light"
       color="yellow"
-      leftSection={<IconCreditCard size={18} />}
       fw={500}
     >
       {features.disablePayments ? (
