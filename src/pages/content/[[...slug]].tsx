@@ -80,7 +80,7 @@ export default function ContentPage({
           <Title order={1}>{title}</Title>
           {lastmod ? (
             <Text c="dimmed" size="sm">
-              Last modified: {formatDate(lastmod)}
+              Last modified: {formatDate(lastmod, undefined, true)}
             </Text>
           ) : null}
         </Stack>

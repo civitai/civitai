@@ -287,8 +287,13 @@ export const completeOnboardingHandler = async ({
 
     switch (input.step) {
       case OnboardingSteps.TOS:
+        const now = new Date();
+        await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        await setUserSetting(id, { tosLastSeenDate: now, tosGreenLastSeenDate: now });
+        break;
       case OnboardingSteps.RedTOS: {
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        await setUserSetting(id, { tosRedLastSeenDate: new Date() });
         break;
       }
       case OnboardingSteps.Profile: {

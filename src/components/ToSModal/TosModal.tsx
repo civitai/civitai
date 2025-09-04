@@ -78,7 +78,7 @@ export default function TosModal({
                 <Title order={2}>{data?.title}</Title>
                 {data.lastmod ? (
                   <Text size="sm" c="dimmed">
-                    Last modified: {formatDate(data.lastmod)}
+                    Last modified: {formatDate(data.lastmod, undefined, true)}
                   </Text>
                 ) : null}
               </Stack>

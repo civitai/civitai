@@ -1,18 +1,25 @@
 
 #!/bin/sh
 
-# Check if tos.md is being modified
-if git diff --cached --name-only | grep -q "src/static-content/tos.md"; then
-  echo "ToS file detected in commit, updating lastmod date..."
-  
+# Check if any ToS files are being modified (including domain-specific ones)
+TOS_FILES=$(git diff --cached --name-only | grep "src/static-content/tos.*\.md")
+
+if [ ! -z "$TOS_FILES" ]; then
+  echo "ToS file(s) detected in commit, updating lastmod date..."
+
   # Update the lastmod field in frontmatter (format: YYYY-MM-DD)
   DATE=$(date +"%Y-%m-%d")
-  sed -i.bak "s/^lastmod: .*/lastmod: $DATE/" src/static-content/tos.md
-  rm -f src/static-content/tos.md.bak
-  
-  # Stage the updated file
-  git add src/static-content/tos.md
-  
+
+  # Process each ToS file
+  for file in $TOS_FILES; do
+    echo "Updating lastmod in: $file"
+    sed -i.bak "s/^lastmod: .*/lastmod: $DATE/" "$file"
+    rm -f "$file.bak"
+
+    # Stage the updated file
+    git add "$file"
+  done
+
   echo "ToS lastmod updated to: $DATE"
 fi
 

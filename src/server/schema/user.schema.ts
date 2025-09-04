@@ -239,6 +239,8 @@ export const userSettingsSchema = z.object({
   generation: generationSettingsSchema.optional(),
   redBrowsingLevel: z.number().optional(),
   tosLastSeenDate: z.date().optional(),
+  tosGreenLastSeenDate: z.date().optional(),
+  tosRedLastSeenDate: z.date().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -259,6 +261,8 @@ export const setUserSettingsInput = z.object({
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),
+  tosGreenLastSeenDate: z.date().optional(),
+  tosRedLastSeenDate: z.date().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
