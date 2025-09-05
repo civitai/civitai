@@ -2124,7 +2124,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     if (fliptClient) {
       const flag = fliptClient.evaluateBoolean({
         flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-        entityId: 'unused',
+        entityId: currentUserId?.toString() || 'anonymous',
         context: {},
       });
       cacheExistenceEnabled = flag.enabled;
