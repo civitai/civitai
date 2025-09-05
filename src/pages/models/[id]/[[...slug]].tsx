@@ -134,6 +134,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
+import { AdUnitSide_2, AdUnitTop } from '~/components/Ads/AdUnit';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -662,7 +663,7 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
-        <Container size="xl" data-tour="model:start">
+        <Container size="xl" data-tour="model:start" className="pb-8">
           <Stack gap="xl">
             <Stack gap="xs">
               <Stack gap={4}>
@@ -1219,46 +1220,54 @@ export default function ModelDetailsV2({
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}
         </Container>
-        {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-          <AssociatedModels
-            fromId={model.id}
-            type="Suggested"
-            versionId={selectedVersion?.id}
-            label={
-              <Group gap={8} wrap="nowrap">
-                Suggested Resources{' '}
-                <InfoPopover>
-                  <Text size="sm" fw={400}>
-                    These are resources suggested by the creator of this model. They may be related
-                    to this model or created by the same user.
-                  </Text>
-                </InfoPopover>
-              </Group>
-            }
-            ownerId={model.user.id}
-          />
-        )}
         {canLoadBelowTheFold && (
-          <Container size="xl" my="xl">
-            <ModelDiscussion
-              canDiscuss={canDiscuss}
-              onlyEarlyAccess={onlyEarlyAccess}
-              modelId={model.id}
-              locked={model.locked || model.meta?.commentsLocked}
-            />
-          </Container>
-        )}
-        {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
-          <Box ref={gallerySectionRef} id="gallery" mt="md">
-            <ModelGallery
-              model={model}
-              selectedVersionId={selectedVersion?.id}
-              modelVersions={model.modelVersions}
-              showModerationOptions={isOwner}
-              showPOIWarning={model.poi}
-              canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
-            />
-          </Box>
+          <>
+            {(isOwner || model.hasSuggestedResources) && (
+              <>
+                {model.hasSuggestedResources && <AdUnitTopSection />}
+                <AssociatedModels
+                  fromId={model.id}
+                  type="Suggested"
+                  versionId={selectedVersion?.id}
+                  label={
+                    <Group gap={8} wrap="nowrap">
+                      Suggested Resources{' '}
+                      <InfoPopover>
+                        <Text size="sm" fw={400}>
+                          These are resources suggested by the creator of this model. They may be
+                          related to this model or created by the same user.
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                  ownerId={model.user.id}
+                />
+              </>
+            )}
+            <AdUnitTopSection />
+            <Container size="xl" my="xl">
+              <ModelDiscussion
+                canDiscuss={canDiscuss}
+                onlyEarlyAccess={onlyEarlyAccess}
+                modelId={model.id}
+                locked={model.locked || model.meta?.commentsLocked}
+              />
+            </Container>
+            {!model.locked && model.mode !== ModelModifier.TakenDown && (
+              <Box ref={gallerySectionRef} id="gallery" mt="md">
+                <ModelGallery
+                  model={model}
+                  selectedVersionId={selectedVersion?.id}
+                  modelVersions={model.modelVersions}
+                  showModerationOptions={isOwner}
+                  showPOIWarning={model.poi}
+                  canReview={
+                    !versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator
+                  }
+                />
+              </Box>
+            )}
+          </>
         )}
       </SensitiveShield>
     </>
@@ -1280,4 +1289,8 @@ export default function ModelDetailsV2({
   //     />
   //   </Box>
   // );
+}
+
+function AdUnitTopSection() {
+  return <AdUnitTop className="bg-gray-1 py-3 dark:bg-dark-6" preserveLayout />;
 }

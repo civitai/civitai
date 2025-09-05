@@ -35,7 +35,7 @@ import {
 import { useRef } from 'react';
 import clsx from 'clsx';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -527,6 +527,7 @@ export function ImageDetail2() {
                       <ImageGenerationData imageId={image.id} />
                       {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
+                      {!hideAds && <AdUnitSide_3 />}
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconBrandWechat />

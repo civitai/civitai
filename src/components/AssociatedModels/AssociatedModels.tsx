@@ -67,69 +67,59 @@ export function AssociatedModels({
 
   return (
     <MasonryProvider maxColumnCount={4}>
-      <MasonryContainer
-        my="xl"
-        pt="xl"
-        pb="xl"
-        style={{
-          background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-        }}
-      >
-        {({ columnCount }) => (
-          <Stack pb={columnCount > 1 && data.length ? 20 : undefined}>
-            <Group>
-              <Title order={2}>{label}</Title>
-              {isOwnerOrModerator && (
-                <Button size="xs" variant="outline" onClick={handleManageClick}>
-                  Manage {type} Resources
-                </Button>
-              )}
-            </Group>
-            {isLoading || loadingRecommended ? (
-              <div style={{ position: 'relative', height: 310 }}>
-                <LoadingOverlay visible />
-              </div>
-            ) : combinedData.length ? (
-              <MasonryCarousel
-                itemWrapperProps={{ style: { paddingTop: 4, paddingBottom: 4 } }}
-                data={combinedData}
-                viewportClassName="py-4"
-                render={({ data, ...props }) =>
-                  data.resourceType === 'model' ? (
+      <MasonryContainer>
+        <Stack className="py-5">
+          <Group>
+            <Title order={2}>{label}</Title>
+            {isOwnerOrModerator && (
+              <Button size="xs" variant="outline" onClick={handleManageClick}>
+                Manage {type} Resources
+              </Button>
+            )}
+          </Group>
+          {isLoading || loadingRecommended ? (
+            <div style={{ position: 'relative', height: 310 }}>
+              <LoadingOverlay visible />
+            </div>
+          ) : combinedData.length ? (
+            <MasonryCarousel
+              itemWrapperProps={{ style: { paddingTop: 4, paddingBottom: 4 } }}
+              data={combinedData}
+              render={({ data, ...props }) =>
+                data.resourceType === 'model' ? (
+                  <ModelCard
+                    {...props}
+                    data={data}
+                    data-activity="follow-suggestion:model"
+                    forceInView
+                  />
+                ) : data.resourceType === 'recommended' ? (
+                  <div style={{ position: 'relative' }}>
+                    <AIRecommendedIndicator />
                     <ModelCard
                       {...props}
                       data={data}
                       data-activity="follow-suggestion:model"
                       forceInView
                     />
-                  ) : data.resourceType === 'recommended' ? (
-                    <div style={{ position: 'relative' }}>
-                      <AIRecommendedIndicator />
-                      <ModelCard
-                        {...props}
-                        data={data}
-                        data-activity="follow-suggestion:model"
-                        forceInView
-                      />
-                    </div>
-                  ) : (
-                    <ArticleCard {...props} data={data} data-activity="follow-suggestion:article" />
-                  )
-                }
-                itemId={(x) => x.id}
-              />
-            ) : (
-              <Group gap="xs" mt="xs">
-                <ThemeIcon color="gray" size="xl" radius="xl">
-                  <IconRocketOff />
-                </ThemeIcon>
-                <Text size="lg" c="dimmed">
-                  {`You aren't suggesting any other resources yet...`}
-                </Text>
-              </Group>
-            )}
-          </Stack>
-        )}
+                  </div>
+                ) : (
+                  <ArticleCard {...props} data={data} data-activity="follow-suggestion:article" />
+                )
+              }
+              itemId={(x) => x.id}
+            />
+          ) : (
+            <Group gap="xs" mt="xs">
+              <ThemeIcon color="gray" size="xl" radius="xl">
+                <IconRocketOff />
+              </ThemeIcon>
+              <Text size="lg" c="dimmed">
+                {`You aren't suggesting any other resources yet...`}
+              </Text>
+            </Group>
+          )}
+        </Stack>
       </MasonryContainer>
     </MasonryProvider>
   );
