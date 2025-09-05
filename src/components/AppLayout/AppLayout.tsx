@@ -93,7 +93,7 @@ export function AppLayout({
         </div>
       )}
       <ChatPortal showFooter={false} />
-      <AdhesiveFooter />
+      {footer && <AdhesiveFooter />}
     </div>
   );
 }
