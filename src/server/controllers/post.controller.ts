@@ -159,9 +159,20 @@ export const updatePostHandler = async ({
 
     const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
 
-    // If rescheduling to less than or equal to minimum schedule time after right now, set to now
-    if (input.publishedAt && dayjs(input.publishedAt).isBefore(minimumScheduleTime)) {
-      input.publishedAt = today;
+    // Handle publishedAt validation and adjustment
+    if (input.publishedAt) {
+      const inputDate = dayjs(input.publishedAt);
+
+      // Throw error only if the date is clearly in the past (more than 1 minute ago to account for request delays)
+      const oneMinuteAgo = increaseDate(today, -1, 'minutes');
+      if (inputDate.isBefore(oneMinuteAgo)) {
+        throw throwBadRequestError('You cannot schedule a post in the past');
+      }
+
+      // If the date is before the minimum schedule time, publish immediately
+      if (inputDate.isBefore(minimumScheduleTime)) {
+        input.publishedAt = today;
+      }
     }
 
     if (

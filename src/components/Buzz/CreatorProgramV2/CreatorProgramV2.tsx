@@ -60,7 +60,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
-import { TosModal } from '~/components/ToSModal/TosModal';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -88,6 +87,11 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import dynamic from 'next/dynamic';
+
+const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
+  ssr: false,
+});
 
 const cardProps: HTMLProps<HTMLDivElement> = {
   className: 'light:bg-gray-0 align-center flex flex-col rounded-lg p-4 dark:bg-dark-5',
@@ -173,7 +177,7 @@ const JoinCreatorProgramCard = () => {
       component: TosModal,
       props: {
         slug: 'creator-program-v2-tos',
-        key: 'creatorProgramToSAccepted' as any,
+        fieldKey: 'creatorProgramToSAccepted' as const,
         onAccepted: async () => {
           try {
             await joinCreatorsProgram();

@@ -1,4 +1,53 @@
 
+#!/bin/sh
+set -e
+
+# Check if any ToS files are being modified (including domain-specific ones)
+TOS_FILES=$(git diff --cached --name-only | grep "src/static-content/tos.*\.md" || true)
+
+echo "DEBUG: TOS_FILES = '$TOS_FILES'"
+
+if [ ! -z "$TOS_FILES" ]; then
+  echo "ToS file(s) detected in commit, updating lastmod date..."
+
+  # Update the lastmod field in frontmatter (format: YYYY-MM-DD)
+  DATE=$(date +"%Y-%m-%d")
+
+  # Process each ToS file
+  for file in $TOS_FILES; do
+    echo "Updating lastmod in: $file"
+    
+    # Check if lastmod field exists
+    if grep -q "^lastmod:" "$file"; then
+      echo "  - Updating existing lastmod field"
+      sed -i.bak "s/^lastmod: .*/lastmod: $DATE/" "$file"
+    else
+      echo "  - Adding new lastmod field"
+      # Find the first --- line and add lastmod after it
+      if grep -q "^---" "$file"; then
+        # Add after the first --- line
+        sed -i.bak "/^---/{N; s/\(---\n\)/\1lastmod: $DATE\n/;}" "$file"
+      else
+        # No frontmatter, create it
+        sed -i.bak "1i\\
+---\\
+lastmod: $DATE\\
+---\\
+" "$file"
+      fi
+    fi
+    
+    rm -f "$file.bak"
+
+    # Stage the updated file
+    git add "$file"
+  done
+
+  echo "ToS lastmod updated to: $DATE"
+else
+  echo "DEBUG: No ToS files found, skipping lastmod update"
+fi
+
 #branch="$(git rev-parse --abbrev-ref HEAD)"
 #if [ "$branch" != "main" ]; then
 #	exit 0
@@ -11,3 +60,6 @@
 #npx lint-staged
 #
 #echo "Typecheck successful"
+
+# Explicitly exit successfully
+exit 0

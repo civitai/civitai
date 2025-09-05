@@ -36,7 +36,6 @@ import {
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
-import dayjs from '~/shared/utils/dayjs';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useCallback, useRef } from 'react';
@@ -740,7 +739,7 @@ export function ModelVersionDetails({
                       <IconClock size={20} />
                     </ThemeIcon>
                     <Text size="xs" c="dimmed">
-                      Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
+                      Scheduled for {formatDate(scheduledPublishDate, 'MMMM D, h:mma')}
                     </Text>
                   </Group>
                 </Stack>
