@@ -281,6 +281,7 @@ export const completeOnboardingHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { domain } = ctx;
     const { id } = ctx.user;
     const onboarding = Flags.addFlag(ctx.user.onboarding, input.step);
     const changed = onboarding !== ctx.user.onboarding;
@@ -289,7 +290,10 @@ export const completeOnboardingHandler = async ({
       case OnboardingSteps.TOS:
         const now = new Date();
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
-        await setUserSetting(id, { tosLastSeenDate: now, tosGreenLastSeenDate: now });
+        await setUserSetting(
+          id,
+          domain === 'green' ? { tosGreenLastSeenDate: now } : { tosLastSeenDate: now }
+        );
         break;
       case OnboardingSteps.RedTOS: {
         await dbWrite.user.update({ where: { id }, data: { onboarding } });

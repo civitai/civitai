@@ -4,7 +4,6 @@ import { cacheIt } from '~/server/middleware.trpc';
 import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 const slugSchema = z.object({
   slug: z.preprocess(
@@ -31,13 +30,12 @@ export const contentRouter = router({
   getMarkdown: publicProcedure
     .input(z.object({ key: z.string() }))
     .query(({ input }) => getMarkdownContent(input)),
-  checkTosUpdate: protectedProcedure.use(cacheIt({ ttl: CacheTTL.day })).query(async ({ ctx }) => {
+  checkTosUpdate: protectedProcedure.query(async ({ ctx }) => {
     const tos = await getStaticContent({ slug: ['tos'], ctx });
     const userSettings = ctx.user ? await getUserSettings(ctx.user.id) : {};
 
     // Get domain color from request context to determine which ToS field to check
-    const domainColor = ctx.req ? getRequestDomainColor(ctx.req) : undefined;
-
+    const domainColor = ctx.domain;
     const tosFieldKey = tosFieldMap[domainColor as keyof typeof tosFieldMap] || 'tosLastSeenDate';
     const userTosLastSeen = userSettings[tosFieldKey] as Date | undefined;
     const tosLastMod = tos.lastmod ? new Date(tos.lastmod) : undefined;

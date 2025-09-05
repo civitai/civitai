@@ -41,8 +41,7 @@ export function useToSUpdateModal() {
                 ? {
                     ...old,
                     hasUpdate: false,
-                    lastmod: new Date(),
-                    userLastSeen: new Date(),
+                    lastmod: tosUpdate.lastmod,
                   }
                 : old
             );
