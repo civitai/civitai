@@ -1277,16 +1277,7 @@ export function GenerationFormContent() {
                                         <Input.Label>CFG Scale</Input.Label>
                                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
                                           Controls how closely the image generation follows the text
-                                          prompt.{' '}
-                                          <Anchor
-                                            href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                                            target="_blank"
-                                            rel="nofollow noreferrer"
-                                            span
-                                          >
-                                            Learn more
-                                          </Anchor>
-                                          .
+                                          prompt.
                                         </InfoPopover>
                                       </div>
                                     }
@@ -1319,16 +1310,7 @@ export function GenerationFormContent() {
                                         <Input.Label>Sampler</Input.Label>
                                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
                                           Each will produce a slightly (or significantly) different
-                                          image result.{' '}
-                                          <Anchor
-                                            href="https://wiki.civitai.com/wiki/Sampler"
-                                            target="_blank"
-                                            rel="nofollow noreferrer"
-                                            span
-                                          >
-                                            Learn more
-                                          </Anchor>
-                                          .
+                                          image result.
                                         </InfoPopover>
                                       </div>
                                     }
@@ -1356,16 +1338,7 @@ export function GenerationFormContent() {
                                             <div className="flex items-center gap-1">
                                               <Input.Label>Steps</Input.Label>
                                               <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                                The number of iterations spent generating an image.{' '}
-                                                <Anchor
-                                                  href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                                                  target="_blank"
-                                                  rel="nofollow noreferrer"
-                                                  span
-                                                >
-                                                  Learn more
-                                                </Anchor>
-                                                .
+                                                The number of iterations spent generating an image.
                                               </InfoPopover>
                                             </div>
                                           }
@@ -1451,16 +1424,7 @@ export function GenerationFormContent() {
                                   <div className="flex items-center gap-1">
                                     <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
                                     <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                      These provide additional color and detail improvements.{' '}
-                                      <Anchor
-                                        href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
-                                        target="_blank"
-                                        rel="nofollow noreferrer"
-                                        span
-                                      >
-                                        Learn more
-                                      </Anchor>
-                                      .
+                                      These provide additional color and detail improvements.
                                     </InfoPopover>
                                   </div>
                                 }
