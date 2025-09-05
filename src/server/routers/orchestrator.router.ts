@@ -59,7 +59,12 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { getFlagged, getReasons, getConsumerStrikes } from '../http/orchestrator/flagged-consumers';
+import {
+  getFlagged,
+  getReasons,
+  getConsumerStrikes,
+  reviewConsumerStrikes,
+} from '../http/orchestrator/flagged-consumers';
 import {
   getFlaggedConsumersSchema,
   getFlaggedReasonsSchema,
@@ -339,4 +344,9 @@ export const orchestratorRouter = router({
   getFlaggedConsumerStrikes: moderatorProcedure
     .input(getFlaggedConsumerStrikesSchema)
     .query(({ input }) => getConsumerStrikes(input)),
+  reviewConsumerStrikes: moderatorProcedure
+    .input(z.object({ userId: z.number() }))
+    .mutation(({ input, ctx }) =>
+      reviewConsumerStrikes({ consumerId: `civitai-${input.userId}`, moderatorId: ctx.user.id })
+    ),
 });

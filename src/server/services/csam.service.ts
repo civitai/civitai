@@ -32,6 +32,7 @@ import JSZip from 'jszip';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 
 type CsamReportImage = {
   id: number;
@@ -56,18 +57,9 @@ type CsamReportTrainingData = {
   hash?: string | undefined;
 };
 
-type CsamReportGeneratedImages = {
-  blobs: string[];
-  jobId: string;
-  prompt?: string;
-  negativePrompt?: string;
-  resources?: string[];
-};
-
 type CsamReportDetails = CsamReportFormOutput & {
   trainingData?: CsamReportTrainingData[];
   userActivity?: CsamReportUserActivity[];
-  generatedImages?: CsamReportGeneratedImages[];
 };
 
 export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
@@ -100,7 +92,7 @@ export async function createCsamReport({
   const isInternalReport = userId === -1;
   const reportedUserId = !isInternalReport ? userId : undefined;
 
-  return await dbWrite.csamReport.create({
+  const report = await dbWrite.csamReport.create({
     data: {
       userId: reportedUserId,
       reportedById,
@@ -110,6 +102,24 @@ export async function createCsamReport({
       images: imageIds?.map((id) => ({ id })) ?? [],
     },
   });
+
+  if (imageIds.length) {
+    const affectedImages = await dbWrite.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { pHash: true },
+    });
+
+    await bulkAddBlockedImages({
+      data: affectedImages
+        .filter((img) => !!img.pHash)
+        .map((x) => ({
+          hash: x.pHash as bigint,
+          reason: BlockImageReason.CSAM,
+        })),
+    });
+  }
+
+  return report;
 }
 
 export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
@@ -193,10 +203,6 @@ async function getModelVersions(versionIds?: number[]) {
     where: { id: { in: versionIds } },
     select: { id: true, createdAt: true, name: true, model: { select: { id: true, name: true } } },
   });
-}
-
-async function deleteCsamReport(reportId: number) {
-  await dbWrite.csamReport.delete({ where: { id: reportId } });
 }
 
 async function getImages(imageIds?: number[]) {
@@ -456,7 +462,9 @@ export async function processCsamReport(report: CsamReportProps) {
   const fns = {
     [CsamReportType.Image]: uploadImages,
     [CsamReportType.TrainingData]: uploadTrainingData,
-    [CsamReportType.GeneratedImage]: uploadTrainingData,
+    [CsamReportType.GeneratedImage]: () => {
+      throw new Error('unsupported report type: "generated-image"');
+    },
   };
 
   try {
@@ -696,6 +704,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   const reportDirs = {
     base: `${baseDir}/base/${data.id}`,
     images: `${baseDir}/images/${data.id}`,
+    generatedImages: `${baseDir}/generated-images/${data.id}`,
     trainingData: `${baseDir}/training-data/${data.id}`,
   };
 
@@ -703,13 +712,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     createDir(dir);
   }
 
-  const user = await getReportedUser(userId);
   const images = await dbRead.image.findMany({ where: { userId } });
-  const models = await dbRead.model.findMany({ where: { userId } });
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { modelId: { in: models.map((x) => x.id) } },
-  });
-
   try {
     await archiveBaseReportData();
 
@@ -717,6 +720,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       case 'Image':
         await archiveImages();
         break;
+      case 'GeneratedImage': {
+        await archiveGeneratedImages();
+        break;
+      }
       case 'TrainingData':
         await archiveTrainingData();
         break;
@@ -732,6 +739,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
+    if (e instanceof Error) {
+      const shouldUpdate = (e.message = 'training data not found');
+      if (shouldUpdate) {
+        await dbWrite.csamReport.update({
+          where: { id: report.id },
+          data: {
+            archivedAt: new Date(),
+          },
+        });
+      }
+    }
     for (const dir of Object.values(reportDirs)) removeDir(dir);
     throw e;
   }
@@ -740,17 +758,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
+    const user = await getReportedUser(userId);
+    const models = await dbRead.model.findMany({ where: { userId } });
+    const modelVersions = await dbRead.modelVersion.findMany({
+      where: { modelId: { in: models.map((x) => x.id) } },
+    });
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
     await fsAsync.writeFile(
       outPath,
-      JSON.stringify({
-        user: { userId, ...user },
-        reportId,
-        models,
-        modelVersions,
-        images,
-      })
+      JSON.stringify(
+        {
+          user,
+          reportId,
+          models,
+          modelVersions,
+          images,
+        },
+        (key, value) => {
+          if (typeof value === 'bigint') {
+            return value.toString();
+          }
+          return value;
+        }
+      )
     );
 
     const readableStream = fs.createReadStream(outPath);
@@ -765,10 +796,6 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const archive = archiver('zip', { zlib: { level: 9 } });
     const output = fs.createWriteStream(outPath);
-
-    // output.on('close', function () {
-    //   console.log(`archive closed: ${outPath}`);
-    // });
 
     archive.on('error', function (err) {
       throw err;
@@ -804,6 +831,51 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
+  }
+
+  async function archiveGeneratedImages() {
+    const { userId } = report;
+
+    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
+    const imageUrls = flaggedData
+      .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+      .map((x) => x.previewUrl);
+
+    const outPath = `${reportDirs.generatedImages}/${userId}_generated-images.zip`;
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const output = fs.createWriteStream(outPath);
+
+    archive.on('error', function (err) {
+      throw err;
+    });
+
+    archive.pipe(output);
+
+    // concurrency limiter
+    const limit = plimit(10);
+    await Promise.all(
+      imageUrls.map((url) => {
+        return limit(async () => {
+          const blob = await fetchBlob(url);
+          if (!blob) return;
+          try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+
+            const imageName = url.split('/').reverse()[0].split('?')[0];
+
+            archive.append(buffer, { name: imageName });
+          } catch (e) {
+            //
+          }
+        });
+      })
+    );
+    archive.finalize();
+
+    const readableStream = fs.createReadStream(outPath);
+    await uploadStream({ stream: readableStream, userId, filename: 'generated-images.zip' });
   }
 
   // downloads training data zip file, writes it to disk, and then uploads that zip

@@ -23,7 +23,7 @@ import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import nodeFetch from 'node-fetch';
@@ -33,9 +33,10 @@ import { removeEmpty } from '~/utils/object-helpers';
 import type { Report } from 'cybertipline-tools';
 import { Client, Environment, FileDetailType, IncidentType, IPEventName } from 'cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 
 const cybertipClient = new Client({
-  environment: Environment.Testing,
+  environment: isDev ? Environment.Testing : Environment.Production,
   credentials: {
     username: env.NCMEC_USERNAME,
     password: env.NCMEC_PASSWORD,
@@ -794,6 +795,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   const reportDirs = {
     base: `${baseDir}/base/${data.id}`,
     images: `${baseDir}/images/${data.id}`,
+    generatedImages: `${baseDir}/generated-images/${data.id}`,
     trainingData: `${baseDir}/training-data/${data.id}`,
   };
 
@@ -801,13 +803,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     createDir(dir);
   }
 
-  const user = await getReportedUser(userId);
   const images = await dbRead.image.findMany({ where: { userId } });
-  const models = await dbRead.model.findMany({ where: { userId } });
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { modelId: { in: models.map((x) => x.id) } },
-  });
-
   try {
     await archiveBaseReportData();
 
@@ -815,6 +811,10 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       case 'Image':
         await archiveImages();
         break;
+      case 'GeneratedImage': {
+        await archiveGeneratedImages();
+        break;
+      }
       case 'TrainingData':
         await archiveTrainingData();
         break;
@@ -830,6 +830,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
+    if (e instanceof Error) {
+      const shouldUpdate = (e.message = 'training data not found');
+      if (shouldUpdate) {
+        await dbWrite.csamReport.update({
+          where: { id: report.id },
+          data: {
+            archivedAt: new Date(),
+          },
+        });
+      }
+    }
     for (const dir of Object.values(reportDirs)) removeDir(dir);
     throw e;
   }
@@ -838,17 +849,30 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
+    const user = await getReportedUser(userId);
+    const models = await dbRead.model.findMany({ where: { userId } });
+    const modelVersions = await dbRead.modelVersion.findMany({
+      where: { modelId: { in: models.map((x) => x.id) } },
+    });
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
     await fsAsync.writeFile(
       outPath,
-      JSON.stringify({
-        user: { userId, ...user },
-        reportId,
-        models,
-        modelVersions,
-        images,
-      })
+      JSON.stringify(
+        {
+          user,
+          reportId,
+          models,
+          modelVersions,
+          images,
+        },
+        (key, value) => {
+          if (typeof value === 'bigint') {
+            return value.toString();
+          }
+          return value;
+        }
+      )
     );
 
     const readableStream = fs.createReadStream(outPath);
@@ -863,10 +887,6 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
 
     const archive = archiver('zip', { zlib: { level: 9 } });
     const output = fs.createWriteStream(outPath);
-
-    // output.on('close', function () {
-    //   console.log(`archive closed: ${outPath}`);
-    // });
 
     archive.on('error', function (err) {
       throw err;
@@ -904,6 +924,51 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
   }
 
+  async function archiveGeneratedImages() {
+    const { userId } = report;
+
+    const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
+    const imageUrls = flaggedData
+      .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+      .map((x) => x.previewUrl);
+
+    const outPath = `${reportDirs.generatedImages}/${userId}_generated-images.zip`;
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const output = fs.createWriteStream(outPath);
+
+    archive.on('error', function (err) {
+      throw err;
+    });
+
+    archive.pipe(output);
+
+    // concurrency limiter
+    const limit = plimit(10);
+    await Promise.all(
+      imageUrls.map((url) => {
+        return limit(async () => {
+          const blob = await fetchBlob(url);
+          if (!blob) return;
+          try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+
+            const imageName = url.split('/').reverse()[0].split('?')[0];
+
+            archive.append(buffer, { name: imageName });
+          } catch (e) {
+            //
+          }
+        });
+      })
+    );
+    archive.finalize();
+
+    const readableStream = fs.createReadStream(outPath);
+    await uploadStream({ stream: readableStream, userId, filename: 'generated-images.zip' });
+  }
+
   // downloads training data zip file, writes it to disk, and then uploads that zip
   async function archiveTrainingData() {
     const { userId } = report;
@@ -932,15 +997,4 @@ function createDir(dir: string) {
 }
 function removeDir(dir: string) {
   fs.rmSync(dir, { recursive: true });
-}
-
-async function archiveBaseData(data: CsamReportProps) {
-  const { userId } = data;
-  if (!userId) return;
-  const user = await getReportedUser(userId);
-  const images = await dbRead.image.findMany({ where: { userId } });
-  const models = await dbRead.model.findMany({ where: { userId } });
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { modelId: { in: models.map((x) => x.id) } },
-  });
 }

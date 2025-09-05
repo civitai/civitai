@@ -8,11 +8,12 @@ async function orchestratorFetch(path: string, opts?: RequestInit) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
   };
-  const response = await fetch(url, { headers, ...opts });
+  console.log(url, { ...opts, headers: { ...headers, ...opts?.headers } });
+  const response = await fetch(url, { ...opts, headers: { ...headers, ...opts?.headers } });
   if (!response.ok) {
     throw new Error(`Orchestrator fetch failed: ${response.status} ${response.statusText}`);
   }
-  return response.json();
+  return response;
 }
 
 export async function getFlagged(
@@ -25,7 +26,7 @@ export async function getFlagged(
   }
   const startDate = args.startDate.toISOString();
   const response = await orchestratorFetch(`?${QS.stringify({ ...args, startDate })}`);
-  return response;
+  return response.json();
 }
 
 export async function getReasons(args: { startDate?: Date } = {}): Promise<FlaggedReason[]> {
@@ -36,14 +37,26 @@ export async function getReasons(args: { startDate?: Date } = {}): Promise<Flagg
   }
   const startDate = args.startDate.toISOString();
   const response = await orchestratorFetch(`/reasons?${QS.stringify({ ...args, startDate })}`);
-  return response;
+  return response.json();
 }
 
 export async function getConsumerStrikes(args: {
   consumerId: string;
 }): Promise<ConsumerStikesGroup[]> {
   const response = await orchestratorFetch(`/${args.consumerId}/strikes`);
-  return response;
+  return response.json();
+}
+
+export async function reviewConsumerStrikes(args: {
+  consumerId: string;
+  moderatorId: number;
+  notes?: string;
+}) {
+  await orchestratorFetch(`/${args.consumerId}/strikes/review`, {
+    method: 'POST',
+    body: JSON.stringify({ moderatorId: args.moderatorId, notes: args.notes ?? '' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 export type Flagged = {

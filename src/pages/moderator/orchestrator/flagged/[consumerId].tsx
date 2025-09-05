@@ -2,16 +2,32 @@ import { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TooltipProps } from '@mantine/core';
-import { Text, Chip, Card, Badge, Pagination, Select, ActionIcon, Tooltip } from '@mantine/core';
+import {
+  Text,
+  Chip,
+  Card,
+  Badge,
+  Pagination,
+  Select,
+  ActionIcon,
+  Tooltip,
+  Paper,
+} from '@mantine/core';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { NextLink } from '~/components/NextLink/NextLink';
-import type { ConsumerStrike } from '~/server/http/orchestrator/flagged-consumers';
+import type {
+  ConsumerStrike,
+  ConsumerStikesGroup,
+} from '~/server/http/orchestrator/flagged-consumers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Tabs } from '@mantine/core';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { create } from 'zustand';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconCheck, IconSquareOff } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck, IconSquareOff } from '@tabler/icons-react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { uniqBy } from 'lodash-es';
 
 const useStore = create<Record<string, boolean>>(() => ({}));
 const resetState = () => {
@@ -25,31 +41,54 @@ export default function FlaggedConsumerId() {
   const userId = Number(consumerId.split('-')[1]);
 
   const { data: user } = trpc.user.getById.useQuery({ id: userId });
+  const { data, isLoading } = trpc.orchestrator.getFlaggedConsumerStrikes.useQuery({ consumerId });
 
   useEffect(() => resetState, []);
 
+  const filtered = useMemo(() => {
+    if (!data) return;
+    const groups = [...new Set(data.map((x) => x.status))];
+    const grouped = groups.map((group) => ({
+      status: group,
+      strikes: data.filter(({ status }) => status === group).flatMap((x) => x.strikes),
+    }));
+    return grouped.map((group) => ({
+      ...group,
+      strikes: uniqBy(
+        group.strikes.filter((x) => x.job?.blobs),
+        'job.id'
+      ),
+    }));
+  }, [data]);
+
   return (
-    <div className="container max-w-md">
-      <div className="flex justify-between">
-        <h1 className="mb-3 text-2xl font-bold">
-          Username:{' '}
-          {user?.username && <NextLink href={`/user/${user.username}`}>{user.username}</NextLink>}
-        </h1>
-        <SelectedCount />
+    <div className="container relative max-w-xl">
+      <div className="flex gap-3">
+        <div className="flex-1">
+          <div className="flex justify-between">
+            <h1 className="mb-3 text-2xl font-bold">
+              Username:{' '}
+              {user?.username && (
+                <NextLink href={`/user/${user.username}`}>{user.username}</NextLink>
+              )}
+            </h1>
+          </div>
+          {isLoading ? (
+            <PageLoader />
+          ) : !filtered ? (
+            <NoContent />
+          ) : (
+            <FlaggedConsumerContent data={filtered} />
+          )}
+        </div>
+        <div>{filtered && <SelectedCount userId={userId} data={filtered} />}</div>
       </div>
-      <FlaggedConsumerContent consumerId={consumerId} />
     </div>
   );
 }
 
-function FlaggedConsumerContent({ consumerId }: { consumerId: string }) {
+function FlaggedConsumerContent({ data }: { data: ConsumerStikesGroup[] }) {
   const [status, setStatus] = useState<string | null>(null);
-
-  const { data, isLoading } = trpc.orchestrator.getFlaggedConsumerStrikes.useQuery({ consumerId });
-
-  if (isLoading) return <PageLoader />;
-  if (!data) return <NoContent />;
-
   const _status = status ?? data[0].status;
 
   return (
@@ -72,18 +111,18 @@ function FlaggedConsumerContent({ consumerId }: { consumerId: string }) {
 
 function FlaggedConsumerStrikes({ data }: { data: ConsumerStrike[] }) {
   const reasons = [...new Set(data.map((x) => x.strike.reason))];
-  const [activePage, setPage] = useState(0);
+  const [activePage, setPage] = useState(1);
   const [pageSize, setPageSize] = useLocalStorage({ key: 'page-size', defaultValue: 100 });
   const [selectedReasons, setSelectedReasons] = useState<string[]>(reasons);
   const filtered = useMemo(
-    () => data.filter((x) => x.job && selectedReasons.includes(x.strike.reason)),
+    () => data.filter((x) => selectedReasons.includes(x.strike.reason)),
     [data, selectedReasons]
   );
   const totalPages = Math.ceil(filtered.length / pageSize);
   const _activePage = totalPages < activePage ? totalPages : activePage;
 
   const items = useMemo(() => {
-    return filtered.slice(_activePage, pageSize);
+    return filtered.slice(_activePage - 1, pageSize);
   }, [filtered, _activePage, pageSize]);
 
   const navigation = (
@@ -143,26 +182,48 @@ function ConsumerStrikePreviewImage({ id, previewUrl }: { id: string; previewUrl
   return (
     <Card
       withBorder
+      className="border-2 p-0"
       onClick={toggleSelect}
-      style={{ aspectRatio: 1, borderColor: active ? 'blue' : undefined }}
+      style={{ borderColor: active ? 'blue' : undefined }}
     >
-      {/* <EdgeMedia2
-                  key={i}
-                  src={previewUrl}
-                  type={id.includes('.mp4') ? 'video' : 'image'}
-                  disableWebm
-                  disablePoster
-                  muted
-                  loading="lazy"
-                /> */}
+      <EdgeMedia2
+        src={previewUrl}
+        type={id.includes('.mp4') ? 'video' : 'image'}
+        disableWebm
+        disablePoster
+        muted
+        loading="lazy"
+      />
     </Card>
   );
 }
 
-function SelectedCount() {
-  const count = useStore((state) => Object.values(state).filter(Boolean).length);
+function handleConfirm(onConfirm: () => void) {
+  dialogStore.trigger({
+    component: ConfirmDialog,
+    props: {
+      title: '⚠️ Please confirm',
+      message: `Definitely want to confirm this`,
+      labels: { cancel: 'Cancel', confirm: 'Confirm' },
+      onConfirm,
+    },
+  });
+}
 
-  if (!count) return null;
+function SelectedCount({ userId, data }: { userId: number; data: ConsumerStikesGroup[] }) {
+  const count = useStore((state) => Object.values(state).filter(Boolean).length);
+  const router = useRouter();
+
+  const reviewConsumerStrikes = trpc.orchestrator.reviewConsumerStrikes.useMutation({
+    onSuccess: () => {
+      router.back();
+    },
+  });
+  const reportCsam = trpc.csam.createReport.useMutation({
+    onSuccess: () => {
+      router.back();
+    },
+  });
 
   const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
     position: 'bottom',
@@ -175,37 +236,68 @@ function SelectedCount() {
     size: '1.25rem',
   };
 
+  const actionIconProps = {
+    size: 'xl',
+  };
+
   function handleReview() {
-    console.log('mark as reviewed');
+    handleConfirm(() => {
+      reviewConsumerStrikes.mutate({ userId });
+    });
   }
 
   function handleReportCsam() {
-    console.log('report CSAM');
+    // TODO - collate data
+    handleConfirm(() => {
+      reportCsam.mutate({ type: 'GeneratedImage', userId, details: { generatedImages: [] } });
+    });
   }
 
   return (
-    <Card
-      padding={0}
+    <Paper
       withBorder
-      className="flex flex-row items-center gap-1 p-3"
-      style={{ position: 'sticky', top: 'var(--header-height,0)' }}
+      className="flex flex-col items-center justify-center"
+      style={{
+        position: 'sticky',
+        top: 'var(--header-height,0)',
+      }}
     >
-      <Text size="sm">{count} Selected</Text>
-      <Tooltip label="Deselect all" {...tooltipProps}>
-        <ActionIcon onClick={resetState}>
-          <IconSquareOff {...iconProps} />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Mark as reviewed" {...tooltipProps}>
-        <ActionIcon onClick={handleReview} color="green">
-          <IconCheck {...iconProps} />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Report CSAM" {...tooltipProps}>
-        <ActionIcon onClick={handleReportCsam} color="orange">
-          <IconSquareOff {...iconProps} />
-        </ActionIcon>
-      </Tooltip>
-    </Card>
+      {count === 0 ? (
+        <>
+          <Tooltip label="Mark as reviewed" {...tooltipProps}>
+            <ActionIcon
+              onClick={handleReview}
+              color="green"
+              loading={reviewConsumerStrikes.isLoading}
+              {...actionIconProps}
+            >
+              <IconCheck {...iconProps} />
+            </ActionIcon>
+          </Tooltip>
+        </>
+      ) : (
+        <>
+          <Text className="flex items-center justify-center font-bold" style={{ height: 42 }}>
+            {count}
+          </Text>
+          <Tooltip label="Deselect all" {...tooltipProps}>
+            <ActionIcon onClick={resetState} {...actionIconProps}>
+              <IconSquareOff {...iconProps} />
+            </ActionIcon>
+          </Tooltip>
+
+          <Tooltip label="Report CSAM" {...tooltipProps}>
+            <ActionIcon
+              onClick={handleReportCsam}
+              color="orange"
+              loading={reportCsam.isLoading}
+              {...actionIconProps}
+            >
+              <IconAlertTriangle {...iconProps} />
+            </ActionIcon>
+          </Tooltip>
+        </>
+      )}
+    </Paper>
   );
 }

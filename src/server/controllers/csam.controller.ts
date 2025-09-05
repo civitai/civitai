@@ -1,6 +1,7 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
+import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import type { CreateCsamReportSchema } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
@@ -41,13 +42,13 @@ export async function createCsamReportHandler({
         userId: reportedById,
       }),
     ]);
-  }
-
-  // there should not be any reports for type 'TrainingData'
-  const modelVersionIds = details?.modelVersionIds ?? [];
-  if (type === 'TrainingData' && !!modelVersionIds.length) {
-    const modelVersionId = modelVersionIds[0];
-    await handleDenyTrainingData({ input: { id: modelVersionId } });
+  } else if (type === 'TrainingData') {
+    const modelVersionId = details?.modelVersionIds?.[0];
+    if (modelVersionId) {
+      await handleDenyTrainingData({ input: { id: modelVersionId } });
+    }
+  } else if (type === 'GeneratedImage') {
+    await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
   }
 
   if (userId !== -1) {
