@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { create } from 'zustand';
-import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { AdUnitOutstreamWithCloseButton } from '~/components/Ads/AdUnitOutstream';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
 // TODO - check for any selector type imports in client files
@@ -33,7 +33,7 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   if (!open)
     return isClient && !isMobile ? (
       <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
-        <AdUnitOutstream />
+        <AdUnitOutstreamWithCloseButton />
       </div>
     ) : null;
 

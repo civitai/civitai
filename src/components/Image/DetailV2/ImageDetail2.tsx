@@ -80,6 +80,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -500,7 +501,8 @@ export function ImageDetail2() {
                           </Text>
                         </AlertWithIcon>
                       )}
-                      {!hideAds && <AdUnitSide_2 />}
+                      {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
+                      {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
                       <VotableTags
                         entityType="image"
                         entityId={image.id}
