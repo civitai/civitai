@@ -1,6 +1,5 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { createClient } from '@clickhouse/client';
-import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import requestIp from 'request-ip';
@@ -12,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
   BountyEngagementType,
@@ -596,11 +596,7 @@ export class Tracker {
     date: Date;
     valid?: boolean;
   }) {
-    return this.track(
-      'moderationRequests',
-      { ...values, createdAt: new Date() },
-      { skipActorMeta: true }
-    );
+    return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
   }
 
   public zkp2pPayment(values: {
@@ -611,6 +607,10 @@ export class Tracker {
     buzzAmount: number;
     errorMessage?: string;
   }) {
-    return this.track('zkp2p_payment_events', { ...values, timestamp: new Date() });
+    return this.track(
+      'zkp2p_payment_events',
+      { ...values, timestamp: new Date() },
+      { skipActorMeta: true }
+    );
   }
 }

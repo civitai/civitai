@@ -624,10 +624,17 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
     .catch();
 };
 
-export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
+export const deleteBidsForModel = async ({
+  modelId,
+  tx,
+}: {
+  modelId: number;
+  tx?: Prisma.TransactionClient;
+}) => {
+  const db = tx ?? dbWrite;
   const now = new Date();
 
-  const model = await dbWrite.model.findFirst({
+  const model = await db.model.findFirst({
     where: { id: modelId },
     select: { name: true, modelVersions: { select: { id: true } } },
   });
@@ -639,7 +646,7 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
     return { bidsDeleted: [], recurringBidsDeleted: [] };
   }
 
-  const aData = await dbWrite.auction.findMany({
+  const aData = await db.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: {
       id: true,
@@ -657,7 +664,7 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
 
   if (aIds.length > 0) {
     // we could reverse the logic here and refund first
-    const deleted = await dbWrite.bid.updateManyAndReturn({
+    const deleted = await db.bid.updateManyAndReturn({
       where: { auctionId: { in: aIds }, entityId: { in: versionIds } },
       data: {
         deleted: true,
@@ -707,13 +714,13 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
     }
   }
 
-  const recToDelete = await dbWrite.bidRecurring.findMany({
+  const recToDelete = await db.bidRecurring.findMany({
     where: { entityId: { in: versionIds } },
     select: { id: true, userId: true },
   });
 
   if (recToDelete.length > 0) {
-    await dbWrite.bidRecurring.deleteMany({
+    await db.bidRecurring.deleteMany({
       where: { id: { in: recToDelete.map((r) => r.id) } },
     });
     const details: DetailsCanceledBid = {

@@ -60,7 +60,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
-import { TosModal } from '~/components/ToSModal/TosModal';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -88,6 +87,11 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import dynamic from 'next/dynamic';
+
+const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
+  ssr: false,
+});
 
 const cardProps: HTMLProps<HTMLDivElement> = {
   className: 'light:bg-gray-0 align-center flex flex-col rounded-lg p-4 dark:bg-dark-5',
@@ -173,7 +177,7 @@ const JoinCreatorProgramCard = () => {
       component: TosModal,
       props: {
         slug: 'creator-program-v2-tos',
-        key: 'creatorProgramToSAccepted' as any,
+        fieldKey: 'creatorProgramToSAccepted' as const,
         onAccepted: async () => {
           try {
             await joinCreatorsProgram();
@@ -368,15 +372,22 @@ export const CompensationPoolCard = () => {
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
+  const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const buzzAccount = useBuzz(undefined, 'user');
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
-  const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
+  const isLoading =
+    isLoadingCompensationPool ||
+    buzzAccount.balanceLoading ||
+    isLoadingBanked ||
+    isLoadingRequirements;
   const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
+
+  const hasActiveMembership = requirements?.validMembership;
 
   const handleBankBuzz = async () => {
     try {
@@ -418,6 +429,7 @@ const BankBuzzCard = () => {
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
+            disabled={!hasActiveMembership}
             onChange={(value) => {
               setToBank(Math.min(Number(value ?? 10000), maxBankable));
             }}
@@ -431,7 +443,10 @@ const BankBuzzCard = () => {
             step={1000}
             allowDecimal={false}
           />
-          <Tooltip label="Bank now!" position="top">
+          <Tooltip
+            label={hasActiveMembership ? 'Bank now!' : 'Active membership required to bank'}
+            position="top"
+          >
             <LegacyActionIcon
               miw={40}
               variant="filled"
@@ -439,6 +454,7 @@ const BankBuzzCard = () => {
               className="rounded-l-none"
               h="100%"
               loading={bankingBuzz}
+              disabled={!hasActiveMembership}
               onClick={() => {
                 dialogStore.trigger({
                   component: ConfirmDialog,
@@ -467,7 +483,7 @@ const BankBuzzCard = () => {
         <Button
           size="compact-xs"
           variant="outline"
-          disabled={toBank === maxBankable}
+          disabled={!hasActiveMembership || toBank === maxBankable}
           onClick={() => setToBank(maxBankable)}
         >
           Max
@@ -482,6 +498,23 @@ const BankBuzzCard = () => {
             <IconInfoCircle size={14} />
           </LegacyActionIcon>
         </div>
+
+        {!hasActiveMembership && (
+          <Alert color="red" className="mb-2 p-2">
+            <div className="flex items-center gap-2">
+              <IconLock size={24} className="shrink-0" />
+              <div className="flex flex-1 flex-col">
+                <p className="text-sm font-bold leading-tight">Active membership required</p>
+                <p className="text-sm leading-tight">
+                  You need an active Civitai membership to bank Buzz.{' '}
+                  <Anchor component={NextLink} href="/pricing" inherit>
+                    Upgrade your membership
+                  </Anchor>
+                </p>
+              </div>
+            </div>
+          </Alert>
+        )}
 
         <Alert color="yellow" className="mt-auto p-2">
           <div className="flex items-center gap-2">

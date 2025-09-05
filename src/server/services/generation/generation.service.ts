@@ -3,7 +3,11 @@ import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { getWanVersion, wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import {
+  getWanVersion,
+  wan21BaseModelMap,
+  wanGeneralBaseModelMap,
+} from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -435,8 +439,7 @@ const getModelVersionGenerationData = async ({
   switch (engine) {
     case 'wan':
       version = getWanVersion(baseModel);
-      if (version === 'v2.1')
-        process = wan22BaseModelMap.find((x) => x.baseModel === baseModel)?.process;
+      process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
       break;
     case 'hunyuan':
       process = 'txt2vid';

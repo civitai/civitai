@@ -5,7 +5,7 @@ import { isDefined } from '~/utils/type-guards';
  * @param buffer - The input Uint8Array with big-endian byte order.
  * @returns A new Uint8Array with little-endian byte order.
  */
-// export function swapByteOrder(buffer: Uint8Array): Uint8Array {
+// function swapByteOrder(buffer: Uint8Array): Uint8Array {
 //   const swapped = new Uint8Array(buffer.length);
 //   for (let i = 0; i < buffer.length; i += 2) {
 //     swapped[i] = buffer[i + 1];
@@ -20,7 +20,7 @@ import { isDefined } from '~/utils/type-guards';
  * @returns A new Uint8Array without BOM or header bytes.
  */
 // const unicodeHeader = new Uint8Array([85, 78, 73, 67, 79, 68, 69, 0]);
-// export function removeUnicodeHeader(buffer: Uint8Array): Uint8Array {
+// function removeUnicodeHeader(buffer: Uint8Array): Uint8Array {
 //   if (buffer.length < unicodeHeader.length) return buffer;
 
 //   // Check for BOM (Byte Order Mark) for big-endian UTF-16 (0xFEFF) and remove it if present
@@ -36,7 +36,7 @@ import { isDefined } from '~/utils/type-guards';
  * @returns The decoded string.
  */
 // const decoder = new TextDecoder('utf-16le');
-// export function decodeUserComment(buffer: Uint8Array): string {
+// export function decodeUserCommentBE(buffer: Uint8Array): string {
 //   // Remove BOM or unwanted header bytes if present
 //   const bufferWithoutBOM = removeUnicodeHeader(buffer);
 //   // Swap the byte order from big-endian to little-endian
@@ -84,7 +84,7 @@ const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0
 //   return new Uint8Array(prefix.concat(encoded));
 // }
 
-function encodeUserCommentUTF16BE(str: string) {
+export function encodeUserCommentUTF16BE(str: string) {
   const encoded = [];
   for (let i = 0; i < str.length; i++) {
     const code = str.charCodeAt(i);
@@ -136,8 +136,9 @@ const tagMap = {
   userComment: {
     tag: 0x9286,
     type: 7,
-    encoder: (value: Int32Array | string | string[]) => {
-      if (value instanceof Int32Array) return new Uint8Array(value.buffer);
+    encoder: (value: Uint32Array | Uint8Array) => {
+      if (value instanceof Uint32Array) return new Uint8Array(value.buffer);
+      else if (value instanceof Uint8Array) return value;
       return encodeUserCommentUTF16BE(value as string);
     },
   },
@@ -148,10 +149,14 @@ const tagMap = {
   },
 };
 
+export function isEncoded(value: any) {
+  return value instanceof Uint8Array || value instanceof Uint32Array;
+}
+
 // some good info can be found here: https://getaround.tech/exif-data-manipulation-javascript/
 export function createExifSegmentFromTags(args: {
   artist?: string | string[];
-  userComment?: string;
+  userComment?: Uint32Array | Uint8Array;
   software?: string | string[];
 }) {
   const tagsArray = Object.entries(args)
@@ -166,7 +171,7 @@ export function createExifSegmentFromTags(args: {
   const valueBlocks: { tag: number; type: number; count: number; data: Uint8Array }[] = [];
 
   for (const { value, tag, type, encoder } of tagsArray) {
-    const data = encoder(value);
+    const data = encoder(value as any);
     valueBlocks.push({ tag, type, count: data.length, data });
   }
 

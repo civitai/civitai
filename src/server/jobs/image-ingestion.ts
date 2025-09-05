@@ -7,7 +7,12 @@ import { BlockedReason } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
-import { deleteImageById, ingestImage, ingestImageBulk } from '~/server/services/image.service';
+import {
+  deleteImageById,
+  deleteImages,
+  ingestImage,
+  ingestImageBulk,
+} from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { getExplainSql } from '~/server/db/db-helpers';
@@ -82,17 +87,18 @@ async function sendImagesForScanBulk(images: IngestImageInput[]) {
 }
 
 // const delayedBlockCutoff = new Date('2025-05-31');
-const limit = 1000;
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
   // During the delayed block period, we want to keep the images for 30 days
   // if (!isProd || delayedBlockCutoff > new Date()) return;
-  const cutoff = decreaseDate(new Date(), 7, 'days');
-
   let nextCursor: number | undefined;
-  await removeBlockedImagesRecursive(cutoff, nextCursor);
+  await removeBlockedImagesRecursive(undefined, nextCursor);
 });
 
-async function removeBlockedImagesRecursive(cutoff: Date, nextCursor?: number) {
+export async function removeBlockedImagesRecursive(
+  cutoff: Date = decreaseDate(new Date(), 7, 'days'),
+  nextCursor?: number,
+  limit = 1000
+) {
   const images = await dbRead.$queryRaw<{ id: number }[]>`
     select id, ingestion, "blockedFor"
     from "Image"
@@ -115,15 +121,11 @@ async function removeBlockedImagesRecursive(cutoff: Date, nextCursor?: number) {
     console.log({ nextCursor, images: images.length });
   }
 
-  if (!images.length) return;
-  if (isProd) {
-    const tasks = images.map((x) => async () => {
-      await deleteImageById(x);
-    });
-    await limitConcurrency(tasks, 5);
-  }
+  if (!images.length || !env.DATABASE_IS_PROD) return;
 
-  if (nextCursor) {
-    await removeBlockedImagesRecursive(cutoff, nextCursor);
-  }
+  await deleteImages(images.map((x) => x.id));
+
+  // if (nextCursor) {
+  //   await removeBlockedImagesRecursive(cutoff, nextCursor);
+  // }
 }

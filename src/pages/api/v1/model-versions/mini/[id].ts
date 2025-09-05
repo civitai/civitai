@@ -13,7 +13,7 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelHashType } from '~/shared/utils/prisma/enums';
 import { Availability, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 
@@ -45,8 +45,8 @@ type FileRow = {
   url: string;
   metadata: FileMetadata;
   sizeKB: number;
-  hash: string;
   name: string;
+  hashes: Record<ModelHashType, string>;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -110,10 +110,22 @@ export default MixedAuthEndpoint(async function handler(
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
   const files = await dbRead.$queryRaw<FileRow[]>`
-    SELECT mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mfh.hash, mf.name
+    SELECT 
+      mf.id, 
+      mf.type, 
+      mf.visibility, 
+      mf.url, 
+      mf.metadata, 
+      mf."sizeKB", 
+      mf.name,
+      COALESCE(
+        JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
+        '{}'::json
+      ) as hashes
     FROM "ModelFile" mf
-    LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'AutoV2'
+    LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name
   `;
 
   const primaryFile = getPrimaryFile(files);
@@ -208,10 +220,8 @@ export default MixedAuthEndpoint(async function handler(
     size: primaryFile.sizeKB, // nullable
     fileType: primaryFile.type,
     fileName: primaryFile.name,
-    // nullable - hashes
-    hashes: {
-      AutoV2: primaryFile.hash, // nullable
-    },
+    // nullable - hashes (all available hash types)
+    hashes: primaryFile.hashes,
     downloadUrls: [downloadUrl], // nullable
     format, // nullable
     canGenerate,

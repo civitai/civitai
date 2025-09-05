@@ -17,7 +17,7 @@ export function getIsImagen4FromResources(resources: { id: number }[]) {
   return resources.some((x) => !!googleModelVersionToModelMap.get(x.id));
 }
 
-const schema = z.object({
+const schema = z.looseObject({
   engine: z.literal('google').catch('google'),
   model: z.enum(googleModels),
   prompt: z.string(),
@@ -51,6 +51,7 @@ export const googleConfig = ImageGenConfig({
       negativePrompt: params.negativePrompt,
       aspectRatio: params.aspectRatio,
       numImages: params.quantity,
+      quantity: params.quantity,
       seed: params.seed,
       model,
     });

@@ -288,7 +288,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * *', a
     return;
   }
 
-  log(`PickTemplars :: Candidates: ${candidates}`);
+  log(`PickTemplars :: Candidates: ${candidates.join(', ')}`);
 
   // Update the new templars:
   const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({

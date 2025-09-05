@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1005",
+  "version": "5.0.1029",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -62,7 +62,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.2.0-beta.4",
+    "@civitai/client": "^0.2.0-beta.6",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^0.2.2",
@@ -72,6 +72,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@emotion/react": "^11.10.4",
     "@essentials/one-key-map": "^1.2.0",
+    "@flipt-io/flipt-client-js": "^0.2.0",
     "@floating-ui/dom": "^1.6.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
     "@headlessui/react": "2.2",

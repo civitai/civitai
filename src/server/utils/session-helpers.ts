@@ -102,6 +102,7 @@ export async function invalidateSession(userId: number) {
     }),
     redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
+    redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
   ]);
   log(`Scheduling refresh session for user ${userId}`);
 }

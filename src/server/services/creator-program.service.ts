@@ -239,6 +239,7 @@ async function getPoolValue(month?: Date) {
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
+      OR (type = 'redeemable' AND description LIKE 'Redeemed code KG-%')
     )
     AND fromAccountId = 0
     AND externalTransactionId NOT LIKE 'renewalBonus:%'
@@ -339,6 +340,21 @@ export async function bankBuzz(userId: number, amount: number) {
 
   if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
     throw throwBadRequestError('User is banned from the Creator Program');
+  }
+
+  // Check if user has active membership
+  const activeMembership = await dbWrite.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: 'active',
+      currentPeriodEnd: {
+        gt: new Date(),
+      },
+    },
+  });
+
+  if (!activeMembership) {
+    throw throwBadRequestError('Active membership required to bank buzz');
   }
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });

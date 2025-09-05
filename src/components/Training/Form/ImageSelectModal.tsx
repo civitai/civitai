@@ -641,7 +641,7 @@ const ImageGridMedia = ({
               <Text size="sm" fw={700}>
                 {img.modelVersion.model.name} ({img.modelVersion.name})
               </Text>
-              <Button variant={isSelected ? 'light' : 'filled'}>
+              <Button variant={isSelected ? 'light' : 'filled'} className="flex-none">
                 {isSelected ? 'Deselect' : 'Select'}
               </Button>
             </Group>

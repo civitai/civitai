@@ -13,6 +13,7 @@ import { isProd } from './other';
  * This way you can ensure the app isn't built with invalid env vars.
  */
 export const serverSchema = z.object({
+  DATABASE_IS_PROD: zc.booleanString.default(isProd),
   DATABASE_URL: z.url(),
   DATABASE_REPLICA_URL: z.url(),
   DATABASE_REPLICA_LONG_URL: z.url().optional(),
@@ -63,10 +64,10 @@ export const serverSchema = z.object({
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.url(),
   S3_UPLOAD_BUCKET: z.string(),
-  S3_IMAGE_UPLOAD_KEY: z.string().optional(),
-  S3_IMAGE_UPLOAD_SECRET: z.string().optional(),
-  S3_IMAGE_UPLOAD_REGION: z.string().optional(),
-  S3_IMAGE_UPLOAD_ENDPOINT: z.url().optional(),
+  S3_IMAGE_UPLOAD_KEY: z.string(),
+  S3_IMAGE_UPLOAD_SECRET: z.string(),
+  S3_IMAGE_UPLOAD_REGION: z.string(),
+  S3_IMAGE_UPLOAD_ENDPOINT: z.url(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
   S3_IMAGE_UPLOAD_OVERRIDE: z.string().optional(),
   S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
@@ -247,4 +248,7 @@ export const serverSchema = z.object({
   // ZKP2P Related:
   ZKP2P_BASE_URL: z.string().optional(),
   ZKP2P_IFRAME_HOST: z.string().optional(),
+
+  FLIPT_URL: z.string(),
+  FLIPT_FETCHER_SECRET: z.string(),
 });

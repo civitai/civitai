@@ -222,7 +222,7 @@ export const userSettingsSchema = z.object({
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   assistantPersonality: userAssistantPersonality.optional(),
-  airEmail: z.string().email().optional(),
+  airEmail: z.email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
@@ -238,6 +238,9 @@ export const userSettingsSchema = z.object({
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   redBrowsingLevel: z.number().optional(),
+  tosLastSeenDate: z.date().optional(),
+  tosGreenLastSeenDate: z.date().optional(),
+  tosRedLastSeenDate: z.date().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -257,6 +260,9 @@ export const setUserSettingsInput = z.object({
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
+  tosLastSeenDate: z.date().optional(),
+  tosGreenLastSeenDate: z.date().optional(),
+  tosRedLastSeenDate: z.date().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });

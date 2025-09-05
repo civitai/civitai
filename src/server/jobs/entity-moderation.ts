@@ -19,6 +19,7 @@ import { createJob, getJobDate } from './job';
 
 // http://localhost:3000/api/webhooks/run-jobs?token=X&run=entity-moderation-queues
 // http://localhost:3000/api/webhooks/run-jobs?token=X&run=entity-moderation-chat
+// migrations: prisma\migrations\20250521094141_add_clavata_moderation\migration.sql
 
 const jobName = 'entity-moderation';
 const jobNameQueues = 'queues';

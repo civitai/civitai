@@ -127,6 +127,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { Flags } from '~/shared/utils/flags';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -265,9 +266,14 @@ export const getModelsRaw = async ({
 
   // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
   let searchModelIds: number[] = [];
-  if (query && searchClient) {
+  if (query && searchClient && (!ids || ids.length === 0)) {
     const request: SearchParams = {
       limit: take ?? 100,
+      filter: [
+        browsingLevel
+          ? `nsfwLevel IN [${Flags.instanceToArray(browsingLevel).join(',')}]`
+          : undefined,
+      ].filter(isDefined),
     };
 
     const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
@@ -708,9 +714,8 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
+    nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
     models.pop(); //Remove excess model
-    // Use final item as cursor to grab next page
-    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
@@ -1330,26 +1335,72 @@ export const permaDeleteModelById = async ({
 }: GetByIdInput & {
   userId: number;
 }) => {
-  const deletedModel = await dbWrite.$transaction(async (tx) => {
-    const model = await tx.model.findUnique({
-      where: { id },
-      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
-    });
-    if (!model) return null;
+  const deletionResult = await dbWrite.$transaction(
+    async (tx) => {
+      const model = await tx.model.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          userId: true,
+          nsfwLevel: true,
+          modelVersions: { select: { id: true } },
+        },
+      });
+      if (!model) return { deletedModel: null, imagesToDelete: [] };
 
-    await tx.post.deleteMany({
-      where: {
-        userId: model.userId,
-        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-      },
-    });
+      // Get posts to find associated images
+      const posts = await tx.post.findMany({
+        where: {
+          userId: model.userId,
+          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+        },
+        select: { id: true },
+      });
+      const postIds = posts.map((post) => post.id);
 
-    const deletedModel = await tx.model.delete({ where: { id } });
-    return deletedModel;
-  });
+      // Get images to delete and queue search index updates
+      let imagesToDelete: { id: number }[] = [];
+      if (postIds.length > 0) {
+        imagesToDelete = await tx.image.findMany({
+          where: { postId: { in: postIds } },
+          select: { id: true },
+        });
 
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBidsForModel({ modelId: id });
+        await tx.image.deleteMany({
+          where: { postId: { in: postIds } },
+        });
+      }
+
+      await tx.post.deleteMany({
+        where: {
+          userId: model.userId,
+          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+        },
+      });
+
+      const deletedModel = await tx.model.delete({ where: { id } });
+      return { deletedModel, imagesToDelete };
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
+
+  const { deletedModel, imagesToDelete } = deletionResult;
+
+  if (deletedModel) {
+    // Delete model bids
+    await deleteBidsForModel({ modelId: deletedModel.id });
+    // Queue model search index updates
+    await modelsSearchIndex.queueUpdate([
+      { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    // Queue image search index updates
+    if (imagesToDelete.length > 0) {
+      await queueImageSearchIndexUpdate({
+        ids: imagesToDelete.map((img) => img.id),
+        action: SearchIndexUpdateQueueAction.Delete,
+      });
+    }
+  }
 
   return deletedModel;
 };

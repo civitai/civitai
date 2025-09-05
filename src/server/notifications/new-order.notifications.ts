@@ -15,16 +15,19 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
     displayName: 'Knights of New Order: Cleansed Smite',
     category: NotificationCategory.Other,
     prepareMessage: ({ details }) => ({
-      message: `Knights of New Order: One of your smites was cleansed with the following reason: ${details.cleansedReason}`,
+      message: `Knights of New Order: One of your smites was cleansed with the following reason: ${
+        details.cleansedReason as string
+      }`,
       url: '/games/knights-of-new-order',
     }),
   },
   'new-order-game-over': {
     displayName: 'Knights of New Order: Game Over',
     category: NotificationCategory.Other,
-    prepareMessage: () => ({
-      message:
-        'Knights of New Order: You just received your last smite and lost all your health! You career will be reset.',
+    prepareMessage: ({ details }) => ({
+      message: `Knights of New Order: ${
+        (details.reason as string) || 'Your New Order career has been reset.'
+      }`,
       url: '/games/knights-of-new-order',
     }),
   },

@@ -142,6 +142,11 @@ import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
 } from '~/shared/constants/base-model.constants';
+import { getIsNanoBanana } from '~/shared/orchestrator/ImageGen/gemini.config';
+import {
+  InputSourceImageUploadMultiple,
+  SourceImageUploadMultiple,
+} from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 let total = 0;
 const tips = {
@@ -451,8 +456,10 @@ export function GenerationFormContent() {
   const isOpenAI = baseModel === 'OpenAI';
   const isImagen4 = getIsImagen4(model.id);
   const isFluxKontext = getIsFluxKontext(model.id);
+  const isNanoBanana = getIsNanoBanana(model.id);
+  const showImg2ImgMultiple = isNanoBanana;
 
-  const disablePriority = runsOnFalAI || isOpenAI;
+  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana;
 
   const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
 
@@ -500,16 +507,18 @@ export function GenerationFormContent() {
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
             const disableAdditionalResources =
-              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext;
-            const disableAdvanced = isFluxUltra || isOpenAI || isImagen4 || isHiDream;
+              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana;
+            const disableAdvanced =
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
               isQwen ||
               isOpenAI ||
               isFluxKontext ||
-              (isHiDream && hiDreamResource?.variant !== 'full');
+              (isHiDream && hiDreamResource?.variant !== 'full') ||
+              isNanoBanana;
             const disableWorkflowSelect =
-              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext || isQwen;
+              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext || isQwen || isNanoBanana;
             const disableDraft =
               !features.draft ||
               isOpenAI ||
@@ -518,7 +527,8 @@ export function GenerationFormContent() {
               isSD3 ||
               isImagen4 ||
               isHiDream ||
-              isFluxKontext;
+              isFluxKontext ||
+              isNanoBanana;
             const enableImageInput =
               (features.image && !isFlux && !isSD3 && !isQwen) || isOpenAI || isFluxKontext;
             const disableCfgScale = isFluxUltra;
@@ -528,6 +538,7 @@ export function GenerationFormContent() {
             const disableVae = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
+            const disableAspectRatio = isFluxUltra || isImg2Img || showImg2ImgMultiple;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -581,6 +592,26 @@ export function GenerationFormContent() {
                       label={isOpenAI ? 'Image (optional)' : undefined}
                       warnOnMissingAiMetadata={isFluxKontext}
                     />
+                  )}
+
+                  {showImg2ImgMultiple && (
+                    <div className="-mx-2">
+                      <InputSourceImageUploadMultiple
+                        name="images"
+                        max={7}
+                        warnOnMissingAiMetadata
+                        aspect="video"
+                      >
+                        {(previewItems) => (
+                          <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
+                            {previewItems.map((item, i) => (
+                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                            ))}
+                            <SourceImageUploadMultiple.Dropzone />
+                          </div>
+                        )}
+                      </InputSourceImageUploadMultiple>
+                    </div>
                   )}
 
                   <div className="-mb-1 flex items-center gap-1">
@@ -1145,7 +1176,7 @@ export function GenerationFormContent() {
                     />
                   )}
 
-                  {!isFluxUltra && !isImg2Img && (
+                  {!disableAspectRatio && (
                     <div className="flex flex-col gap-0.5">
                       <Input.Label>Aspect Ratio</Input.Label>
                       <InputSegmentedControl

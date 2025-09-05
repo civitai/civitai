@@ -106,17 +106,22 @@ export default MixedAuthEndpoint(async function handler(
   let searchIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
+    const browsingLevelValues = Flags.instanceToArray(browsingLevel);
     // Fetch IDs from Meilisearch
-    const meiliResult = await searchClient?.index(MODELS_SEARCH_INDEX).search(query, {
-      limit,
-      filter: [cursor ? `id < ${cursor}` : undefined].filter(isDefined),
-      attributesToRetrieve: ['id'],
-      sort: ['id:desc'],
-    });
-    // @ts-ignore
+    const meiliResult = await searchClient
+      ?.index(MODELS_SEARCH_INDEX)
+      .search<{ id: number }>(query, {
+        limit: limit ? limit + 1 : undefined,
+        filter: [
+          cursor ? `id < ${String(cursor)}` : undefined,
+          `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
+        ].filter(isDefined),
+        attributesToRetrieve: ['id'],
+        sort: ['id:desc'],
+      });
+
+    meiliNextCursor = meiliResult?.hits.pop()?.id.toString();
     searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
-    meiliNextCursor =
-      meiliResult?.hits?.length === limit ? searchIds[searchIds.length - 1]?.toString() : undefined;
   }
 
   try {

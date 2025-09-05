@@ -7,7 +7,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import {
   wanDuration,
-  wan22BaseModelMap,
+  wan21BaseModelMap,
   maxFalAdditionalResources,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
@@ -25,7 +25,7 @@ export function Wan21FormInput() {
   const resolution = form.watch('resolution');
   // const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
-  const config = wan22BaseModelMap.find(
+  const config = wan21BaseModelMap.find(
     (x) => x.resolution === resolution && x.process === process
   );
   const baseModel = config?.baseModel;
@@ -33,7 +33,7 @@ export function Wan21FormInput() {
 
   const availableBaseModels = useMemo(
     () =>
-      wan22BaseModelMap
+      wan21BaseModelMap
         .filter((value) => value.process === process)
         .map((value) => ({
           value: value.resolution,

@@ -23,7 +23,7 @@ import { env } from '~/env/server';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
-import { wan22BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
@@ -514,11 +514,11 @@ function formatImageGenStep({
     timeout: step.timeout,
     name: step.name,
     params: params!,
-    images: formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
     completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -564,7 +564,7 @@ function formatVideoGenStep({
     else baseModel = 'WanVideo14B_I2V_720p';
   }
 
-  const match = baseModel ? wan22BaseModelMap.find((x) => x.baseModel === baseModel) : undefined;
+  const match = baseModel ? wan21BaseModelMap.find((x) => x.baseModel === baseModel) : undefined;
   if (match) {
     (params as any).process = match.process;
     (params as any).resolution = match.resolution;
@@ -581,11 +581,11 @@ function formatVideoGenStep({
       // workflow: videoMetadata.params?.workflow,
       quantity: 1,
     }) as typeof params,
-    images: formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
     status: step.status,
     metadata,
     resources: combinedResources,
     completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -635,11 +635,11 @@ function formatTextToImageStep({
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
     params: removeEmpty(data),
-    images: formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
     status: step.status,
     metadata: metadata,
     resources: resources.filter((x) => !injectableIds.includes(x.id)),
     completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -670,11 +670,11 @@ export function formatComfyStep({
     timeout: step.timeout,
     name: step.name,
     params: data,
-    images: formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
     completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -722,7 +722,9 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
   }
 }
 
-export type NormalizedWorkflowStepOutput = ReturnType<typeof formatWorkflowStepOutput>[number];
+export type NormalizedWorkflowStepOutput = ReturnType<
+  typeof formatWorkflowStepOutput
+>['images'][number];
 function formatWorkflowStepOutput({
   workflowId,
   step,
@@ -733,7 +735,7 @@ function formatWorkflowStepOutput({
   const items = normalizeOutput(step) ?? [];
   const seed = 'seed' in step.input ? step.input.seed : undefined;
 
-  return items.map((item, index) => {
+  const images = items.map((item, index) => {
     const job = step.jobs?.find((x) => x.id === item.jobId);
     // eslint-disable-next-line prefer-const
     let { width, height, ...restItem } = item;
@@ -800,6 +802,12 @@ function formatWorkflowStepOutput({
       aspect,
     };
   });
+  const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+
+  return {
+    images,
+    errors,
+  };
 }
 
 export type WorkflowStatusUpdate = AsyncReturnType<typeof getWorkflowStatusUpdate>;
@@ -817,9 +825,9 @@ export async function getWorkflowStatusUpdate({
       status: result.status!,
       steps: result.steps?.map((step) => ({
         name: step.name,
-        images: formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
         status: step.status,
         completedAt: step.completedAt,
+        ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
       })),
     };
   }

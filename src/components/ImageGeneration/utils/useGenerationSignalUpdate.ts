@@ -70,6 +70,7 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
                 if (stepMatch) {
                   step.status = stepMatch.status;
                   step.completedAt = stepMatch.completedAt;
+                  step.errors = stepMatch.errors;
                   for (const [index, image] of step.images.entries()) {
                     const imageMatch = stepMatch.images.find((x) => x.id === image.id);
                     if (imageMatch) step.images[index] = imageMatch;

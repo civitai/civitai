@@ -1,6 +1,6 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React, { useEffect, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import { getRandomId } from '~/utils/string-helpers';
@@ -10,7 +10,10 @@ import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
-import styles from './ads.module.scss';
+import {
+  useContainerContext,
+  useContainerProviderStore,
+} from '~/components/ContainerProvider/ContainerProvider';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -101,11 +104,11 @@ function AdWrapper({
   onDismount,
 }: {
   adUnit: string;
-  sizes?: AdSize[] | null;
-  lutSizes?: AdSizeLUT[];
   withFeedback?: boolean;
   className?: string;
   id?: string;
+  sizes?: AdSize[] | null;
+  lutSizes?: AdSizeLUT[];
   maxHeight?: number;
   maxWidth?: number;
   preserveLayout?: boolean;
@@ -115,53 +118,115 @@ function AdWrapper({
   // const key = router.asPath.split('?')[0];
   const { adsBlocked, ready, isMember } = useAdsContext();
 
-  const adWrapperStyles = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
 
   if (adSizes && !adSizes.length) return null;
 
-  return (
-    <div
-      ref={ref}
-      style={preserveLayout !== false ? adWrapperStyles : undefined}
-      className={clsx({
-        [styles.adWrapper]: preserveLayout !== false,
-        ['relative box-content flex flex-col items-center justify-center gap-2']: true,
-        [className ?? '']: !!className,
-      })}
-    >
-      {inView && (
-        <>
-          {adsBlocked ? (
-            <SupportUsImage sizes={adSizes ?? undefined} />
-          ) : ready && adSizes !== undefined ? (
-            <AdUnitContent
-              // key={key}
-              adUnit={adUnit}
-              sizes={adSizes ?? undefined}
-              id={id}
-              onDismount={onDismount}
-            />
-          ) : null}
-          {withFeedback && !isMember && (
-            <div className="flex w-full justify-end">
-              <Text
-                component={NextLink}
-                td="underline"
-                href="/pricing"
-                c="dimmed"
-                size="xs"
-                align="center"
-              >
-                Remove ads
-              </Text>
-            </div>
-          )}
-        </>
+  const content = inView ? (
+    <>
+      {adsBlocked ? (
+        <SupportUsImage sizes={adSizes ?? undefined} />
+      ) : ready && adSizes !== undefined ? (
+        <AdUnitContent
+          // key={key}
+          adUnit={adUnit}
+          sizes={adSizes ?? undefined}
+          id={id}
+          onDismount={onDismount}
+        />
+      ) : null}
+      {withFeedback && !isMember && (
+        <div className="flex w-full justify-end">
+          <Text
+            component={NextLink}
+            td="underline"
+            href="/pricing"
+            c="dimmed"
+            size="xs"
+            align="center"
+          >
+            Remove ads
+          </Text>
+        </div>
       )}
-    </div>
+    </>
+  ) : null;
+
+  const className2 = clsx(
+    'relative box-content flex flex-col items-center justify-center gap-2',
+    className
   );
+
+  if (lutSizes) {
+    return (
+      <AdunitLutStyles
+        ref={ref}
+        lutSizes={lutSizes}
+        maxHeight={maxHeight}
+        maxWidth={maxWidth}
+        className={className2}
+        preserveLayout={preserveLayout}
+      >
+        {content}
+      </AdunitLutStyles>
+    );
+  } else if (sizes) {
+    return (
+      <AdunitSizesStyles
+        ref={ref}
+        sizes={sizes}
+        maxHeight={maxHeight}
+        maxWidth={maxWidth}
+        className={className2}
+        preserveLayout={preserveLayout}
+      >
+        {content}
+      </AdunitSizesStyles>
+    );
+  } else return null;
+
+  // return (
+  //   <div
+  //     ref={ref}
+  //     style={preserveLayout !== false ? adWrapperStyles : undefined}
+  //     className={clsx({
+  //       [styles.adWrapper]: preserveLayout !== false,
+  //       ['relative box-content flex flex-col items-center justify-center gap-2']: true,
+  //       className,
+  //     })}
+  //   >
+  //     {inView && (
+  //       <>
+  //         {adsBlocked ? (
+  //           <SupportUsImage sizes={adSizes ?? undefined} />
+  //         ) : ready && adSizes !== undefined ? (
+  //           <AdUnitContent
+  //             // key={key}
+  //             adUnit={adUnit}
+  //             sizes={adSizes ?? undefined}
+  //             id={id}
+  //             onDismount={onDismount}
+  //           />
+  //         ) : null}
+  //         {withFeedback && !isMember && (
+  //           <div className="flex w-full justify-end">
+  //             <Text
+  //               component={NextLink}
+  //               td="underline"
+  //               href="/pricing"
+  //               c="dimmed"
+  //               size="xs"
+  //               align="center"
+  //             >
+  //               Remove ads
+  //             </Text>
+  //           </div>
+  //         )}
+  //       </>
+  //     )}
+  //   </div>
+  // );
 }
 
 export function adUnitFactory(factoryArgs: {
@@ -214,35 +279,6 @@ function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: n
   return maxHeight ? Math.min(maxHeight, height) : height;
 }
 
-const useAdWrapperStyles = ({
-  sizes,
-  lutSizes,
-  maxHeight,
-  maxWidth: maxOuterWidth,
-}: {
-  sizes?: AdSize[] | null;
-  lutSizes?: AdSizeLUT[];
-  maxHeight?: number;
-  maxWidth?: number;
-}) => {
-  const vars: Record<string, string> = {};
-
-  lutSizes?.forEach(([[minWidth, maxWidth], sizes], index) => {
-    if (minWidth) vars[`--min-width-${index + 1}`] = `${minWidth}px`;
-    if (maxWidth) vars[`--max-width-${index + 1}`] = `${maxWidth}px`;
-
-    vars[`--min-width-${index + 1}`] = `${getMaxHeight(sizes, {
-      maxHeight,
-      maxWidth: maxOuterWidth,
-    })}px`;
-  });
-
-  return {
-    minHeight: sizes ? getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }) : undefined,
-    ...vars,
-  };
-};
-
 function useAdSizes({
   sizes,
   lutSizes,
@@ -286,3 +322,81 @@ function useAdSizes({
 
   return adSizes;
 }
+
+const AdunitLutStyles = forwardRef<
+  HTMLDivElement,
+  {
+    lutSizes: AdSizeLUT[];
+    maxHeight?: number;
+    maxWidth?: number;
+    className?: string;
+    children: React.ReactNode;
+    preserveLayout?: boolean;
+  }
+>(({ className, children, lutSizes, maxHeight, maxWidth, preserveLayout = true }, ref) => {
+  const { nodeRef, containerName } = useContainerContext();
+  const sizes = useContainerProviderStore(
+    useCallback((state) => {
+      const inlineSize = state[containerName]?.inlineSize ?? nodeRef.current?.offsetWidth ?? 0;
+      return lutSizes.find(([[minWidth, maxWidth]]) => {
+        if (minWidth && inlineSize < minWidth) return false;
+        if (maxWidth && inlineSize > maxWidth) return false;
+        return true;
+      })?.[1];
+    }, [])
+  );
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={
+        preserveLayout && sizes
+          ? {
+              minHeight: getMaxHeight(sizes, {
+                maxHeight,
+                maxWidth,
+              }),
+            }
+          : undefined
+      }
+    >
+      {children}
+    </div>
+  );
+});
+
+AdunitLutStyles.displayName = 'AdunitLutStyles';
+
+const AdunitSizesStyles = forwardRef<
+  HTMLDivElement,
+  {
+    sizes: AdSize[];
+    maxHeight?: number;
+    maxWidth?: number;
+    className?: string;
+    children: React.ReactNode;
+    preserveLayout?: boolean;
+  }
+>(({ className, children, sizes, maxHeight, maxWidth, preserveLayout = true }, ref) => {
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={
+        preserveLayout
+          ? {
+              minHeight: getMaxHeight(sizes, {
+                maxHeight,
+                maxWidth,
+              }),
+            }
+          : undefined
+      }
+    >
+      {children}
+    </div>
+  );
+});
+
+AdunitSizesStyles.displayName = 'AdunitSizesStyles';

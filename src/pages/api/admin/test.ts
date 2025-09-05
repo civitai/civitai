@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbRead } from '~/server/db/client';
+import { removeBlockedImagesRecursive } from '~/server/jobs/image-ingestion';
 import { refreshImageResources } from '~/server/services/image.service';
 import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -93,6 +94,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // });
 
     // res.status(200).send({ data });
+    // await removeBlockedImagesRecursive(undefined, undefined, 10000);
     res.status(200).send({});
   } catch (e) {
     console.log(e);

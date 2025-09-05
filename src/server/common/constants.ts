@@ -378,6 +378,7 @@ export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
+export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
@@ -927,6 +928,25 @@ export const generationConfig = {
       model: {
         id: 1669468,
         name: `Google Imagen 4`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  NanoBanana: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2154472,
+      name: 'Nano Banana',
+      trainedWords: [],
+      baseModel: 'NanoBanana',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1903424,
+        name: `Google Nano Banana`,
         type: 'Checkpoint',
       },
     } as GenerationResource,

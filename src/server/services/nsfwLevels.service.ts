@@ -45,7 +45,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     bountyEntryIds: connections
       .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
       .map((x) => x.entityId),
-    collectionIds: [], // collectionItems.map((x) => x.collectionId),
+    // collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -63,7 +63,7 @@ async function getPostConnectedEntities(postIds: number[]) {
 
   return {
     modelVersionIds: posts.map((x) => x.modelVersionId).filter(isDefined),
-    collectionIds: [], // collectionItems.map((x) => x.collectionId),
+    // collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -221,12 +221,14 @@ export async function updateNsfwLevels({
   const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
   const updateModelVersions = batcher(modelVersionIds, updateModelVersionNsfwLevels);
   const updateModels = batcher(modelIds, updateModelNsfwLevels);
+  // Collections are processed by separate optimized job
   // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
   const nsfwLevelChangeBatches = [
     [updatePosts, updateArticles, updateBounties, updateBountyEntries],
     [updateModelVersions],
     [updateModels],
+    // Collections handled by dedicated job for performance
     // [updateCollections],
   ];
 
@@ -337,36 +339,31 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
           CASE
             WHEN (c."nsfw" IS TRUE) THEN ${nsfwBrowsingLevelsFlag}
             ELSE COALESCE((
-              SELECT bit_or(COALESCE(cl."nsfwLevel", 0))
+              SELECT bit_or(COALESCE(item_nsfw."nsfwLevel", 0))
               FROM (
                 SELECT
                   ci."collectionId",
-                  (
-                    CASE
-                      WHEN (i."nsfwLevel" != 0) THEN i."nsfwLevel"
-                      WHEN (p."nsfwLevel" != 0) THEN p."nsfwLevel"
-                      WHEN (m."nsfwLevel" != 0) THEN m."nsfwLevel"
-                      WHEN (a."nsfwLevel" != 0) THEN a."nsfwLevel"
-                      ELSE 0
-                    END
+                  COALESCE(
+                    CASE WHEN ci."imageId" IS NOT NULL THEN i."nsfwLevel" END,
+                    CASE WHEN ci."postId" IS NOT NULL THEN p."nsfwLevel" END,
+                    CASE WHEN ci."modelId" IS NOT NULL THEN m."nsfwLevel" END,
+                    CASE WHEN ci."articleId" IS NOT NULL THEN a."nsfwLevel" END,
+                    0
                   ) AS "nsfwLevel"
                 FROM "CollectionItem" ci
-
-                LEFT JOIN LATERAL (SELECT "nsfwLevel" FROM "Image" i WHERE ci."imageId" IS NOT NULL AND i.id = ci."imageId" LIMIT 1) i ON TRUE
-                LEFT JOIN LATERAL (SELECT "nsfwLevel" FROM "Post" p WHERE ci."imageId" IS NOT NULL AND p.id = ci."imageId" AND p."publishedAt" IS NOT NULL LIMIT 1) p ON TRUE
-                LEFT JOIN LATERAL (SELECT "nsfwLevel" FROM "Model" m WHERE ci."imageId" IS NOT NULL AND m.id = ci."imageId" AND m."status" = 'Published' LIMIT 1) m ON TRUE
-                LEFT JOIN LATERAL (SELECT "nsfwLevel" FROM "Article" a WHERE ci."imageId" IS NOT NULL AND a.id = ci."imageId" AND a."publishedAt" IS NOT NULL LIMIT 1) a ON TRUE
-
+                LEFT JOIN "Image" i ON ci."imageId" = i.id
+                LEFT JOIN "Post" p ON ci."postId" = p.id AND p."publishedAt" IS NOT NULL
+                LEFT JOIN "Model" m ON ci."modelId" = m.id AND m."status" = 'Published'
+                LEFT JOIN "Article" a ON ci."articleId" = a.id AND a."publishedAt" IS NOT NULL
                 WHERE ci."collectionId" = c.id
-                AND ci."status" = 'ACCEPTED'
+                  AND ci."status" = 'ACCEPTED'
                 ORDER BY ci."createdAt" DESC
-                LIMIT 100
-              ) AS cl
-              GROUP BY cl."collectionId"
+                LIMIT 50
+              ) AS item_nsfw
+              GROUP BY item_nsfw."collectionId"
             ), 0)
           END
-        )
-        AS "nsfwLevel"
+        ) AS "nsfwLevel"
       FROM "Collection" c
       WHERE c."id" in (${Prisma.join(collectionIds)}) AND c."availability" = 'Public'
     )

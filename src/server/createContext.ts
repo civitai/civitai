@@ -8,6 +8,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { createCallerFactory } from '@trpc/server';
 import { appRouter } from '~/server/routers';
 import { Fingerprint } from '~/server/utils/fingerprint';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -47,6 +48,7 @@ export const createContext = async ({
     skip: false,
   };
   const fingerprint = new Fingerprint((req.headers['x-fingerprint'] as string) ?? '');
+  const domain = getRequestDomainColor(req) ?? 'blue';
 
   return {
     user: session?.user,
@@ -58,11 +60,14 @@ export const createContext = async ({
     fingerprint,
     res,
     req,
+    domain,
   };
 };
 
 const createCaller = createCallerFactory()(appRouter);
 export const publicApiContext2 = async (req: NextApiRequest, res: NextApiResponse) => {
+  const domain = getRequestDomainColor(req) ?? 'blue';
+
   return createCaller({
     user: undefined,
     acceptableOrigin: true,
@@ -79,6 +84,7 @@ export const publicApiContext2 = async (req: NextApiRequest, res: NextApiRespons
     },
     res,
     req,
+    domain,
   });
 };
 
