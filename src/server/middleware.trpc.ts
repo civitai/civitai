@@ -102,13 +102,21 @@ export type RateLimit = {
   userReq?: (user: ExtendedUser) => boolean;
   errorMessage?: string;
 };
-export function rateLimit(rateLimits?: RateLimit | RateLimit[]) {
+export function rateLimit<TInput = any>(
+  rateLimits?: RateLimit | RateLimit[],
+  condition?: (input: TInput) => boolean
+) {
   if (!rateLimits) rateLimits = { limit: 10, period: CacheTTL.md };
   if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
 
-  return middleware(async ({ ctx, next, path }) => {
+  return middleware(async ({ ctx, input, next, path }) => {
     // Skip if user is a moderator
     if (ctx.user?.isModerator || isDev || isTest) return await next();
+
+    // Skip rate limiting if condition is provided and not met
+    if (condition && !condition(input as TInput)) {
+      return await next();
+    }
 
     // Get valid limits
     const validLimits: RateLimit[] = [];

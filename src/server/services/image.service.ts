@@ -29,7 +29,6 @@ import {
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
-import { logicalDb } from '~/server/db/logicalDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
@@ -152,6 +151,17 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
+import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
+import client from 'prom-client';
+
+const {
+  cacheHitRequestsTotal,
+  ffRequestsTotal,
+  requestDurationSeconds,
+  requestTotal,
+  droppedIdsTotal,
+} = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -193,6 +203,13 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
   }
 }
 
+export const invalidateManyImageExistence = async (ids: number[]) => {
+  const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
+  const kv: Record<string, string> = {};
+  for (const id of ids) kv[`${cachePrefix}${id}`] = 'false';
+  await sysRedis.packed.mSet(kv, { EX: 60 * 5 });
+};
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -204,6 +221,8 @@ export const deleteImageById = async ({
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
     if (!image) return;
+
+    const invalidateExistence = invalidateManyImageExistence([id]);
 
     await Promise.all([
       deleteImageFromS3({ id, url: image.url }),
@@ -218,6 +237,7 @@ export const deleteImageById = async ({
             postMetrics.queueUpdate(image.postId),
           ]
         : []),
+      invalidateExistence,
     ]);
 
     return image;
@@ -238,6 +258,8 @@ export async function deleteImages(ids: number[], updatePosts = true) {
     const imageIds = results.map((x) => x.id);
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
+    const invalidateExistence = invalidateManyImageExistence(idsForPostUpdate);
+
     await Promise.all([
       queueImageSearchIndexUpdate({
         ids: imageIds,
@@ -246,6 +268,7 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       updatePostNsfwLevel(idsForPostUpdate),
       bustCachesForPosts(idsForPostUpdate),
       postMetrics.queueUpdate(idsForPostUpdate),
+      invalidateExistence,
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -335,11 +358,15 @@ export async function handleUnblockImages({
         }))
       ),
     ]);
+
+    const invalidateExistence = invalidateManyImageExistence(ids);
+
     await Promise.all([
       updateNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
+      invalidateExistence,
     ]);
 
     if (moderatorId) {
@@ -374,6 +401,8 @@ export async function handleBlockImages({
   });
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
+    const invalidateExistence = invalidateManyImageExistence(ids);
+
     await Promise.all([
       dbWrite.image.updateMany({
         where: { id: { in: ids } },
@@ -387,6 +416,7 @@ export async function handleBlockImages({
       }),
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
+      invalidateExistence,
     ]);
     if (include?.includes('phash-block')) {
       await bulkAddBlockedImages({
@@ -1450,6 +1480,7 @@ export const getAllImages = async (
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
         modelVersionIds: [], // TODO doing this basically just for TS
         modelVersionIdsManual: [],
+        publishedAt: i.publishedAt ? i.sortAt : undefined,
         user: {
           id: creatorId,
           username,
@@ -1632,7 +1663,7 @@ export const getAllImagesIndex = async (
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
       metadata: { ...metadata, width: sr.width, height: sr.height },
-      publishedAt: !publishedAtUnix ? undefined : sr.sortAt,
+      publishedAt: publishedAtUnix ? sr.sortAt : undefined,
       //
       user: {
         id: sr.userId,
@@ -2054,6 +2085,10 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     offset,
   };
 
+  const route = 'getImagesFromSearch';
+  const endTimer = requestDurationSeconds.startTimer({ route });
+  requestTotal.inc({ route }); // count every request up front
+
   try {
     // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
@@ -2080,28 +2115,161 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
-    const filteredHitIds = filteredHits.map((fh) => fh.id);
+    // Get all image IDs from search results
+    const searchImageIds = filteredHits.map((hit) => hit.id);
 
-    let dbIdResp: { id: number }[];
+    let cacheExistenceEnabled = false;
 
-    if (!useLogicalReplica) {
-      // we could pull in nsfwLevel/needsReview here too and overwrite the search index attributes (move above the hits filter)
-      dbIdResp = await dbRead.image.findMany({
+    const fliptClient = await FliptSingleton.getInstance();
+    if (fliptClient) {
+      const flag = fliptClient.evaluateBoolean({
+        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+        entityId: 'unused',
+        context: {},
+      });
+      cacheExistenceEnabled = flag.enabled;
+    }
+    ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
+
+    if (!cacheExistenceEnabled) {
+      cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
+
+      // BASIC DB CHECK (default)
+      const filteredHitIds = [...new Set(searchImageIds)];
+      const dbIdResp = await dbRead.image.findMany({
         where: { id: { in: filteredHitIds } },
         select: { id: true },
       });
-    } else {
-      const dbIdData = await logicalDb.query<{ id: number }>(
-        `select id from "Image" where "id" = ANY($1::integer[])`,
-        [filteredHitIds]
-      );
-      dbIdResp = dbIdData.rows;
+
+      const idSet = new Set(dbIdResp.map((r) => r.id));
+      const filtered = results.hits.filter((h) => idSet.has(h.id));
+
+      const droppedCount = results.hits.length - filtered.length;
+      droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
+
+      const imageMetrics = await getImageMetricsObject(filtered);
+      const fullData = filtered.map((h) => {
+        const match = imageMetrics[h.id];
+        return {
+          ...h,
+          stats: {
+            likeCountAllTime: match?.reactionLike ?? 0,
+            laughCountAllTime: match?.reactionLaugh ?? 0,
+            heartCountAllTime: match?.reactionHeart ?? 0,
+            cryCountAllTime: match?.reactionCry ?? 0,
+            commentCountAllTime: match?.comment ?? 0,
+            collectedCountAllTime: match?.collection ?? 0,
+            tippedAmountCountAllTime: match?.buzz ?? 0,
+            dislikeCountAllTime: 0,
+            viewCountAllTime: 0,
+          },
+        };
+      });
+
+      if (fullData.length) {
+        sysRedis.packed
+          .sAdd(
+            REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
+            fullData.map((i) => i.id)
+          )
+          .catch((e) => {
+            const err = e as Error;
+            logToAxiom(
+              {
+                type: 'search-redis-error',
+                error: err.message,
+                cause: err.cause,
+                stack: err.stack,
+              },
+              'temp-search'
+            ).catch();
+          });
+      }
+
+      endTimer();
+      return { data: fullData, nextCursor };
     }
 
-    const dbIds = dbIdResp.map((dbi) => dbi.id);
-    const filtered = filteredHits.filter((fh) => dbIds.includes(fh.id));
+    // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
+    const checkImageExistence = async (imageIds: number[]) => {
+      // Preserve original order and remove duplicates
+      const uniqueIds = [...new Set(imageIds)];
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}`);
 
-    // TODO maybe grab more if the number is now too low?
+      // Check cached results first (1 minute TTL)
+      const cachedResults = await sysRedis.packed.mGet(cacheKeys as any);
+
+      // Separate cached and uncached IDs
+      const uncachedIds: number[] = [];
+      const cachedMap = new Map<number, boolean>();
+      let cacheMiss = 0;
+
+      for (let i = 0; i < uniqueIds.length; i++) {
+        const id = uniqueIds[i];
+        const cachedResult = cachedResults[i];
+
+        if (cachedResult === 'true') {
+          cachedMap.set(id, true);
+        } else if (cachedResult === 'false') {
+          cachedMap.set(id, false);
+        } else {
+          uncachedIds.push(id);
+          cacheMiss++;
+        }
+      }
+
+      let hitType: 'full' | 'partial' | 'miss';
+      if (cacheMiss === 0) {
+        hitType = 'full';
+      } else if (cacheMiss === uniqueIds.length) {
+        hitType = 'miss';
+      } else {
+        hitType = 'partial';
+      }
+
+      cacheHitRequestsTotal.inc({ route, hit_type: hitType });
+
+      // Query DB for uncached IDs
+      let dbResults: { id: number }[] = [];
+      if (uncachedIds.length > 0) {
+        dbResults = await dbRead.image.findMany({
+          where: { id: { in: uncachedIds } },
+          select: { id: true },
+        });
+
+        const dbIdSet = new Set(dbResults.map((r) => r.id));
+
+        // Update cache with DB results (1-minute TTL)
+        const cacheUpdates: Record<string, string> = {};
+        for (const id of uncachedIds) {
+          const exists = dbIdSet.has(id);
+          cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
+          cachedMap.set(id, exists);
+        }
+        if (Object.keys(cacheUpdates).length > 0) {
+          await sysRedis.packed.mSet(cacheUpdates, { EX: 60 });
+        }
+      }
+
+      // Filter hits based on existence check while preserving order
+      let dropped = 0;
+      const filteredHits = results.hits.filter((hit) => {
+        const exists = cachedMap.get(hit.id);
+        const keep = exists !== false; // treat undefined as exists=true
+        if (!keep) {
+          dropped++;
+        }
+        return keep;
+      });
+
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
+
+      return filteredHits;
+    };
+
+    // Apply the (flagged) existence check
+    const filtered = await checkImageExistence(searchImageIds);
 
     const imageMetrics = await getImageMetricsObject(filtered);
 
@@ -2145,6 +2313,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
         });
     }
 
+    endTimer();
     return {
       data: fullData,
       nextCursor,
@@ -2161,6 +2330,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       },
       'temp-search'
     ).catch();
+
+    endTimer();
     return { data: [], nextCursor: undefined };
   }
 }
@@ -5056,6 +5227,9 @@ export async function updateImageAcceptableMinor({
       ? SearchIndexUpdateQueueAction.Delete
       : SearchIndexUpdateQueueAction.Update,
   });
+  if (acceptableMinor) {
+    await invalidateManyImageExistence([id]);
+  }
 
   return image;
 }

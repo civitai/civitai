@@ -26,6 +26,12 @@ import {
   IconTrendingUp,
   IconTicket,
   IconExternalLink,
+  IconUsers,
+  IconBrandApple,
+  IconBrandGoogle,
+  IconBrandPaypal,
+  IconBrandAlipay,
+  IconBrandWechat,
 } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Fragment } from 'react';
@@ -164,14 +170,11 @@ const BuzzPurchasePaymentButton = ({
       radius="md"
       variant="light"
       color="yellow"
-      leftSection={<IconBolt size={18} />}
       fw={500}
+      leftSection={<IconCreditCard size={18} />}
     >
       {features.disablePayments ? (
-        <Group gap="xs" wrap="nowrap">
-          <IconCreditCard size={16} />
-          <span>Credit Card</span>
-        </Group>
+        <span>Credit Card</span>
       ) : (
         <Group gap="sm">
           <Text size="sm" fw={500}>
@@ -192,59 +195,82 @@ const BuzzPurchasePaymentButton = ({
 const RedeemableCodesSection = () => {
   const liveFeatures = useLiveFeatureFlags();
 
+  const paymentMethods = [
+    { icon: IconBrandApple, label: 'Apple Pay' },
+    { icon: IconBrandGoogle, label: 'Google Pay' },
+    { icon: IconCreditCard, label: 'Credit Card' },
+    { icon: IconBrandPaypal, label: 'PayPal' },
+    { icon: IconBrandAlipay, label: 'Alipay' },
+    { icon: IconBrandWechat, label: 'WeChat Pay' },
+  ];
+
   return (
     <Card padding="md" radius="md" mt="sm" withBorder>
       <Stack gap="sm">
         <Group gap="sm">
-          <ThemeIcon size="sm" variant="light" color="gray" radius="sm">
+          <ThemeIcon size="md" variant="light" color="gray" radius="sm">
             <IconTicket size={16} />
           </ThemeIcon>
           <div style={{ flex: 1 }}>
-            {liveFeatures.buzzGiftCards ? (
-              <>
-                <Text size="sm" fw={500}>
-                  Alternative Payment Method
-                </Text>
-                <Text size="xs" c="dimmed">
-                  <Anchor
-                    component={NextLink}
-                    href="/gift-cards?type=buzz"
-                    size="xs"
-                    className={classes.giftCardLink}
-                  >
-                    Purchase redeemable codes
-                  </Anchor>{' '}
-                  for yourself or as gifts
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text size="sm" fw={500}>
-                  Have a redeemable code?
-                </Text>
-                <Text size="xs" c="dimmed">
-                  You can redeem codes and get Buzz instantly!
-                </Text>
-              </>
-            )}
+            <Text size="sm" fw={500}>
+              Don't see a supported payment option?
+            </Text>
+            <Text size="xs" c="dimmed">
+              Purchase gift cards with Apple Pay, Google Pay, credit cards, and more
+            </Text>
           </div>
         </Group>
 
-        <Button
-          component="a"
-          href="/redeem-code"
-          target="_blank"
-          rel="noopener noreferrer"
-          size="sm"
-          radius="md"
-          variant="light"
-          color="yellow"
-          leftSection={<IconExternalLink size={16} />}
-          fw={500}
-          fullWidth
-        >
-          {liveFeatures.buzzGiftCards ? 'Redeem or get a Code' : 'Redeem a Code'}
-        </Button>
+        {/* Payment method icons */}
+        <Group gap={4} wrap="wrap">
+          {paymentMethods.map(({ icon: Icon, label }) => (
+            <Badge
+              key={label}
+              size="lg"
+              variant="light"
+              color="gray"
+              radius="sm"
+              px={8}
+              leftSection={<Icon size={16} />}
+              tt="none"
+            >
+              {label}
+            </Badge>
+          ))}
+        </Group>
+
+        <Stack gap="xs">
+          <Button
+            component="a"
+            href="/gift-cards?type=buzz"
+            target="_blank"
+            rel="noopener noreferrer"
+            size="sm"
+            radius="md"
+            variant="light"
+            color="yellow"
+            leftSection={<IconExternalLink size={16} />}
+            fw={500}
+            fullWidth
+          >
+            Buy Gift Cards
+          </Button>
+
+          <Button
+            component="a"
+            href="/redeem-code"
+            target="_blank"
+            rel="noopener noreferrer"
+            size="xs"
+            radius="md"
+            variant="subtle"
+            color="gray"
+            fw={500}
+            fullWidth
+          >
+            Have a code? Redeem it here
+          </Button>
+        </Stack>
       </Stack>
     </Card>
   );
@@ -838,18 +864,6 @@ export const BuzzPurchaseImproved = ({
                       {/* Payment Methods */}
                       <div>
                         <Group gap="sm" wrap="wrap">
-                          {availableZkp2pMethods.map(({ method, ...config }) => (
-                            <BuzzZkp2pButton
-                              key={method}
-                              method={method}
-                              config={config}
-                              amount={unitAmount / 100}
-                              buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
-                              disabled={!ctaEnabled}
-                              onRedirect={onCancel} // Close modal on redirect
-                            />
-                          ))}
-
                           {features.coinbasePayments && (
                             <BuzzCoinbaseButton
                               unitAmount={unitAmount}
@@ -880,6 +894,48 @@ export const BuzzPurchaseImproved = ({
                           />
                         </Group>
                       </div>
+
+                      {/* Peer-to-Peer Payment Methods Section */}
+                      {availableZkp2pMethods.length > 0 && (
+                        <Card padding="md" radius="md" mt="sm" withBorder>
+                          <Stack gap="sm">
+                            <Group gap="sm">
+                              <ThemeIcon size="md" variant="light" color="gray" radius="sm">
+                                <IconUsers size={16} />
+                              </ThemeIcon>
+                              <div style={{ flex: 1 }}>
+                                <Text size="sm" fw={500}>
+                                  Peer-to-Peer Payment Methods
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  Secure, private, and instant peer-to-peer checkout. Powered by <a href="https://zkp2p.xyz" target="_blank" className={classes.giftCardLink}>ZKP2P</a> -{' '}
+                                  <Anchor
+                                    href="https://education.civitai.com/civitais-guide-to-buzz-purchases-via-zkp2p/"
+                                    size="xs"
+                                    className={classes.giftCardLink}
+                                  >
+                                    Learn More
+                                  </Anchor>
+                                </Text>
+                              </div>
+                            </Group>
+
+                            <Group gap="sm" wrap="wrap">
+                              {availableZkp2pMethods.map(({ method, ...config }) => (
+                                <BuzzZkp2pButton
+                                  key={method}
+                                  method={method}
+                                  config={config}
+                                  amount={unitAmount / 100}
+                                  buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
+                                  disabled={!ctaEnabled}
+                                  onRedirect={onCancel}
+                                />
+                              ))}
+                            </Group>
+                          </Stack>
+                        </Card>
+                      )}
 
                       {/* Alternative Payment Section */}
                       {liveFeatures.buzzGiftCards && <RedeemableCodesSection />}

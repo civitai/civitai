@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
+import { invalidateManyImageExistence } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { numericString } from '~/utils/zod-helpers';
@@ -50,9 +51,16 @@ export default WebhookEndpoint(async (req, res) => {
     where: { id: { in: posts.map((p) => p.id) } },
   });
 
-  await dbWrite.image.deleteMany({
+  const imagesToDelete = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((p) => p.id) } },
   });
+
+  await Promise.all([
+    dbWrite.image.deleteMany({
+      where: { postId: { in: posts.map((p) => p.id) } },
+    }),
+    invalidateManyImageExistence(imagesToDelete.map((i) => i.id)),
+  ]);
 
   res.status(200).json({ finished: true });
 });

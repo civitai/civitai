@@ -5,6 +5,7 @@ import {
   protectedProcedure,
   isFlagProtected,
 } from '~/server/trpc';
+import type { UpsertArticleInput } from '~/server/schema/article.schema';
 import {
   getInfiniteArticlesSchema,
   upsertArticleInput,
@@ -48,7 +49,7 @@ export const articleRouter = router({
   upsert: guardedProcedure
     .input(upsertArticleInput)
     .use(isFlagProtected('articleCreate'))
-    .use(rateLimit(articleRateLimits))
+    .use(rateLimit(articleRateLimits, (input: UpsertArticleInput) => !input.id))
     .mutation(upsertArticleHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

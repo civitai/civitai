@@ -216,7 +216,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           </Badge>
         </div>
 
-        <Text size="xs">
+        <Text size="xs" component="div">
           {!post.publishedAt ? (
             <>
               Your {postLabel} is currently{' '}
@@ -234,7 +234,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               <ThemeIcon color="gray" variant="filled" radius="xl">
                 <IconClock size={20} />
               </ThemeIcon>
-              <span>Scheduled for {formatDate(post.publishedAt)}</span>
+              <span>Scheduled for {formatDate(post.publishedAt, 'MMMM D, h:mma')}</span>
             </div>
           ) : (
             <>

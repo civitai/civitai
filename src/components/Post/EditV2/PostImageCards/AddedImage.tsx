@@ -39,8 +39,8 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
+import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import {
   isMadeOnSite,
   useGenerationStatus,
@@ -48,6 +48,7 @@ import {
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
@@ -62,30 +63,28 @@ import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageTools
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { BlockedReason } from '~/server/common/enums';
 import type { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
-import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import {
+  getBaseModelGroup,
+  getGenerationBaseModelAssociatedGroups,
+  getGenerationBaseModelResourceOptions,
+} from '~/shared/constants/base-model.constants';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
-import { isValidAIGeneration, hasImageLicenseViolation } from '~/utils/image-utils';
+import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import {
-  getGenerationBaseModelResourceOptions,
-  getGenerationBaseModelAssociatedGroups,
-  getBaseModelGroup,
-} from '~/shared/constants/base-model.constants';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -826,24 +825,12 @@ function EditDetail() {
             {!resources?.length && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {image.type === 'image' ? (
-                  <Alert className="rounded-lg" color="yellow">
-                    <Text>
-                      Install the{' '}
-                      <Text
-                        component="a"
-                        href="https://github.com/civitai/sd_civitai_extension"
-                        target="_blank"
-                        rel="nofollow"
-                      >
-                        Civitai Extension for Automatic 1111 Stable Diffusion Web UI
-                      </Text>{' '}
-                      to automatically detect all the resources used in your images.
-                    </Text>
-                  </Alert>
-                ) : (
-                  <Center>No resources found.</Center>
-                )}
+                <Center>
+                  <Text>
+                    We weren&apos;t able to detect any resources used in the creation of this image.
+                    You can add them manually using the + Resource button.
+                  </Text>
+                </Center>
               </CustomCard>
             )}
             {/* #endregion */}

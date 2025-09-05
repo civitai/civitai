@@ -537,6 +537,10 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     a: 'Any earned Yellow Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
   },
   {
+    q: 'Do I need an active membership to Bank Buzz?',
+    a: 'Yes, you must have an active Civitai membership to bank Buzz in the Creator Program. If your membership expires, you will not be able to bank additional Buzz until you renew your subscription.',
+  },
+  {
     q: 'What happens if cancel my Civitai Membership?',
     a: `If you deactivate your Subscription you'll remain in the Program until the end of the month, allowing you to Bank your Buzz and withdraw through the end of the period.`,
   },

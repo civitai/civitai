@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
+import { increaseDate } from '~/utils/date-helpers';
 import { env } from '~/env/server';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import type { Context } from '~/server/createContext';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
@@ -85,9 +87,12 @@ export const createPostHandler = async ({
 }) => {
   try {
     const { ip, fingerprint } = ctx;
+    const today = new Date();
+
     const post = await createPost({ userId: ctx.user.id, ...input });
     const isPublished = !!post.publishedAt;
-    const isScheduled = isPublished && dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
+    const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
+    const isScheduled = isPublished && dayjs(post.publishedAt).isAfter(minimumScheduleTime); // Publishing more than minimum schedule time in the future
     const tags = post.tags.map((x) => x.name);
     if (isScheduled) tags.push('scheduled');
 
@@ -152,14 +157,32 @@ export const updatePostHandler = async ({
       throw throwBadRequestError('You cannot reschedule a post that is already published');
     }
 
+    const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
+
+    // Handle publishedAt validation and adjustment
+    if (input.publishedAt) {
+      const inputDate = dayjs(input.publishedAt);
+
+      // Throw error only if the date is clearly in the past (more than 1 minute ago to account for request delays)
+      const oneMinuteAgo = increaseDate(today, -1, 'minutes');
+      if (inputDate.isBefore(oneMinuteAgo)) {
+        throw throwBadRequestError('You cannot schedule a post in the past');
+      }
+
+      // If the date is before the minimum schedule time, publish immediately
+      if (inputDate.isBefore(minimumScheduleTime)) {
+        input.publishedAt = today;
+      }
+    }
+
     if (
       input.publishedAt &&
       !post?.publishedAt &&
       post?.collectionId &&
-      dayjs(input.publishedAt).isAfter(dayjs().add(10, 'minutes'))
+      dayjs(input.publishedAt).isAfter(minimumScheduleTime)
     ) {
       // Force be published right away.
-      input.publishedAt = new Date();
+      input.publishedAt = today;
     }
 
     if (post && input.publishedAt && input.collectionId) {
@@ -247,7 +270,12 @@ export const updatePostHandler = async ({
         select: { tagName: true },
       });
 
-      const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
+      const minimumScheduleTimeForPublish = increaseDate(
+        new Date(),
+        POST_MINIMUM_SCHEDULE_MINUTES,
+        'minutes'
+      );
+      const isScheduled = dayjs(updatedPost.publishedAt).isAfter(minimumScheduleTimeForPublish); // Publishing more than minimum schedule time in the future
       const tags = postTags.map((x) => x.tagName);
 
       if (!isScheduled) {

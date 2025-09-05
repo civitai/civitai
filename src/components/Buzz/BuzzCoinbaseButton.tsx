@@ -44,7 +44,7 @@ export const BuzzCoinbaseButton = ({
         fw={500}
         fullWidth
       >
-        Pay with Crypto
+        Crypto
       </Button>
     </Stack>
   );

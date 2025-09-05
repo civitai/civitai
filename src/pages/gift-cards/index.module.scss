@@ -131,6 +131,24 @@
   border: none;
   box-shadow: 0 2px 8px rgba(139, 69, 219, 0.3);
   transition: all 0.2s ease;
+  font-size: var(--mantine-font-size-xs);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  min-width: 0; // Allow buttons to shrink below content width
+  
+  // Mobile optimizations
+  @media (max-width: 768px) {
+    font-size: 10px;
+    padding: 4px 8px;
+    min-height: 32px;
+    
+    // Make text more compact on very small screens
+    @media (max-width: 480px) {
+      font-size: 10px;
+      padding: 4px 6px;
+      min-height: 28px;
+      line-height: 1.2;
+    }
+  }
   
   &:hover {
     background: linear-gradient(135deg, var(--mantine-color-violet-7), var(--mantine-color-indigo-7));

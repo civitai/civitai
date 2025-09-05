@@ -65,9 +65,9 @@ const adDensity: AdDensity[] = [
   [2, [5, 7]],
   [3, [5, 8]],
   [4, [5, 9]],
-  [5, [6, 11]],
-  [6, [7, 12]],
-  [7, [8, 12]],
+  [5, [6, 9]],
+  [6, [6, 9]],
+  [7, [6, 9]],
 ];
 
 export const supportUsImageSizes = [
@@ -81,7 +81,5 @@ export const supportUsImageSizes = [
   [970, 90],
   [970, 250],
 ];
-
-
 
 export const adUnitsLoaded: Record<string, boolean> = {};

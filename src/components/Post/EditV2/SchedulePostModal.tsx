@@ -1,13 +1,34 @@
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import { increaseDate } from '~/utils/date-helpers';
 
-const minDate = new Date();
-const maxDate = dayjs().add(3, 'month').toDate();
-
-const schema = z.object({ date: z.date().min(minDate).max(maxDate) });
+const schema = z.object({
+  date: z
+    .date()
+    .refine(
+      (date) => {
+        const now = new Date();
+        const minDate = increaseDate(now, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
+        return date >= minDate;
+      },
+      {
+        message: `Schedule date must be at least ${POST_MINIMUM_SCHEDULE_MINUTES} minutes in the future`,
+      }
+    )
+    .refine(
+      (date) => {
+        const now = new Date();
+        const maxDate = increaseDate(now, 3, 'months');
+        return date <= maxDate;
+      },
+      {
+        message: 'Schedule date cannot be more than 3 months in the future',
+      }
+    ),
+});
 
 export function SchedulePostModal({
   onSubmit,
@@ -19,6 +40,9 @@ export function SchedulePostModal({
   publishingModel?: boolean;
 }) {
   const dialog = useDialogContext();
+  const today = new Date();
+  const minDate = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
+  const maxDate = increaseDate(today, 3, 'months');
 
   const form = useForm({
     schema,

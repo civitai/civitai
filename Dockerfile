@@ -32,7 +32,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN \
   if [ -f yarn.lock ]; then SKIP_ENV_VALIDATION=1 yarn build; \
@@ -46,7 +46,7 @@ RUN \
 FROM node:20-alpine3.16 AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
+ENV NODE_ENV=production
 
 # ENV NEXT_TELEMETRY_DISABLED 1
 
@@ -65,7 +65,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 EXPOSE 3000
-ENV PORT 3000
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV PORT=3000
+ENV NEXT_TELEMETRY_DISABLED=1
 
 CMD ["node", "--", "server.js", "--", "--expose-gc"]
