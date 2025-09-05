@@ -2861,6 +2861,7 @@ model BountyEntryMetric {
 enum CsamReportType {
   Image
   TrainingData
+  GeneratedImage
 }
 
 model CsamReport {

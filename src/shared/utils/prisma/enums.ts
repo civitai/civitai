@@ -640,6 +640,7 @@ export type BountyEngagementType = (typeof BountyEngagementType)[keyof typeof Bo
 export const CsamReportType = {
   Image: 'Image',
   TrainingData: 'TrainingData',
+  GeneratedImage: 'GeneratedImage',
 } as const;
 
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];

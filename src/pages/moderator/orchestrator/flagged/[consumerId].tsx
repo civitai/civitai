@@ -1,7 +1,8 @@
 import { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Text, Chip, Card, Badge } from '@mantine/core';
+import type { TooltipProps } from '@mantine/core';
+import { Text, Chip, Card, Badge, Pagination, Select, ActionIcon, Tooltip } from '@mantine/core';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { ConsumerStrike } from '~/server/http/orchestrator/flagged-consumers';
@@ -9,6 +10,8 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Tabs } from '@mantine/core';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { create } from 'zustand';
+import { useLocalStorage } from '@mantine/hooks';
+import { IconCheck, IconSquareOff } from '@tabler/icons-react';
 
 const useStore = create<Record<string, boolean>>(() => ({}));
 const resetState = () => {
@@ -27,11 +30,13 @@ export default function FlaggedConsumerId() {
 
   return (
     <div className="container max-w-md">
-      {user?.username && (
+      <div className="flex justify-between">
         <h1 className="mb-3 text-2xl font-bold">
-          Username: <NextLink href={`/user/${user.username}`}>{user.username}</NextLink>
+          Username:{' '}
+          {user?.username && <NextLink href={`/user/${user.username}`}>{user.username}</NextLink>}
         </h1>
-      )}
+        <SelectedCount />
+      </div>
       <FlaggedConsumerContent consumerId={consumerId} />
     </div>
   );
@@ -67,28 +72,47 @@ function FlaggedConsumerContent({ consumerId }: { consumerId: string }) {
 
 function FlaggedConsumerStrikes({ data }: { data: ConsumerStrike[] }) {
   const reasons = [...new Set(data.map((x) => x.strike.reason))];
+  const [activePage, setPage] = useState(0);
+  const [pageSize, setPageSize] = useLocalStorage({ key: 'page-size', defaultValue: 100 });
   const [selectedReasons, setSelectedReasons] = useState<string[]>(reasons);
-  const items = useMemo(
+  const filtered = useMemo(
     () => data.filter((x) => x.job && selectedReasons.includes(x.strike.reason)),
     [data, selectedReasons]
+  );
+  const totalPages = Math.ceil(filtered.length / pageSize);
+  const _activePage = totalPages < activePage ? totalPages : activePage;
+
+  const items = useMemo(() => {
+    return filtered.slice(_activePage, pageSize);
+  }, [filtered, _activePage, pageSize]);
+
+  const navigation = (
+    <div className="flex items-center justify-between">
+      <div className="flex gap-1">
+        <Chip.Group value={selectedReasons} onChange={setSelectedReasons} multiple>
+          {reasons.map((reason) => (
+            <Chip key={reason} value={reason}>
+              {reason}
+            </Chip>
+          ))}
+        </Chip.Group>
+      </div>
+      <div className="flex items-center justify-end gap-3">
+        <Select
+          value={pageSize.toString()}
+          data={['25', '50', '75', '100']}
+          onChange={(value) => setPageSize(Number(value))}
+        />
+        <Pagination total={totalPages} value={_activePage} onChange={setPage} />
+      </div>
+    </div>
   );
 
   return (
     <>
-      <div className="flex justify-between">
-        <div className="flex gap-1">
-          <Chip.Group value={selectedReasons} onChange={setSelectedReasons} multiple>
-            {reasons.map((reason) => (
-              <Chip key={reason} value={reason}>
-                {reason}
-              </Chip>
-            ))}
-          </Chip.Group>
-        </div>
-        <SelectedCount />
-      </div>
       <div className="flex flex-col gap-3">
-        {items.slice(0, 100).map(({ strike, job }, index) => (
+        {navigation}
+        {items.map(({ strike, job }, index) => (
           <Card key={index} withBorder padding="sm">
             <div className="mb-1 grid grid-cols-4 gap-1">
               {job.blobs.map((blob, i) => (
@@ -103,6 +127,7 @@ function FlaggedConsumerStrikes({ data }: { data: ConsumerStrike[] }) {
             </Text>
           </Card>
         ))}
+        {navigation}
       </div>
     </>
   );
@@ -136,5 +161,51 @@ function ConsumerStrikePreviewImage({ id, previewUrl }: { id: string; previewUrl
 
 function SelectedCount() {
   const count = useStore((state) => Object.values(state).filter(Boolean).length);
-  return count > 0 ? <span>{count} selected</span> : null;
+
+  if (!count) return null;
+
+  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+    position: 'bottom',
+    withArrow: true,
+    withinPortal: true,
+    variant: 'filled',
+  };
+
+  const iconProps = {
+    size: '1.25rem',
+  };
+
+  function handleReview() {
+    console.log('mark as reviewed');
+  }
+
+  function handleReportCsam() {
+    console.log('report CSAM');
+  }
+
+  return (
+    <Card
+      padding={0}
+      withBorder
+      className="flex flex-row items-center gap-1 p-3"
+      style={{ position: 'sticky', top: 'var(--header-height,0)' }}
+    >
+      <Text size="sm">{count} Selected</Text>
+      <Tooltip label="Deselect all" {...tooltipProps}>
+        <ActionIcon onClick={resetState}>
+          <IconSquareOff {...iconProps} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Mark as reviewed" {...tooltipProps}>
+        <ActionIcon onClick={handleReview} color="green">
+          <IconCheck {...iconProps} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Report CSAM" {...tooltipProps}>
+        <ActionIcon onClick={handleReportCsam} color="orange">
+          <IconSquareOff {...iconProps} />
+        </ActionIcon>
+      </Tooltip>
+    </Card>
+  );
 }
