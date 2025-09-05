@@ -72,6 +72,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@emotion/react": "^11.10.4",
     "@essentials/one-key-map": "^1.2.0",
+    "@flipt-io/flipt-client-js": "^0.2.0",
     "@floating-ui/dom": "^1.6.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
     "@headlessui/react": "2.2",

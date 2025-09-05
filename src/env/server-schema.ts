@@ -248,4 +248,7 @@ export const serverSchema = z.object({
   // ZKP2P Related:
   ZKP2P_BASE_URL: z.string().optional(),
   ZKP2P_IFRAME_HOST: z.string().optional(),
+
+  FLIPT_URL: z.string(),
+  FLIPT_FETCHER_SECRET: z.string(),
 });
