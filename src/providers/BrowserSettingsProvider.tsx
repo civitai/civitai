@@ -11,6 +11,7 @@ import { devtools } from 'zustand/middleware';
 import type { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useModerationBlocklists } from '~/hooks/useModerationBlocklists';
 
 const Context = createContext<ContentSettingsStore | null>(null);
 
@@ -26,6 +27,9 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       });
     },
   });
+
+  // Prefetch moderation blocklists globally and use trpc as global store
+  useModerationBlocklists({ enabled: true });
 
   const snapshotRef = useRef<Partial<StoreState>>({});
   const storeRef = useRef<ContentSettingsStore | null>(null);
