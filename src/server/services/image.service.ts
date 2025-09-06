@@ -2117,6 +2117,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
     // Get all image IDs from search results
     const searchImageIds = filteredHits.map((hit) => hit.id);
+    const filteredHitIds = [...new Set(searchImageIds)];
 
     let cacheExistenceEnabled = false;
 
@@ -2135,7 +2136,6 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
 
       // BASIC DB CHECK (default)
-      const filteredHitIds = [...new Set(searchImageIds)];
       const dbIdResp = await dbRead.image.findMany({
         where: { id: { in: filteredHitIds } },
         select: { id: true },
@@ -2265,11 +2265,11 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
       droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
 
-      return filteredHits;
+      return filteredHits.filter((x) => imageIds.includes(x.id));
     };
 
     // Apply the (flagged) existence check
-    const filtered = await checkImageExistence(searchImageIds);
+    const filtered = await checkImageExistence(filteredHitIds);
 
     const imageMetrics = await getImageMetricsObject(filtered);
 
