@@ -34,7 +34,7 @@ import clsx from 'clsx';
 import type { DragEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
