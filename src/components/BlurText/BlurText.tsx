@@ -1,7 +1,7 @@
 import React, { forwardRef } from 'react';
 import { createPolymorphicComponent, Box } from '@mantine/core';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useModerationBlocklists } from '~/hooks/useModerationBlocklists';
+import profanityFilter from '~/libs/profanity';
 
 interface BlurTextProps {
   children: React.ReactNode;
@@ -12,8 +12,6 @@ const _BlurText = forwardRef<HTMLElement, BlurTextProps>(({ children, blur, ...p
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
   const shouldBlur = blur !== undefined ? blur : blurNsfw;
 
-  const { data: blocklists, isLoading } = useModerationBlocklists({ enabled: shouldBlur });
-
   // If shouldBlur is false, return children as-is
   if (!shouldBlur) {
     return (
@@ -23,18 +21,9 @@ const _BlurText = forwardRef<HTMLElement, BlurTextProps>(({ children, blur, ...p
     );
   }
 
-  // If still loading blocklists, return children as-is
-  if (isLoading || !blocklists) {
-    return (
-      <Box component="span" ref={ref} {...props}>
-        {children}
-      </Box>
-    );
-  }
-
   const processTextContent = (content: React.ReactNode): React.ReactNode => {
     if (typeof content === 'string') {
-      return blurTextContent(content, blocklists.words);
+      return profanityFilter.censor(content);
     }
 
     if (React.isValidElement(content)) {
@@ -60,16 +49,5 @@ const _BlurText = forwardRef<HTMLElement, BlurTextProps>(({ children, blur, ...p
   );
 });
 _BlurText.displayName = 'BlurText';
-
-function blurTextContent(text: string, wordBlocklist: Array<{ re: RegExp; word: string }>): string {
-  let processedText = text;
-
-  // Check against word blocklist only
-  for (const { re } of wordBlocklist) {
-    processedText = processedText.replace(re, (match) => '*'.repeat(match.length));
-  }
-
-  return processedText;
-}
 
 export const BlurText = createPolymorphicComponent<'span', BlurTextProps>(_BlurText);
