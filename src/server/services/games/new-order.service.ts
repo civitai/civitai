@@ -427,7 +427,13 @@ async function processImageRating({
 
   // Update image nsfw level if the player is a mod
   if (isModerator) {
-    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+    await updateImageNsfwLevel({
+      id: imageId,
+      nsfwLevel: rating,
+      userId: playerId,
+      isModerator,
+      status: 'Actioned',
+    });
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
@@ -518,6 +524,7 @@ async function processImageRating({
             userId: playerId,
             isModerator: true,
             activity: 'setNsfwLevelKono',
+            status: 'Actioned',
           });
         }
       }
@@ -593,6 +600,7 @@ async function processImageRating({
           userId: playerId,
           isModerator: true,
           activity: 'setNsfwLevelKono',
+          status: 'Actioned',
         });
       }
     } else {

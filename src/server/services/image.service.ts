@@ -4456,27 +4456,27 @@ export async function updateImageNsfwLevel({
       leakingContentCounter.inc();
     }
 
-    // TODO: In the future, we might need to revise if the Knights are doing a great job.
-    if (!current?.nsfwLevelLocked && current.userId === userId) {
-      // Add it to knights queue so they can review this:
-      await addImageToQueue({
-        imageIds: id,
-        rankType: NewOrderRankType.Knight,
-        priority: 1,
+    if (!current.nsfwLevelLocked) {
+      await dbWrite.imageRatingRequest.upsert({
+        where: { imageId_userId: { imageId: id, userId: userId } },
+        create: {
+          nsfwLevel,
+          imageId: id,
+          userId: userId,
+          // -5 means it was added to the queue, 3 means it was locked so mods should see.
+          weight: current.userId === userId ? 3 : 1,
+        },
+        update: { nsfwLevel },
       });
-    }
 
-    await dbWrite.imageRatingRequest.upsert({
-      where: { imageId_userId: { imageId: id, userId: userId } },
-      create: {
-        nsfwLevel,
-        imageId: id,
-        userId: userId,
-        // -5 means it was added to the queue, 3 means it was locked so mods should see.
-        weight: current.userId === userId ? (current?.nsfwLevelLocked ? 3 : -5) : 1,
-      },
-      update: { nsfwLevel },
-    });
+      if (current.userId === userId) {
+        await addImageToQueue({
+          imageIds: id,
+          rankType: NewOrderRankType.Knight,
+          priority: 1,
+        });
+      }
+    }
   }
 
   return nsfwLevel;

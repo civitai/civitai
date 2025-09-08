@@ -270,8 +270,8 @@ async function updateImage(
           if (reviewKey === 'minor') queueDetails.priority = 1;
           if (reviewKey === 'poi') queueDetails.priority = 2;
 
-          // Always add images needing review regardless of sampling
-          shouldAddToQueue = true;
+          // never add images needing review regardless of sampling
+          shouldAddToQueue = false;
         }
 
         if (shouldAddToQueue) {
