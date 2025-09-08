@@ -146,6 +146,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
         if (trigger === 'update') {
           await invalidateSession(Number(token.sub));
+          console.log('firfirea');
           token.user = await getSessionUser({ userId: Number(token.sub) });
         } else {
           token.sub = Number(token.sub) as any; //eslint-disable-line
