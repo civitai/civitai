@@ -445,7 +445,7 @@ export const getImageRatingRequestsSchema = paginationSchema.extend({
 export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
 export const imageRatingReviewInput = z.object({
   limit: z.number(),
-  cursor: z.string().optional(),
+  cursor: z.number().optional(),
 });
 
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;

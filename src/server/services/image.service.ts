@@ -4626,15 +4626,15 @@ export async function getImageRatingRequests({
         AND i."nsfwLevelLocked" = FALSE
         AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
         AND i."nsfwLevel" < ${NsfwLevel.Blocked}
-        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.empty}
+        ${!!cursor ? Prisma.sql` AND i."id" >= ${cursor}` : Prisma.empty}
       ORDER BY i."id" ASC
       LIMIT ${limit + 1}
   `;
 
-  let nextCursor: string | undefined;
+  let nextCursor: number | undefined;
   if (limit && results.length > limit) {
     const nextItem = results.pop();
-    nextCursor = nextItem?.createdAt.toISOString() || undefined;
+    nextCursor = nextItem?.id || undefined;
   }
 
   const imageIds = results.map((x) => x.id);
