@@ -9,7 +9,7 @@ import {
   Loader,
 } from '@mantine/core';
 import type { Dispatch, DragEvent, SetStateAction } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   isOrchestratorUrl,
   maxOrchestratorImageFileSize,
@@ -112,6 +112,8 @@ export function SourceImageUploadMultiple({
     return images;
   }, [value, uploads]);
 
+  console.log({ previewImages });
+
   const previewItems = useMemo(() => {
     return [...previewImages.filter((x) => !x.linkToId), ...uploads];
   }, [previewImages, uploads]);
@@ -120,30 +122,31 @@ export function SourceImageUploadMultiple({
     if (uploads.length > 0 && uploads.every((x) => x.status === 'complete')) setUploads([]);
   }, [uploads]);
 
-  useEffect(() => {
-    if (!previewImages?.length) return;
+  const getShouldCrop = useCallback((previewImages: { width: number; height: number }[]) => {
+    if (!previewImages.length) return false;
+    let allMatch = true;
     if (cropToFirstImage) {
       const { width, height } = previewImages[0];
       const ratio = width / height;
-      const allMatch = previewImages.every(({ width, height }) => width / height === ratio);
-      if (!allMatch)
-        handleCrop(
-          previewImages.map((x) => x.url),
-          'replace'
-        );
+      allMatch = previewImages.every(({ width, height }) => width / height === ratio);
     } else if (!!aspectRatios?.length) {
       const ratios = aspectRatios.map((ratio) => {
         const [w, h] = ratio.split(':').map(Number);
         return w / h;
       });
-      const allMatch = previewImages.every(({ width, height }) =>
+      allMatch = previewImages.every(({ width, height }) =>
         ratios.some((r) => r === width / height)
       );
-      if (!allMatch)
-        handleCrop(
-          previewImages.map((x) => x.url),
-          'replace'
-        );
+    }
+    return !allMatch;
+  }, []);
+
+  useEffect(() => {
+    if (getShouldCrop(previewImages)) {
+      handleCrop(
+        previewImages.map((x) => x.url),
+        'replace'
+      );
     }
   }, [previewImages]);
 
@@ -244,36 +247,30 @@ export function SourceImageUploadMultiple({
   }
 
   async function handleCrop(items: (string | Blob | File)[], action: 'add' | 'replace' = 'add') {
-    const incoming: ImageCrop[] = items.map((src) => ({
-      status: 'cropping',
-      id: getRandomId(),
-      url: typeof src !== 'string' ? URL.createObjectURL(src) : src,
-    }));
-    setUploads(incoming);
-    const current = previewItems.filter((x) => x.status === 'complete').map((x) => x.url);
-    const allImages =
-      action === 'add' ? [...current, ...incoming.map((x) => x.url)] : incoming.map((x) => x.url);
-
+    const urls = items.map((src) => (typeof src !== 'string' ? URL.createObjectURL(src) : src));
+    const previewUrls = previewItems.filter((x) => x.status === 'complete').map((x) => x.url);
+    const allUrls = action === 'add' ? [...previewUrls, ...urls] : urls;
     const withAspectRatio = await Promise.all(
-      allImages.map(async (url) => {
+      allUrls.map(async (url) => {
         const { width, height } = await getImageDimensions(url);
         const aspectRatio = Math.round(((width / height) * 100) / 100);
         return { url, width, height, aspectRatio };
       })
     );
 
-    const ratios = aspectRatios?.map((ratio) => {
-      const [w, h] = ratio.split(':').map(Number);
-      return w / h;
-    });
+    const shouldCrop = getShouldCrop(withAspectRatio);
 
-    if (
-      !withAspectRatio.every(({ aspectRatio }) => {
-        if (cropToFirstImage) return aspectRatio === withAspectRatio[0].aspectRatio;
-        else if (ratios) return ratios.includes(aspectRatio);
-        return false;
-      })
-    ) {
+    if (!shouldCrop) {
+      await Promise.all(urls.map((url) => handleUpload(url)));
+    } else {
+      const incoming: ImageCrop[] = urls.map((url) => ({
+        status: 'cropping',
+        id: getRandomId(),
+        url,
+      }));
+
+      setUploads(incoming);
+
       dialogStore.trigger({
         id: 'image-crop-modal',
         component: ImageCropModal,
@@ -289,15 +286,12 @@ export function SourceImageUploadMultiple({
           aspectRatios,
         },
       });
-    } else {
-      await Promise.all(incoming.map(({ url }) => handleUpload(url)));
     }
   }
 
   // handle adding new urls or files
   async function handleChange(value: (string | File)[]) {
-    if (cropToFirstImage || !!aspectRatios?.length) await handleCrop(value);
-    else await Promise.all(value.map((src) => handleUpload(src)));
+    await handleCrop(value);
   }
 
   return (

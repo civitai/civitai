@@ -39,10 +39,7 @@ export function MatureContentSettings() {
       </ToggleList>
       {showNsfw && (
         <Stack gap={4}>
-          <Stack gap={0}>
-            <Text fw={500}>Browsing Levels</Text>
-            {/* <Text size="sm">Pick browsing levels for the type of content you want to see.</Text> */}
-          </Stack>
+          <Text fw={500}>Browsing Levels</Text>
           <BrowsingLevelsStacked />
         </Stack>
       )}
