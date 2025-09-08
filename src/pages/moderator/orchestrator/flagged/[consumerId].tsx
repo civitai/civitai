@@ -216,16 +216,17 @@ function SelectedCount({ userId, data }: { userId: number; data: ConsumerStikesG
   const count = useStore((state) => Object.values(state).filter(Boolean).length);
   const router = useRouter();
 
+  const onSuccess = () => {
+    if (history.length === 1) router.push('/moderator/orchestrator/flagged');
+    else router.back();
+  };
+
   const reviewConsumerStrikes = trpc.orchestrator.reviewConsumerStrikes.useMutation({
-    onSuccess: () => {
-      router.back();
-    },
+    onSuccess,
     onError: () => showErrorNotification({ error: new Error('failed to submit review') }),
   });
   const reportCsam = trpc.csam.createReport.useMutation({
-    onSuccess: () => {
-      router.back();
-    },
+    onSuccess,
     onError: () => showErrorNotification({ error: new Error('failed to submit csam report') }),
   });
 

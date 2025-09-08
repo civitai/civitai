@@ -1,4 +1,3 @@
-import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
@@ -30,8 +29,14 @@ import nodeFetch from 'node-fetch';
 import JSZip from 'jszip';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
-import type { Report } from 'cybertipline-tools';
-import { Client, Environment, FileDetailType, IncidentType, IPEventName } from 'cybertipline-tools';
+import type { Report } from '@civitai/cybertipline-tools';
+import {
+  Client,
+  Environment,
+  FileDetailType,
+  IncidentType,
+  IPEventName,
+} from '@civitai/cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 
