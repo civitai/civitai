@@ -75,7 +75,9 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  return next({ ctx: { ...ctx, user, token, allowMatureContent: true } });
+  const allowMatureContent = user.showNsfw;
+  // const allowMatureContent = ctx.domain === 'blue' && user.showNsfw;
+  return next({ ctx: { ...ctx, user, token, allowMatureContent } });
   // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 

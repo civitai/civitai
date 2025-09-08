@@ -289,7 +289,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     (appContext.ctx.req as any)['session'] = session;
   }
   const allowMatureContent =
-    appContext.ctx.req?.headers.host === env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE;
+    appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN;
 
   return {
     pageProps: {

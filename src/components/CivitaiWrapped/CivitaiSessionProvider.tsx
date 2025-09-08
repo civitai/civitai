@@ -25,7 +25,7 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
-  const { canViewNsfw } = useFeatureFlags();
+  const { allowMatureContent } = useAppContext();
   const { region } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
@@ -56,11 +56,12 @@ export function CivitaiSessionProvider({
         blurNsfw: user.blurNsfw,
       },
     };
-    if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
+    if (!allowMatureContent)
+      currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
     return currentUser;
     // data?.expires seems not used but is needed to remotely kill sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.expires, disableHidden, canViewNsfw]);
+  }, [data?.expires, disableHidden, allowMatureContent]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();

@@ -1,13 +1,11 @@
 import type { MenuItemProps } from '@mantine/core';
 import {
-  ActionIcon,
-  Center,
+  Anchor,
   Checkbox,
   Menu,
   Modal,
   Text,
   Stack,
-  ThemeIcon,
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
@@ -83,15 +81,13 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
-import {
-  getIsFluxContextFromEngine,
-  getIsFluxKontext,
-} from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '@civitai/client';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
+import { useAppContext } from '~/providers/AppProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -100,6 +96,7 @@ export type GeneratedImageProps = {
 };
 
 const matureDictionary: Record<string, boolean> = {
+  [NsfwLevel.P_G13]: true,
   [NsfwLevel.R]: true,
   [NsfwLevel.X]: true,
   [NsfwLevel.XXX]: true,
@@ -116,7 +113,8 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
-  const features = useFeatureFlags();
+  const { allowMatureContent } = useAppContext();
+  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
@@ -268,15 +266,26 @@ export function GeneratedImage({
         <>
           {nsfwLevelError ? (
             <BlockedBlock
-              title="Blocked for Adult Content"
+              title="Blocked for Mature Content"
               message="Private generation is limited to PG, PG-13 only."
             />
           ) : blockedReason ? (
             <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
-          ) : features.isGreen && matureDictionary[image.nsfwLevel ?? ''] ? (
+          ) : (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''] ? (
             <BlockedBlock
-              title={'Blocked'}
-              message={'This image received a mature rating and is unavailable on this site'}
+              title={'Blocked for Mature Content'}
+              message={
+                !allowMatureContent
+                  ? 'This image received a mature rating and is unavailable on this site'
+                  : () => (
+                      <Text align="center" size="sm">
+                        To view this content, enable mature content in your{' '}
+                        <Anchor component={NextLink} href="/user/account">
+                          account settings
+                        </Anchor>
+                      </Text>
+                    )
+              }
             />
           ) : (
             <EdgeMedia2

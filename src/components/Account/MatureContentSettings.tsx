@@ -16,9 +16,10 @@ export function MatureContentSettings() {
       <ToggleList>
         <ToggleList.Item checked={showNsfw} onChange={() => toggleShowNsfw()}>
           <div>
-            <Text fw={500}>Show mature content</Text>
+            <Text fw={500}>Enable mature content</Text>
             <Text size="sm">
-              {`By enabling mature content, you confirm you are over the age of 18.`}
+              By enabling mature content, you confirm you are over the age of 18 and wish to view
+              and/or create such content.
             </Text>
           </div>
         </ToggleList.Item>
