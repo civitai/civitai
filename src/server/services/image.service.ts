@@ -154,6 +154,7 @@ import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
+import { getExplainSql } from '~/server/db/db-helpers';
 
 const {
   cacheHitRequestsTotal,
@@ -4626,7 +4627,7 @@ export async function getImageRatingRequests({
         AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
         AND i."nsfwLevel" < ${NsfwLevel.Blocked}
         ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.empty}
-      ORDER BY irr."createdAt"
+      ORDER BY i."id" ASC
       LIMIT ${limit + 1}
   `;
 
