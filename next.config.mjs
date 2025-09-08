@@ -267,11 +267,6 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/wiki',
-          destination: 'https://wiki.civitai.com',
-          permanent: true,
-        },
-        {
           source: '/education',
           destination: 'https://education.civitai.com',
           permanent: true,

@@ -116,16 +116,7 @@ export function Wan22FormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>CFG Scale</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              Controls how closely the video generation follows the text prompt. 
             </InfoPopover>
           </div>
         }
@@ -139,19 +130,7 @@ export function Wan22FormInput() {
         name="shift"
         label={
           <div className="flex items-center gap-1">
-            <Input.Label>Shift</Input.Label>
-            {/* <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
-            </InfoPopover> */}
+            <Input.Label>Shift</Input.Label> 
           </div>
         }
         min={1}

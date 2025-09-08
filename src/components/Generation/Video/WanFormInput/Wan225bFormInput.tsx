@@ -116,16 +116,7 @@ export function Wan225bFormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>CFG Scale</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              Controls how closely the video generation follows the text prompt.
             </InfoPopover>
           </div>
         }
@@ -140,16 +131,7 @@ export function Wan225bFormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>Steps</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              Controls how closely the video generation follows the text prompt.
             </InfoPopover>
           </div>
         }
@@ -163,18 +145,6 @@ export function Wan225bFormInput() {
         label={
           <div className="flex items-center gap-1">
             <Input.Label>Shift</Input.Label>
-            {/* <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
-            </InfoPopover> */}
           </div>
         }
         min={1}
