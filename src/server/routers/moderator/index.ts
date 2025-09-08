@@ -11,7 +11,7 @@ import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
-import { getModelModRules } from '~/server/services/model.service';
+import { getModelModRules, getTrainingModelsForModerators } from '~/server/services/model.service';
 import { moderatorProcedure, router } from '~/server/trpc';
 import { throwDbError } from '~/server/utils/errorHandling';
 import type { ModerationRule } from '~/shared/utils/prisma/models';
@@ -25,6 +25,9 @@ export const modRouter = router({
     resolveFlagged: moderatorProcedure
       .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
+    queryTraining: moderatorProcedure
+      .input(z.object({ limit: z.number().optional(), cursor: z.number().optional() }))
+      .query(({ input }) => getTrainingModelsForModerators(input)),
   }),
   modelVersions: router({
     query: moderatorProcedure

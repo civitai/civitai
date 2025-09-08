@@ -3347,3 +3347,91 @@ export async function getTopWeeklyEarners(fresh = false) {
 
   return results;
 }
+
+export const getTrainingModelsForModerators = async ({
+  limit = DEFAULT_PAGE_SIZE,
+  cursor,
+}: {
+  limit?: number;
+  cursor?: number;
+}) => {
+  const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
+  const cursorWhere = cursor ? { id: { lt: cursor } } : {};
+
+  const where: Prisma.ModelWhereInput = {
+    ...cursorWhere,
+    uploadType: ModelUploadType.Trained,
+    deletedAt: null,
+    modelVersions: {
+      some: {
+        files: {
+          some: {
+            type: 'Training Data',
+            dataPurged: false,
+          },
+        },
+      },
+    },
+  };
+
+  const items = await dbRead.model.findMany({
+    take,
+    skip,
+    where,
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+      status: true,
+      createdAt: true,
+      publishedAt: true,
+      user: {
+        select: simpleUserSelect,
+      },
+      modelVersions: {
+        where: {
+          files: {
+            some: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          trainingStatus: true,
+          createdAt: true,
+          files: {
+            where: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+            select: {
+              id: true,
+              name: true,
+              url: true,
+              sizeKB: true,
+              createdAt: true,
+              metadata: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
+
+  return {
+    items,
+    nextCursor,
+  };
+};
