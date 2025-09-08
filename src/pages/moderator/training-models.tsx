@@ -51,22 +51,70 @@ export default function TrainingModerationFeedPage() {
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
 
+  const utils = trpc.useUtils();
+
   const toggleCannotPublishMutation = trpc.model.toggleCannotPublish.useMutation({
+    onMutate: async (variables) => {
+      // Cancel any outgoing refetches
+      await utils.moderator.models.queryTraining.cancel();
+
+      // Snapshot the previous value
+      const previousData = utils.moderator.models.queryTraining.getInfiniteData();
+
+      // Optimistically update the cache
+      utils.moderator.models.queryTraining.setInfiniteData(
+        { limit: 20, username: debouncedUsernameFilter || undefined },
+        (old) => {
+          if (!old) return old;
+          
+          return {
+            ...old,
+            pages: old.pages.map(page => ({
+              ...page,
+              items: page.items.map(model => 
+                model.id === variables.id 
+                  ? {
+                      ...model,
+                      meta: {
+                        ...model.meta,
+                        cannotPublish: !model.meta?.cannotPublish
+                      }
+                    }
+                  : model
+              )
+            }))
+          };
+        }
+      );
+
+      // Return a context object with the snapshotted value
+      return { previousData };
+    },
+    onError: (error, variables, context) => {
+      // If the mutation fails, use the context returned from onMutate to roll back
+      if (context?.previousData) {
+        utils.moderator.models.queryTraining.setInfiniteData(
+          { limit: 20, username: debouncedUsernameFilter || undefined },
+          context.previousData
+        );
+      }
+      
+      showNotification({
+        title: 'Error',
+        message: error.message,
+        color: 'red',
+      });
+    },
     onSuccess: () => {
       showNotification({
         title: 'Success',
         message: 'Model publish status updated',
         color: 'green',
       });
-      // Refetch the data to update the UI
-      window.location.reload();
     },
-    onError: (error) => {
-      showNotification({
-        title: 'Error',
-        message: error.message,
-        color: 'red',
-      });
+    onSettled: () => {
+      // Always refetch after error or success to sync with server
+      utils.moderator.models.queryTraining.invalidate();
     },
   });
 
