@@ -131,17 +131,19 @@ export async function getUserNotificationCount({
   unread: boolean;
   category?: NotificationCategory;
 }) {
-  const cachedCount = await notificationCache.getUser(userId);
-  if (cachedCount) return cachedCount;
+  try {
+    //const cachedCount = await notificationCache.getUser(userId);
+    //if (cachedCount) return cachedCount;
 
-  const AND = [Prisma.sql`un."userId" = ${userId}`];
-  if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
-  // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
+    const AND = [Prisma.sql`un."userId" = ${userId}`];
+    if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
+    // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
-  // this seems unused
-  if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
+    // this seems unused
+    if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
+    console.log('getUserNotificationCount');
+    const raw = Prisma.sql`
     SELECT
       n.category,
       COUNT(*) AS count
@@ -151,11 +153,19 @@ export async function getUserNotificationCount({
     WHERE
       ${Prisma.join(AND, ' AND ')}
     GROUP BY category
-  `);
+  `;
+    console.log(raw);
+    const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(raw);
 
-  const result = await query.result();
-  await notificationCache.setUser(userId, result);
-  return result;
+    const result = await query.result();
+    await notificationCache.setUser(userId, result);
+    console.log('result', result.length, result);
+    return result;
+  } catch (e) {
+    console.error('getUserNotificationCount err ', e);
+  }
+
+  return [];
 }
 
 export const markNotificationsRead = async ({
