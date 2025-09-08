@@ -259,6 +259,7 @@ export type ModelMeta = Partial<{
   declinedAt: string;
   showcaseCollectionId: number;
   cannotPromote: boolean;
+  cannotPublish: boolean;
   commentsLocked: boolean;
 }>;
 

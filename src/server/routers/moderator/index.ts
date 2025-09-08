@@ -26,7 +26,7 @@ export const modRouter = router({
       .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
     queryTraining: moderatorProcedure
-      .input(z.object({ limit: z.number().optional(), cursor: z.number().optional() }))
+      .input(z.object({ limit: z.number().optional(), cursor: z.number().optional(), username: z.string().optional() }))
       .query(({ input }) => getTrainingModelsForModerators(input)),
   }),
   modelVersions: router({

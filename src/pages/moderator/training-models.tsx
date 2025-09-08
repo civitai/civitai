@@ -8,13 +8,14 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  TextInput,
   Title,
   ThemeIcon,
 } from '@mantine/core';
 import { IconDownload, IconEye, IconUser, IconCalendar } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -22,14 +23,26 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { showNotification } from '@mantine/notifications';
 import classes from './training-models.module.scss';
 
 export default function TrainingModerationFeedPage() {
   const currentUser = useCurrentUser();
+  const [usernameFilter, setUsernameFilter] = useState('');
+  const [debouncedUsernameFilter, setDebouncedUsernameFilter] = useState('');
+
+  // Debounce username filter
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedUsernameFilter(usernameFilter);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [usernameFilter]);
 
   const { data, isFetching, hasNextPage, fetchNextPage, isInitialLoading } =
     trpc.moderator.models.queryTraining.useInfiniteQuery(
-      { limit: 20 },
+      { limit: 20, username: debouncedUsernameFilter || undefined },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         enabled: !!currentUser?.isModerator,
@@ -37,6 +50,29 @@ export default function TrainingModerationFeedPage() {
     );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
+
+  const toggleCannotPublishMutation = trpc.model.toggleCannotPublish.useMutation({
+    onSuccess: () => {
+      showNotification({
+        title: 'Success',
+        message: 'Model publish status updated',
+        color: 'green',
+      });
+      // Refetch the data to update the UI
+      window.location.reload();
+    },
+    onError: (error) => {
+      showNotification({
+        title: 'Error',
+        message: error.message,
+        color: 'red',
+      });
+    },
+  });
+
+  const handleToggleCannotPublish = (modelId: number) => {
+    toggleCannotPublishMutation.mutate({ id: modelId });
+  };
 
   if (!currentUser?.isModerator) {
     return (
@@ -68,6 +104,27 @@ export default function TrainingModerationFeedPage() {
                   Models uploaded with training data for moderation review
                 </Text>
               </div>
+            </Group>
+          </Card>
+
+          {/* Username Filter */}
+          <Card p="md" radius="md" withBorder>
+            <Group gap="sm" align="center">
+              <ThemeIcon size="sm" variant="light" color="gray" radius="md">
+                <IconUser size={16} />
+              </ThemeIcon>
+              <TextInput
+                placeholder="Filter by username (leave empty to show all)"
+                value={usernameFilter}
+                onChange={(event) => setUsernameFilter(event.currentTarget.value)}
+                style={{ flex: 1 }}
+                rightSection={usernameFilter !== debouncedUsernameFilter ? <Loader size={16} /> : null}
+              />
+              {usernameFilter && (
+                <Button size="xs" variant="light" onClick={() => setUsernameFilter('')}>
+                  Clear
+                </Button>
+              )}
             </Group>
           </Card>
 
@@ -189,7 +246,23 @@ export default function TrainingModerationFeedPage() {
                               </Button>
                             </Group>
                           </Group>
-                          
+
+                          {/* Moderation Actions */}
+                          <Group gap="xs" justify="space-between">
+                            <Text size="xs" c="dimmed" fw={500}>
+                              Moderation Actions
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant={model.meta?.cannotPublish ? 'filled' : 'light'}
+                              color={model.meta?.cannotPublish ? 'red' : 'gray'}
+                              onClick={() => handleToggleCannotPublish(model.id)}
+                              loading={toggleCannotPublishMutation.isLoading}
+                            >
+                              {model.meta?.cannotPublish ? 'Allow Publish' : 'Block Publish'}
+                            </Button>
+                          </Group>
+
                           {/* Version Badges */}
                           <Group gap="xs">
                             <Badge color="blue" variant="light" size="xs">

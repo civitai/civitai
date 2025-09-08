@@ -1737,6 +1737,9 @@ export const publishModelById = async ({
   meta?: ModelMeta;
   republishing?: boolean;
 }) => {
+  if (meta?.cannotPublish) {
+    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+  }
   const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -3294,6 +3297,32 @@ export const toggleCannotPromote = async ({
   };
 };
 
+export const toggleCannotPublish = async ({
+  id,
+  isModerator,
+}: GetByIdInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+  const model = await getModel({ id, select: { id: true, meta: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+  const modelMeta = model.meta as ModelMeta | null;
+  const currentCannotPublish = modelMeta?.cannotPublish ?? false;
+  const cannotPublish = !currentCannotPublish;
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: {
+      meta: modelMeta ? { ...modelMeta, cannotPublish } : { cannotPublish },
+    },
+    select: { id: true, meta: true },
+  });
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  return {
+    id: updated.id,
+    meta: updated.meta as ModelMeta | null,
+  };
+};
+
 export async function getTopWeeklyEarners(fresh = false) {
   if (fresh) await bustFetchThroughCache(REDIS_KEYS.CACHES.TOP_EARNERS);
 
@@ -3351,9 +3380,11 @@ export async function getTopWeeklyEarners(fresh = false) {
 export const getTrainingModelsForModerators = async ({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
+  username,
 }: {
   limit?: number;
   cursor?: number;
+  username?: string;
 }) => {
   const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
   const cursorWhere = cursor ? { id: { lt: cursor } } : {};
@@ -3362,6 +3393,11 @@ export const getTrainingModelsForModerators = async ({
     ...cursorWhere,
     uploadType: ModelUploadType.Trained,
     deletedAt: null,
+    ...(username && {
+      user: {
+        username,
+      },
+    }),
     modelVersions: {
       some: {
         files: {
@@ -3390,6 +3426,7 @@ export const getTrainingModelsForModerators = async ({
       status: true,
       createdAt: true,
       publishedAt: true,
+      meta: true,
       user: {
         select: simpleUserSelect,
       },
