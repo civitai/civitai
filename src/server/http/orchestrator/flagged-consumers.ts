@@ -81,7 +81,9 @@ export type ConsumerStrike = {
     id: string;
     type: string;
     prompt: string;
-    blobs: { id: string; previewUrl: string }[];
+    negativePrompt?: string;
+    resources?: string[];
+    blobs?: { id: string; previewUrl: string }[];
   };
 };
 

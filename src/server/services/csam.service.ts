@@ -839,6 +839,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     const flaggedData = await getConsumerStrikes({ consumerId: `civitai-${userId}` });
     const imageUrls = flaggedData
       .flatMap((group) => group.strikes.flatMap(({ job }) => job.blobs))
+      .filter(isDefined)
       .map((x) => x.previewUrl);
 
     const outPath = `${reportDirs.generatedImages}/${userId}_generated-images.zip`;

@@ -28,6 +28,8 @@ import { IconAlertTriangle, IconCheck, IconSquareOff } from '@tabler/icons-react
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { uniqBy } from 'lodash-es';
+import { isDefined } from '~/utils/type-guards';
+import { showErrorNotification } from '~/utils/notifications';
 
 const useStore = create<Record<string, boolean>>(() => ({}));
 const resetState = () => {
@@ -154,7 +156,7 @@ function FlaggedConsumerStrikes({ data }: { data: ConsumerStrike[] }) {
         {items.map(({ strike, job }, index) => (
           <Card key={index} withBorder padding="sm">
             <div className="mb-1 grid grid-cols-4 gap-1">
-              {job.blobs.map((blob, i) => (
+              {job.blobs?.map((blob, i) => (
                 <ConsumerStrikePreviewImage key={i} {...blob} />
               ))}
             </div>
@@ -218,11 +220,13 @@ function SelectedCount({ userId, data }: { userId: number; data: ConsumerStikesG
     onSuccess: () => {
       router.back();
     },
+    onError: () => showErrorNotification({ error: new Error('failed to submit review') }),
   });
   const reportCsam = trpc.csam.createReport.useMutation({
     onSuccess: () => {
       router.back();
     },
+    onError: () => showErrorNotification({ error: new Error('failed to submit csam report') }),
   });
 
   const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
@@ -248,8 +252,27 @@ function SelectedCount({ userId, data }: { userId: number; data: ConsumerStikesG
 
   function handleReportCsam() {
     // TODO - collate data
+    const selected = Object.keys(useStore.getState());
+    const jobs = data
+      .flatMap((x) =>
+        x.strikes.map(({ strike, job }) => {
+          if (!job || !job.blobs) return null;
+          return {
+            blobs: job.blobs
+              .filter((blob) => selected.includes(blob.previewUrl))
+              .map(({ previewUrl }) => ({ url: previewUrl })),
+            jobId: job.id,
+            prompt: job.prompt,
+            negativePrompt: job.negativePrompt,
+            resources: job.resources,
+            dateTime: new Date(strike.dateTime),
+          };
+        })
+      )
+      .filter(isDefined);
+    // .filter(x => x.job && x.job.blobs?.some((blob) => ))
     handleConfirm(() => {
-      reportCsam.mutate({ type: 'GeneratedImage', userId, details: { generatedImages: [] } });
+      reportCsam.mutate({ type: 'GeneratedImage', userId, details: { generatedImages: jobs } });
     });
   }
 
