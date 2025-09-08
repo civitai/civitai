@@ -43,6 +43,11 @@ export function ModerationNav() {
           label: 'Contests',
           href: '/moderator/contests',
         },
+        {
+          label: 'Generator Flagged',
+          href: '/moderator/orchestrator/flagged',
+          hidden: !features.csamReports,
+        },
       ]
         .filter((i) => !i.hidden)
         .map((link) => (

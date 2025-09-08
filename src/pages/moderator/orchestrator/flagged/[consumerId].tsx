@@ -12,6 +12,7 @@ import {
   ActionIcon,
   Tooltip,
   Paper,
+  Alert,
 } from '@mantine/core';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -30,6 +31,7 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
+import { Page } from '~/components/AppLayout/Page';
 
 const useStore = create<Record<string, boolean>>(() => ({}));
 const resetState = () => {
@@ -37,7 +39,7 @@ const resetState = () => {
   useStore.setState({}, true);
 };
 
-export default function FlaggedConsumerId() {
+function FlaggedConsumerId() {
   const router = useRouter();
   const consumerId = router.query.consumerId as string;
   const userId = Number(consumerId.split('-')[1]);
@@ -90,7 +92,7 @@ export default function FlaggedConsumerId() {
 }
 
 function FlaggedConsumerContent({ data }: { data: ConsumerStikesGroup[] }) {
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>('unreviewed');
   const _status = status ?? data[0].status;
 
   return (
@@ -153,6 +155,7 @@ function FlaggedConsumerStrikes({ data }: { data: ConsumerStrike[] }) {
     <>
       <div className="flex flex-col gap-3">
         {navigation}
+        {!items.length && <Alert>{`You're all caught up!`}</Alert>}
         {items.map(({ strike, job }, index) => (
           <Card key={index} withBorder padding="sm">
             <div className="mb-1 grid grid-cols-4 gap-1">
@@ -162,10 +165,21 @@ function FlaggedConsumerStrikes({ data }: { data: ConsumerStrike[] }) {
             </div>
             <Text size="sm">
               <Badge component="span" size="sm">
+                Prompt
+              </Badge>{' '}
+              <Badge component="span" size="sm">
                 {strike.reason}
               </Badge>{' '}
               {job.prompt}
             </Text>
+            {job.negativePrompt && (
+              <Text size="sm">
+                <Badge component="span" size="sm">
+                  Negative Prompt
+                </Badge>{' '}
+                {job.negativePrompt}
+              </Text>
+            )}
           </Card>
         ))}
         {navigation}
@@ -325,3 +339,5 @@ function SelectedCount({ userId, data }: { userId: number; data: ConsumerStikesG
     </Paper>
   );
 }
+
+export default Page(FlaggedConsumerId, { features: (features) => features.csamReports });
