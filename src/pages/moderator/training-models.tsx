@@ -88,19 +88,34 @@ export default function TrainingModerationFeedPage() {
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
               {flatData?.map((model) => (
                 <Card key={model.id} p="md" radius="md" withBorder className={classes.modelCard}>
-                  <Stack gap="sm">
-                    {/* Compact Header */}
+                  <Stack gap="sm" h="100%">
+                    {/* Compact Header with User */}
                     <div>
-                      <Text fw={700} size="lg" className={classes.modelTitle} lineClamp={2}>
-                        {model.name}
-                      </Text>
-                      <Group gap="xs" mt="xs" wrap="wrap">
+                      <Group gap="xs" mb="xs" align="flex-start">
+                        <div style={{ flex: 1 }}>
+                          <Text fw={700} size="lg" className={classes.modelTitle} lineClamp={2}>
+                            {model.name}
+                          </Text>
+                        </div>
+                        <Group gap="xs" align="center">
+                          <UserAvatar user={model.user} size="xs" />
+                          <Text size="xs" fw={500}>
+                            {model.user.username}
+                          </Text>
+                        </Group>
+                      </Group>
+
+                      {/* Status and Type Badges */}
+                      <Group gap="xs" wrap="wrap">
                         <Badge
                           color={model.status === 'Published' ? 'green' : 'orange'}
                           variant="light"
                           size="sm"
                         >
                           {model.status}
+                        </Badge>
+                        <Badge variant="outline" size="xs">
+                          {model.type}
                         </Badge>
                         {model.nsfw && (
                           <Badge color="red" variant="light" size="xs">
@@ -127,18 +142,6 @@ export default function TrainingModerationFeedPage() {
 
                     {/* Compact Meta */}
                     <div className={classes.metaSection}>
-                      <Group gap="xs" mb="xs">
-                        <UserAvatar user={model.user} size="xs" />
-                        <Text size="xs" fw={500}>
-                          {model.user.username}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          •
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {model.type}
-                        </Text>
-                      </Group>
                       <Text size="xs" c="dimmed">
                         Created {formatDate(model.createdAt)}
                       </Text>
@@ -152,49 +155,56 @@ export default function TrainingModerationFeedPage() {
                     {/* Compact Versions */}
                     {model.modelVersions.map((version) => (
                       <div key={version.id} className={classes.versionSection}>
-                        <Group gap="xs" justify="space-between" align="flex-start" noWrap>
-                          {/* Version Info */}
-                          <div>
-                            <Group gap="xs" align="flex-start" wrap="wrap">
+                        <Stack gap="xs">
+                          {/* Version Header */}
+                          <Group justify="space-between" align="flex-start">
+                            <div style={{ flex: 1, minWidth: 0 }}>
                               <Text fw={600} size="sm" lineClamp={1}>
                                 {version.name}
                               </Text>
-                              <Badge color="blue" variant="light" size="xs">
-                                {version.status}
-                              </Badge>
-                              {version.trainingStatus && (
-                                <Badge color="purple" variant="light" size="xs">
-                                  {version.trainingStatus}
-                                </Badge>
-                              )}
+                              <Text size="xs" c="dimmed">
+                                Created {formatDate(version.createdAt)}
+                              </Text>
+                            </div>
+                            <Group gap="xs" style={{ flexShrink: 0 }}>
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="blue"
+                                leftSection={<IconEye size={14} />}
+                                component={Link}
+                                href={`/models/${model.id}?modelVersionId=${version.id}`}
+                              >
+                                View
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="filled"
+                                color="yellow"
+                                leftSection={<IconEye size={14} />}
+                                component={Link}
+                                href={`/moderator/review/training-data/${version.id}`}
+                              >
+                                Review
+                              </Button>
                             </Group>
-                            <Text size="xs" c="dimmed">
-                              Created {formatDate(version.createdAt)}
-                            </Text>
-                          </div>
-
-                          {/* Action Buttons */}
+                          </Group>
+                          
+                          {/* Version Badges */}
                           <Group gap="xs">
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="blue"
-                              leftSection={<IconEye size={14} />}
-                              component={Link}
-                              href={`/models/${model.id}?modelVersionId=${version.id}`}
-                            >
-                              View
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="filled"
-                              color="yellow"
-                              leftSection={<IconEye size={14} />}
-                              component={Link}
-                              href={`/moderator/review/training-data/${version.id}`}
-                            >
-                              Review
-                            </Button>
+                            <Badge color="blue" variant="light" size="xs">
+                              {version.status}
+                            </Badge>
+                            {version.baseModel && (
+                              <Badge color="gray" variant="outline" size="xs">
+                                {version.baseModel}
+                              </Badge>
+                            )}
+                            {version.trainingStatus && (
+                              <Badge color="purple" variant="light" size="xs">
+                                {version.trainingStatus}
+                              </Badge>
+                            )}
                           </Group>
 
                           {/* Compact Training Files */}
@@ -212,7 +222,7 @@ export default function TrainingModerationFeedPage() {
                                       color="yellow"
                                       leftSection={<IconDownload size={12} />}
                                       component="a"
-                                      href={file.url}
+                                      href={`/api/download/models/${version.id}?type=Training%20Data`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       style={{ flexShrink: 0 }}
@@ -246,7 +256,7 @@ export default function TrainingModerationFeedPage() {
                               </div>
                             ))}
                           </Stack>
-                        </Group>
+                        </Stack>
                       </div>
                     ))}
                   </Stack>

@@ -3406,6 +3406,7 @@ export const getTrainingModelsForModerators = async ({
           id: true,
           name: true,
           status: true,
+          baseModel: true,
           trainingStatus: true,
           createdAt: true,
           files: {
