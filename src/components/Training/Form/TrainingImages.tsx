@@ -921,11 +921,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         let label = imgData.label;
 
         if (triggerWord.length) {
-          const separator = labelType === 'caption' ? '.' : ',';
-          const regMatch = new RegExp(`^${triggerWord}(${separator}|$)`);
+          const separator = labelType === 'caption' ? '' : ',';
+          const regMatch =
+            labelType === 'caption'
+              ? new RegExp(`^${triggerWord}( |$)`)
+              : new RegExp(`^${triggerWord}(${separator}|$)`);
 
           if (!regMatch.test(label)) {
-            label = label.length > 0 ? [triggerWord, label].join(`${separator} `) : triggerWord;
+            label =
+              label.length > 0
+                ? labelType === 'caption'
+                  ? [triggerWord, label].join(' ')
+                  : [triggerWord, label].join(`${separator} `)
+                : triggerWord;
           }
         }
 
