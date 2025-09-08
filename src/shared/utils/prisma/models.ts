@@ -134,7 +134,7 @@ export type BountyEntryMode = "Open" | "BenefactorsOnly";
 
 export type BountyEngagementType = "Favorite" | "Track";
 
-export type CsamReportType = "Image" | "TrainingData";
+export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage";
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 

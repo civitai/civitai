@@ -20,6 +20,16 @@ export const csamContentsDictionary = {
   other: 'AI-generated sexualization of uploaded images/videos of minors',
 } as const;
 
+export type ConsumerStrikeDetailsSchema = z.infer<typeof consumerStrikeDetailsSchema>;
+const consumerStrikeDetailsSchema = z.object({
+  blobs: z.object({ url: z.string() }).array(),
+  jobId: z.string(),
+  prompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
+  resources: z.string().array().optional(),
+  dateTime: z.date().optional(),
+});
+
 // #region [user input]
 export type CsamReportFormInput = z.input<typeof csamReportDetails>;
 export type CsamReportFormOutput = z.output<typeof csamReportDetails>;
@@ -28,6 +38,7 @@ export const csamReportDetails = z.object({
   minorDepiction: z.enum(['real', 'non-real']).optional(),
   capabilities: zodEnumFromObjKeys(csamCapabilitiesDictionary).array().optional(),
   contents: zodEnumFromObjKeys(csamContentsDictionary).array().optional(),
+  generatedImages: consumerStrikeDetailsSchema.array().optional(),
   // trainingData: trainingDataSchema.array().optional(),
   // userActivity: userActivitySchema.array().optional(),
 });

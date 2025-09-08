@@ -1,103 +1,98 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { removeBlockedImagesRecursive } from '~/server/jobs/image-ingestion';
-import { refreshImageResources } from '~/server/services/image.service';
-import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { TaskBatcher } from '~/utils/taskBatcher';
+import { isDefined } from '~/utils/type-guards';
 
-type Row = {
-  userId: number;
-  cosmeticId: number;
-  claimKey: string;
-  data: any[];
-  fixedData?: Record<string, any>;
+type MatureContent = {
+  count: number;
+  subscriptions: Record<string, number>;
 };
-
-const covered = [1288397, 1288372, 1288371, 1288358, 1282254, 1281249];
-const notCovered = [474453, 379259];
-const test = [1183765, 164821];
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    // const modelVersions = await getResourceData({
-    //   ids: [1182093],
-    //   user: session?.user,
-    // });
-    // const modelVersions = await dbRead.$queryRaw`
-    //   SELECT
-    //     mv."id",
-    //     mv."name",
-    //     mv."trainedWords",
-    //     mv."baseModel",
-    //     mv."settings",
-    //     mv."availability",
-    //     mv."clipSkip",
-    //     mv."vaeId",
-    //     mv."earlyAccessEndsAt",
-    //     (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
-    //     gc."covered",
-    //     (
-    //       SELECT to_json(obj)
-    //       FROM (
-    //         SELECT
-    //           m."id",
-    //           m."name",
-    //           m."type",
-    //           m."nsfw",
-    //           m."poi",
-    //           m."minor",
-    //           m."userId"
-    //         FROM "Model" m
-    //         WHERE m.id = mv."modelId"
-    //       ) as obj
-    //     ) as model
-    //   FROM "ModelVersion" mv
-    //   LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
-    //   WHERE mv.id IN (${Prisma.join([1325378])})
-    // `;
 
-    // const thread = await getCommentsThreadDetails2({
-    //   entityId: 10936,
-    //   entityType: 'article',
-    // });
+    const result = await clickhouse?.$query<{ userId: number }>(`
+      SELECT "userId"
+      FROM "pageViews"
+      WHERE time BETWEEN '2025-08-01' AND '2025-08-31'
+      GROUP BY "userId"
+    `);
 
-    // await upsertTagsOnImageNew([
-    //   {
-    //     imageId: 1,
-    //     tagId: 1,
-    //     // source: 'User',
-    //     confidence: 70,
-    //     // automated: true,
-    //     // disabled: false,
-    //     // needsReview: false,
-    //   },
-    // ]);
-    // for (const workflow of workflows) {
-    //   setWorkflowDefinition(workflow.key, workflow);
-    // }
+    if (!result) throw new Error('no results');
+    const browsingLevels: Record<number, number> = {};
+    const matureContent: { show: MatureContent; hide: MatureContent } = {
+      show: { count: 0, subscriptions: {} },
+      hide: { count: 0, subscriptions: {} },
+    };
 
-    // const data = await getGenerationResourceData({ ids: [1703341] });
+    let totalProcessed = 0;
+    const users = await Limiter({ batchSize: 5000, limit: 10 }).process(result, async (result) => {
+      const userIds = result.map((x) => x.userId);
+      const users = await dbRead.user.findMany({
+        where: { id: { in: userIds } },
+        select: {
+          id: true,
+          browsingLevel: true,
+          showNsfw: true,
+          subscriptionId: true,
+        },
+      });
+      totalProcessed += users.length;
+      console.log({ totalProcessed });
+      return users;
+    });
 
-    // await setExperimentalConfig({ userIds: [5] });
-    // const data = await updateCollectionsNsfwLevels([24004]);
+    const subscriptions = await Limiter({ batchSize: 5000, limit: 10 }).process(
+      users,
+      async (users) => {
+        const subscriptionIds = users.map((x) => x.subscriptionId).filter(isDefined);
+        return await dbRead.customerSubscription.findMany({
+          where: { id: { in: subscriptionIds }, status: 'active' },
+          select: { id: true, userId: true, productId: true },
+        });
+      }
+    );
 
-    // const imageResources = await dbRead.$queryRaw<{ imageId: number }[]>`
-    //   select * from "ImageResourceNew" where "modelVersionId" = 690425 and detected
-    // `;
+    const productIds = [
+      ...new Set([...subscriptions.map((subscription) => subscription.productId)]),
+    ];
+    const products = await dbRead.product.findMany({ where: { id: { in: productIds } } });
 
-    // await Limiter({ batchSize: 1, limit: 10 }).process(imageResources, async ([{ imageId }]) => {
-    //   await refreshImageResources(imageId);
-    // });
-
-    // res.status(200).send({ data });
-    // await removeBlockedImagesRecursive(undefined, undefined, 10000);
-    res.status(200).send({});
+    for (const { browsingLevel, showNsfw, subscriptionId } of users) {
+      browsingLevels[browsingLevel] = (browsingLevels[browsingLevel] ?? 0) + 1;
+      matureContent[showNsfw ? 'show' : 'hide'].count += 1;
+      const subscription = subscriptions.find((x) => x.id === subscriptionId);
+      if (subscription) {
+        const product = products.find((x) => x.id === subscription.productId);
+        if (product) {
+          const tier = (product.metadata as any).tier;
+          if (tier && tier !== 'free') {
+            // subscriptions[product.name] = (subscriptions[product.name] ?? 0) + 1;
+            matureContent[showNsfw ? 'show' : 'hide'].subscriptions[tier] =
+              (matureContent[showNsfw ? 'show' : 'hide'].subscriptions[tier] ?? 0) + 1;
+          }
+        }
+      }
+    }
+    res.status(200).send({ browsingLevels, matureContent });
   } catch (e) {
     console.log(e);
     res.status(400).end();
   }
 });
+
+/*
+August
+Total new users - 346617
+Total new users with mature content disabled - 193086
+Total new users with mature content enabled - 153531
+
+Total active users with mature content disabled - 235435
+Total active users with mature content enabled - 585806
+
+*/
