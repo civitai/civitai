@@ -8,8 +8,8 @@ import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
+import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 declare global {
   interface Window {
@@ -50,18 +50,17 @@ const blockedUrls: string[] = [
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const { domain } = useAppContext();
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = isDev
     ? true
-    : !features.isGreen &&
-      features.isBlue &&
+    : domain !== 'green' &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url));
 
