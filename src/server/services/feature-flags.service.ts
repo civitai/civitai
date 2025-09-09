@@ -136,6 +136,7 @@ const featureFlags = createFeatureFlags({
   kontextAds: ['mod', 'granted'],
   logicalReplica: ['public'],
   modelVersionPopularity: ['public'],
+  kinguinIframe: ['dev'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
