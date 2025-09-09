@@ -158,12 +158,13 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     }, [_value, warnOnMissingAiMetadata, loaded]);
 
     function handleRemoveItem() {
-      onChange?.();
+      handleChange();
     }
 
     function handleError() {
       handleRemoveItem();
       setError('Failed to load image');
+      if (_value) removeFromHistory(_value.url);
     }
 
     const _error = error ?? inputError;
@@ -212,10 +213,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                 onLoad={(e) => {
                   setLoaded(true);
                 }}
-                onError={() => {
-                  removeFromHistory(_value.url);
-                  onChange?.(null);
-                }}
+                onError={handleError}
               />
               {loaded && removable && (
                 <CloseButton

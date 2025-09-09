@@ -3,7 +3,6 @@ import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useAppContext } from '~/providers/AppProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { isRegionRestricted } from '~/server/utils/region-blocking';
 import {
@@ -11,6 +10,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
+import { trpc } from '~/utils/trpc';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -25,10 +25,11 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
-  const { canViewNsfw } = useFeatureFlags();
+  const { allowMatureContent } = useAppContext();
   const { region } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
+  const { data: settings } = trpc.user.getSettings.useQuery();
 
   const sessionUser = useMemo(() => {
     if (!user)
@@ -51,16 +52,17 @@ export function CivitaiSessionProvider({
         showNsfw: user.showNsfw,
         browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : user.browsingLevel,
         disableHidden: disableHidden ?? true,
-        allowAds: user.allowAds ?? !isMember ? true : false,
+        allowAds: settings?.allowAds ?? !isMember ? true : false,
         autoplayGifs: user.autoplayGifs ?? true,
         blurNsfw: user.blurNsfw,
       },
     };
-    if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
+    if (!allowMatureContent)
+      currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
     return currentUser;
     // data?.expires seems not used but is needed to remotely kill sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.expires, disableHidden, canViewNsfw]);
+  }, [data?.expires, disableHidden, allowMatureContent]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();

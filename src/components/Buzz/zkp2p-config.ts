@@ -74,12 +74,12 @@ export const ZKP2P_PAYMENT_METHODS: Record<string, PaymentMethodConfig> = {
     label: 'Wise',
     description: 'Pay with Wise',
   },
-  revolut: {
-    regions: [...EU_COUNTRY_CODES, 'GB', 'US', 'AU', 'NZ', 'JP', 'SG', 'CH'],
-    icon: IconBrandRevolut,
-    label: 'Revolut',
-    description: 'Pay with Revolut',
-  },
+  // revolut: {
+  //   regions: [...EU_COUNTRY_CODES, 'GB', 'US', 'AU', 'NZ', 'JP', 'SG', 'CH'],
+  //   icon: IconBrandRevolut,
+  //   label: 'Revolut',
+  //   description: 'Pay with Revolut',
+  // },
 };
 
 export function getAvailablePaymentMethods(countryCode?: string) {

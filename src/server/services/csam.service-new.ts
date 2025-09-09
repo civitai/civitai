@@ -1,4 +1,3 @@
-import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
 import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
@@ -10,7 +9,7 @@ import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/sch
 import { clickhouse } from '~/server/clickhouse/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isDefined } from '~/utils/type-guards';
-import { fetchBlob } from '~/utils/file-utils';
+import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { S3Client } from '@aws-sdk/client-s3';
 import { env } from '~/env/server';
 import fsAsync from 'fs/promises';
@@ -18,28 +17,46 @@ import fs from 'fs';
 import archiver from 'archiver';
 import stream from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
-import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import * as z from 'zod';
 import plimit from 'p-limit';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import type { Ncmec } from '~/server/http/ncmec/ncmec.schema';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import nodeFetch from 'node-fetch';
 import JSZip from 'jszip';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
-import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
+import type { Report } from '@civitai/cybertipline-tools';
+import {
+  Client,
+  Environment,
+  FileDetailType,
+  IncidentType,
+  IPEventName,
+} from '@civitai/cybertipline-tools';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+
+const cybertipClient = new Client({
+  environment: isDev ? Environment.Testing : Environment.Production,
+  credentials: {
+    username: env.NCMEC_USERNAME,
+    password: env.NCMEC_PASSWORD,
+  },
+});
+
+type CsamReportUploadProps = {
+  fileId?: string | undefined;
+  hash?: string | undefined;
+};
 
 type CsamReportImage = {
   id: number;
-  fileId?: string;
-  hash?: string;
   fileAnnotations?: Ncmec.FileAnnotationsSchema;
-};
+} & CsamReportUploadProps;
 
 type CsamReportUserActivity = {
   type: 'Login' | 'Registration' | 'Upload' | 'Unknown';
@@ -53,13 +70,25 @@ type CsamReportUserActivity = {
 
 type CsamReportTrainingData = {
   filename: string;
-  fileId?: string | undefined;
-  hash?: string | undefined;
+} & CsamReportUploadProps;
+
+type CsamReportGeneratedImageData = {
+  url: string;
+} & CsamReportUploadProps;
+
+type CsamReportGeneratedImages = {
+  blobs: CsamReportGeneratedImageData[];
+  jobId: string;
+  prompt?: string;
+  negativePrompt?: string;
+  resources?: string[];
+  dateTime?: Date;
 };
 
 type CsamReportDetails = CsamReportFormOutput & {
   trainingData?: CsamReportTrainingData[];
   userActivity?: CsamReportUserActivity[];
+  generatedImages?: CsamReportGeneratedImages[];
 };
 
 export type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
@@ -92,7 +121,7 @@ export async function createCsamReport({
   const isInternalReport = userId === -1;
   const reportedUserId = !isInternalReport ? userId : undefined;
 
-  const report = await dbWrite.csamReport.create({
+  return await dbWrite.csamReport.create({
     data: {
       userId: reportedUserId,
       reportedById,
@@ -102,24 +131,6 @@ export async function createCsamReport({
       images: imageIds?.map((id) => ({ id })) ?? [],
     },
   });
-
-  if (imageIds.length) {
-    const affectedImages = await dbWrite.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { pHash: true },
-    });
-
-    await bulkAddBlockedImages({
-      data: affectedImages
-        .filter((img) => !!img.pHash)
-        .map((x) => ({
-          hash: x.pHash as bigint,
-          reason: BlockImageReason.CSAM,
-        })),
-    });
-  }
-
-  return report;
 }
 
 export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
@@ -203,6 +214,10 @@ async function getModelVersions(versionIds?: number[]) {
     where: { id: { in: versionIds } },
     select: { id: true, createdAt: true, name: true, model: { select: { id: true, name: true } } },
   });
+}
+
+async function deleteCsamReport(reportId: number) {
+  await dbWrite.csamReport.delete({ where: { id: reportId } });
 }
 
 async function getImages(imageIds?: number[]) {
@@ -424,192 +439,273 @@ async function constructReportPayload({
 }
 
 export async function processCsamReport(report: CsamReportProps) {
-  const images = await getImages(report.images.map((x) => x.id));
-  const modelVersions = await getModelVersions([
-    ...new Set([
-      ...(report.details.modelVersionIds ?? []),
-      ...images.map((x) => x.modelVersionId).filter(isDefined),
-    ]),
-  ]);
+  const status = await cybertipClient.getStatus();
+  if (status.data.responseCode !== 0) return;
 
-  let shouldDelete = false;
-  if (report.type === 'Image' && !images.length) shouldDelete = true;
-  if (report.type === 'TrainingData' && !modelVersions.length) shouldDelete = true;
-  if (shouldDelete) {
-    await dbWrite.csamReport.delete({ where: { id: report.id } });
-    return;
+  switch (report.type) {
+    case 'Image':
+      return await reportImages(report);
+    case 'GeneratedImage':
+      return await reportGenerationData(report);
+    case 'TrainingData':
+      return await reportTrainingData(report);
   }
+}
 
-  let incidentDateTime = new Date();
-  if (report.type === 'Image') {
-    incidentDateTime = images[0].createdAt;
-  } else if (report.type === 'TrainingData') {
-    incidentDateTime = modelVersions[0].createdAt;
-  }
+async function getInitialReportData(report: CsamReportProps) {
+  const reportingUser = await getReportingUser(report.reportedById);
+  const reportedUser = report.userId ? await getReportedUser(report.userId) : undefined;
+  if (!reportingUser || !reportedUser) return await deleteCsamReport(report.id);
 
   const userActivity = await getUserIpInfo(report);
 
-  const reportPayload = await constructReportPayload({
-    reportedById: report.reportedById,
-    userId: report.userId,
-    reportDetails: { ...report.details, userActivity },
-    modelVersions,
-    incidentDateTime,
+  return {
+    incidentSummary: {
+      incidentType: IncidentType.ChildPornography,
+      incidentDateTime: report.createdAt,
+    },
+    reporter: {
+      reportingPerson: {
+        email: reportingUser.email ? [{ email: reportingUser.email }] : [],
+        firstName: reportingUser.name ?? undefined,
+      },
+      contactPerson: {
+        email: [{ email: 'report@civitai.com' }],
+      },
+    },
+    personOrUserReported: {
+      espIdentifier: reportedUser.id.toString(),
+      screenName: reportedUser.username ?? undefined,
+      ipCaptureEvent: userActivity?.map((activity) => {
+        const [year, month, day, hour, minute, second] = activity.time.split(/[-: ]/).map(Number);
+        return {
+          ipAddress: activity.ip,
+          eventName: IPEventName[activity.type],
+          dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
+        };
+      }),
+      additionalInfo: reportedUser.email ? `Email: ${reportedUser.email}` : undefined,
+    },
+  } satisfies Report;
+}
+
+async function reportImages(report: CsamReportProps) {
+  const initialReport = await getInitialReportData(report);
+  if (!initialReport) return;
+
+  const images = await getImages(report.images.map((x) => x.id));
+  if (!images.length) return await deleteCsamReport(report.id);
+
+  const modelVersions = await getModelVersions([
+    ...new Set([...images.map((x) => x.modelVersionId).filter(isDefined)]),
+  ]);
+
+  initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
+
+  const {
+    data: { reportId },
+  } = await cybertipClient.submitReport({
+    ...initialReport,
   });
 
-  const { reportId } = await ncmecCaller().initializeReport(reportPayload);
+  const uploadResult = await Limiter({ limit: 2, batchSize: 1 }).process(
+    images,
+    async ([image]) => {
+      const imageReportInfo = report.images.find((x) => x.id === image.id);
+      if (!imageReportInfo) return;
 
-  const fns = {
-    [CsamReportType.Image]: uploadImages,
-    [CsamReportType.TrainingData]: uploadTrainingData,
-    [CsamReportType.GeneratedImage]: () => {
-      throw new Error('unsupported report type: "generated-image"');
+      const imageUrl = getEdgeUrl(image.url, { type: image.type });
+      const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
+      const modelVersion = modelVersions.find((x) => x.id === image.modelVersionId);
+      const modelId = modelVersion?.model.id;
+      const modelVersionId = modelVersion?.id;
+
+      const fileAnnotations =
+        imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
+      const tags = image.tags.map((x) => x.tag.name);
+      if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
+        fileAnnotations.animeDrawingVirtualHentai = true;
+      }
+      if (
+        tags.some((tag) =>
+          [
+            'violence',
+            'explosions and blasts',
+            'physical violence',
+            'weapon violence',
+            'graphic violence or gore',
+            'hanging',
+          ].includes(tag)
+        )
+      ) {
+        fileAnnotations.physicalHarm = true;
+      }
+
+      const blob = await fetchBlobAsFile(imageUrl);
+      if (!blob) return;
+
+      const {
+        data: { fileId, hash },
+      } = await cybertipClient.uploadFile({ id: reportId, file: blob });
+
+      await cybertipClient.submitFileDetails({
+        reportId,
+        fileId,
+        originalFileName: image.name ?? undefined,
+        locationOfFile: imageUrl,
+        fileViewedByEsp: true,
+        fileAnnotations,
+      });
+
+      return {
+        ...imageReportInfo,
+        fileAnnotations,
+        fileId,
+        hash,
+      };
+    }
+  );
+
+  await dbWrite.csamReport.update({
+    where: { id: report.id },
+    data: {
+      ...report,
+      reportId,
+      reportSentAt: new Date(),
+      details: { ...report.details, images: uploadResult.filter(isDefined) },
     },
-  };
+  });
+
+  await cybertipClient.finishReport({ id: reportId });
+}
+
+async function reportGenerationData(report: CsamReportProps) {
+  const initialReport = await getInitialReportData(report);
+  if (!initialReport) return;
+
+  const generatedImages = report.details.generatedImages;
+  if (!generatedImages) return await deleteCsamReport(report.id);
+
+  const {
+    data: { reportId },
+  } = await cybertipClient.submitReport({
+    ...initialReport,
+  });
+
+  const uploadResult = await Limiter({ batchSize: 1, limit: 2 }).process(
+    generatedImages,
+    async ([{ blobs, prompt, negativePrompt, resources }]) => {
+      const data = await Promise.all(
+        blobs.map(async (blob) => ({ ...blob, file: await fetchBlobAsFile(blob.url) }))
+      );
+      const arr: CsamReportGeneratedImageData[] = [];
+      for (const { file, url } of data) {
+        if (file) {
+          const {
+            data: { fileId, hash },
+          } = await cybertipClient.uploadFile({ id: reportId, file });
+
+          const valuePair: Array<{ name: string; value: string }> = [];
+          if (prompt) valuePair.push({ name: 'prompt', value: prompt });
+          if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: negativePrompt });
+          if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
+
+          await cybertipClient.submitFileDetails({
+            fileId,
+            reportId,
+            publiclyAvailable: false,
+            details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
+          });
+          arr.push({ url, fileId, hash });
+        }
+      }
+
+      return arr;
+    }
+  );
+
+  await dbWrite.csamReport.update({
+    where: { id: report.id },
+    data: {
+      ...report,
+      reportId,
+      reportSentAt: new Date(),
+      details: { ...report.details, generatedImages: uploadResult },
+    },
+  });
+
+  await cybertipClient.finishReport({ id: reportId });
+}
+
+async function reportTrainingData(report: CsamReportProps) {
+  const initialReport = await getInitialReportData(report);
+  if (!initialReport) return;
+
+  const modelVersions = await getModelVersions([
+    ...new Set([...(report.details.modelVersionIds ?? [])]),
+  ]);
+
+  const version = modelVersions[0];
+  if (!version) return await deleteCsamReport(report.id);
+
+  const dir = `${baseDir}/training-data/${report.id}`;
+  const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
+
+  createDir(dir);
+
+  const {
+    data: { reportId },
+  } = await cybertipClient.submitReport({
+    ...initialReport,
+  });
 
   try {
-    const data = await fns[report.type]();
-    await ncmecCaller().finishReport(reportId);
-    console.log('finished report:', reportId);
-
-    await dbWrite.csamReport.update({
-      where: { id: report.id },
-      data: { ...data, details: { ...data.details, userActivity } },
+    const zipStream = await getTrainingDataZipStream({
+      reportedById: report.reportedById,
+      versionId: version.id,
     });
-  } catch (e) {
-    console.log('ERROR');
-    console.log(e);
-    await ncmecCaller().retractReport(reportId);
-    throw e;
-  }
 
-  async function uploadImages(): Promise<Partial<CsamReportProps>> {
+    await fsAsync.writeFile(outPath, zipStream);
+
     const limit = plimit(2);
-    const result = await Promise.all(
-      images.map((image) => {
-        return limit(async () => {
-          const imageReportInfo = report.images.find((x) => x.id === image.id);
-          if (!imageReportInfo) return;
 
-          const imageUrl = getEdgeUrl(image.url, { type: image.type });
-          const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
-          const modelVersion = modelVersions.find((x) => x.id === image.modelVersionId);
-          const modelId = modelVersion?.model.id;
-          const modelVersionId = modelVersion?.id;
-          const additionalInfo: string[] = [];
-          if (modelId) additionalInfo.push(`model id: ${modelId}`);
-          if (modelVersionId) additionalInfo.push(`model version id: ${modelVersionId}`);
-          if (prompt && typeof prompt === 'string') additionalInfo.push(`prompt: ${prompt}`);
-          if (negativePrompt && typeof negativePrompt === 'string')
-            additionalInfo.push(`negativePrompt: ${negativePrompt}`);
+    const zipReader = new JSZip();
+    const zData = await new Promise<Buffer>((resolve, reject) => {
+      fs.readFile(outPath, function (err, data) {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    }).then((data) => zipReader.loadAsync(new Uint8Array(data)));
 
-          const fileAnnotations =
-            imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
-          const tags = image.tags.map((x) => x.tag.name);
-          if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
-            fileAnnotations.animeDrawingVirtualHentai = true;
-          }
-          if (
-            tags.some((tag) =>
-              [
-                'violence',
-                'explosions and blasts',
-                'physical violence',
-                'weapon violence',
-                'graphic violence or gore',
-                'hanging',
-              ].includes(tag)
-            )
-          ) {
-            fileAnnotations.physicalHarm = true;
-          }
+    const results = await unzipTrainingData(zData, ({ imgBlob, filename }) =>
+      limit(async () => {
+        const file = blobToFile(imgBlob, filename);
+        const {
+          data: { fileId, hash },
+        } = await cybertipClient.uploadFile({ id: reportId, file });
 
-          const blob = await fetchBlob(imageUrl);
-          if (!blob) return;
+        await cybertipClient.submitFileDetails({ reportId, fileId, originalFileName: filename });
 
-          const { fileId, hash } = await ncmecCaller().uploadFile({
-            reportId,
-            file: blob,
-            fileDetails: {
-              originalFileName: image.name ?? undefined,
-              locationOfFile: imageUrl,
-              fileViewedByEsp: true,
-              fileAnnotations,
-              additionalInfo: additionalInfo.length
-                ? `${additionalInfo.map((info) => `  - ${info}`).join('\n')}`
-                : undefined,
-            },
-          });
-
-          return {
-            ...imageReportInfo,
-            fileAnnotations,
-            fileId,
-            hash,
-          };
-        });
+        return { filename, fileId, hash };
       })
     );
 
-    return {
-      images: result.filter(isDefined),
-      reportId,
-      reportSentAt: new Date(),
-    };
-  }
-
-  async function uploadTrainingData() {
-    const version = modelVersions[0];
-    const dir = `${baseDir}/training-data/${report.id}`;
-    const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
-
-    // persist output to be used in upcoming job
-    createDir(dir);
-
-    try {
-      const zipStream = await getTrainingDataZipStream({
-        reportedById: report.reportedById,
-        versionId: version.id,
-      });
-
-      await fsAsync.writeFile(outPath, zipStream);
-
-      const limit = plimit(2);
-
-      const zipReader = new JSZip();
-      const zData = await new Promise<Buffer>((resolve, reject) => {
-        fs.readFile(outPath, function (err, data) {
-          if (err) reject(err);
-          else resolve(data);
-        });
-      }).then((data) => zipReader.loadAsync(new Uint8Array(data)));
-
-      const results = await unzipTrainingData(zData, ({ imgBlob, filename }) =>
-        limit(async () => {
-          const { fileId, hash } = await ncmecCaller().uploadFile({
-            reportId,
-            file: imgBlob,
-            fileDetails: {
-              originalFileName: filename,
-            },
-          });
-          return { filename, fileId, hash };
-        })
-      );
-
-      const details = report.details as CsamReportDetails;
-      details.trainingData = results;
-
-      removeDir(dir);
-      return {
+    await dbWrite.csamReport.update({
+      where: { id: report.id },
+      data: {
+        ...report,
         reportId,
         reportSentAt: new Date(),
-        details,
-      };
-    } catch (e) {
-      removeDir(dir);
-      throw e;
-    }
+        details: { ...report.details, trainingData: results },
+      },
+    });
+
+    await cybertipClient.finishReport({ id: reportId });
+
+    removeDir(dir);
+  } catch (e) {
+    removeDir(dir);
+    throw e;
   }
 }
 

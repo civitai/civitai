@@ -154,6 +154,7 @@ import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
+import { getExplainSql } from '~/server/db/db-helpers';
 
 const {
   cacheHitRequestsTotal,
@@ -208,6 +209,7 @@ export const invalidateManyImageExistence = async (ids: number[]) => {
   const kv: Record<string, string> = {};
   for (const id of ids) kv[`${cachePrefix}${id}`] = 'false';
   await sysRedis.packed.mSet(kv, { EX: 60 * 5 });
+  await Promise.all(Object.keys(kv).map((key) => sysRedis.expire(key as any, 600)));
 };
 
 export const deleteImageById = async ({
@@ -359,14 +361,11 @@ export async function handleUnblockImages({
       ),
     ]);
 
-    const invalidateExistence = invalidateManyImageExistence(ids);
-
     await Promise.all([
       updateNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
-      invalidateExistence,
     ]);
 
     if (moderatorId) {
@@ -2117,6 +2116,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
     // Get all image IDs from search results
     const searchImageIds = filteredHits.map((hit) => hit.id);
+    const filteredHitIds = [...new Set(searchImageIds)];
+    console.log({ filteredHitIds });
 
     let cacheExistenceEnabled = false;
 
@@ -2124,7 +2125,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     if (fliptClient) {
       const flag = fliptClient.evaluateBoolean({
         flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-        entityId: 'unused',
+        entityId: currentUserId?.toString() || 'anonymous',
         context: {},
       });
       cacheExistenceEnabled = flag.enabled;
@@ -2135,7 +2136,6 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
 
       // BASIC DB CHECK (default)
-      const filteredHitIds = [...new Set(searchImageIds)];
       const dbIdResp = await dbRead.image.findMany({
         where: { id: { in: filteredHitIds } },
         select: { id: true },
@@ -2247,8 +2247,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
           cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
           cachedMap.set(id, exists);
         }
+
         if (Object.keys(cacheUpdates).length > 0) {
-          await sysRedis.packed.mSet(cacheUpdates, { EX: 60 });
+          await sysRedis.packed.mSet(cacheUpdates);
+          await Promise.all(
+            Object.keys(cacheUpdates).map((key) => sysRedis.expire(key as any, 600))
+          );
         }
       }
 
@@ -2265,11 +2269,11 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
       droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
 
-      return filteredHits;
+      return filteredHits.filter((x) => imageIds.includes(x.id));
     };
 
     // Apply the (flagged) existence check
-    const filtered = await checkImageExistence(searchImageIds);
+    const filtered = await checkImageExistence(filteredHitIds);
 
     const imageMetrics = await getImageMetricsObject(filtered);
 
@@ -4455,27 +4459,27 @@ export async function updateImageNsfwLevel({
       leakingContentCounter.inc();
     }
 
-    // TODO: In the future, we might need to revise if the Knights are doing a great job.
-    if (!current?.nsfwLevelLocked && current.userId === userId) {
-      // Add it to knights queue so they can review this:
-      await addImageToQueue({
-        imageIds: id,
-        rankType: NewOrderRankType.Knight,
-        priority: 1,
+    if (!current.nsfwLevelLocked) {
+      await dbWrite.imageRatingRequest.upsert({
+        where: { imageId_userId: { imageId: id, userId: userId } },
+        create: {
+          nsfwLevel,
+          imageId: id,
+          userId: userId,
+          // -5 means it was added to the queue, 3 means it was locked so mods should see.
+          weight: current.userId === userId ? 3 : 1,
+        },
+        update: { nsfwLevel },
       });
-    }
 
-    await dbWrite.imageRatingRequest.upsert({
-      where: { imageId_userId: { imageId: id, userId: userId } },
-      create: {
-        nsfwLevel,
-        imageId: id,
-        userId: userId,
-        // -5 means it was added to the queue, 3 means it was locked so mods should see.
-        weight: current.userId === userId ? (current?.nsfwLevelLocked ? 3 : -5) : 1,
-      },
-      update: { nsfwLevel },
-    });
+      if (current.userId === userId) {
+        await addImageToQueue({
+          imageIds: id,
+          rankType: NewOrderRankType.Knight,
+          priority: 1,
+        });
+      }
+    }
   }
 
   return nsfwLevel;
@@ -4625,15 +4629,15 @@ export async function getImageRatingRequests({
         AND i."nsfwLevelLocked" = FALSE
         AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
         AND i."nsfwLevel" < ${NsfwLevel.Blocked}
-        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.empty}
-      ORDER BY irr."createdAt"
+        ${!!cursor ? Prisma.sql` AND i."id" >= ${cursor}` : Prisma.empty}
+      ORDER BY i."id" ASC
       LIMIT ${limit + 1}
   `;
 
-  let nextCursor: string | undefined;
+  let nextCursor: number | undefined;
   if (limit && results.length > limit) {
     const nextItem = results.pop();
-    nextCursor = nextItem?.createdAt.toISOString() || undefined;
+    nextCursor = nextItem?.id || undefined;
   }
 
   const imageIds = results.map((x) => x.id);

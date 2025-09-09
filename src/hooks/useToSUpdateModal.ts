@@ -1,6 +1,6 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useRef } from 'react';
-import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -10,7 +10,6 @@ const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
 
 export function useToSUpdateModal() {
   const currentUser = useCurrentUser();
-  const dialogStore = useDialogStore();
   const shownForVersion = useRef<Date | null>(null);
 
   const queryUtils = trpc.useUtils();
