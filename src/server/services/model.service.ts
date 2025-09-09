@@ -3381,10 +3381,16 @@ export const getTrainingModelsForModerators = async ({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
   username,
+  dateFrom,
+  dateTo,
+  cannotPublish,
 }: {
   limit?: number;
   cursor?: number;
   username?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  cannotPublish?: boolean;
 }) => {
   const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
   const cursorWhere = cursor ? { id: { lt: cursor } } : {};
@@ -3397,6 +3403,22 @@ export const getTrainingModelsForModerators = async ({
       user: {
         username,
       },
+    }),
+    ...(dateFrom && {
+      createdAt: {
+        gte: dateFrom,
+        ...(dateTo && { lte: dateTo }),
+      },
+    }),
+    ...(dateTo && !dateFrom && {
+      createdAt: {
+        lte: dateTo,
+      },
+    }),
+    ...(cannotPublish !== undefined && {
+      meta: cannotPublish
+        ? { path: ['cannotPublish'], equals: true }
+        : { not: { path: ['cannotPublish'], equals: true } },
     }),
     modelVersions: {
       some: {

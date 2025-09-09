@@ -5,6 +5,7 @@ import {
   Center,
   Group,
   Loader,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -12,7 +13,8 @@ import {
   Title,
   ThemeIcon,
 } from '@mantine/core';
-import { IconDownload, IconEye, IconUser } from '@tabler/icons-react';
+import { DateInput } from '@mantine/dates';
+import { IconDownload, IconEye, IconUser, IconCalendar, IconFilter } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
 import { useMemo, useState, useEffect } from 'react';
@@ -32,6 +34,9 @@ export default function TrainingModerationFeedPage() {
   const currentUser = useCurrentUser();
   const [usernameFilter, setUsernameFilter] = useState('');
   const [debouncedUsernameFilter, setDebouncedUsernameFilter] = useState('');
+  const [dateFromFilter, setDateFromFilter] = useState<Date | null>(null);
+  const [dateToFilter, setDateToFilter] = useState<Date | null>(null);
+  const [cannotPublishFilter, setCannotPublishFilter] = useState<string>('all');
 
   // Debounce username filter
   useEffect(() => {
@@ -44,7 +49,14 @@ export default function TrainingModerationFeedPage() {
 
   const { data, isFetching, hasNextPage, fetchNextPage, isInitialLoading } =
     trpc.moderator.models.queryTraining.useInfiniteQuery(
-      { limit: 20, username: debouncedUsernameFilter || undefined },
+      {
+        limit: 20,
+        username: debouncedUsernameFilter || undefined,
+        dateFrom: dateFromFilter || undefined,
+        dateTo: dateToFilter || undefined,
+        cannotPublish:
+          cannotPublishFilter === 'all' ? undefined : cannotPublishFilter === 'blocked',
+      },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         enabled: !!currentUser?.isModerator,
@@ -65,7 +77,14 @@ export default function TrainingModerationFeedPage() {
 
       // Optimistically update the cache
       utils.moderator.models.queryTraining.setInfiniteData(
-        { limit: 20, username: debouncedUsernameFilter || undefined },
+        {
+          limit: 20,
+          username: debouncedUsernameFilter || undefined,
+          dateFrom: dateFromFilter || undefined,
+          dateTo: dateToFilter || undefined,
+          cannotPublish:
+            cannotPublishFilter === 'all' ? undefined : cannotPublishFilter === 'blocked',
+        },
         (old) => {
           if (!old) return old;
 
@@ -98,7 +117,14 @@ export default function TrainingModerationFeedPage() {
       // If the mutation fails, use the context returned from onMutate to roll back
       if (context?.previousData) {
         utils.moderator.models.queryTraining.setInfiniteData(
-          { limit: 20, username: debouncedUsernameFilter || undefined },
+          {
+            limit: 20,
+            username: debouncedUsernameFilter || undefined,
+            dateFrom: dateFromFilter || undefined,
+            dateTo: dateToFilter || undefined,
+            cannotPublish:
+              cannotPublishFilter === 'all' ? undefined : cannotPublishFilter === 'blocked',
+          },
           context.previousData
         );
       }
@@ -159,26 +185,78 @@ export default function TrainingModerationFeedPage() {
             </Group>
           </Card>
 
-          {/* Username Filter */}
+          {/* Filters */}
           <Card p="md" radius="md" withBorder>
             <Group gap="sm" align="center">
-              <ThemeIcon size="sm" variant="light" color="gray" radius="md">
-                <IconUser size={16} />
+              <ThemeIcon size="sm" variant="light" color="blue" radius="md">
+                <IconFilter size={16} />
               </ThemeIcon>
-              <TextInput
-                placeholder="Filter by username (leave empty to show all)"
-                value={usernameFilter}
-                onChange={(event) => setUsernameFilter(event.currentTarget.value)}
-                style={{ flex: 1 }}
-                rightSection={
-                  usernameFilter !== debouncedUsernameFilter ? <Loader size={16} /> : null
-                }
-              />
-              {usernameFilter && (
-                <Button size="xs" variant="light" onClick={() => setUsernameFilter('')}>
-                  Clear
-                </Button>
-              )}
+              <Stack gap="sm" style={{ flex: 1 }}>
+                <Group gap="sm" wrap="wrap" align="flex-end">
+                  {/* Username Filter */}
+                  <TextInput
+                    placeholder="Filter by username"
+                    value={usernameFilter}
+                    onChange={(event) => setUsernameFilter(event.currentTarget.value)}
+                    leftSection={<IconUser size={16} />}
+                    rightSection={
+                      usernameFilter !== debouncedUsernameFilter ? <Loader size={16} /> : null
+                    }
+                    style={{ minWidth: 200, flex: 1 }}
+                  />
+
+                  {/* Date Range Filter */}
+                  <DateInput
+                    placeholder="From date"
+                    value={dateFromFilter}
+                    onChange={setDateFromFilter}
+                    leftSection={<IconCalendar size={16} />}
+                    clearable
+                    style={{ minWidth: 150 }}
+                  />
+                  <DateInput
+                    placeholder="To date"
+                    value={dateToFilter}
+                    onChange={setDateToFilter}
+                    leftSection={<IconCalendar size={16} />}
+                    clearable
+                    style={{ minWidth: 150 }}
+                  />
+
+                  {/* Cannot Publish Filter */}
+                  <Select
+                    placeholder="Publishing status"
+                    data={[
+                      { value: 'all', label: 'All models' },
+                      { value: 'blocked', label: 'Blocked from publishing' },
+                      { value: 'allowed', label: 'Allowed to publish' },
+                    ]}
+                    value={cannotPublishFilter}
+                    onChange={(value) => setCannotPublishFilter(value || 'all')}
+                    style={{ minWidth: 180 }}
+                  />
+                </Group>
+
+                {/* Clear Filters Button */}
+                {(usernameFilter ||
+                  dateFromFilter ||
+                  dateToFilter ||
+                  cannotPublishFilter !== 'all') && (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="gray"
+                    onClick={() => {
+                      setUsernameFilter('');
+                      setDateFromFilter(null);
+                      setDateToFilter(null);
+                      setCannotPublishFilter('all');
+                    }}
+                  >
+                    Clear All Filters
+                  </Button>
+                )}
+              </Stack>
             </Group>
           </Card>
 
@@ -248,6 +326,11 @@ export default function TrainingModerationFeedPage() {
                           {model.tosViolation && (
                             <Badge color="red" variant="filled" size="xs">
                               ToS
+                            </Badge>
+                          )}
+                          {modelMeta?.cannotPublish && (
+                            <Badge color="red" variant="filled" size="xs">
+                              Blocked
                             </Badge>
                           )}
                         </Group>
