@@ -12,7 +12,7 @@ import {
   Title,
   ThemeIcon,
 } from '@mantine/core';
-import { IconDownload, IconEye, IconUser, IconCalendar } from '@tabler/icons-react';
+import { IconDownload, IconEye, IconUser } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
 import { useMemo, useState, useEffect } from 'react';
@@ -24,6 +24,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { showNotification } from '@mantine/notifications';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import classes from './training-models.module.scss';
 
 export default function TrainingModerationFeedPage() {
@@ -71,17 +73,19 @@ export default function TrainingModerationFeedPage() {
             ...old,
             pages: old.pages.map((page) => ({
               ...page,
-              items: page.items.map((model) =>
-                model.id === variables.id
-                  ? {
-                      ...model,
-                      meta: {
-                        ...model.meta,
-                        cannotPublish: !model.meta?.cannotPublish,
-                      },
-                    }
-                  : model
-              ),
+              items: page.items.map((model) => {
+                if (model.id === variables.id) {
+                  const modelMeta = model.meta as ModelMeta | null;
+                  return {
+                    ...model,
+                    meta: {
+                      ...(modelMeta || {}),
+                      cannotPublish: !modelMeta?.cannotPublish,
+                    },
+                  };
+                }
+                return model;
+              }),
             })),
           };
         }
@@ -193,198 +197,200 @@ export default function TrainingModerationFeedPage() {
             </Center>
           ) : (
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-              {flatData?.map((model) => (
-                <Card key={model.id} p="md" radius="md" withBorder className={classes.modelCard}>
-                  <Stack gap="sm" h="100%">
-                    {/* Compact Header with User */}
-                    <div>
-                      <Group gap="xs" mb="xs" align="flex-start">
-                        <div style={{ flex: 1 }}>
-                          <Text fw={700} size="lg" className={classes.modelTitle} lineClamp={2}>
-                            {model.name}
-                          </Text>
-                        </div>
-                        <Group gap="xs" align="center">
-                          <UserAvatar user={model.user} size="xs" />
-                          <Text size="xs" fw={500}>
-                            {model.user.username}
-                          </Text>
+              {flatData?.map((model) => {
+                const modelMeta = model.meta as ModelMeta | null;
+                return (
+                  <Card key={model.id} p="md" radius="md" withBorder className={classes.modelCard}>
+                    <Stack gap="sm" h="100%">
+                      {/* Compact Header with User */}
+                      <div>
+                        <Group gap="xs" mb="xs" align="flex-start">
+                          <div style={{ flex: 1 }}>
+                            <Text fw={700} size="lg" className={classes.modelTitle} lineClamp={2}>
+                              {model.name}
+                            </Text>
+                          </div>
+                          <Group gap="xs" align="center">
+                            <UserAvatar user={model.user} size="xs" />
+                            <Text size="xs" fw={500}>
+                              {model.user.username}
+                            </Text>
+                          </Group>
                         </Group>
-                      </Group>
 
-                      {/* Status and Type Badges */}
-                      <Group gap="xs" wrap="wrap">
-                        <Badge
-                          color={model.status === 'Published' ? 'green' : 'orange'}
-                          variant="light"
-                          size="sm"
-                        >
-                          {model.status}
-                        </Badge>
-                        <Badge variant="outline" size="xs">
-                          {model.type}
-                        </Badge>
-                        {model.nsfw && (
-                          <Badge color="red" variant="light" size="xs">
-                            NSFW
+                        {/* Status and Type Badges */}
+                        <Group gap="xs" wrap="wrap">
+                          <Badge
+                            color={model.status === 'Published' ? 'green' : 'orange'}
+                            variant="light"
+                            size="sm"
+                          >
+                            {model.status}
                           </Badge>
-                        )}
-                        {model.poi && (
-                          <Badge color="red" variant="filled" size="xs">
-                            POI
+                          <Badge variant="outline" size="xs">
+                            {model.type}
                           </Badge>
-                        )}
-                        {model.minor && (
-                          <Badge color="red" variant="filled" size="xs">
-                            Minor
-                          </Badge>
-                        )}
-                        {model.tosViolation && (
-                          <Badge color="red" variant="filled" size="xs">
-                            ToS
-                          </Badge>
-                        )}
-                      </Group>
-                    </div>
+                          {model.nsfw && (
+                            <Badge color="red" variant="light" size="xs">
+                              NSFW
+                            </Badge>
+                          )}
+                          {model.poi && (
+                            <Badge color="red" variant="filled" size="xs">
+                              POI
+                            </Badge>
+                          )}
+                          {model.minor && (
+                            <Badge color="red" variant="filled" size="xs">
+                              Minor
+                            </Badge>
+                          )}
+                          {model.tosViolation && (
+                            <Badge color="red" variant="filled" size="xs">
+                              ToS
+                            </Badge>
+                          )}
+                        </Group>
+                      </div>
 
-                    {/* Compact Meta */}
-                    <div className={classes.metaSection}>
-                      <Text size="xs" c="dimmed">
-                        Created {formatDate(model.createdAt)}
-                      </Text>
-                      {model.publishedAt && (
+                      {/* Compact Meta */}
+                      <div className={classes.metaSection}>
                         <Text size="xs" c="dimmed">
-                          Published {formatDate(model.publishedAt)}
+                          Created {formatDate(model.createdAt)}
                         </Text>
-                      )}
-                    </div>
+                        {model.publishedAt && (
+                          <Text size="xs" c="dimmed">
+                            Published {formatDate(model.publishedAt)}
+                          </Text>
+                        )}
+                      </div>
 
-                    {/* Compact Versions */}
-                    {model.modelVersions.map((version) => (
-                      <div key={version.id} className={classes.versionSection}>
-                        <Stack gap="xs">
-                          {/* Version Header */}
-                          <Group justify="space-between" align="flex-start">
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Text fw={600} size="sm" lineClamp={1}>
-                                {version.name}
+                      {/* Compact Versions */}
+                      {model.modelVersions.map((version) => (
+                        <div key={version.id} className={classes.versionSection}>
+                          <Stack gap="xs">
+                            {/* Version Header */}
+                            <Group justify="space-between" align="flex-start">
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <Text fw={600} size="sm" lineClamp={1}>
+                                  {version.name}
+                                </Text>
+                                <Text size="xs" c="dimmed">
+                                  Created {formatDate(version.createdAt)}
+                                </Text>
+                              </div>
+                              <Group gap="xs" style={{ flexShrink: 0 }}>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color="blue"
+                                  leftSection={<IconEye size={14} />}
+                                  component={Link}
+                                  href={`/models/${model.id}?modelVersionId=${version.id}`}
+                                >
+                                  View
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="filled"
+                                  color="yellow"
+                                  leftSection={<IconEye size={14} />}
+                                  component={Link}
+                                  href={`/moderator/review/training-data/${version.id}`}
+                                >
+                                  Review
+                                </Button>
+                              </Group>
+                            </Group>
+
+                            {/* Moderation Actions */}
+                            <Group gap="xs" justify="space-between">
+                              <Text size="xs" c="dimmed" fw={500}>
+                                Moderation Actions
                               </Text>
-                              <Text size="xs" c="dimmed">
-                                Created {formatDate(version.createdAt)}
-                              </Text>
-                            </div>
-                            <Group gap="xs" style={{ flexShrink: 0 }}>
                               <Button
                                 size="xs"
-                                variant="light"
-                                color="blue"
-                                leftSection={<IconEye size={14} />}
-                                component={Link}
-                                href={`/models/${model.id}?modelVersionId=${version.id}`}
+                                variant={modelMeta?.cannotPublish ? 'filled' : 'light'}
+                                color={modelMeta?.cannotPublish ? 'red' : 'gray'}
+                                onClick={() => handleToggleCannotPublish(model.id)}
+                                loading={toggleCannotPublishMutation.isLoading}
                               >
-                                View
-                              </Button>
-                              <Button
-                                size="xs"
-                                variant="filled"
-                                color="yellow"
-                                leftSection={<IconEye size={14} />}
-                                component={Link}
-                                href={`/moderator/review/training-data/${version.id}`}
-                              >
-                                Review
+                                {modelMeta?.cannotPublish ? 'Allow Publish' : 'Block Publish'}
                               </Button>
                             </Group>
-                          </Group>
 
-                          {/* Moderation Actions */}
-                          <Group gap="xs" justify="space-between">
-                            <Text size="xs" c="dimmed" fw={500}>
-                              Moderation Actions
-                            </Text>
-                            <Button
-                              size="xs"
-                              variant={model.meta?.cannotPublish ? 'filled' : 'light'}
-                              color={model.meta?.cannotPublish ? 'red' : 'gray'}
-                              onClick={() => handleToggleCannotPublish(model.id)}
-                              loading={toggleCannotPublishMutation.isLoading}
-                            >
-                              {model.meta?.cannotPublish ? 'Allow Publish' : 'Block Publish'}
-                            </Button>
-                          </Group>
-
-                          {/* Version Badges */}
-                          <Group gap="xs">
-                            <Badge color="blue" variant="light" size="xs">
-                              {version.status}
-                            </Badge>
-                            {version.baseModel && (
-                              <Badge color="gray" variant="outline" size="xs">
-                                {version.baseModel}
+                            {/* Version Badges */}
+                            <Group gap="xs">
+                              <Badge color="blue" variant="light" size="xs">
+                                {version.status}
                               </Badge>
-                            )}
-                            {version.trainingStatus && (
-                              <Badge color="purple" variant="light" size="xs">
-                                {version.trainingStatus}
-                              </Badge>
-                            )}
-                          </Group>
+                              {version.baseModel && (
+                                <Badge color="gray" variant="outline" size="xs">
+                                  {version.baseModel}
+                                </Badge>
+                              )}
+                              {version.trainingStatus && (
+                                <Badge color="purple" variant="light" size="xs">
+                                  {version.trainingStatus}
+                                </Badge>
+                              )}
+                            </Group>
 
-                          {/* Compact Training Files */}
-                          <Stack gap="xs" w="100%" mt="sm">
-                            {version.files.map((file) => (
-                              <div key={file.id} className={classes.fileItem}>
-                                <Stack gap={4}>
-                                  <Group justify="space-between" align="center">
-                                    <Text size="xs" fw={500} lineClamp={1}>
-                                      {file.name}
-                                    </Text>
-                                    <Button
-                                      size="xs"
-                                      variant="light"
-                                      color="yellow"
-                                      leftSection={<IconDownload size={12} />}
-                                      component="a"
-                                      href={`/api/download/models/${version.id}?type=Training%20Data`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      style={{ flexShrink: 0 }}
-                                    >
-                                      Download
-                                    </Button>
-                                  </Group>
-                                  <Text size="xs" c="dimmed">
-                                    {formatBytes(file.sizeKB * 1024)} •{' '}
-                                    {formatDate(file.createdAt, 'MMM d')}
-                                  </Text>
-                                  {file.metadata &&
-                                    typeof file.metadata === 'object' &&
-                                    !Array.isArray(file.metadata) && (
-                                      <Group gap="xs">
-                                        {'numImages' in file.metadata &&
-                                          file.metadata.numImages && (
-                                            <Badge variant="light" color="green" size="xs">
-                                              {file.metadata.numImages} img
-                                            </Badge>
-                                          )}
-                                        {'numCaptions' in file.metadata &&
-                                          file.metadata.numCaptions && (
-                                            <Badge variant="light" color="blue" size="xs">
-                                              {file.metadata.numCaptions} cap
-                                            </Badge>
-                                          )}
+                            {/* Compact Training Files */}
+                            <Stack gap="xs" w="100%" mt="sm">
+                              {version.files.map((file) => {
+                                const fileMetadata = file.metadata as ModelFileMetadata | null;
+                                return (
+                                  <div key={file.id} className={classes.fileItem}>
+                                    <Stack gap={4}>
+                                      <Group justify="space-between" align="center">
+                                        <Text size="xs" fw={500} lineClamp={1}>
+                                          {file.name}
+                                        </Text>
+                                        <Button
+                                          size="xs"
+                                          variant="light"
+                                          color="yellow"
+                                          leftSection={<IconDownload size={12} />}
+                                          component="a"
+                                          href={`/api/download/models/${version.id}?type=Training%20Data`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          style={{ flexShrink: 0 }}
+                                        >
+                                          Download
+                                        </Button>
                                       </Group>
-                                    )}
-                                </Stack>
-                              </div>
-                            ))}
+                                      <Text size="xs" c="dimmed">
+                                        {formatBytes(file.sizeKB * 1024)} •{' '}
+                                        {formatDate(file.createdAt, 'MMM d')}
+                                      </Text>
+                                      {fileMetadata && (
+                                        <Group gap="xs">
+                                          {fileMetadata.numImages && (
+                                            <Badge variant="light" color="green" size="xs">
+                                              {fileMetadata.numImages} img
+                                            </Badge>
+                                          )}
+                                          {fileMetadata.numCaptions && (
+                                            <Badge variant="light" color="blue" size="xs">
+                                              {fileMetadata.numCaptions} cap
+                                            </Badge>
+                                          )}
+                                        </Group>
+                                      )}
+                                    </Stack>
+                                  </div>
+                                );
+                              })}
+                            </Stack>
                           </Stack>
-                        </Stack>
-                      </div>
-                    ))}
-                  </Stack>
-                </Card>
-              ))}
+                        </div>
+                      ))}
+                    </Stack>
+                  </Card>
+                );
+              })}
             </SimpleGrid>
           )}
 
