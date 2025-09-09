@@ -360,14 +360,11 @@ export async function handleUnblockImages({
       ),
     ]);
 
-    const invalidateExistence = invalidateManyImageExistence(ids);
-
     await Promise.all([
       updateNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
-      invalidateExistence,
     ]);
 
     if (moderatorId) {
@@ -2119,6 +2116,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     // Get all image IDs from search results
     const searchImageIds = filteredHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
+    console.log({ filteredHitIds });
 
     let cacheExistenceEnabled = false;
 
