@@ -185,48 +185,6 @@ function AdWrapper({
       </AdunitSizesStyles>
     );
   } else return null;
-
-  // return (
-  //   <div
-  //     ref={ref}
-  //     style={preserveLayout !== false ? adWrapperStyles : undefined}
-  //     className={clsx({
-  //       [styles.adWrapper]: preserveLayout !== false,
-  //       ['relative box-content flex flex-col items-center justify-center gap-2']: true,
-  //       className,
-  //     })}
-  //   >
-  //     {inView && (
-  //       <>
-  //         {adsBlocked ? (
-  //           <SupportUsImage sizes={adSizes ?? undefined} />
-  //         ) : ready && adSizes !== undefined ? (
-  //           <AdUnitContent
-  //             // key={key}
-  //             adUnit={adUnit}
-  //             sizes={adSizes ?? undefined}
-  //             id={id}
-  //             onDismount={onDismount}
-  //           />
-  //         ) : null}
-  //         {withFeedback && !isMember && (
-  //           <div className="flex w-full justify-end">
-  //             <Text
-  //               component={NextLink}
-  //               td="underline"
-  //               href="/pricing"
-  //               c="dimmed"
-  //               size="xs"
-  //               align="center"
-  //             >
-  //               Remove ads
-  //             </Text>
-  //           </div>
-  //         )}
-  //       </>
-  //     )}
-  //   </div>
-  // );
 }
 
 export function adUnitFactory(factoryArgs: {

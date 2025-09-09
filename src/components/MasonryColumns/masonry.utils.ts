@@ -2,13 +2,13 @@ import type {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
+import { Adunit_InContent } from '~/components/Ads/Playwire/Adunit';
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -35,7 +35,7 @@ export function useMasonryColumns<TData>(
             {
               width: 300,
               height: 250,
-              AdUnit: AdUnitIncontent_1,
+              AdUnit: Adunit_InContent,
             },
           ]
         : undefined,
