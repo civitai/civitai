@@ -209,6 +209,7 @@ export const invalidateManyImageExistence = async (ids: number[]) => {
   const kv: Record<string, string> = {};
   for (const id of ids) kv[`${cachePrefix}${id}`] = 'false';
   await sysRedis.packed.mSet(kv, { EX: 60 * 5 });
+  await Promise.all(Object.keys(kv).map((key) => sysRedis.expire(key as any, 600)));
 };
 
 export const deleteImageById = async ({
@@ -2246,8 +2247,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
           cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
           cachedMap.set(id, exists);
         }
+
         if (Object.keys(cacheUpdates).length > 0) {
-          await sysRedis.packed.mSet(cacheUpdates, { EX: 60 });
+          await sysRedis.packed.mSet(cacheUpdates);
+          await Promise.all(
+            Object.keys(cacheUpdates).map((key) => sysRedis.expire(key as any, 600))
+          );
         }
       }
 
