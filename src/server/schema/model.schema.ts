@@ -259,6 +259,7 @@ export type ModelMeta = Partial<{
   declinedAt: string;
   showcaseCollectionId: number;
   cannotPromote: boolean;
+  cannotPublish: boolean;
   commentsLocked: boolean;
 }>;
 
@@ -388,4 +389,12 @@ export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>
 export const publishPrivateModelSchema = z.object({
   modelId: z.number(),
   publishVersions: z.boolean(),
+});
+
+export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
+export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
+  username: z.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  cannotPublish: z.boolean().optional(),
 });

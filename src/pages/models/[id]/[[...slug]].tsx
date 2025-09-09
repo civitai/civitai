@@ -1145,6 +1145,24 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
+              {isOwner && model.meta?.cannotPublish && (
+                <Alert color="red">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="sm" mt={-3}>
+                      This model has been flagged by moderators and cannot be published. The
+                      training data has been identified as problematic. If you believe this is an
+                      error, please{' '}
+                      <Text component="a" c="blue.4" href="/contact" target="_blank">
+                        contact our support team
+                      </Text>{' '}
+                      for review.
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
