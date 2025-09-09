@@ -12,12 +12,21 @@ import {
   TextInput,
   Title,
   ThemeIcon,
+  Modal,
+  ScrollArea,
 } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
-import { IconDownload, IconEye, IconUser, IconCalendar, IconFilter } from '@tabler/icons-react';
+import {
+  IconDownload,
+  IconEye,
+  IconUser,
+  IconCalendar,
+  IconFilter,
+  IconPhoto,
+} from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -28,6 +37,10 @@ import { trpc } from '~/utils/trpc';
 import { showNotification } from '@mantine/notifications';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
+import { fetchBlob } from '~/utils/file-utils';
+import { getJSZip } from '~/utils/lazy';
+import { unzipTrainingData } from '~/utils/training';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import classes from './training-models.module.scss';
 
 export default function TrainingModerationFeedPage() {
@@ -37,6 +50,21 @@ export default function TrainingModerationFeedPage() {
   const [dateFromFilter, setDateFromFilter] = useState<Date | null>(null);
   const [dateToFilter, setDateToFilter] = useState<Date | null>(null);
   const [cannotPublishFilter, setCannotPublishFilter] = useState<string>('all');
+
+  // Image viewer state
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerUrls, setViewerUrls] = useState<{ url: string; ext: string; name: string }[]>([]);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [currentVersionId, setCurrentVersionId] = useState<number | null>(null);
+  const [currentModelInfo, setCurrentModelInfo] = useState<{
+    modelName: string;
+    versionName: string;
+    status: string;
+    baseModel?: string;
+    type: string;
+  } | null>(null);
+  const requestedRef = useRef(false);
 
   // Debounce username filter
   useEffect(() => {
@@ -150,6 +178,54 @@ export default function TrainingModerationFeedPage() {
 
   const handleToggleCannotPublish = (modelId: number) => {
     toggleCannotPublishMutation.mutate({ id: modelId });
+  };
+
+  const handleViewImages = async (versionId: number, modelInfo: { modelName: string; versionName: string; status: string; baseModel?: string; type: string }) => {
+    if (currentVersionId === versionId && viewerUrls.length > 0) {
+      setCurrentModelInfo(modelInfo);
+      setViewerOpen(true);
+      return;
+    }
+
+    setCurrentVersionId(versionId);
+    setCurrentModelInfo(modelInfo);
+    setViewerOpen(true);
+    setViewerLoading(true);
+    setViewerError(null);
+    setViewerUrls([]);
+    requestedRef.current = false;
+
+    try {
+      const zip = await fetchBlob(`/api/download/training-data/${versionId}`);
+      if (zip) {
+        const zipReader = await getJSZip();
+        const zData = await zipReader.loadAsync(zip);
+        const urls = await unzipTrainingData(zData, ({ imgBlob, fileExt, filename }) => {
+          return {
+            url: URL.createObjectURL(imgBlob),
+            ext: fileExt,
+            name: filename,
+          };
+        });
+        setViewerUrls(urls);
+      } else {
+        setViewerError('Failed to download training data');
+      }
+    } catch (err) {
+      console.error('Error loading training data:', err);
+      setViewerError(err instanceof Error ? err.message : 'Failed to load training data');
+    } finally {
+      setViewerLoading(false);
+    }
+  };
+
+  const handleCloseViewer = () => {
+    setViewerOpen(false);
+    // Clean up object URLs to prevent memory leaks
+    viewerUrls.forEach(({ url }) => URL.revokeObjectURL(url));
+    setViewerUrls([]);
+    setViewerError(null);
+    setCurrentModelInfo(null);
   };
 
   if (!currentUser?.isModerator) {
@@ -375,6 +451,21 @@ export default function TrainingModerationFeedPage() {
                                 </Button>
                                 <Button
                                   size="xs"
+                                  variant="light"
+                                  color="green"
+                                  leftSection={<IconPhoto size={14} />}
+                                  onClick={() => handleViewImages(version.id, {
+                                    modelName: model.name,
+                                    versionName: version.name,
+                                    status: version.status,
+                                    baseModel: version.baseModel || undefined,
+                                    type: model.type,
+                                  })}
+                                >
+                                  Images
+                                </Button>
+                                <Button
+                                  size="xs"
                                   variant="filled"
                                   color="yellow"
                                   leftSection={<IconEye size={14} />}
@@ -490,6 +581,105 @@ export default function TrainingModerationFeedPage() {
             </InViewLoader>
           )}
         </Stack>
+
+        {/* Image Viewer Modal */}
+        <Modal
+          opened={viewerOpen}
+          onClose={handleCloseViewer}
+          size="90%"
+          title={
+            <Stack gap={8}>
+              {currentModelInfo ? (
+                <>
+                  <Text fw={600} size="lg">{currentModelInfo.modelName}</Text>
+                  <Group gap="xs" wrap="wrap">
+                    <Badge variant="light" color="blue" size="sm">{currentModelInfo.versionName}</Badge>
+                    <Badge
+                      color={currentModelInfo.status === 'Published' ? 'green' : 'orange'}
+                      variant="light"
+                      size="sm"
+                    >
+                      {currentModelInfo.status}
+                    </Badge>
+                    <Badge variant="outline" size="sm">{currentModelInfo.type}</Badge>
+                    {currentModelInfo.baseModel && (
+                      <Badge color="gray" variant="outline" size="sm">{currentModelInfo.baseModel}</Badge>
+                    )}
+                  </Group>
+                </>
+              ) : (
+                <Text fw={600}>Training Images</Text>
+              )}
+            </Stack>
+          }
+          centered
+        >
+          {viewerLoading ? (
+            <Center py="xl">
+              <Stack align="center" gap="sm">
+                <Loader type="bars" size="lg" />
+                <Text size="sm" c="dimmed">
+                  Loading training images...
+                </Text>
+              </Stack>
+            </Center>
+          ) : viewerError ? (
+            <Center py="xl">
+              <Stack align="center" gap="sm">
+                <Text size="sm" c="red">
+                  {viewerError}
+                </Text>
+                <Button size="sm" variant="light" onClick={handleCloseViewer}>
+                  Close
+                </Button>
+              </Stack>
+            </Center>
+          ) : viewerUrls.length === 0 ? (
+            <Center py="xl">
+              <Text size="sm" c="dimmed">
+                No images found in training data
+              </Text>
+            </Center>
+          ) : (
+            <ScrollArea h={600}>
+              <SimpleGrid cols={{ base: 2, sm: 3, lg: 4 }} spacing="md" p="md">
+                {viewerUrls.map(({ url, ext, name }, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-center overflow-hidden rounded-lg border bg-gray-50"
+                  >
+                    {IMAGE_MIME_TYPE.includes(`image/${ext}` as any) && (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt={name}
+                          className="h-auto max-h-64 w-full object-contain"
+                          loading="lazy"
+                          title={name}
+                        />
+                      </>
+                    )}
+                    {VIDEO_MIME_TYPE.includes(`video/${ext}` as any) && (
+                      <video
+                        disablePictureInPicture
+                        playsInline
+                        controls
+                        muted
+                        loop
+                        preload="metadata"
+                        className="h-auto max-h-64 w-full"
+                        title={name}
+                      >
+                        <source src={url} type={`video/${ext}`} />
+                      </video>
+                    )}
+                  </div>
+                ))}
+              </SimpleGrid>
+            </ScrollArea>
+          )}
+        </Modal>
       </div>
     </>
   );
