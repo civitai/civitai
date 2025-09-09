@@ -8,7 +8,7 @@ import {
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
-import { getAllModelsSchema } from '~/server/schema/model.schema';
+import { getAllModelsSchema, getTrainingModerationFeedSchema } from '~/server/schema/model.schema';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import { getModelModRules, getTrainingModelsForModerators } from '~/server/services/model.service';
@@ -26,14 +26,7 @@ export const modRouter = router({
       .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
     queryTraining: moderatorProcedure
-      .input(z.object({ 
-        limit: z.number().optional(), 
-        cursor: z.number().optional(), 
-        username: z.string().optional(),
-        dateFrom: z.date().optional(),
-        dateTo: z.date().optional(),
-        cannotPublish: z.boolean().optional(),
-      }))
+      .input(getTrainingModerationFeedSchema)
       .query(({ input }) => getTrainingModelsForModerators(input)),
   }),
   modelVersions: router({

@@ -392,4 +392,9 @@ export const publishPrivateModelSchema = z.object({
 });
 
 export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
-export const getTrainingModerationFeedSchema = infiniteQuerySchema;
+export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
+  username: z.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  cannotPublish: z.boolean().optional(),
+});

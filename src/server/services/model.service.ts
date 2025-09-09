@@ -30,6 +30,7 @@ import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  GetTrainingModerationFeedSchema,
   IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
@@ -3384,14 +3385,7 @@ export const getTrainingModelsForModerators = async ({
   dateFrom,
   dateTo,
   cannotPublish,
-}: {
-  limit?: number;
-  cursor?: number;
-  username?: string;
-  dateFrom?: Date;
-  dateTo?: Date;
-  cannotPublish?: boolean;
-}) => {
+}: GetTrainingModerationFeedSchema) => {
   const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
   const cursorWhere = cursor ? { id: { lt: cursor } } : {};
 

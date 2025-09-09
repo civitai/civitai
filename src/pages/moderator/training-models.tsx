@@ -180,7 +180,16 @@ export default function TrainingModerationFeedPage() {
     toggleCannotPublishMutation.mutate({ id: modelId });
   };
 
-  const handleViewImages = async (versionId: number, modelInfo: { modelName: string; versionName: string; status: string; baseModel?: string; type: string }) => {
+  const handleViewImages = async (
+    versionId: number,
+    modelInfo: {
+      modelName: string;
+      versionName: string;
+      status: string;
+      baseModel?: string;
+      type: string;
+    }
+  ) => {
     if (currentVersionId === versionId && viewerUrls.length > 0) {
       setCurrentModelInfo(modelInfo);
       setViewerOpen(true);
@@ -454,13 +463,15 @@ export default function TrainingModerationFeedPage() {
                                   variant="light"
                                   color="green"
                                   leftSection={<IconPhoto size={14} />}
-                                  onClick={() => handleViewImages(version.id, {
-                                    modelName: model.name,
-                                    versionName: version.name,
-                                    status: version.status,
-                                    baseModel: version.baseModel || undefined,
-                                    type: model.type,
-                                  })}
+                                  onClick={() =>
+                                    handleViewImages(version.id, {
+                                      modelName: model.name,
+                                      versionName: version.name,
+                                      status: version.status,
+                                      baseModel: version.baseModel || undefined,
+                                      type: model.type,
+                                    })
+                                  }
                                 >
                                   Images
                                 </Button>
@@ -591,9 +602,13 @@ export default function TrainingModerationFeedPage() {
             <Stack gap={8}>
               {currentModelInfo ? (
                 <>
-                  <Text fw={600} size="lg">{currentModelInfo.modelName}</Text>
+                  <Text fw={600} size="lg">
+                    {currentModelInfo.modelName}
+                  </Text>
                   <Group gap="xs" wrap="wrap">
-                    <Badge variant="light" color="blue" size="sm">{currentModelInfo.versionName}</Badge>
+                    <Badge variant="light" color="blue" size="sm">
+                      {currentModelInfo.versionName}
+                    </Badge>
                     <Badge
                       color={currentModelInfo.status === 'Published' ? 'green' : 'orange'}
                       variant="light"
@@ -601,9 +616,13 @@ export default function TrainingModerationFeedPage() {
                     >
                       {currentModelInfo.status}
                     </Badge>
-                    <Badge variant="outline" size="sm">{currentModelInfo.type}</Badge>
+                    <Badge variant="outline" size="sm">
+                      {currentModelInfo.type}
+                    </Badge>
                     {currentModelInfo.baseModel && (
-                      <Badge color="gray" variant="outline" size="sm">{currentModelInfo.baseModel}</Badge>
+                      <Badge color="gray" variant="outline" size="sm">
+                        {currentModelInfo.baseModel}
+                      </Badge>
                     )}
                   </Group>
                 </>
