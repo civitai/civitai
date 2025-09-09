@@ -66,23 +66,23 @@ export default function TrainingModerationFeedPage() {
         { limit: 20, username: debouncedUsernameFilter || undefined },
         (old) => {
           if (!old) return old;
-          
+
           return {
             ...old,
-            pages: old.pages.map(page => ({
+            pages: old.pages.map((page) => ({
               ...page,
-              items: page.items.map(model => 
-                model.id === variables.id 
+              items: page.items.map((model) =>
+                model.id === variables.id
                   ? {
                       ...model,
                       meta: {
                         ...model.meta,
-                        cannotPublish: !model.meta?.cannotPublish
-                      }
+                        cannotPublish: !model.meta?.cannotPublish,
+                      },
                     }
                   : model
-              )
-            }))
+              ),
+            })),
           };
         }
       );
@@ -98,7 +98,7 @@ export default function TrainingModerationFeedPage() {
           context.previousData
         );
       }
-      
+
       showNotification({
         title: 'Error',
         message: error.message,
@@ -166,7 +166,9 @@ export default function TrainingModerationFeedPage() {
                 value={usernameFilter}
                 onChange={(event) => setUsernameFilter(event.currentTarget.value)}
                 style={{ flex: 1 }}
-                rightSection={usernameFilter !== debouncedUsernameFilter ? <Loader size={16} /> : null}
+                rightSection={
+                  usernameFilter !== debouncedUsernameFilter ? <Loader size={16} /> : null
+                }
               />
               {usernameFilter && (
                 <Button size="xs" variant="light" onClick={() => setUsernameFilter('')}>
