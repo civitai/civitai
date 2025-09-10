@@ -106,7 +106,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (window.ramp) {
-      window.ramp.spaAds({ countPageview: true });
+      window.ramp.spaAds({ countPageview: true, path: window.location.pathname });
     }
   }, [router.pathname]);
 
