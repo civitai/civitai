@@ -8,7 +8,7 @@ import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { Adunit_InContent } from '~/components/Ads/Playwire/Adunit';
+import { Adunit_InContent, Adunit_InContentSkyscaper } from '~/components/Ads/Playwire/Adunit';
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -36,6 +36,11 @@ export function useMasonryColumns<TData>(
               width: 300,
               height: 250,
               AdUnit: Adunit_InContent,
+            },
+            {
+              width: 300,
+              height: 600,
+              AdUnit: Adunit_InContentSkyscaper,
             },
           ]
         : undefined,
