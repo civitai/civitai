@@ -77,7 +77,7 @@ import { isDefined } from '~/utils/type-guards';
 
 const maxRuns = 5;
 
-const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
+const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan', 'chroma'];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -544,7 +544,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Stack
         className={clsx(
-          'sticky top-0 z-10 mb-[-5px] bg-white pb-[5px] dark:bg-dark-7',
+          'dark:bg-dark-7 sticky top-0 z-10 mb-[-5px] bg-white pb-[5px]',
           !multiMode && 'hidden'
         )}
       >
@@ -751,7 +751,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             w="fit-content"
             px="md"
             py="xs"
-            className="self-end bg-gray-0 dark:bg-dark-6"
+            className="bg-gray-0 dark:bg-dark-6 self-end"
           >
             <Group gap="sm">
               <Badge>
