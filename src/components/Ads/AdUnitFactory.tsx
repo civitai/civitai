@@ -125,7 +125,8 @@ function AdWrapper({
 
   const content = inView ? (
     <>
-      {adsBlocked ? (
+      <SupportUsImage sizes={adSizes ?? undefined} />
+      {/* {adsBlocked ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
       ) : ready && adSizes !== undefined ? (
         <AdUnitContent
@@ -149,7 +150,7 @@ function AdWrapper({
             Remove ads
           </Text>
         </div>
-      )}
+      )} */}
     </>
   ) : null;
 
