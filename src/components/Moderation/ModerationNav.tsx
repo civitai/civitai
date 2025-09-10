@@ -15,7 +15,11 @@ export function ModerationNav() {
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
-        { label: 'Training Models', href: '/moderator/training-models' },
+        { 
+          label: 'Training Models', 
+          href: '/moderator/training-models', 
+          hidden: !features.trainingModelsModeration 
+        },
         { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
         { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },

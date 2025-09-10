@@ -12,9 +12,13 @@ import { getAllModelsSchema, getTrainingModerationFeedSchema } from '~/server/sc
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import { getModelModRules, getTrainingModelsForModerators } from '~/server/services/model.service';
-import { moderatorProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
 import { throwDbError } from '~/server/utils/errorHandling';
 import type { ModerationRule } from '~/shared/utils/prisma/models';
+
+const trainingModerationProcedure = protectedProcedure.use(
+  isFlagProtected('trainingModelsModeration')
+);
 
 export const modRouter = router({
   models: router({
@@ -25,7 +29,7 @@ export const modRouter = router({
     resolveFlagged: moderatorProcedure
       .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
-    queryTraining: moderatorProcedure
+    queryTraining: trainingModerationProcedure
       .input(getTrainingModerationFeedSchema)
       .query(({ input }) => getTrainingModelsForModerators(input)),
   }),

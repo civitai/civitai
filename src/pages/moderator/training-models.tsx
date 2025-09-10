@@ -23,7 +23,7 @@ import {
   IconCalendar,
   IconFilter,
   IconPhoto,
-  IconWorkflow,
+  IconCode,
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
@@ -33,6 +33,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { showNotification } from '@mantine/notifications';
@@ -46,6 +47,7 @@ import classes from './training-models.module.scss';
 
 export default function TrainingModerationFeedPage() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const [usernameFilter, setUsernameFilter] = useState('');
   const [debouncedUsernameFilter, setDebouncedUsernameFilter] = useState('');
   const [workflowIdFilter, setWorkflowIdFilter] = useState('');
@@ -100,7 +102,7 @@ export default function TrainingModerationFeedPage() {
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        enabled: !!currentUser?.isModerator,
+        enabled: features.trainingModelsModeration,
       }
     );
 
@@ -252,12 +254,12 @@ export default function TrainingModerationFeedPage() {
     setCurrentModelInfo(null);
   };
 
-  if (!currentUser?.isModerator) {
+  if (!features.trainingModelsModeration) {
     return (
       <>
         <Meta title="Access Denied" deIndex />
         <Center py="xl">
-          <Text>Access denied. Moderator access required.</Text>
+          <Text>Access denied. You do not have permission to access this feature.</Text>
         </Center>
       </>
     );
@@ -310,7 +312,7 @@ export default function TrainingModerationFeedPage() {
                     placeholder="Filter by workflow ID"
                     value={workflowIdFilter}
                     onChange={(event) => setWorkflowIdFilter(event.currentTarget.value)}
-                    leftSection={<IconWorkflow size={16} />}
+                    leftSection={<IconCode size={16} />}
                     rightSection={
                       workflowIdFilter !== debouncedWorkflowIdFilter ? <Loader size={16} /> : null
                     }
