@@ -68,12 +68,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     useAdProviderStore.setState({ adsBlocked: true });
   }
 
-  function handleLoaded() {
-    useAdProviderStore.setState({ adsBlocked: false });
-  }
-
   useEffect(() => {
     function callback() {
+      useAdProviderStore.setState({ adsBlocked: false });
+
       // check for cmp consent
       if (window.__tcfapi) {
         window.__tcfapi('addEventListener', 2, function (tcData: any, success: boolean) {
@@ -105,10 +103,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (window.ramp) {
+    if (ready) {
       window.ramp.spaAds({ countPageview: true, path: window.location.pathname });
     }
-  }, [router.pathname]);
+  }, [router.pathname, ready]);
 
   return (
     <AdsContext.Provider
@@ -146,7 +144,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
               src={`//cdn.intergient.com/${env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID}/${env.NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID}/ramp.js`}
               data-cfasync="false"
               onError={handleLoadedError}
-              onLoad={handleLoaded}
             />
             <ImpressionTracker />
           </>

@@ -88,17 +88,16 @@ export function createAdunit({
   supportUsSize: SupportUsImageSize;
 }) {
   return function Adunit(props: AdunitProps) {
-    const { adsBlocked } = useAdsContext();
+    const { adsBlocked, ready } = useAdsContext();
     return (
       <AdUnitRenderable browsingLevel={props.browsingLevel}>
-        {adsBlocked ? (
-          <SupportUsImage
-            supportUsSize={supportUsSize}
-            className={clsx(className, props.className)}
-          />
-        ) : (
-          <AdunitDynamic id={props.id} type={type} className={clsx(className, props.className)} />
-        )}
+        <div className={props.className}>
+          {adsBlocked ? (
+            <SupportUsImage supportUsSize={supportUsSize} className={clsx(className)} />
+          ) : ready ? (
+            <AdunitDynamic id={props.id} type={type} className={clsx(className)} />
+          ) : null}
+        </div>
       </AdUnitRenderable>
     );
   };
