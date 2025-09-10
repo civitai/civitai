@@ -75,29 +75,40 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     function callback() {
       // check for cmp consent
-      // window.__tcfapi('addEventListener', 2, function (tcData: any, success: boolean) {
-      //   if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
-      //     window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
-      //     // AdConsent finished asking for consent, do something that is dependend on user consent ...
-      //     if (!success) useAdProviderStore.setState({ adsBlocked: true });
-      //     else useAdProviderStore.setState({ ready: true });
-      //   }
-      // });
+      if (window.__tcfapi) {
+        window.__tcfapi('addEventListener', 2, function (tcData: any, success: boolean) {
+          // TODO - need to test this
+          if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
+            window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
+            console.log({ __tcfapi: success });
+            // AdConsent finished asking for consent, do something that is dependend on user consent ...
+            if (!success) useAdProviderStore.setState({ adsBlocked: true });
+            else useAdProviderStore.setState({ ready: true });
+          }
+        });
+      }
 
       window.googletag.cmd.push(function () {
         window.googletag.pubads().addEventListener('impressionViewable', function (event: any) {
           const slot = event.slot;
           const adUnit = slot.getAdUnitPath()?.split('/')?.reverse()?.[0];
+          console.log('adunit impression', slot.getAdUnitPath(), slot);
           if (adUnit) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: adUnit }));
         });
       });
     }
 
-    window.addEventListener('adnginLoaderReady', callback);
+    window.addEventListener('ramp-ready', callback);
     return () => {
-      window.removeEventListener('adnginLoaderReady', callback);
+      window.removeEventListener('ramp-ready', callback);
     };
   }, []);
+
+  useEffect(() => {
+    if (window.ramp) {
+      window.ramp.spaAds({ countPageview: true });
+    }
+  }, [router.pathname]);
 
   return (
     <AdsContext.Provider
@@ -125,9 +136,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   window.ramp.passiveMode = true;
 
                   window.ramp.que.push(() => {
-                    console.log('ramp ready')
-                    // TODO - set up impression tracking
-                    // TODO - check consent status
+                    dispatchEvent(new CustomEvent('ramp-ready'));
                   })
                 `,
               }}
