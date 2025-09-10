@@ -23,6 +23,7 @@ import {
   IconCalendar,
   IconFilter,
   IconPhoto,
+  IconWorkflow,
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
@@ -47,6 +48,8 @@ export default function TrainingModerationFeedPage() {
   const currentUser = useCurrentUser();
   const [usernameFilter, setUsernameFilter] = useState('');
   const [debouncedUsernameFilter, setDebouncedUsernameFilter] = useState('');
+  const [workflowIdFilter, setWorkflowIdFilter] = useState('');
+  const [debouncedWorkflowIdFilter, setDebouncedWorkflowIdFilter] = useState('');
   const [dateFromFilter, setDateFromFilter] = useState<Date | null>(null);
   const [dateToFilter, setDateToFilter] = useState<Date | null>(null);
   const [cannotPublishFilter, setCannotPublishFilter] = useState<string>('all');
@@ -75,11 +78,21 @@ export default function TrainingModerationFeedPage() {
     return () => clearTimeout(timer);
   }, [usernameFilter]);
 
+  // Debounce workflowId filter
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedWorkflowIdFilter(workflowIdFilter);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [workflowIdFilter]);
+
   const { data, isFetching, hasNextPage, fetchNextPage, isInitialLoading } =
     trpc.moderator.models.queryTraining.useInfiniteQuery(
       {
         limit: 20,
         username: debouncedUsernameFilter || undefined,
+        workflowId: debouncedWorkflowIdFilter || undefined,
         dateFrom: dateFromFilter || undefined,
         dateTo: dateToFilter || undefined,
         cannotPublish:
@@ -108,6 +121,7 @@ export default function TrainingModerationFeedPage() {
         {
           limit: 20,
           username: debouncedUsernameFilter || undefined,
+          workflowId: debouncedWorkflowIdFilter || undefined,
           dateFrom: dateFromFilter || undefined,
           dateTo: dateToFilter || undefined,
           cannotPublish:
@@ -148,6 +162,7 @@ export default function TrainingModerationFeedPage() {
           {
             limit: 20,
             username: debouncedUsernameFilter || undefined,
+            workflowId: debouncedWorkflowIdFilter || undefined,
             dateFrom: dateFromFilter || undefined,
             dateTo: dateToFilter || undefined,
             cannotPublish:
@@ -290,6 +305,18 @@ export default function TrainingModerationFeedPage() {
                     style={{ minWidth: 200, flex: 1 }}
                   />
 
+                  {/* Workflow ID Filter */}
+                  <TextInput
+                    placeholder="Filter by workflow ID"
+                    value={workflowIdFilter}
+                    onChange={(event) => setWorkflowIdFilter(event.currentTarget.value)}
+                    leftSection={<IconWorkflow size={16} />}
+                    rightSection={
+                      workflowIdFilter !== debouncedWorkflowIdFilter ? <Loader size={16} /> : null
+                    }
+                    style={{ minWidth: 200, flex: 1 }}
+                  />
+
                   {/* Date Range Filter */}
                   <DateInput
                     placeholder="From date"
@@ -324,6 +351,7 @@ export default function TrainingModerationFeedPage() {
 
                 {/* Clear Filters Button */}
                 {(usernameFilter ||
+                  workflowIdFilter ||
                   dateFromFilter ||
                   dateToFilter ||
                   cannotPublishFilter !== 'all') && (
@@ -333,6 +361,7 @@ export default function TrainingModerationFeedPage() {
                     color="gray"
                     onClick={() => {
                       setUsernameFilter('');
+                      setWorkflowIdFilter('');
                       setDateFromFilter(null);
                       setDateToFilter(null);
                       setCannotPublishFilter('all');

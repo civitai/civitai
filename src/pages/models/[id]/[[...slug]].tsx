@@ -1152,13 +1152,12 @@ export default function ModelDetailsV2({
                       <IconExclamationMark />
                     </ThemeIcon>
                     <Text size="sm" mt={-3}>
-                      This model has been flagged by moderators and cannot be published. The
-                      training data has been identified as problematic. If you believe this is an
-                      error, please{' '}
+                      Due to the nature of the training data used to create this model, it cannot be
+                      Published. If you believe this to be an error, please{' '}
                       <Text component="a" c="blue.4" href="/contact" target="_blank">
                         contact our support team
-                      </Text>{' '}
-                      for review.
+                      </Text>
+                      .
                     </Text>
                   </Group>
                 </Alert>

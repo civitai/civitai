@@ -397,4 +397,5 @@ export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
   dateFrom: z.date().optional(),
   dateTo: z.date().optional(),
   cannotPublish: z.boolean().optional(),
+  workflowId: z.string().optional(),
 });

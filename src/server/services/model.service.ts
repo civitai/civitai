@@ -3385,6 +3385,7 @@ export const getTrainingModelsForModerators = async ({
   dateFrom,
   dateTo,
   cannotPublish,
+  workflowId,
 }: GetTrainingModerationFeedSchema) => {
   const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
   const cursorWhere = cursor ? { id: { lt: cursor } } : {};
@@ -3420,6 +3421,12 @@ export const getTrainingModelsForModerators = async ({
           some: {
             type: 'Training Data',
             dataPurged: false,
+            ...(workflowId && {
+              metadata: {
+                path: ['trainingResults', 'workflowId'],
+                equals: workflowId,
+              },
+            }),
           },
         },
       },
