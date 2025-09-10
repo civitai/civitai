@@ -16,6 +16,7 @@ export type BaseModelGroup = BaseModelConfig[number]['group'];
 // type BaseModel
 const baseModelConfig = [
   { name: 'AuraFlow', type: 'image', group: 'AuraFlow' },
+  { name: 'Chroma', type: 'image', group: 'Chroma' },
   { name: 'CogVideoX', type: 'image', group: 'CogVideoX' },
   { name: 'Flux.1 S', type: 'image', group: 'Flux1' },
   { name: 'Flux.1 D', type: 'image', group: 'Flux1' },
