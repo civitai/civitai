@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useAdsContext } from '~/components/Ads/Playwire/AdsProvider';
@@ -98,14 +98,17 @@ function SupportUsImage({
 }) {
   const [width, height] = supportUsSize.split('x').map(Number);
   return (
-    <NextLink href="/pricing" className={className}>
-      <Image
-        src={`/images/support-us/${supportUsSize}.jpg`}
-        alt="Please support civitai and creators by disabling adblock"
-        width={width}
-        height={height}
-      />
-    </NextLink>
+    <div className={className}>
+      <NextLink href="/pricing">
+        <Image
+          src={`/images/support-us/${supportUsSize}.jpg`}
+          alt="Please support civitai and creators by disabling adblock"
+          width={width}
+          height={height}
+          className="rounded-md"
+        />
+      </NextLink>
+    </div>
   );
 }
 
@@ -114,6 +117,7 @@ type AdunitProps = {
   browsingLevel?: number;
   className?: string;
   onImpressionTracked?: (type: string) => void;
+  hideOnBlocked?: boolean;
 };
 export function createAdunit({
   type,
@@ -127,7 +131,7 @@ export function createAdunit({
   return function Adunit(props: AdunitProps) {
     const { adsBlocked, ready } = useAdsContext();
     return (
-      <AdUnitRenderable browsingLevel={props.browsingLevel}>
+      <AdUnitRenderable browsingLevel={props.browsingLevel} hideOnBlocked={props.hideOnBlocked}>
         <div className={props.className}>
           {!ready ? null : !adsBlocked ? (
             <AdunitDynamic
@@ -148,15 +152,15 @@ export function createAdunit({
 export function createAdunitLUT(
   lut: { minWidth?: number; component: React.ComponentType<AdunitProps> }[]
 ) {
+  const lutReversed = lut.reverse();
   return function AdunitLUT(props: AdunitProps) {
     const { nodeRef, containerName } = useContainerContext();
     const Component = useContainerProviderStore(
       useCallback((state) => {
         const containerWidth =
           state[containerName]?.inlineSize ?? nodeRef.current?.offsetWidth ?? 0;
-        return (
-          lut.reverse().find(({ minWidth = 0 }) => minWidth < containerWidth)?.component ?? null
-        );
+        const match = lutReversed.find(({ minWidth = 0 }) => minWidth <= containerWidth);
+        return match?.component ?? null;
       }, [])
     );
 

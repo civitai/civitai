@@ -64,7 +64,6 @@ import { Fragment, useEffect } from 'react';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Flags } from '~/shared/utils/flags';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -74,6 +73,7 @@ import { useSearchParams } from 'next/navigation';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { Adunit_InContent, Adunit_InContentSkyscaper } from '~/components/Ads/Playwire/Adunit';
 
 type Props = { postId: number };
 
@@ -447,10 +447,10 @@ export function PostDetailContent({ postId }: Props) {
               <div className="sticky left-0 top-0 ">
                 <div className="flex w-full flex-col gap-3 py-3">
                   {sidebarEnabled && scrollHeight >= 600 && (
-                    <AdUnitSide_1 browsingLevel={aggregateBrowsingLevel} />
+                    <Adunit_InContentSkyscaper browsingLevel={aggregateBrowsingLevel} />
                   )}
                   {sidebarEnabled && scrollHeight > 900 && (
-                    <AdUnitSide_2 browsingLevel={aggregateBrowsingLevel} />
+                    <Adunit_InContent browsingLevel={aggregateBrowsingLevel} hideOnBlocked />
                   )}
                 </div>
               </div>

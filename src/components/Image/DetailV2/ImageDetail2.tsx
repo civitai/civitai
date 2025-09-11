@@ -79,8 +79,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
-import { Adunit_Footer } from '~/components/Ads/Playwire/Adunit';
+import { Adunit_FooterImageDetail, Adunit_InContent } from '~/components/Ads/Playwire/Adunit';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -501,8 +500,7 @@ export function ImageDetail2() {
                           </Text>
                         </AlertWithIcon>
                       )}
-                      {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
-                      {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
+                      {!hideAds && <Adunit_InContent />}
                       <VotableTags
                         entityType="image"
                         entityId={image.id}
@@ -527,7 +525,7 @@ export function ImageDetail2() {
                       <ImageGenerationData imageId={image.id} />
                       {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
-                      {!hideAds && <AdUnitSide_3 />}
+                      {/* {!hideAds && <AdUnitSide_3 />} */}
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconBrandWechat />
@@ -549,7 +547,7 @@ export function ImageDetail2() {
               </div>
               {!hideAds && (
                 <div className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9">
-                  <Adunit_Footer />
+                  <Adunit_FooterImageDetail />
                 </div>
               )}
             </div>

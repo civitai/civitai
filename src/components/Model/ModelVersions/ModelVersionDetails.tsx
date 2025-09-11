@@ -123,6 +123,7 @@ import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
+import { Adunit_InContent } from '~/components/Ads/Playwire/Adunit';
 
 export function ModelVersionDetails({
   model,
@@ -1443,7 +1444,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
+          {!model.nsfw && !model.poi && <Adunit_InContent />}
         </Stack>
       </ContainerGrid2.Col>
 

@@ -67,7 +67,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       !blockedUrls.some((url) => router.asPath.includes(url));
 
   function handleLoadedError() {
-    useAdProviderStore.setState({ adsBlocked: true });
+    useAdProviderStore.setState({ adsBlocked: true, ready: true });
   }
 
   useEffect(() => {
@@ -104,10 +104,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (ready) {
+    if (ready && !adsBlocked) {
       window.ramp.spaAds({ countPageview: true, path: window.location.pathname });
     }
-  }, [router.pathname, ready]);
+  }, [router.pathname, ready, adsBlocked]);
 
   return (
     <AdsContext.Provider

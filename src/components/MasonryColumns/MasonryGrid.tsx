@@ -1,11 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import {
-  Button,
-  useComputedColorScheme,
-  useMantineColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Button, useComputedColorScheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
@@ -15,12 +10,12 @@ import { Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
-import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import { AdUnitRenderable } from '~/components/Ads/Playwire/AdUnitFactory';
 import classes from './MasonryGrid.module.scss';
+import { Adunit_InContent } from '~/components/Ads/Playwire/Adunit';
 
 type Props<TData> = {
   data: TData[];
@@ -53,7 +48,7 @@ export function MasonryGrid<TData>({
           {
             width: 300,
             height: 250,
-            AdUnit: AdUnitIncontent_1,
+            AdUnit: Adunit_InContent,
           },
         ],
       }),

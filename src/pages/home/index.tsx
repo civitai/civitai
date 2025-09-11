@@ -1,7 +1,6 @@
 import { Box, Button, Group, Popover, Text, Title } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { AdUnitTop } from '~/components/Ads/AdUnit';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -29,6 +28,7 @@ import {
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import classes from './index.module.css';
+import { AdunitBanner } from '~/components/Ads/Playwire/Adunit';
 
 export function Home() {
   const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
@@ -97,7 +97,7 @@ export function Home() {
                       metadata={homeBlock.metadata}
                     />
                   )}
-                  {showAds && <AdUnitTop className="py-3" />}
+                  {showAds && <AdunitBanner className="py-3" />}
                 </React.Fragment>
               );
             })}

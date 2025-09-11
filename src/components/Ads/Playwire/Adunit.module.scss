@@ -1,13 +1,29 @@
-.in_content {
-  min-height: 250px;
+.center {
   display: flex;
   justify-content: center;
+}
 
+.in_content {
+  min-height: 250px;
   &_skyscraper {
     min-height: 600px;
   }
 }
 
-// .adhesive-footer {
-//   &-mobile {}
-// }
+.footer {
+  min-height: 90px;
+}
+
+.banner {
+  &_mobile {
+    min-height: 100px;
+  }
+  &_desktop {
+    &_short {
+      min-height: 90px;
+    }
+    &_tall {
+      min-height: 250px;
+    }
+  }
+}
