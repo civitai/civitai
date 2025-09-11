@@ -116,7 +116,7 @@ function AdWrapper({
 }) {
   // const router = useRouter();
   // const key = router.asPath.split('?')[0];
-  const { adsBlocked, ready, isMember } = useAdsContext();
+  const { adsBlocked, ready } = useAdsContext();
 
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
