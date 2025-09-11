@@ -300,6 +300,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (r.baseType === 'chroma' && (!r.negativePrompt || !r.negativePrompt.trim())) {
+        showErrorNotification({
+          error: new Error('A negative prompt is required for Chroma training.'),
+          autoClose: false,
+        });
+        return;
+      }
+
       if (r.params.targetSteps > maxSteps) {
         showErrorNotification({
           error: new Error(
@@ -368,7 +376,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     finishedRuns = 0;
 
     runs.forEach(async (run, idx) => {
-      const { base, baseType, params, customModel, samplePrompts, staging, highPriority } = run;
+      const {
+        base,
+        baseType,
+        params,
+        customModel,
+        samplePrompts,
+        negativePrompt,
+        staging,
+        highPriority,
+      } = run;
       const { optimizerArgs, ...paramData } = params;
 
       if (isInvalidRapid(baseType, paramData.engine)) {
@@ -408,6 +425,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           baseModelType: baseType,
           params: paramData,
           samplePrompts,
+          ...(negativePrompt && { negativePrompt }),
           staging,
           highPriority,
         },

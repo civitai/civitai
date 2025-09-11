@@ -112,6 +112,7 @@ export type TrainingRun = {
   baseType: TrainingBaseModelType;
   customModel?: GenerationResource;
   samplePrompts: string[];
+  negativePrompt?: string;
   params: TrainingDetailsParams;
   highPriority: boolean;
   staging: boolean;
@@ -258,6 +259,7 @@ export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine:
 const defaultRunBase = {
   id: 1,
   samplePrompts: ['', '', ''],
+  negativePrompt: '',
   staging: false,
   highPriority: false,
   buzzCost: 0,
@@ -517,6 +519,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               ? data.customModel
               : run.customModel;
           run.samplePrompts = data.samplePrompts ?? run.samplePrompts;
+          run.negativePrompt = data.negativePrompt ?? run.negativePrompt;
           run.highPriority = data.highPriority ?? run.highPriority;
           run.staging = data.staging ?? run.staging;
           run.buzzCost = data.buzzCost ?? run.buzzCost;

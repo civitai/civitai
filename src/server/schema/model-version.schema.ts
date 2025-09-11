@@ -140,6 +140,7 @@ export const trainingDetailsObj = z.object({
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),
+  negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
 });
