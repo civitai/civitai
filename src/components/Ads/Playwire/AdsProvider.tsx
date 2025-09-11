@@ -57,8 +57,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const currentUser = useCurrentUser();
 
-  useEffect(() => console.log({ ready }), [ready]);
-
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
