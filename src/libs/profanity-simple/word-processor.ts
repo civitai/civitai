@@ -1,11 +1,7 @@
 import nlp from 'compromise';
 
 // Import all NSFW word lists
-import nsfwWords from '~/utils/metadata/lists/words-nsfw.json';
-import nsfwSoftWords from '~/utils/metadata/lists/words-nsfw-soft.json';
-import nsfwPromptWords from '~/utils/metadata/lists/words-nsfw-prompt.json';
-import blocklistNsfw from '~/utils/metadata/lists/blocklist-nsfw.json';
-import paddleNsfw from '~/utils/metadata/lists/words-paddle-nsfw.json';
+import blockedWords from '~/utils/metadata/lists/blocked-words.json';
 
 /**
  * NSFW Word Processor Utility
@@ -14,7 +10,7 @@ import paddleNsfw from '~/utils/metadata/lists/words-paddle-nsfw.json';
  * and generates plurals and conjugations using the compromise package.
  */
 
-interface ProcessedWords {
+export interface ProcessedWords {
   originalWords: string[];
   expandedWords: string[];
   allWords: string[];
@@ -111,17 +107,8 @@ function generateWordVariations(word: string): string[] {
  * Process all NSFW word lists and return deduplicated, expanded word lists
  */
 export function processNsfwWords(): ProcessedWords {
-  // Combine all word lists
-  const allRawWords = [
-    ...nsfwWords,
-    ...nsfwSoftWords,
-    ...nsfwPromptWords,
-    ...blocklistNsfw,
-    ...paddleNsfw,
-  ];
-
   // Clean and deduplicate original words
-  const originalWords = Array.from(new Set(allRawWords.filter(isValidWord).map(cleanWord))).sort();
+  const originalWords = Array.from(new Set(blockedWords.filter(isValidWord).map(cleanWord))).sort();
 
   // Generate variations for all words
   const expandedWordsSet = new Set<string>();

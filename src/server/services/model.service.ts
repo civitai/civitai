@@ -19,6 +19,7 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
@@ -1449,6 +1450,18 @@ export const upsertModel = async (
   if (input.description) await throwOnBlockedLinkDomain(input.description);
   if (!input.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
+  }
+
+  // Check model name and description for profanity
+  const profanityFilter = createProfanityFilter();
+  const textToCheck = [input.name, input.description].filter(Boolean).join(' ');
+  const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+  // If profanity is detected, mark model as NSFW and add to locked properties
+  if (hasProfanity && !input.nsfw) {
+    input.nsfw = true;
+    // Add nsfw to lockedProperties to prevent users from changing it
+    input.lockedProperties = [...(input.lockedProperties ?? []), 'nsfw'];
   }
 
   const {

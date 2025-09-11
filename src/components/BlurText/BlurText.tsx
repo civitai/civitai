@@ -1,53 +1,59 @@
 import React, { forwardRef } from 'react';
-import { createPolymorphicComponent, Box } from '@mantine/core';
+import type { TextProps } from '@mantine/core';
+import { createPolymorphicComponent, Text } from '@mantine/core';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import profanityFilter from '~/libs/profanity';
+import { useCleanText } from '~/hooks/useCheckProfanity';
 
-interface BlurTextProps {
+interface BlurTextProps extends TextProps {
   children: React.ReactNode;
   blur?: boolean;
 }
 
-const _BlurText = forwardRef<HTMLElement, BlurTextProps>(({ children, blur, ...props }, ref) => {
-  const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
-  const shouldBlur = blur !== undefined ? blur : blurNsfw;
+const _BlurText = forwardRef<HTMLParagraphElement, BlurTextProps>(
+  ({ children, blur, ...props }, ref) => {
+    const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
+    const shouldBlur = blur !== undefined ? blur : blurNsfw;
 
-  // If shouldBlur is false, return children as-is
-  if (!shouldBlur) {
+    // Extract all text content to clean with the hook
+    const extractTextContent = (content: React.ReactNode): string => {
+      if (typeof content === 'string') {
+        return content;
+      }
+      if (React.isValidElement(content)) {
+        return extractTextContent(content.props.children);
+      }
+      if (Array.isArray(content)) {
+        return content.map(extractTextContent).join('');
+      }
+      return '';
+    };
+
+    // Get the full text content
+    const fullText = extractTextContent(children);
+
+    // Use the hook to clean the text
+    const cleanedText = useCleanText(fullText, {
+      enabled: shouldBlur,
+      replacementStyle: 'asterisk',
+    });
+
+    // If no profanity filtering needed, return original children
+    if (!shouldBlur || cleanedText === fullText) {
+      return (
+        <Text component="span" ref={ref} {...props}>
+          {children}
+        </Text>
+      );
+    }
+
+    // Return cleaned text for simple cases
     return (
-      <Box component="span" ref={ref} {...props}>
-        {children}
-      </Box>
+      <Text component="span" ref={ref} {...props}>
+        {cleanedText}
+      </Text>
     );
   }
-
-  const processTextContent = (content: React.ReactNode): React.ReactNode => {
-    if (typeof content === 'string') {
-      return profanityFilter.censor(content);
-    }
-
-    if (React.isValidElement(content)) {
-      return React.cloneElement(content, {
-        ...content.props,
-        children: React.Children.map(content.props.children, processTextContent),
-      });
-    }
-
-    if (Array.isArray(content)) {
-      return content.map(processTextContent);
-    }
-
-    return content;
-  };
-
-  const processedChildren = processTextContent(children);
-
-  return (
-    <Box component="span" ref={ref} {...props}>
-      {processedChildren}
-    </Box>
-  );
-});
+);
 _BlurText.displayName = 'BlurText';
 
 export const BlurText = createPolymorphicComponent<'span', BlurTextProps>(_BlurText);
