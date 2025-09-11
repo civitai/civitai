@@ -1145,6 +1145,23 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
+              {isOwner && model.meta?.cannotPublish && (
+                <Alert color="red">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="sm" mt={-3}>
+                      Due to the nature of the training data used to create this model, it cannot be
+                      Published. If you believe this to be an error, please{' '}
+                      <Text component="a" c="blue.4" href="/contact" target="_blank">
+                        contact our support team
+                      </Text>
+                      .
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
