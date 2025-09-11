@@ -46,7 +46,8 @@ function AdunitDynamic({ id, type, className }: { id?: string; type: string; cla
 
     return () => {
       const units: Record<string, { element: HTMLElement }> = window.ramp.settings.slots;
-      const type = Object.entries(units).find(([_, value]) => value.element.id === selectorId)?.[0];
+      const id = document.querySelector(`[data-selector-id='${selectorId}']`)?.id;
+      const type = Object.entries(units).find(([_, value]) => value.element.id === id)?.[0];
       if (type) {
         console.log('destroying adunit', type, selectorId);
         window.ramp.destroyUnits([type]);
