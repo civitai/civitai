@@ -14,6 +14,10 @@ export const Adunit_InContentSkyscaper = createAdunit({
   supportUsSize: '300x600',
 });
 
+export const Adunit_Footer = createAdunit({
+  type: 'standard_iab_foot1',
+});
+
 // export const Adunit_Head1_Desktop = createAdunit({
 //   type: 'standard_iab_head1'
 // })

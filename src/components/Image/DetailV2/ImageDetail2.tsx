@@ -34,7 +34,6 @@ import {
 } from '@tabler/icons-react';
 import { useRef } from 'react';
 import clsx from 'clsx';
-import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -81,6 +80,7 @@ import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/
 import { generationPanel } from '~/store/generation.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { Adunit_Footer } from '~/components/Ads/Playwire/Adunit';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -547,7 +547,11 @@ export function ImageDetail2() {
                   </ScrollArea>
                 </div>
               </div>
-              {!hideAds && <AdhesiveAd closeable={false} preserveLayout />}
+              {!hideAds && (
+                <div className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9">
+                  <Adunit_Footer />
+                </div>
+              )}
             </div>
           </BrowsingSettingsAddonsProvider>
         </BrowsingLevelProvider>

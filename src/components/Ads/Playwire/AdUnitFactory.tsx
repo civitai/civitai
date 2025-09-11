@@ -25,36 +25,66 @@ type SupportUsImageSize =
 export function AdUnitRenderable({
   children,
   browsingLevel: browsingLevelOverride,
+  hideOnBlocked,
 }: {
   children: React.ReactElement;
   browsingLevel?: number;
+  hideOnBlocked?: boolean;
 }) {
-  const { adsEnabled } = useAdsContext();
+  const { adsEnabled, adsBlocked } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel);
 
   if (!adsEnabled || nsfw) return null;
+  if (hideOnBlocked && adsBlocked) return null;
 
   return children;
 }
 
-function AdunitDynamic({ id, type, className }: { id?: string; type: string; className?: string }) {
+function getTypeFromSelectorId(selectorId: string) {
+  const units: Record<string, { element: HTMLElement }> = window.ramp.settings.slots;
+  return Object.entries(units).find(
+    ([_, value]) => value.element.getAttribute('data-selector-id') === selectorId
+  )?.[0];
+}
+
+function AdunitDynamic({
+  id,
+  type,
+  className,
+  onImpressionTracked,
+}: {
+  id?: string;
+  type: string;
+  className?: string;
+  onImpressionTracked?: (type: string) => void;
+}) {
   const [selectorId] = useState(id ?? getRandomId());
 
   useEffect(() => {
     window.ramp.spaAddAds([{ type, selectorId }]);
 
     return () => {
-      const units: Record<string, { element: HTMLElement }> = window.ramp.settings.slots;
-      const type = Object.entries(units).find(
-        ([_, value]) => value.element.getAttribute('data-selector-id') === selectorId
-      )?.[0];
+      const type = getTypeFromSelectorId(selectorId);
       if (type) {
         console.log('destroying adunit', type, selectorId);
         window.ramp.destroyUnits([type]);
       }
     };
   }, [selectorId, type]);
+
+  useEffect(() => {
+    if (!onImpressionTracked) return;
+    const listener = ((e: CustomEvent) => {
+      const type = getTypeFromSelectorId(selectorId);
+      console.log({ detail: e.detail, type });
+      if (type && e.detail === type) onImpressionTracked?.(type);
+    }) as EventListener;
+    window.addEventListener('civitai-ad-impression', listener);
+    return () => {
+      window.removeEventListener('civitai-ad-impression', listener);
+    };
+  }, [onImpressionTracked]);
 
   return <div className={className} id={selectorId} />;
 }
@@ -79,7 +109,12 @@ function SupportUsImage({
   );
 }
 
-type AdunitProps = { id?: string; browsingLevel?: number; className?: string };
+type AdunitProps = {
+  id?: string;
+  browsingLevel?: number;
+  className?: string;
+  onImpressionTracked?: (type: string) => void;
+};
 export function createAdunit({
   type,
   className,
@@ -87,18 +122,23 @@ export function createAdunit({
 }: {
   type: string;
   className?: string;
-  supportUsSize: SupportUsImageSize;
+  supportUsSize?: SupportUsImageSize;
 }) {
   return function Adunit(props: AdunitProps) {
     const { adsBlocked, ready } = useAdsContext();
     return (
       <AdUnitRenderable browsingLevel={props.browsingLevel}>
         <div className={props.className}>
-          {!ready ? null : adsBlocked ? (
+          {!ready ? null : !adsBlocked ? (
+            <AdunitDynamic
+              id={props.id}
+              type={type}
+              className={clsx(className)}
+              onImpressionTracked={props.onImpressionTracked}
+            />
+          ) : supportUsSize ? (
             <SupportUsImage supportUsSize={supportUsSize} className={clsx(className)} />
-          ) : (
-            <AdunitDynamic id={props.id} type={type} className={clsx(className)} />
-          )}
+          ) : null}
         </div>
       </AdUnitRenderable>
     );

@@ -90,9 +90,9 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       window.googletag.cmd.push(function () {
         window.googletag.pubads().addEventListener('impressionViewable', function (event: any) {
           const slot = event.slot;
-          const adUnit = slot.getAdUnitPath()?.split('/')?.reverse()?.[0];
-          console.log('adunit impression', slot.getAdUnitPath(), slot);
-          if (adUnit) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: adUnit }));
+          const type = slot.getSlotElementId();
+          console.log('adunit impression', type, slot);
+          if (type) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: type }));
         });
       });
     }
