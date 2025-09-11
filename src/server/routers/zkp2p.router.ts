@@ -5,7 +5,7 @@ import { protectedProcedure, router } from '~/server/trpc';
 export const zkp2pRouter = router({
   checkUSDCAvailability: protectedProcedure.query(async ({ ctx }) => {
     try {
-      const zkp2pHost = env.NEXT_PUBLIC_ZKP2P_IFRAME_HOST;
+      const zkp2pHost = env.NEXT_PUBLIC_ZKP2P_IFRAME_HOST || 'http://localhost:3001';
       const adminToken = env.WEBHOOK_TOKEN;
 
       if (!zkp2pHost || !adminToken) {
@@ -32,6 +32,7 @@ export const zkp2pRouter = router({
           balance: balance,
         };
       } else {
+        console.error('Error checking USDC availability:', response.statusText);
         return { shouldShow: false, balance: 0 };
       }
     } catch (error) {

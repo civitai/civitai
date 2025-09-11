@@ -10,13 +10,10 @@ interface USDCPurchasePromptProps {
 
 // Hook to check if USDC prompt should show (for other components to use)
 export const useUSDCPurchasePromptVisibility = (userId?: number) => {
-  const { data, isLoading } = trpc.zkp2p.checkUSDCAvailability.useQuery(
-    undefined,
-    {
-      enabled: !!userId,
-      refetchOnWindowFocus: false,
-    }
-  );
+  const { data, isLoading } = trpc.zkp2p.checkUSDCAvailability.useQuery(undefined, {
+    enabled: !!userId,
+    refetchOnWindowFocus: false,
+  });
 
   return {
     shouldShow: data?.shouldShow ?? false,
@@ -38,13 +35,23 @@ export const USDCPurchasePrompt = ({ userId }: USDCPurchasePromptProps) => {
     }
 
     try {
-      await processUSDCPurchase.mutateAsync({ amount: balance });
-      // Refetch the availability data to update the UI
-      await utils.zkp2p.checkUSDCAvailability.invalidate();
-      // Could also trigger a refetch of user's buzz balance here
+      const result = await processUSDCPurchase.mutateAsync({ amount: balance });
+
+      // Optimistically update the cache to hide the prompt immediately
+      utils.zkp2p.checkUSDCAvailability.setData(undefined, {
+        shouldShow: false,
+        balance: 0,
+      });
+
+      // Invalidate queries to ensure fresh data on next fetch
+      await Promise.all([utils.zkp2p.checkUSDCAvailability.invalidate()]);
+
+      // Log success for debugging
+      console.log('USDC purchase successful:', result);
     } catch (error) {
       console.error('Error processing USDC purchase:', error);
-      // Error handling could be improved with notifications
+      // Re-invalidate to ensure we have correct state after error
+      await utils.zkp2p.checkUSDCAvailability.invalidate();
     }
   };
 
