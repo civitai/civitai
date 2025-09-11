@@ -1,9 +1,15 @@
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { protectedProcedure, router } from '~/server/trpc';
 
 export const zkp2pRouter = router({
   checkUSDCAvailability: protectedProcedure.query(async ({ ctx }) => {
+    // Check if zkp2pPayments feature is enabled for this user
+    if (!ctx.features.zkp2pPayments) {
+      return { shouldShow: false, balance: 0 };
+    }
+
     try {
       const zkp2pHost = env.NEXT_PUBLIC_ZKP2P_IFRAME_HOST || 'http://localhost:3001';
       const adminToken = env.WEBHOOK_TOKEN;
@@ -48,6 +54,14 @@ export const zkp2pRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Check if zkp2pPayments feature is enabled for this user
+      if (!ctx.features.zkp2pPayments) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'USDC purchases are not available for your account',
+        });
+      }
+
       try {
         const zkp2pHost = env.NEXT_PUBLIC_ZKP2P_IFRAME_HOST;
         const adminToken = env.WEBHOOK_TOKEN;

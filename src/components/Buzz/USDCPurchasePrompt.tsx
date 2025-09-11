@@ -3,6 +3,7 @@ import { IconBolt, IconWallet } from '@tabler/icons-react';
 import { usdcToBuzz } from '~/utils/buzz';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 interface USDCPurchasePromptProps {
   userId?: number;
@@ -10,15 +11,16 @@ interface USDCPurchasePromptProps {
 
 // Hook to check if USDC prompt should show (for other components to use)
 export const useUSDCPurchasePromptVisibility = (userId?: number) => {
+  const features = useFeatureFlags();
   const { data, isLoading } = trpc.zkp2p.checkUSDCAvailability.useQuery(undefined, {
-    enabled: !!userId,
+    enabled: !!userId && features.zkp2pPayments,
     refetchOnWindowFocus: false,
   });
 
   return {
-    shouldShow: data?.shouldShow ?? false,
+    shouldShow: features.zkp2pPayments && (data?.shouldShow ?? false),
     balance: data?.balance ?? 0,
-    isLoading,
+    isLoading: features.zkp2pPayments ? isLoading : false,
   };
 };
 
