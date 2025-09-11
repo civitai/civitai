@@ -5,7 +5,7 @@ import type {
 import { useMemo } from 'react';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useAdsContext } from '~/components/Ads/Playwire/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Adunit_InContent, Adunit_InContentSkyscaper } from '~/components/Ads/Playwire/Adunit';

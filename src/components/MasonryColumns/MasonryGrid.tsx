@@ -9,7 +9,7 @@ import {
 import React, { useMemo } from 'react';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useAdsContext } from '~/components/Ads/Playwire/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

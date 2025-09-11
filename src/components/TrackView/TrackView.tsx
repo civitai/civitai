@@ -1,8 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
-// import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useAdsContext } from '~/components/Ads/Playwire/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
