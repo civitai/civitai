@@ -1,11 +1,6 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 
-export function useCurrentUserSettings() {
-  const { data = {} } = trpc.user.getSettings.useQuery();
-  return data;
-}
-
 export function useMutateUserSettings({
   onSuccess,
   onError,

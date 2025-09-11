@@ -845,10 +845,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]
       : undefined;
-  const memberInBadState =
-    (subscription &&
-      ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status)) ??
-    undefined;
+  // const memberInBadState =
+  //   (subscription &&
+  //     ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status)) ??
+  //   undefined;
 
   const permissions: string[] = [];
   const systemPermissions = await getSystemPermissions();
@@ -860,24 +860,12 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // if (!!user.username && !!user.email)
   //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
 
-  const userSettings = userSettingsSchema.safeParse(settings ?? {});
-
   const sessionUser: SessionUser = {
     ...rest,
     image: profilePicture?.url ?? rest.image,
     tier: tier !== 'free' ? tier : undefined,
     permissions,
-    memberInBadState,
-    allowAds:
-      userSettings.success && userSettings.data.allowAds != null
-        ? userSettings.data.allowAds
-        : tier != null
-        ? false
-        : true,
-    redBrowsingLevel:
-      userSettings.success && userSettings.data.redBrowsingLevel != null
-        ? userSettings.data.redBrowsingLevel
-        : undefined,
+    // memberInBadState,
     // feedbackToken,
   };
   await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
@@ -1766,7 +1754,6 @@ export async function updateContentSettings({
   blurNsfw,
   showNsfw,
   browsingLevel,
-  autoplayGifs,
   domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
@@ -1774,12 +1761,11 @@ export async function updateContentSettings({
     blurNsfw !== undefined ||
     showNsfw !== undefined ||
     // Red domain we'll store in the settings.
-    (browsingLevel !== undefined && domain !== 'red') ||
-    autoplayGifs !== undefined
+    (browsingLevel !== undefined && domain !== 'red')
   ) {
     await dbWrite.user.update({
       where: { id: userId },
-      data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+      data: { blurNsfw, showNsfw, browsingLevel },
     });
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
@@ -1806,48 +1792,92 @@ export const getUserByPaddleCustomerId = async ({
   return user;
 };
 
+export type UserSettings = UserSettingsSchema;
+
 // #region [user settings]
-const userSettingsCache = createCachedObject<UserSettingsSchema & { userId: number }>({
+const userSettingsCache = createCachedObject<
+  UserSettings & {
+    userId: number;
+  }
+>({
   key: REDIS_KEYS.USER.SETTINGS,
   idKey: 'userId',
   ttl: CacheTTL.hour * 4,
   staleWhileRevalidate: false,
   lookupFn: async (ids) => {
-    const settings = await dbWrite.$queryRaw<{ id: number; settings: UserSettingsSchema }[]>`
-    SELECT id, settings
+    const settings = await dbWrite.$queryRaw<
+      {
+        id: number;
+        settings: UserSettingsSchema;
+        autoplayGifs?: boolean;
+        blurNsfw: boolean;
+        filePreferences?: UserFilePreferences;
+      }[]
+    >`
+    SELECT id, settings, "autoplayGifs", "blurNsfw"
     FROM "User"
     WHERE id IN (${Prisma.join(ids)})
   `;
-    return Object.fromEntries(settings.map((x) => [x.id, { userId: x.id, ...x.settings }]));
+    return Object.fromEntries(
+      settings.map((x) => [
+        x.id,
+        {
+          userId: x.id,
+          ...x.settings,
+          autoplayGifs: x.autoplayGifs,
+          blurNsfw: x.blurNsfw,
+          filePreferences: x.filePreferences,
+        },
+      ])
+    );
   },
 });
 
-export async function getUserSettings(id: number) {
+const defaultUserSettings: UserSettings = {
+  allowAds: true,
+  blurNsfw: true,
+  autoplayGifs: true,
+  disableHidden: true,
+  cosmeticStoreLastViewed: null,
+};
+
+export async function getUserSettings(id?: number): Promise<UserSettings> {
+  if (!id) return defaultUserSettings;
   const result = await userSettingsCache.fetch([id]);
   const { userId, ...settings } = result[id] ?? {};
-  return settings;
+  return { ...defaultUserSettings, ...settings };
 }
 
-export async function setUserSetting(userId: number, settings: UserSettingsInput) {
+export async function setUserSetting(
+  userId: number,
+  { autoplayGifs, blurNsfw, filePreferences, ...settings }: UserSettingsInput
+) {
+  if (autoplayGifs !== undefined || blurNsfw !== undefined || filePreferences !== undefined) {
+    await dbWrite.user.update({
+      where: { id: userId },
+      data: { autoplayGifs, blurNsfw, filePreferences },
+    });
+  }
+
   const toSet = removeEmpty(settings);
   const keys = Object.keys(toSet);
-  if (!keys.length) return;
-
-  await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
-      WHERE id = ${userId}
-    `);
-
-  const toRemove = Object.entries(settings)
-    .filter(([, value]) => value === undefined)
-    .map(([key]) => `'${key}'`);
-  if (toRemove.length) {
+  if (keys.length > 0) {
     await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}
-      WHERE id = ${userId}
-    `);
+        UPDATE "User"
+        SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
+        WHERE id = ${userId}
+      `);
+
+    const toRemove = Object.entries(settings)
+      .filter(([, value]) => value === undefined)
+      .map(([key]) => `'${key}'`);
+    if (toRemove.length) {
+      await dbWrite.$executeRawUnsafe(`
+        UPDATE "User"
+        SET settings = settings - ${toRemove.join(' - ')}}
+        WHERE id = ${userId}
+      `);
+    }
   }
 
   await userSettingsCache.bust([userId]);

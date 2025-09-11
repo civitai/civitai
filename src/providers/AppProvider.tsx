@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserSettings } from '~/server/services/user.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { trpc } from '~/utils/trpc';
 
@@ -19,7 +19,7 @@ export function AppProvider({
   children,
   settings,
   ...appContext
-}: { children: React.ReactNode; settings: UserSettingsSchema; region: RegionInfo } & AppContext) {
+}: { children: React.ReactNode; settings: UserSettings; region: RegionInfo } & AppContext) {
   trpc.user.getSettings.useQuery(undefined, { initialData: settings });
   const [state] = useState(appContext);
 

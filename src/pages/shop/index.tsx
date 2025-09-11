@@ -78,18 +78,15 @@ export default function CosmeticShopMain() {
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
   const { data: userCosmetics, isLoading: loadingOwnedCosmetics } = useQueryUserCosmetics();
 
-  const { updateLastViewed, isFetched } = useShopLastViewed();
+  const { updateLastViewed } = useShopLastViewed();
 
   useEffect(() => {
     setFilters(query);
   }, [query]);
 
   useEffect(() => {
-    if (isFetched) {
-      // Update last viewed
-      updateLastViewed();
-    }
-  }, [isFetched]);
+    updateLastViewed();
+  }, []);
 
   const allUserCosmetics = useMemo(() => {
     return Object.values(userCosmetics ?? {}).flat();

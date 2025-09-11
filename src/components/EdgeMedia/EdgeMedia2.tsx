@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
@@ -46,7 +46,7 @@ function EdgeImage(props: ImageMediaProps) {
 function EdgeVideo(props: VideoMediaProps) {
   const [loaded, setLoaded] = useState(false);
 
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const autoplayGifs = useUserSettings((x) => x.autoplayGifs);
   const duration = props.metadata?.duration ?? 0;
   if (props.anim === undefined) {
     if (!autoplayGifs) props.anim = false;

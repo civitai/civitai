@@ -15,7 +15,7 @@ import type {
 } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export const useQueryCosmeticShopItemsPaged = (
   filters?: Partial<GetPaginatedCosmeticShopItemInput>,
@@ -264,37 +264,16 @@ export const useQueryShop = (
 };
 
 export const useShopLastViewed = () => {
-  const currentUser = useCurrentUser();
-  const { data, isLoading, isFetched, ...rest } = trpc.user.getSettings.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
-
-  const { cosmeticStoreLastViewed: lastViewed } = data ?? {
-    cosmeticStoreLastViewed: null,
-  };
-
-  const updateUserSettings = useMutateUserSettings({
-    onError(_error, _payload, context) {
-      // Simply ignore really. We don't want to show an error notification for this.
-    },
-  });
+  const lastViewed = useUserSettings((x) => x.cosmeticStoreLastViewed);
+  const setState = useUserSettings((x) => x.setState);
 
   const updateLastViewed = async () => {
-    if (!currentUser || updateUserSettings.isLoading || updateUserSettings.isSuccess) {
-      return;
-    }
-
-    updateUserSettings.mutate({
-      cosmeticStoreLastViewed: new Date(),
-    });
+    setState({ cosmeticStoreLastViewed: new Date() });
   };
 
   return {
     lastViewed,
-    isLoading,
-    isFetched,
     updateLastViewed,
-    updatedLastViewed: updateUserSettings.isSuccess,
   };
 };
 

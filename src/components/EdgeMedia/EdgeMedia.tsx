@@ -6,11 +6,11 @@ import { getInferredMediaType } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import clsx from 'clsx';
 import styles from './EdgeMedia.module.scss';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -148,7 +148,7 @@ export function EdgeMedia2({
   metadata?: MixedObject | null;
   type: MediaType;
 }) {
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const autoplayGifs = useUserSettings((x) => x.autoplayGifs);
   const anim =
     props.anim ??
     shouldAnimateByDefault({ type: props.type, metadata, forceDisabled: !autoplayGifs });

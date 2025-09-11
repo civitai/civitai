@@ -10,11 +10,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
-import { trpc } from '~/utils/trpc';
-// const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
-// const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
-//   ssr: false,
-// });
 
 export function CivitaiSessionProvider({
   children,
@@ -29,7 +24,7 @@ export function CivitaiSessionProvider({
   const { region } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
-  const { data: settings } = trpc.user.getSettings.useQuery();
+  // const { data: settings } = trpc.user.getSettings.useQuery();
 
   const sessionUser = useMemo(() => {
     if (!user)
@@ -46,15 +41,11 @@ export function CivitaiSessionProvider({
       emailHash: user.email ? md5(user.email) : undefined,
       isMember,
       isPaidMember,
-      memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
         showNsfw: user.showNsfw,
         browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : user.browsingLevel,
         disableHidden: disableHidden ?? true,
-        allowAds: settings?.allowAds ?? !isMember ? true : false,
-        autoplayGifs: user.autoplayGifs ?? true,
-        blurNsfw: user.blurNsfw,
       },
     };
     if (!allowMatureContent)
@@ -81,7 +72,6 @@ export type CivitaiSessionUser = SessionUser & {
   isMember: boolean;
   refresh: () => Promise<Session | null>;
   showNsfw: boolean;
-  blurNsfw: boolean;
   disableHidden?: boolean;
   browsingLevel: number;
   meta?: UserMeta;
@@ -107,11 +97,8 @@ export type CurrentUser = Omit<
 
 type BrowsingSettings = {
   showNsfw: boolean;
-  blurNsfw: boolean;
   browsingLevel: number;
   disableHidden: boolean;
-  allowAds: boolean;
-  autoplayGifs: boolean;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);
@@ -125,6 +112,4 @@ export const useCivitaiSessionContext = () => {
 const publicContentSettings: BrowsingSettings = {
   ...browsingModeDefaults,
   disableHidden: true,
-  allowAds: true,
-  autoplayGifs: true,
 };

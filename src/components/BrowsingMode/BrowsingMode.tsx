@@ -20,6 +20,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const { isRestricted } = useIsRegionRestricted();
@@ -46,15 +47,17 @@ type BrowsingModeIconProps = {
 
 export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
-  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const blurNsfw = useUserSettings((x) => x.blurNsfw);
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
-  const setState = useBrowsingSettings((x) => x.setState);
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const { isRestricted } = useIsRegionRestricted();
+  const setBrowsingSettingsState = useBrowsingSettings((x) => x.setState);
+  const setUserSettingsState = useUserSettings((x) => x.setState);
 
-  const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
-  const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
+  const toggleBlurNsfw = () => setUserSettingsState((state) => ({ blurNsfw: !state.blurNsfw }));
+  const toggleDisableHidden = () =>
+    setBrowsingSettingsState((state) => ({ disableHidden: !state.disableHidden }));
 
   return (
     <div id="browsing-mode">

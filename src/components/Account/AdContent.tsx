@@ -1,21 +1,13 @@
 import { Switch } from '@mantine/core';
 import React from 'react';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export function AdContent() {
-  const allowAds = useBrowsingSettings((x) => x.allowAds);
-  const setState = useBrowsingSettings((x) => x.setState);
-
-  const updateUserSettingsMutation = useMutateUserSettings({
-    onError(error) {
-      setState((state) => ({ allowAds: !state.allowAds }));
-    },
-  });
+  const allowAds = useUserSettings((x) => x.allowAds);
+  const setState = useUserSettings((x) => x.setState);
 
   const handleToggleAds: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     setState({ allowAds: e.target.checked });
-    // updateUserSettingsMutation.mutate({ allowAds: e.target.checked });
   };
 
   return (
@@ -32,7 +24,6 @@ export function AdContent() {
           label="Allow on-site ads"
           checked={allowAds}
           onChange={handleToggleAds}
-          disabled={updateUserSettingsMutation.isLoading}
         />
       </div>
     </div>

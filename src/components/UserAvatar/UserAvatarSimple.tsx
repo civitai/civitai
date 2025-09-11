@@ -17,6 +17,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getInitials } from '~/utils/string-helpers';
 import classes from './UserAvatarSimple.module.scss';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export function UserAvatarSimple({
   id,
@@ -38,7 +39,7 @@ export function UserAvatarSimple({
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
   const router = useRouter();
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const autoplayGifs = useUserSettings((x) => x.autoplayGifs);
 
   if (id === -1) return null;
 

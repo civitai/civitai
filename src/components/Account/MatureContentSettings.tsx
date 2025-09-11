@@ -2,14 +2,16 @@ import { Text, Stack } from '@mantine/core';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export function MatureContentSettings() {
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
-  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
-  const setState = useBrowsingSettings((x) => x.setState);
+  const blurNsfw = useUserSettings((x) => x.blurNsfw);
+  const setBrowsingSettingsState = useBrowsingSettings((x) => x.setState);
+  const setUserSettingsState = useUserSettings((x) => x.setState);
 
-  const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
-  const toggleShowNsfw = () => setState((state) => ({ showNsfw: !state.showNsfw }));
+  const toggleBlurNsfw = () => setUserSettingsState((state) => ({ blurNsfw: !state.blurNsfw }));
+  const toggleShowNsfw = () => setBrowsingSettingsState((state) => ({ showNsfw: !state.showNsfw }));
 
   return (
     <Stack>

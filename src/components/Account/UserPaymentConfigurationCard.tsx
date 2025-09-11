@@ -30,6 +30,7 @@ import {
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -106,25 +107,25 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
 };
 
 const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus }) => {
-  const { data: settings, isLoading: isLoadingSettings } = trpc.user.getSettings.useQuery();
+  const creatorsProgramCodeOfConductAccepted = useUserSettings(
+    (state) => state.creatorsProgramCodeOfConductAccepted
+  );
 
   const targetUrl =
     status === StripeConnectStatus.PendingOnboarding
       ? '/user/stripe-connect/onboard'
       : stripeConnectLoginUrl;
 
-  const btnProps: Partial<ButtonProps> = settings?.creatorsProgramCodeOfConductAccepted
+  const btnProps: Partial<ButtonProps> = creatorsProgramCodeOfConductAccepted
     ? {
         // @ts-ignore - component is indeed valid prop for buttons
         component: 'a',
         href: targetUrl,
         rightIcon: <IconExternalLink size={18} />,
         target: '/blank',
-        loading: isLoadingSettings,
       }
     : {
         rightIcon: <IconExternalLink size={18} />,
-        loading: isLoadingSettings,
         onClick: () => {
           dialogStore.trigger({
             component: AcceptCodeOfConduct,

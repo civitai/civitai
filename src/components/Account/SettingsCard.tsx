@@ -11,11 +11,9 @@ import {
   Tooltip,
 } from '@mantine/core';
 import produce from 'immer';
-import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-// import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
@@ -33,19 +31,20 @@ const assistantToggleableFeatures = toggleableFeatures.filter(
 
 export function SettingsCard() {
   const user = useCurrentUser();
-  const queryUtils = trpc.useUtils();
+  // const queryUtils = trpc.useUtils();
   const flags = useFeatureFlags();
 
-  const { mutate, isLoading } = trpc.user.update.useMutation({
-    async onSuccess() {
-      await queryUtils.model.getAll.invalidate();
-      await user?.refresh();
-      showSuccessNotification({ message: 'User profile updated' });
-    },
-  });
+  // const { mutate, isLoading } = trpc.user.update.useMutation({
+  //   async onSuccess() {
+  //     await queryUtils.model.getAll.invalidate();
+  //     await user?.refresh();
+  //     showSuccessNotification({ message: 'User profile updated' });
+  //   },
+  // });
 
-  const { assistantPersonality } = useCurrentUserSettings();
-  const { mutate: mutateSetting, isLoading: isLoadingSetting } = useMutateUserSettings();
+  const filePreferences = useUserSettings((state) => state.filePreferences);
+  const assistantPersonality = useUserSettings((state) => state.assistantPersonality);
+  const setState = useUserSettings((state) => state.setState);
 
   if (!user) return null;
 
@@ -70,14 +69,12 @@ export function SettingsCard() {
                 label: 'Unoptimized (jpeg, png)',
               },
             ]}
-            value={user.filePreferences?.imageFormat ?? 'metadata'}
+            value={filePreferences?.imageFormat ?? 'metadata'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, imageFormat: value as ImageFormat },
+              }))
             }
-            disabled={isLoading}
           />
         </Group>
 
@@ -87,14 +84,12 @@ export function SettingsCard() {
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
-            value={user.filePreferences?.format ?? 'SafeTensor'}
+            value={filePreferences?.format ?? 'SafeTensor'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, format: value as ModelFileFormat },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, format: value as ModelFileFormat },
+              }))
             }
-            disabled={isLoading}
           />
           <Select
             label="Preferred Size"
@@ -103,14 +98,12 @@ export function SettingsCard() {
               value: size,
               label: titleCase(size),
             }))}
-            value={user.filePreferences?.size ?? 'pruned'}
+            value={filePreferences?.size ?? 'pruned'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, size: value as ModelFileSize },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, size: value as ModelFileSize },
+              }))
             }
-            disabled={isLoading}
           />
           <Select
             label="Preferred Precision"
@@ -119,14 +112,12 @@ export function SettingsCard() {
               value,
               label: value.toUpperCase(),
             }))}
-            value={user.filePreferences?.fp ?? 'fp16'}
+            value={filePreferences?.fp ?? 'fp16'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, fp: value as ModelFileFp },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, fp: value as ModelFileFp },
+              }))
             }
-            disabled={isLoading}
           />
         </Group>
 
@@ -153,7 +144,6 @@ export function SettingsCard() {
                       </Group>
                     }
                     name="assistantPersonality"
-                    disabled={isLoadingSetting || !flags.assistantPersonality}
                     data={[
                       {
                         value: 'civbot',
@@ -167,7 +157,7 @@ export function SettingsCard() {
                     value={assistantPersonality ?? 'civbot'}
                     onChange={(value: string | null) => {
                       if (flags.assistantPersonality) {
-                        mutateSetting({ assistantPersonality: value as UserAssistantPersonality });
+                        setState({ assistantPersonality: value as UserAssistantPersonality });
                       }
                     }}
                   />
@@ -189,8 +179,8 @@ export function SettingsCard() {
 }
 
 function AutoplayGifsToggle() {
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
-  const setState = useBrowsingSettings((x) => x.setState);
+  const autoplayGifs = useUserSettings((x) => x.autoplayGifs);
+  const setState = useUserSettings((x) => x.setState);
 
   return (
     <Switch

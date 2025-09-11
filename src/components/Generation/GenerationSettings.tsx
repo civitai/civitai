@@ -1,21 +1,11 @@
-import {
-  CloseButton,
-  List,
-  Modal,
-  Text,
-  Title,
-  Switch,
-  ActionIcon,
-  Button,
-  Popover,
-} from '@mantine/core';
+import { CloseButton, List, Modal, Text, Title, Switch, Button, Popover } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useEffect, useRef } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 type GenerationKeys = keyof UserSettingsSchema['generation'];
 type GenerationSettingOption = {
@@ -51,11 +41,12 @@ function GenerationSettingsOption({
   option: GenerationSettingOption;
   onSuccess?: VoidFunction;
 }) {
-  const { generation = {} } = useCurrentUserSettings();
-  const { mutate, isLoading } = useMutateUserSettings({ onSuccess });
+  const generation = useUserSettings((x) => x.generation ?? {});
+  const setState = useUserSettings((x) => x.setState);
 
   function toggleSetting(key: GenerationKeys, value: boolean) {
-    mutate({ generation: { ...generation, [key]: value } });
+    setState((state) => ({ generation: { ...state.generation, [key]: value } }));
+    onSuccess?.();
   }
 
   return (
@@ -73,7 +64,6 @@ function GenerationSettingsOption({
       checked={generation[option.key]}
       onChange={(e) => toggleSetting(option.key, e.target.checked)}
       description={option.description}
-      disabled={isLoading}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );
@@ -88,8 +78,8 @@ function openAdvancedModeModal() {
 
 function AdvancedModeModal() {
   const dialog = useDialogContext();
-  const { generation = {} } = useCurrentUserSettings();
-  const { mutate } = useMutateUserSettings();
+  const generation = useUserSettings((x) => x.generation ?? {});
+  const setState = useUserSettings((x) => x.setState);
   const hasSetAdvancedMode = 'advancedMode' in generation;
   const toggleOptionRef = useRef<GenerationSettingOption | null>(null);
   if (!toggleOptionRef.current)
@@ -99,7 +89,8 @@ function AdvancedModeModal() {
 
   function handleClose() {
     dialog.onClose();
-    if (!hasSetAdvancedMode) mutate({ generation: { ...generation, advancedMode: false } });
+    if (!hasSetAdvancedMode)
+      setState((state) => ({ generation: { ...state.generation, advancedMode: false } }));
   }
 
   return (
@@ -141,7 +132,7 @@ function AdvancedModeModal() {
 }
 
 export function GenerationSettingsPopover({ children }: { children: React.ReactElement }) {
-  const { generation = {} } = useCurrentUserSettings();
+  const generation = useUserSettings((x) => x.generation ?? {});
 
   useEffect(() => {
     if (generation.advancedMode === undefined) openAdvancedModeModal();

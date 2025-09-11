@@ -48,6 +48,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import type {
   GetAuctionBySlugReturn,
   GetMyBidsReturn,
@@ -205,7 +206,7 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
 };
 
 const useHideNsfwText = () => {
-  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const blurNsfw = useUserSettings((x) => x.blurNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
   const hasExplicit = getHasExplicitBrowsingLevel(browsingLevel);
   return !hasExplicit || blurNsfw;

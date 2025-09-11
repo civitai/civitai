@@ -52,7 +52,6 @@ import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
 import type { ParsedCookies } from '~/shared/utils/cookies';
@@ -62,6 +61,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
+import type { UserSettings } from '~/server/services/user.service';
 
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
@@ -74,6 +74,7 @@ import 'mantine-react-table/styles.css'; //import MRT styles
 import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
+import { UserSettingsProvider } from '~/providers/UserSettingsProvider';
 
 applyNodeOverrides();
 
@@ -85,7 +86,7 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags: FeatureAccess;
   seed: number;
-  settings: UserSettingsSchema;
+  settings: UserSettings;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -160,47 +161,49 @@ function MyApp(props: CustomAppProps) {
                 <GoogleAnalytics />
                 <AccountProvider>
                   <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                    <ErrorBoundary>
-                      <BrowserSettingsProvider>
-                        <BrowsingLevelProvider>
-                          <BrowsingSettingsAddonsProvider>
-                            <SignalsProviderStack>
-                              <ActivityReportingProvider>
-                                <ReferralsProvider {...cookies.referrals}>
-                                  <FiltersProvider>
-                                    <AdsProvider>
-                                      <PaddleProvider>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </PaddleProvider>
-                                    </AdsProvider>
-                                  </FiltersProvider>
-                                </ReferralsProvider>
-                              </ActivityReportingProvider>
-                            </SignalsProviderStack>
-                          </BrowsingSettingsAddonsProvider>
-                        </BrowsingLevelProvider>
-                      </BrowserSettingsProvider>
-                    </ErrorBoundary>
+                    <UserSettingsProvider settings={settings}>
+                      <ErrorBoundary>
+                        <BrowserSettingsProvider>
+                          <BrowsingLevelProvider>
+                            <BrowsingSettingsAddonsProvider>
+                              <SignalsProviderStack>
+                                <ActivityReportingProvider>
+                                  <ReferralsProvider {...cookies.referrals}>
+                                    <FiltersProvider>
+                                      <AdsProvider>
+                                        <PaddleProvider>
+                                          <HiddenPreferencesProvider>
+                                            <CivitaiLinkProvider>
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </CivitaiLinkProvider>
+                                          </HiddenPreferencesProvider>
+                                        </PaddleProvider>
+                                      </AdsProvider>
+                                    </FiltersProvider>
+                                  </ReferralsProvider>
+                                </ActivityReportingProvider>
+                              </SignalsProviderStack>
+                            </BrowsingSettingsAddonsProvider>
+                          </BrowsingLevelProvider>
+                        </BrowserSettingsProvider>
+                      </ErrorBoundary>
+                    </UserSettingsProvider>
                   </CivitaiSessionProvider>
                 </AccountProvider>
               </FeatureFlagsProvider>
@@ -281,9 +284,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const region = getRegion(request);
   const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
 
-  const settings = await fetch(`${baseUrl as string}/api/user/settings`, {
+  const settings: UserSettings = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,
-  }).then((res) => res.json() as UserSettingsSchema);
+  }).then((res) => res.json());
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;

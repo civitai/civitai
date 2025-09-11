@@ -1,7 +1,7 @@
 import type { CardProps } from '@mantine/core';
 import { Card, Center, Loader, Text } from '@mantine/core';
 import type { CSSProperties } from 'react';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import { isProd } from '~/env/other';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -30,7 +30,7 @@ export function AssistantChat({
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { assistantPersonality } = useCurrentUserSettings();
+  const assistantPersonality = useUserSettings((state) => state.assistantPersonality);
 
   const { data: { token = null } = {}, isError } = trpc.user.getToken.useQuery(undefined, {
     enabled: !!currentUser,
