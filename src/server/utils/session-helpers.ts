@@ -3,6 +3,7 @@ import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
 import { missingSignedAtCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { getSessionUser } from '~/server/services/user.service';
 import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { generateSecretHash } from '~/server/utils/key-generator';
@@ -103,6 +104,7 @@ export async function invalidateSession(userId: number) {
     redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
     redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
+    invalidateCivitaiUser({ userId }), // Ensures the orch. user is also invalidated
   ]);
   log(`Scheduling refresh session for user ${userId}`);
 }

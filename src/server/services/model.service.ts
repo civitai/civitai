@@ -30,6 +30,7 @@ import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  GetTrainingModerationFeedSchema,
   IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
@@ -1737,6 +1738,9 @@ export const publishModelById = async ({
   meta?: ModelMeta;
   republishing?: boolean;
 }) => {
+  if (meta?.cannotPublish) {
+    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+  }
   const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -3294,6 +3298,32 @@ export const toggleCannotPromote = async ({
   };
 };
 
+export const toggleCannotPublish = async ({
+  id,
+  isModerator,
+}: GetByIdInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+  const model = await getModel({ id, select: { id: true, meta: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+  const modelMeta = model.meta as ModelMeta | null;
+  const currentCannotPublish = modelMeta?.cannotPublish ?? false;
+  const cannotPublish = !currentCannotPublish;
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: {
+      meta: modelMeta ? { ...modelMeta, cannotPublish } : { cannotPublish },
+    },
+    select: { id: true, meta: true },
+  });
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  return {
+    id: updated.id,
+    meta: updated.meta as ModelMeta | null,
+  };
+};
+
 export async function getTopWeeklyEarners(fresh = false) {
   if (fresh) await bustFetchThroughCache(REDIS_KEYS.CACHES.TOP_EARNERS);
 
@@ -3347,3 +3377,122 @@ export async function getTopWeeklyEarners(fresh = false) {
 
   return results;
 }
+
+export const getTrainingModelsForModerators = async ({
+  limit = DEFAULT_PAGE_SIZE,
+  cursor,
+  username,
+  dateFrom,
+  dateTo,
+  cannotPublish,
+  workflowId,
+}: GetTrainingModerationFeedSchema) => {
+  const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
+  const cursorWhere = cursor ? { id: { lt: cursor } } : {};
+
+  const where: Prisma.ModelWhereInput = {
+    ...cursorWhere,
+    uploadType: ModelUploadType.Trained,
+    deletedAt: null,
+    ...(username && {
+      user: {
+        username,
+      },
+    }),
+    ...(dateFrom && {
+      createdAt: {
+        gte: dateFrom,
+        ...(dateTo && { lte: dateTo }),
+      },
+    }),
+    ...(dateTo && !dateFrom && {
+      createdAt: {
+        lte: dateTo,
+      },
+    }),
+    ...(cannotPublish !== undefined && {
+      meta: cannotPublish
+        ? { path: ['cannotPublish'], equals: true }
+        : { not: { path: ['cannotPublish'], equals: true } },
+    }),
+    modelVersions: {
+      some: {
+        files: {
+          some: {
+            type: 'Training Data',
+            dataPurged: false,
+            ...(workflowId && {
+              metadata: {
+                path: ['trainingResults', 'workflowId'],
+                equals: workflowId,
+              },
+            }),
+          },
+        },
+      },
+    },
+  };
+
+  const items = await dbRead.model.findMany({
+    take,
+    skip,
+    where,
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+      status: true,
+      createdAt: true,
+      publishedAt: true,
+      meta: true,
+      user: {
+        select: simpleUserSelect,
+      },
+      modelVersions: {
+        where: {
+          files: {
+            some: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          baseModel: true,
+          trainingStatus: true,
+          createdAt: true,
+          files: {
+            where: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+            select: {
+              id: true,
+              name: true,
+              url: true,
+              sizeKB: true,
+              createdAt: true,
+              metadata: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
+
+  return {
+    items,
+    nextCursor,
+  };
+};

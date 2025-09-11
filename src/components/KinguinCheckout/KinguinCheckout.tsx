@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Group, Text, Title, Anchor } from '@mantine/core';
 import { IconAlertCircle, IconX, IconExternalLink } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 declare global {
   interface Window {
@@ -74,18 +75,34 @@ export function KinguinCheckout({
   kinguinCheckoutSDK,
 }: KinguinCheckoutProps) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [safariRedirected, setSafariRedirected] = useState<boolean>(false);
+  const [directRedirected, setDirectRedirected] = useState<boolean>(false);
   const checkoutInitialized = useRef(false);
 
   const productId = extractKinguinProductId(productUrl);
+  const useIframe = features.kinguinIframe;
 
   const buildKinguinUrl = (productId: string) => {
     return `https://www.kinguin.net/category/${productId}/civitai-gift-card?referrer=civitai.com`;
   };
 
   const initializeCheckout = () => {
-    if (!kinguinCheckoutSDK || !productId || checkoutInitialized.current) {
+    if (!productId) {
+      console.error('Product ID not available');
+      return;
+    }
+
+    // If iframe is disabled by feature flag, redirect directly
+    if (!useIframe) {
+      const productPageUrl = buildKinguinUrl(productId);
+      window.open(productPageUrl, '_blank');
+      setDirectRedirected(true);
+      return;
+    }
+
+    if (!kinguinCheckoutSDK || checkoutInitialized.current) {
       console.error('Kinguin SDK not available or already initialized');
       return;
     }
@@ -197,12 +214,20 @@ export function KinguinCheckout({
     }
   };
 
-  // Initialize Kinguin checkout when SDK is loaded
+  // Initialize Kinguin checkout when SDK is loaded or when iframe is disabled
   useEffect(() => {
-    if (sdkLoaded && productId && kinguinCheckoutSDK) {
+    if (!productId) return;
+
+    if (!useIframe) {
+      // Direct redirect when iframe is disabled
+      const productPageUrl = buildKinguinUrl(productId);
+      window.open(productPageUrl, '_blank');
+      setDirectRedirected(true);
+    } else if (sdkLoaded && kinguinCheckoutSDK) {
+      // Use iframe when enabled and SDK is loaded
       initializeCheckout();
     }
-  }, [sdkLoaded, productId, kinguinCheckoutSDK]);
+  }, [sdkLoaded, productId, kinguinCheckoutSDK, useIframe]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -222,8 +247,9 @@ export function KinguinCheckout({
   // Use SDK error from props, or component error
   const displayError = sdkError || checkoutError;
 
-  // Check if Safari redirect message should be shown
+  // Check if redirect message should be shown
   const showSafariMessage = safariRedirected && isSafariBrowser();
+  const showDirectRedirectMessage = directRedirected && !useIframe;
 
   return (
     <div>
@@ -246,7 +272,25 @@ export function KinguinCheckout({
       </div>
 
       {/* Checkout Content */}
-      {showSafariMessage ? (
+      {showDirectRedirectMessage ? (
+        <Alert icon={<IconExternalLink size={16} />} title="Redirecting to Kinguin" color="blue">
+          <div>
+            <Text mb={0}>
+              You are being redirected to complete your purchase directly on Kinguin. A new window
+              should have opened automatically.
+            </Text>
+            <Text mb="sm">If the window didn't open, please click the link below:</Text>
+            <Anchor
+              href={buildKinguinUrl(productId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1"
+            >
+              Open Kinguin Checkout <IconExternalLink size={14} />
+            </Anchor>
+          </div>
+        </Alert>
+      ) : showSafariMessage ? (
         <Alert icon={<IconExternalLink size={16} />} title="Safari Checkout" color="blue">
           <div>
             <Text mb={0}>

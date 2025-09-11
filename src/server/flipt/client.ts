@@ -4,6 +4,7 @@ import { logToAxiom } from '../logging/client';
 
 export enum FLIPT_FEATURE_FLAGS {
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
+  ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
 }
 
 class FliptSingleton {

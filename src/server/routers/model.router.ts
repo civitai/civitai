@@ -83,6 +83,7 @@ import {
   setAssociatedResources,
   setModelsCategory,
   toggleCannotPromote,
+  toggleCannotPublish,
   toggleLockComments,
 } from '~/server/services/model.service';
 import {
@@ -266,5 +267,10 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       toggleCannotPromote({ ...input, isModerator: ctx.user.isModerator ?? false })
+    ),
+  toggleCannotPublish: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      toggleCannotPublish({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
 });
