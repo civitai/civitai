@@ -77,7 +77,6 @@ function AdunitDynamic({
     if (!onImpressionTracked) return;
     const listener = ((e: CustomEvent) => {
       const type = getTypeFromSelectorId(selectorId);
-      console.log({ detail: e.detail, type });
       if (type && e.detail === type) onImpressionTracked?.(type);
     }) as EventListener;
     window.addEventListener('civitai-ad-impression', listener);
@@ -133,15 +132,17 @@ export function createAdunit({
     return (
       <AdUnitRenderable browsingLevel={props.browsingLevel} hideOnBlocked={props.hideOnBlocked}>
         <div className={props.className}>
-          {!ready ? null : !adsBlocked ? (
+          {!ready ? (
+            <div className={className} />
+          ) : !adsBlocked ? (
             <AdunitDynamic
               id={props.id}
               type={type}
-              className={clsx(className)}
+              className={className}
               onImpressionTracked={props.onImpressionTracked}
             />
           ) : supportUsSize ? (
-            <SupportUsImage supportUsSize={supportUsSize} className={clsx(className)} />
+            <SupportUsImage supportUsSize={supportUsSize} className={className} />
           ) : null}
         </div>
       </AdUnitRenderable>
