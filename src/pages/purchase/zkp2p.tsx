@@ -209,22 +209,13 @@ export default function Zkp2pPurchasePage() {
             </div>
           </Center>
         )}
-        {error && (
-          <Container size="sm" mt="xl">
-            <Alert icon={<IconAlertCircle size={16} />} title="Payment Error" color="red">
-              {error}
-            </Alert>
-          </Container>
-        )}
-        {!error && (
-          <iframe
-            ref={iframeRef}
-            src={iframeUrl}
-            className={`w-full h-full border-0 ${loading ? 'hidden' : 'block'}`}
-            allow="clipboard-write"
-            title="ZKP2P Payment"
-          />
-        )}
+        <iframe
+          ref={iframeRef}
+          src={iframeUrl}
+          className={`w-full h-full border-0 ${loading ? 'hidden' : 'block'}`}
+          allow="clipboard-write"
+          title="ZKP2P Payment"
+        />
       </div>
     </>
   );
