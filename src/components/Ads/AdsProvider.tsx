@@ -25,11 +25,10 @@ const AdsContext = createContext<{
   adsEnabled: boolean;
   username?: string;
   isMember: boolean;
-} | null>(null);
+}>({ ready: true, adsBlocked: true, adsEnabled: true, isMember: false });
 
 export function useAdsContext() {
   const context = useContext(AdsContext);
-  if (!context) throw new Error('missing AdsProvider');
   return context;
 }
 

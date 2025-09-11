@@ -57,6 +57,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const currentUser = useCurrentUser();
 
+  useEffect(() => console.log({ ready }), [ready]);
+
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
@@ -72,7 +74,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function callback() {
-      useAdProviderStore.setState({ adsBlocked: false });
+      useAdProviderStore.setState({ adsBlocked: false, ready: true });
 
       // check for cmp consent
       if (window.__tcfapi) {
@@ -83,7 +85,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             console.log({ __tcfapi: success });
             // AdConsent finished asking for consent, do something that is dependend on user consent ...
             if (!success) useAdProviderStore.setState({ adsBlocked: true });
-            else useAdProviderStore.setState({ ready: true });
           }
         });
       }

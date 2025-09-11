@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useAdsContext } from '~/components/Ads/Playwire/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { NextLink } from '~/components/NextLink/NextLink';
