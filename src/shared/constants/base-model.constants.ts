@@ -300,6 +300,22 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     ],
   },
   {
+    group: 'Chroma',
+    support: [
+      {
+        modelTypes: [
+          ModelType.Checkpoint,
+          ModelType.TextualInversion,
+          ModelType.LORA,
+          ModelType.DoRA,
+          ModelType.LoCon,
+          ModelType.VAE,
+        ],
+        baseModels: ['Chroma'],
+      },
+    ],
+  },
+  {
     group: 'NoobAI',
     support: [
       {

@@ -107,6 +107,7 @@ import {
   fluxKreaAir,
   getIsFluxKrea,
   getIsQwen,
+  getIsChroma,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -446,6 +447,7 @@ export function GenerationFormContent() {
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
+  const isChroma = getIsChroma(baseModel);
 
   // HiDream
   const isHiDream = getIsHiDream(baseModel);
@@ -481,7 +483,7 @@ export function GenerationFormContent() {
               ? fluxMode === fluxDraftAir
               : isSD3
               ? model.id === 983611
-              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen;
+              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen && !isChroma;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
               ? 10
@@ -493,13 +495,13 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen) {
+            if (isFlux || isSD3 || isQwen || isChroma) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext || isQwen) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -518,7 +520,14 @@ export function GenerationFormContent() {
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               isNanoBanana;
             const disableWorkflowSelect =
-              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext || isQwen || isNanoBanana;
+              isFlux ||
+              isSD3 ||
+              isImageGen ||
+              isHiDream ||
+              isFluxKontext ||
+              isQwen ||
+              isNanoBanana ||
+              isChroma;
             const disableDraft =
               !features.draft ||
               isOpenAI ||
@@ -528,13 +537,17 @@ export function GenerationFormContent() {
               isImagen4 ||
               isHiDream ||
               isFluxKontext ||
-              isNanoBanana;
+              isNanoBanana ||
+              isChroma;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen) || isOpenAI || isFluxKontext;
+              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma) ||
+              isOpenAI ||
+              isFluxKontext;
             const disableCfgScale = isFluxUltra;
-            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext;
+            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
             const disableSteps = isFluxUltra || isFluxKontext;
-            const disableClipSkip = isSDXL || isFlux || isQwen || isSD3 || isFluxKontext;
+            const disableClipSkip =
+              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
             const disableVae = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
@@ -832,7 +845,7 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isQwen && !isSD3 && <ReadySection />}
+                          {!isFlux && !isQwen && !isSD3 && !isChroma && <ReadySection />}
                         </Card>
                       );
                     }}
@@ -1288,7 +1301,7 @@ export function GenerationFormContent() {
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
                                     presets={
-                                      isFlux || isQwen || isFluxKontext || isSD3
+                                      isFlux || isQwen || isFluxKontext || isSD3 || isChroma
                                         ? undefined
                                         : [
                                             { label: 'Creative', value: '4' },
@@ -1347,7 +1360,7 @@ export function GenerationFormContent() {
                                           sliderProps={sharedSliderProps}
                                           numberProps={sharedNumberProps}
                                           presets={
-                                            isFlux || isQwen || isSD3
+                                            isFlux || isQwen || isSD3 || isChroma
                                               ? undefined
                                               : [
                                                   {
