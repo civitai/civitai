@@ -245,6 +245,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Chroma')) return 'Chroma';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Seedream')) return 'Seedream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
