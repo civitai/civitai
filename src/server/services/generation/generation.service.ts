@@ -779,7 +779,6 @@ export async function getResourceData(
     });
 
   // TODO - check if resource id is in "EcosystemCheckpoint" table
-  console.log(resources[0]);
   return generation
     ? resources.filter((resource) => {
         const baseModel = getBaseModelSetType(resource.baseModel);
