@@ -114,8 +114,8 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
   transformFn: (data) => {
     if (data.process === 'txt2vid') {
       delete data.images;
-      data.duration = 8;
     } else if (data.process === 'img2vid') {
+      data.duration = 8;
       const image = data.images?.[0];
       if (image) {
         data.aspectRatio = findClosestAspectRatio(image, [...veo3AspectRatios]);
