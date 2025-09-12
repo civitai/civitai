@@ -259,7 +259,9 @@ export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine:
 const defaultRunBase = {
   id: 1,
   samplePrompts: ['', '', ''],
-  negativePrompt: '',
+  negativePrompt:
+    // Add default query.
+    'bad quality, low quality, worst quality, jpeg artifacts, blurry, pixelated, out of focus, watermark, text, signature',
   staging: false,
   highPriority: false,
   buzzCost: 0,
