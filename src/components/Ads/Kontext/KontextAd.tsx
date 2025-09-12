@@ -15,7 +15,8 @@ function KontextAdContent({ index, className }: { index: number; className?: str
   const loadedRef = useRef(false);
   const currentUser = useCurrentUser();
   const [ref, inView] = useInView();
-  const { kontextReady } = useAdsContext();
+  const kontextReady = false;
+  // const { kontextReady } = useAdsContext();
   const { getMessages } = useKontextContext();
 
   const messages = getMessages(index);
@@ -72,7 +73,8 @@ function KontextAdContent({ index, className }: { index: number; className?: str
 
 export function KontextAd(props: { index: number; className?: string }) {
   const features = useFeatureFlags();
-  const { kontextAvailable } = useAdsContext();
+  const kontextAvailable = false;
+  // const { kontextAvailable } = useAdsContext();
 
   if (!features.kontextAds || !kontextAvailable) return null;
   return <KontextAdContent {...props} />;

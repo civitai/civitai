@@ -23,22 +23,25 @@ const AdsContext = createContext<{
   ready: boolean;
   adsBlocked?: boolean;
   adsEnabled: boolean;
-  username?: string;
-  isMember: boolean;
-}>({ ready: true, adsBlocked: true, adsEnabled: true, isMember: false });
+} | null>(null);
 
 export function useAdsContext() {
   const context = useContext(AdsContext);
+  if (!context) throw new Error('missing AdsProvider');
   return context;
 }
 
 const useAdProviderStore = create<{
   ready: boolean;
+  scriptReady: boolean;
   adsBlocked: boolean;
 }>(() => ({
   ready: false,
+  scriptReady: false,
   adsBlocked: true,
 }));
+
+const useStore = create<{ status?: 'blocked' | 'ready' }>(() => ({}));
 
 const blockedUrls: string[] = [
   '/collections/6503138',
@@ -64,12 +67,12 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       !blockedUrls.some((url) => router.asPath.includes(url));
 
   function handleLoadedError() {
-    useAdProviderStore.setState({ adsBlocked: true });
+    useAdProviderStore.setState({ adsBlocked: true, ready: true });
   }
 
   useEffect(() => {
     function callback() {
-      useAdProviderStore.setState({ adsBlocked: false });
+      useAdProviderStore.setState({ adsBlocked: false, ready: true });
 
       // check for cmp consent
       if (window.__tcfapi) {
@@ -80,7 +83,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             console.log({ __tcfapi: success });
             // AdConsent finished asking for consent, do something that is dependend on user consent ...
             if (!success) useAdProviderStore.setState({ adsBlocked: true });
-            else useAdProviderStore.setState({ ready: true });
           }
         });
       }
@@ -88,9 +90,9 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       window.googletag.cmd.push(function () {
         window.googletag.pubads().addEventListener('impressionViewable', function (event: any) {
           const slot = event.slot;
-          const adUnit = slot.getAdUnitPath()?.split('/')?.reverse()?.[0];
-          console.log('adunit impression', slot.getAdUnitPath(), slot);
-          if (adUnit) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: adUnit }));
+          const type = slot.getSlotElementId();
+          console.log('adunit impression', type, slot);
+          if (type) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: type }));
         });
       });
     }
@@ -102,10 +104,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (ready) {
+    if (ready && !adsBlocked) {
       window.ramp.spaAds({ countPageview: true, path: window.location.pathname });
     }
-  }, [router.pathname, ready]);
+  }, [router.pathname, ready, adsBlocked]);
 
   return (
     <AdsContext.Provider
@@ -113,8 +115,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         ready,
         adsBlocked,
         adsEnabled,
-        username: currentUser?.username,
-        isMember,
       }}
     >
       {children}

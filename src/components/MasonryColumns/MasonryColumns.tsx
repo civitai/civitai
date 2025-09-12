@@ -71,13 +71,7 @@ export function MasonryColumns<TData>({
                   />
                 );
               case 'ad':
-                return (
-                  <AdUnitRenderable key={`ad_${index}`}>
-                    <TwCard className="w-full items-center justify-center shadow">
-                      <data.data.AdUnit />
-                    </TwCard>
-                  </AdUnitRenderable>
-                );
+                return <data.data.AdUnit key={`ad_${index}`} />;
             }
           })}
         </div>

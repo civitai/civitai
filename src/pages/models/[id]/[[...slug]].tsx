@@ -134,7 +134,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
-import { AdUnitSide_2, AdUnitTop } from '~/components/Ads/AdUnit';
+import { AdunitBanner } from '~/components/Ads/Playwire/Adunit';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -1309,5 +1309,5 @@ export default function ModelDetailsV2({
 }
 
 function AdUnitTopSection() {
-  return <AdUnitTop className="bg-gray-1 py-3 dark:bg-dark-6" preserveLayout />;
+  return <AdunitBanner className="bg-gray-1 py-3 dark:bg-dark-6" />;
 }

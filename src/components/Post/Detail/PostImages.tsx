@@ -1,7 +1,6 @@
-import { ActionIcon, Badge, Button, Center, Group, Loader, Paper, Stack } from '@mantine/core';
+import { Badge, Button, Center, Group, Loader, Paper, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { Fragment, useRef, useState } from 'react';
-import { AdUnitTop } from '~/components/Ads/AdUnit';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -23,6 +22,7 @@ import type { PostContestCollectionItem } from '~/types/router';
 import classes from './PostImages.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AdunitBannerPostDetail } from '~/components/Ads/Playwire/Adunit';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -202,7 +202,7 @@ export function PostImages({
                 )}
               </ImageGuard2>
             </Paper>
-            {i > 0 && (i - 1) % 3 === 0 && <AdUnitTop maxWidth={728} />}
+            {i > 0 && (i - 1) % 3 === 0 && <AdunitBannerPostDetail />}
           </Fragment>
         );
       })}

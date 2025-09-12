@@ -1,14 +1,20 @@
 import React, { createContext, useContext, useState } from 'react';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { RegionInfo } from '~/server/utils/region-blocking';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { trpc } from '~/utils/trpc';
 
-type AppContext = {
+type AppProviderProps = {
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
+  domain: ColorDomain;
+};
+
+type AppContext = AppProviderProps & {
   allowMatureContent: boolean;
 };
+
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
   const context = useContext(Context);
@@ -19,9 +25,14 @@ export function AppProvider({
   children,
   settings,
   ...appContext
-}: { children: React.ReactNode; settings: UserSettingsSchema; region: RegionInfo } & AppContext) {
+}: {
+  children: React.ReactNode;
+  settings: UserSettingsSchema;
+} & AppProviderProps) {
   trpc.user.getSettings.useQuery(undefined, { initialData: settings });
-  const [state] = useState(appContext);
+  const [state] = useState<AppContext>(() => {
+    return { ...appContext, allowMatureContent: appContext.domain !== 'green' };
+  });
 
   return <Context.Provider value={state}>{children}</Context.Provider>;
 }
