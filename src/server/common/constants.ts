@@ -721,6 +721,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  Chroma: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2164239,
+      name: 'v1.0-HD',
+      trainedWords: [],
+      baseModel: 'Chroma',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1330309,
+        name: 'Chroma',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   NoobAI: {
     aspectRatios: commonAspectRatios,
     checkpoint: {
