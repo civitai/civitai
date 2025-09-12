@@ -26,6 +26,7 @@ const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
   trainingData: z.url(),
   loraName: z.string(),
   samplePrompts: z.array(z.string()),
+  negativePrompt: z.string().optional(),
   params: z.union([
     trainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
     whatIfTrainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),

@@ -64,12 +64,14 @@ export const trainingDetailsBaseModels35 = ['sd3_medium', 'sd3_large'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
 export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2v_14b'] as const;
+export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
   ...trainingDetailsBaseModelsXL,
   ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
+  ...trainingDetailsBaseModelsChroma,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -138,6 +140,7 @@ export const trainingDetailsObj = z.object({
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),
+  negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
 });

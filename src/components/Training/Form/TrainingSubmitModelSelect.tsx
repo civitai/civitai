@@ -24,6 +24,7 @@ import type {
 import {
   trainingDetailsBaseModels15,
   trainingDetailsBaseModels35,
+  trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsWan,
@@ -248,6 +249,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsWan as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelChroma =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsChroma as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -309,6 +315,15 @@ export const ModelSelect = ({
                     baseType="flux"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-09-01')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="teal"
+                    name="Chroma"
+                    value={baseModelChroma}
+                    baseType="chroma"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={new Date() < new Date('2025-10-01')}
                   />
                 </>
               )}

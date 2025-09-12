@@ -8,6 +8,7 @@ import {
   Stack,
   Switch,
   Text,
+  Textarea,
   ThemeIcon,
   Title,
   Tooltip,
@@ -296,6 +297,47 @@ export const AdvancedSettings = ({
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
+        {selectedRun.baseType === 'chroma' && (
+          <Accordion.Item value="negative-prompt">
+            <Accordion.Control>
+              <Stack gap={4}>
+                <Group gap="sm">
+                  <Text>Negative Prompt</Text>
+                  <Badge color="red" size="sm">
+                    Required
+                  </Badge>
+                </Group>
+                {openedSections.includes('negative-prompt') && (
+                  <Text size="xs" c="dimmed">
+                    The negative prompt helps define what should NOT appear in generated samples
+                    during training.
+                  </Text>
+                )}
+              </Stack>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack p="sm">
+                <Textarea
+                  label="Negative Prompt"
+                  placeholder="Enter negative prompt (required for Chroma training)"
+                  value={selectedRun.negativePrompt || ''}
+                  onChange={(event) => {
+                    doUpdate({
+                      negativePrompt: event.currentTarget.value,
+                    });
+                  }}
+                  error={
+                    !selectedRun.negativePrompt?.trim()
+                      ? 'Negative prompt is required for Chroma training'
+                      : undefined
+                  }
+                  minRows={3}
+                  autosize
+                />
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
         {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
           <Card withBorder mt="md" p="sm">
             <Card.Section inheritPadding withBorder py="sm">
