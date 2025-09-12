@@ -1,15 +1,16 @@
-import { Input, SegmentedControl } from '@mantine/core';
+import { Input, SegmentedControl, Select } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { InputSwitch, InputTextArea } from '~/libs/form';
+import { InputSelect, InputSwitch, InputTextArea } from '~/libs/form';
 import {
   getVeo3Checkpoint,
   veo3ModelOptions,
   getVeo3Models,
   removeVeo3CheckpointFromResources,
   veo3AspectRatios,
+  veo3Durations,
 } from '~/server/orchestrator/veo3/veo3.schema';
 import type { ResourceInput } from '~/server/orchestrator/infrastructure/base.schema';
 import {
@@ -51,7 +52,7 @@ export function Veo3FormInput() {
             max={1}
             warnOnMissingAiMetadata
             aspect="video"
-            aspectRatios={['16:9']}
+            aspectRatios={['16:9', '9:16']}
           >
             {(previewItems) => (
               <div className="mx-auto w-full max-w-80">
@@ -81,12 +82,23 @@ export function Veo3FormInput() {
       />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable Prompt Enhancer" />
-      {isTxt2Vid && (
-        <InputAspectRatioColonDelimited
-          name="aspectRatio"
-          label="Aspect Ratio"
-          options={veo3AspectRatios}
-        />
+      {isTxt2Vid ? (
+        <>
+          <InputAspectRatioColonDelimited
+            name="aspectRatio"
+            label="Aspect Ratio"
+            options={veo3AspectRatios}
+          />
+          <InputSelect
+            name="duration"
+            data={veo3Durations.map((value) => ({ label: `${value}s`, value }))}
+            label="Duration"
+          />
+        </>
+      ) : (
+        <>
+          <Select label="Duration" value={'8s'} data={['8s']} />
+        </>
       )}
 
       {/* <div className="flex flex-col gap-0.5">
