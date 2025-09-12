@@ -273,7 +273,7 @@ export const getPostsInfinite = async ({
   }
 
   // sorting
-  let orderBy = 'p."publishedAt" DESC NULLS LAST';
+  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC NULLS LAST';
   if (sort === PostSort.MostComments) {
     orderBy = `pm."commentCount" DESC`;
     AND.push(Prisma.sql`pm."commentCount" > 0`);
@@ -289,7 +289,7 @@ export const getPostsInfinite = async ({
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    const cursorValue = cursorProp === 'p."publishedAt"' ? new Date(cursor) : Number(cursor);
+    const cursorValue = cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"' ? new Date(cursor) : Number(cursor);
     if (cursorProp)
       AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
   }
