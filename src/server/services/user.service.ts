@@ -794,8 +794,28 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // TODO switch from prisma, or try to make this a direct/raw query
   const response = await dbWrite.user.findFirst({
     where,
-    include: {
-      referral: { select: { id: true } },
+    select: {
+      id: true,
+      browsingLevel: true,
+      showNsfw: true,
+      referral: {
+        select: {
+          id: true,
+        },
+      },
+      image: true,
+      email: true,
+      emailVerified: true,
+      name: true,
+      username: true,
+      isModerator: true,
+      deletedAt: true,
+      customerId: true,
+      paddleCustomerId: true,
+      mutedAt: true,
+      bannedAt: true,
+      onboarding: true,
+      meta: true,
       profilePicture: {
         select: {
           id: true,
@@ -833,14 +853,11 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     subscriptionId: subscription?.id ?? undefined,
     mutedAt: response.mutedAt ?? undefined,
     bannedAt: response.bannedAt ?? undefined,
-    autoplayGifs: response.autoplayGifs ?? undefined,
-    leaderboardShowcase: response.leaderboardShowcase ?? undefined,
-    filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
     meta: userMeta,
     banDetails: getUserBanDetails({ meta: userMeta }),
   };
 
-  const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
+  const { profilePicture, ...rest } = user;
   const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]

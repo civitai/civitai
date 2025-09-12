@@ -27,6 +27,7 @@ export function UserSettingsProvider({
   const snapshotRef = useRef<Partial<StoreState> | null>(null);
   if (!snapshotRef.current) snapshotRef.current = store.getState();
 
+  // TODO - need a way to trigger fetch without debouncer
   useEffect(() => {
     if (!currentUser) return;
     const unsubscribe = store.subscribe((curr, prev) => {
@@ -48,7 +49,7 @@ export function UserSettingsProvider({
             curr.setState(reverseChanged);
             if (error instanceof Error)
               showErrorNotification({
-                title: 'Failed to update settings',
+                title: 'Failed to update user settings',
                 error,
               });
           });
