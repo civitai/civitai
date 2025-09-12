@@ -8,6 +8,7 @@ type BaseModelConfigToSatisfy = {
   hidden?: boolean;
   ecosystem?: string;
   engine?: string;
+  family?: string;
 };
 type BaseModelConfig = typeof baseModelConfig;
 export type BaseModel = BaseModelConfig[number]['name'];
@@ -78,6 +79,7 @@ const baseModelConfig = [
     group: 'SDXLDistilled',
     hidden: true,
   },
+  { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD' },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
@@ -300,6 +302,22 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     ],
   },
   {
+    group: 'Chroma',
+    support: [
+      {
+        modelTypes: [
+          ModelType.Checkpoint,
+          ModelType.TextualInversion,
+          ModelType.LORA,
+          ModelType.DoRA,
+          ModelType.LoCon,
+          ModelType.VAE,
+        ],
+        baseModels: ['Chroma'],
+      },
+    ],
+  },
+  {
     group: 'NoobAI',
     support: [
       {
@@ -370,6 +388,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'Qwen',
     support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
+  },
+  {
+    group: 'Seedream',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedream'] }],
   },
   {
     group: 'WanVideo',

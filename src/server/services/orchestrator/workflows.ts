@@ -100,9 +100,9 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
-  // console.log('------');
-  // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
-  // console.log('------');
+  console.log('------');
+  console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
+  console.log('------');
 
   const { data, error, response } = await clientSubmitWorkflow({
     client,

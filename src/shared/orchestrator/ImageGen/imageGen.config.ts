@@ -14,6 +14,10 @@ import {
   openaiConfig,
   openaiModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/openai.config';
+import {
+  seedreamConfig,
+  seedreamModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/seedream.config';
 
 type ImageGenConfigKey = keyof typeof imageGenConfig;
 export const imageGenConfig = {
@@ -21,6 +25,7 @@ export const imageGenConfig = {
   google: googleConfig,
   flux1: flux1KontextConfig,
   gemini: geminiConfig,
+  seedream: seedreamConfig,
 };
 
 export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
@@ -29,6 +34,7 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
     .concat([...googleModelVersionToModelMap.keys()].map((key) => [key, 'google']))
     .concat([...fluxKontextModelVersionToModelMap.keys()].map((key) => [key, 'flux1']))
     .concat([...geminiModelVersionToModelMap.keys()].map((key) => [key, 'gemini']))
+    .concat([...seedreamModelVersionToModelMap.keys()].map((key) => [key, 'seedream']))
 );
 
 export function getModelVersionUsesImageGen(modelVersionId: number) {
