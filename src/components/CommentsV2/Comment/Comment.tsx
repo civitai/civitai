@@ -254,7 +254,12 @@ export function CommentContent({
             <>
               <Box my={5}>
                 <LineClamp className="text-sm" lineClamp={3} variant="block">
-                  <RenderHtml html={comment.content} allowCustomStyles={false} withMentions />
+                  <RenderHtml
+                    html={comment.content}
+                    allowCustomStyles={false}
+                    withMentions
+                    withProfanityFilter
+                  />
                 </LineClamp>
               </Box>
               {/* COMMENT INTERACTION */}
