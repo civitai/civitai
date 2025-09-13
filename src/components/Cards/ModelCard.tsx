@@ -15,6 +15,7 @@ import {
   IconMessageCircle2,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { BlurText } from '~/components/BlurText/BlurText';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -195,12 +196,20 @@ export function ModelCard({ data }: Props) {
           </div>
         </div>
       }
-      footer={
+      footer={({ safe }) => (
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
-          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
+          <BlurText
+            component={Text}
+            className={cardClasses.dropShadow}
+            size="xl"
+            fw={700}
+            lineClamp={3}
+            lh={1.2}
+            blur={safe !== undefined ? !safe : undefined}
+          >
             {data.name}
-          </Text>
+          </BlurText>
           {data.rank && (
             <div className="flex flex-wrap items-center justify-between gap-1">
               {(!!data.rank.downloadCount ||
@@ -267,7 +276,7 @@ export function ModelCard({ data }: Props) {
             </div>
           )}
         </div>
-      }
+      )}
     />
   );
 }

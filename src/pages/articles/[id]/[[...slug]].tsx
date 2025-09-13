@@ -20,7 +20,7 @@ import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/ico
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -144,7 +144,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     data: memoizedImageData,
   });
   const [image] = items;
-  if (image && !images.length) setImages([image]);
+
+  // Move setState to useEffect to avoid render-phase side effects
+  useEffect(() => {
+    if (image && !images.length) {
+      setImages([image]);
+    }
+  }, [image, images.length, setImages]);
 
   if (isLoading) return <PageLoader />;
   if (!article || isBlocked || disableArticles) return <NotFound />;

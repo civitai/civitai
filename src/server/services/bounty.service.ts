@@ -38,8 +38,8 @@ import {
 import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { userContentOverviewCache } from '~/server/redis/caches';
-import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -372,6 +372,21 @@ export const upsertBounty = async ({
   ...data
 }: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
   await throwOnBlockedLinkDomain(data.description);
+  if (!isModerator) {
+    for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+  }
+
+  // Check bounty name and description for profanity
+  const profanityFilter = createProfanityFilter();
+  const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
+  const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+  // If profanity is detected, mark bounty as NSFW and add to locked properties
+  if (hasProfanity && !data.nsfw) {
+    data.nsfw = true;
+    // Add nsfw to lockedProperties to prevent users from changing it
+    data.lockedProperties = [...(data.lockedProperties ?? []), 'nsfw'];
+  }
   if (id) {
     if (!isModerator) {
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];

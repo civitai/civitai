@@ -119,7 +119,7 @@ export default function CommentThreadModal({
             </AlertWithIcon>
           )}
           <Stack gap="xl">
-            <RenderHtml html={comment.content} withMentions />
+            <RenderHtml html={comment.content} withMentions withProfanityFilter />
             <ReactionPicker
               reactions={reactions}
               onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}

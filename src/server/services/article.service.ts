@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
@@ -19,6 +19,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -669,9 +670,25 @@ export const upsertArticle = async ({
   coverImage,
   isModerator,
   ...data
-}: UpsertArticleInput & { userId: number; isModerator?: boolean }) => {
+}: UpsertArticleInput & { userId: number; isModerator?: boolean; nsfw?: boolean }) => {
   try {
     await throwOnBlockedLinkDomain(data.content);
+    if (!isModerator) {
+      for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+    }
+
+    // Check article title and content for profanity
+    const profanityFilter = createProfanityFilter();
+    const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
+    const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+    // If profanity is detected, mark article as NSFW and add to locked properties
+    if (hasProfanity && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+      data.nsfw = true;
+      data.userNsfwLevel = NsfwLevel.R;
+      // Add userNsfwLevel to lockedProperties to prevent users from changing it
+      data.lockedProperties = [...(data.lockedProperties ?? []), 'nsfw', 'userNsfwLevel'];
+    }
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;
@@ -739,6 +756,7 @@ export const upsertArticle = async ({
         userId: true,
         publishedAt: true,
         status: true,
+        nsfwLevel: true,
       },
     });
     if (!article) throw throwNotFoundError();

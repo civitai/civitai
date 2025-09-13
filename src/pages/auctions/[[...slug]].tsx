@@ -217,7 +217,7 @@ export default function Auctions({
       <Meta
         title={getDocTitle()}
         description="View and participate in auctions for featured spots on Civitai."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
+        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/${pathname}`, rel: 'canonical' }]}
         deIndex={slug === MY_BIDS}
       />
       <Container size="xl" h="100%" data-tour="auction:start">

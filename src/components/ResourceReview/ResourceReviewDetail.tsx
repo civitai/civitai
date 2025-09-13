@@ -211,7 +211,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
             )}
           </Group>
           <Divider />
-          {data.details && <RenderHtml html={data.details} />}
+          {data.details && <RenderHtml html={data.details} withProfanityFilter />}
 
           <Stack gap="xs">
             <Title order={3}>

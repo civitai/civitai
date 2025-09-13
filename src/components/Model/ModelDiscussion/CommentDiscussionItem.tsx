@@ -95,7 +95,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
       </Group>
 
       <ContentClamp maxHeight={100}>
-        <RenderHtml html={comment.content} className="text-sm" withMentions />
+        <RenderHtml html={comment.content} className="text-sm" withMentions withProfanityFilter />
       </ContentClamp>
 
       <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">

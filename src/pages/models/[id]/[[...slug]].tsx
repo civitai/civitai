@@ -3,14 +3,12 @@ import {
   Anchor,
   Badge,
   Box,
-  Button,
   Center,
   Container,
   Divider,
   Group,
   Loader,
   Menu,
-  Paper,
   Stack,
   Text,
   ThemeIcon,
@@ -37,8 +35,6 @@ import {
   IconInfoCircle,
   IconLock,
   IconLockOff,
-  IconMessage,
-  IconMessageCircleOff,
   IconPlus,
   IconRadar2,
   IconRecycle,
@@ -73,7 +69,6 @@ import {
   openReportModal,
   openUnpublishModal,
 } from '~/components/Dialog/dialog-registry';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -81,7 +76,6 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
-import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
@@ -91,7 +85,6 @@ import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -134,7 +127,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
-import { AdUnitSide_2, AdUnitTop } from '~/components/Ads/AdUnit';
+import { AdUnitTop } from '~/components/Ads/AdUnit';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

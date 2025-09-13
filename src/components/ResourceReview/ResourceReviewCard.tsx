@@ -49,7 +49,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
         )}
         {data.details && (
           <ScrollArea.Autosize mah={200}>
-            <RenderHtml html={data.details} className="text-sm" />
+            <RenderHtml html={data.details} className="text-sm" withProfanityFilter />
           </ScrollArea.Autosize>
         )}
       </Stack>

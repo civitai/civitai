@@ -147,6 +147,16 @@ const csamHelpTriggeredSchema = z.object({
     .optional(),
 });
 
+const profanitySearchSchema = z.object({
+  type: z.literal('ProfanitySearch'),
+  details: z
+    .looseObject({
+      query: z.string().optional(),
+      matches: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -164,4 +174,5 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   membershipCancelSchema,
   membershipDowngradeSchema,
   csamHelpTriggeredSchema,
+  profanitySearchSchema,
 ]);

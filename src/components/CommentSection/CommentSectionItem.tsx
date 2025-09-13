@@ -173,7 +173,12 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               </Text>
             </Group>
             {!isEditing ? (
-              <RenderHtml html={comment.content} className="text-sm" withMentions />
+              <RenderHtml
+                html={comment.content}
+                className="text-sm"
+                withMentions
+                withProfanityFilter
+              />
             ) : (
               <RichTextEditor
                 value={editComment.content}

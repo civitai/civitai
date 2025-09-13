@@ -146,7 +146,7 @@ type Props = {
   renderSearchComponent?: (opts: RenderSearchComponentProps) => ReactElement;
 };
 export type RenderSearchComponentProps = {
-  onSearchDone?: () => void;
+  onSearchDone?: (e?: React.SyntheticEvent<HTMLInputElement>) => void;
   isMobile: boolean;
   ref?: RefObject<HTMLInputElement>;
 };
