@@ -15,7 +15,6 @@ import {
   IconMessageCircle2,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { BlurText } from '~/components/BlurText/BlurText';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -199,14 +198,7 @@ export function ModelCard({ data }: Props) {
       footer={
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
-          <Text
-            component={Text}
-            className={cardClasses.dropShadow}
-            size="xl"
-            fw={700}
-            lineClamp={3}
-            lh={1.2}
-          >
+          <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
             {data.name}
           </Text>
           {data.rank && (
