@@ -2118,7 +2118,6 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     // Get all image IDs from search results
     const searchImageIds = filteredHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
-    console.log({ filteredHitIds });
 
     let cacheExistenceEnabled = false;
 
