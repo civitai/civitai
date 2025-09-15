@@ -502,6 +502,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://policies.google.com/terms',
     name: 'Veo 3',
   },
+  seedream: {
+    url: 'https://seed.bytedance.com/en/user-agreement',
+    name: 'Seedream',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -564,6 +568,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.2 T2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 TI2V-5B': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
+  Seedream: baseLicenses['seedream'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -632,6 +637,14 @@ const commonAspectRatios = [
   { label: 'Square', width: 1024, height: 1024 },
   { label: 'Landscape', width: 1216, height: 832 },
   { label: 'Portrait', width: 832, height: 1216 },
+];
+
+export const seedreamSizes = [
+  { label: '16:9', width: 2272, height: 1280 },
+  { label: '4:3', width: 1696, height: 1280 },
+  { label: '1:1', width: 1280, height: 1280 },
+  { label: '3:4', width: 1280, height: 1696 },
+  { label: '9:16', width: 1280, height: 2272 },
 ];
 
 export const generationConfig = {
@@ -812,6 +825,25 @@ export const generationConfig = {
       model: {
         id: 1864281,
         name: 'Qwen-Image',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Seedream: {
+    aspectRatios: seedreamSizes,
+    checkpoint: {
+      id: 2208278,
+      name: 'v4.0',
+      trainedWords: [],
+      baseModel: 'Seedream',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1951069,
+        name: 'Seedream',
         type: 'Checkpoint',
       },
     } as GenerationResource,
