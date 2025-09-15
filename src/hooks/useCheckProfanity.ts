@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { createProfanityFilter, type ProfanityFilterOptions } from '~/libs/profanity-simple';
 
 export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions> {
@@ -42,8 +41,6 @@ export function useCheckProfanity(
   text: string,
   options: UseCheckProfanityOptions = {}
 ): ProfanityAnalysis {
-  const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
-
   const { enabled = true } = options;
 
   // Create profanity filter with provided options
@@ -54,7 +51,7 @@ export function useCheckProfanity(
   // Analyze the text
   const analysis = useMemo((): ProfanityAnalysis => {
     // Return clean results if disabled or if global blur is off
-    if (!enabled || !blurNsfw || !text.trim()) {
+    if (!enabled || !text.trim()) {
       return {
         hasProfanity: false,
         matches: [],
@@ -87,7 +84,7 @@ export function useCheckProfanity(
         originalText: text,
       };
     }
-  }, [text, enabled, blurNsfw, profanityFilter]);
+  }, [text, enabled, profanityFilter]);
 
   return analysis;
 }

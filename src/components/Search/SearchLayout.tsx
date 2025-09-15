@@ -148,46 +148,51 @@ export function SearchLayout({
     if (!searchQuery) return false;
 
     const illegalSearch = includesInappropriate({ prompt: searchQuery });
-    const isIllegal = illegalSearch === 'minor';
+    return illegalSearch === 'minor';
+  }, [searchQuery]);
 
-    if (isIllegal) {
-      const { sortBy: index } = parsedQuery || {};
-      trackAction({
-        type: 'CSAM_Help_Triggered',
-        details: {
-          query: searchQuery,
-          index,
-        },
-      }).catch(() => undefined);
-    }
+  // Track illegal search separately to avoid side effects in useMemo
+  useEffect(() => {
+    if (!searchQuery || !isIllegalSearch) return;
 
-    return isIllegal;
-  }, [searchQuery, parsedQuery?.sortBy]);
+    const { sortBy: index } = parsedQuery || {};
+    trackAction({
+      type: 'CSAM_Help_Triggered',
+      details: {
+        query: searchQuery,
+        index,
+      },
+    }).catch(() => undefined);
+  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy]);
 
   // Check profanity in search query
   const profanityAnalysis = useCheckProfanity(searchQuery, {
-    enabled: !isIllegalSearch && !!searchQuery,
+    enabled: domainColor === 'green' && !isIllegalSearch && !!searchQuery,
   });
 
-  const isProfaneSearch = useMemo(() => {
-    // TODO.profanity: Only apply profanity filtering in green domain
-    if (!searchQuery) return false;
+  // Track profanity search separately to avoid side effects in useMemo
+  useEffect(() => {
+    if (!searchQuery || !profanityAnalysis.hasProfanity || domainColor !== 'green') return;
 
     const { sortBy: index } = parsedQuery || {};
 
-    if (profanityAnalysis.hasProfanity) {
-      trackAction({
-        type: 'ProfanitySearch',
-        details: {
-          query: searchQuery,
-          index,
-          matches: profanityAnalysis.matches,
-        },
-      }).catch(() => undefined);
-    }
+    trackAction({
+      type: 'ProfanitySearch',
+      details: {
+        query: searchQuery,
+        index,
+        matches: profanityAnalysis.matches,
+      },
+    }).catch(() => undefined);
+  }, [
+    searchQuery,
+    domainColor,
+    profanityAnalysis.hasProfanity,
+    profanityAnalysis.matches.length,
+    parsedQuery?.sortBy,
+  ]);
 
-    return profanityAnalysis.hasProfanity;
-  }, [searchQuery, parsedQuery?.sortBy]);
+  const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   return (
     <SearchLayoutCtx.Provider value={ctx}>

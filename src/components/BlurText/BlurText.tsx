@@ -3,6 +3,7 @@ import type { TextProps } from '@mantine/core';
 import { createPolymorphicComponent, Text } from '@mantine/core';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useCleanText } from '~/hooks/useCheckProfanity';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 interface BlurTextProps extends TextProps {
   children: React.ReactNode;
@@ -11,8 +12,12 @@ interface BlurTextProps extends TextProps {
 
 const _BlurText = forwardRef<HTMLParagraphElement, BlurTextProps>(
   ({ children, blur, ...props }, ref) => {
-    const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
-    const shouldBlur = blur !== undefined ? blur : blurNsfw;
+    const [blurNsfw, browsingLevel] = useBrowsingSettings((state) => [
+      state.blurNsfw,
+      state.browsingLevel,
+    ]);
+    const shouldBlur =
+      blur !== undefined ? blur : blurNsfw || browsingLevel <= publicBrowsingLevelsFlag;
 
     // Extract all text content to clean with the hook
     const extractTextContent = (content: React.ReactNode): string => {

@@ -13,6 +13,7 @@ import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
 import classes from './NotificationList.module.css';
 import { match } from 'path-to-regexp';
+import { BlurText } from '~/components/BlurText/BlurText';
 
 type RouteMatch = {
   pathname: string;
@@ -151,9 +152,9 @@ export function NotificationList({
                   </ThemeIcon>
                 )}
                 <Stack gap={0}>
-                  <Text size={textSize} fw="bold" lineClamp={truncate ? 3 : undefined}>
+                  <BlurText size={textSize} fw="bold" lineClamp={truncate ? 3 : undefined}>
                     {details.message}
-                  </Text>
+                  </BlurText>
                   <Group gap={2} wrap="nowrap">
                     {notificationDetails?.content && (
                       <>
