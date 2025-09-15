@@ -64,4 +64,5 @@ export type UserSettingsChat = z.infer<typeof userSettingsChat>;
 export const userSettingsChat = z.object({
   muteSounds: z.boolean().optional(),
   acknowledged: z.boolean().optional(),
+  replaceBadWords: z.boolean().optional(),
 });

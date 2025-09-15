@@ -61,6 +61,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
+import { BlurText } from '~/components/BlurText/BlurText';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -781,6 +782,8 @@ function DisplayMessages({
 }) {
   const currentUser = useCurrentUser();
   const existingChatId = useChatStore((state) => state.existingChatId);
+  const { data: userSettings } = trpc.chat.getUserSettings.useQuery();
+  const replaceBadWords = userSettings?.replaceBadWords ?? true;
 
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
   const tChat = allChatData?.find((chat) => chat.id === existingChatId);
@@ -926,7 +929,9 @@ function DisplayMessages({
                         [classes.myMessage]: isMe,
                       })}
                     >
-                      <Linkify options={linkifyOptions}>{c.content}</Linkify>
+                      <Linkify options={linkifyOptions}>
+                        <BlurText blur={replaceBadWords}>{c.content}</BlurText>
+                      </Linkify>
                     </div>
                   </Tooltip>
                 </Group>
