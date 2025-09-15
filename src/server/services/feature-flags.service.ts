@@ -90,7 +90,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Chats',
     description: 'Send and receive DMs from users across the site.',
-    availability: ['user'],
+    availability: ['user', 'blue', 'red'],
   },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
