@@ -137,7 +137,7 @@ export function SearchLayout({
     const { query, sortBy: index, ...filters } = parsedQuery;
 
     if (query && index) trackSearch({ query, index, filters });
-  }, [JSON.stringify(parsedQuery)]);
+  }, [parsedQuery]);
 
   // Callback for InstantSearch state changes
   const handleQueryChange = useCallback((query: string) => {
@@ -162,16 +162,16 @@ export function SearchLayout({
     }
 
     return isIllegal;
-  }, [searchQuery]);
+  }, [searchQuery, parsedQuery?.sortBy]);
 
   // Check profanity in search query
   const profanityAnalysis = useCheckProfanity(searchQuery, {
-    enabled: domainColor === 'green' && !isIllegalSearch && !!searchQuery,
+    enabled: !isIllegalSearch && !!searchQuery,
   });
 
   const isProfaneSearch = useMemo(() => {
-    // Only apply profanity filtering in green domain
-    if (domainColor !== 'green' || !searchQuery) return false;
+    // TODO.profanity: Only apply profanity filtering in green domain
+    if (!searchQuery) return false;
 
     const { sortBy: index } = parsedQuery || {};
 
@@ -187,7 +187,7 @@ export function SearchLayout({
     }
 
     return profanityAnalysis.hasProfanity;
-  }, [searchQuery, domainColor]);
+  }, [searchQuery, parsedQuery?.sortBy]);
 
   return (
     <SearchLayoutCtx.Provider value={ctx}>
