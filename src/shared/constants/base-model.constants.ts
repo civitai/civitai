@@ -396,6 +396,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [
       { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 14B t2v'] },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B', 'Wan Video 2.2 I2V-A14B', 'Wan Video 2.2 TI2V-5B'],
+      },
+    ],
   },
   {
     group: 'WanVideo14B_I2V_480p',
@@ -409,6 +415,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 14B i2v 720p'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B', 'Wan Video 2.2 I2V-A14B', 'Wan Video 2.2 TI2V-5B'],
+      },
+    ],
   },
   {
     group: 'WanVideo14B_I2V_720p',
@@ -418,7 +430,13 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 14B i2v 720p'],
       },
     ],
-    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] }],
+    partialSupport: [
+      { modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] },
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B', 'Wan Video 2.2 I2V-A14B', 'Wan Video 2.2 TI2V-5B'],
+      },
+    ],
   },
   {
     group: 'WanVideo-22-T2V-A14B',
@@ -426,6 +444,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Wan Video 2.2 T2V-A14B'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
       },
     ],
   },
@@ -437,11 +461,23 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 2.2 I2V-A14B'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+      },
+    ],
   },
   {
     group: 'WanVideo-22-TI2V-5B',
     support: [
       { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 2.2 TI2V-5B'] },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+      },
     ],
   },
   {
