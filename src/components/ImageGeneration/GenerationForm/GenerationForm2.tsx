@@ -107,6 +107,7 @@ import {
   fluxKreaAir,
   getIsFluxKrea,
   getIsQwen,
+  getIsChroma,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -147,6 +148,7 @@ import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
+import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 
 let total = 0;
 const tips = {
@@ -446,6 +448,7 @@ export function GenerationFormContent() {
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
+  const isChroma = getIsChroma(baseModel);
 
   // HiDream
   const isHiDream = getIsHiDream(baseModel);
@@ -457,9 +460,10 @@ export function GenerationFormContent() {
   const isImagen4 = getIsImagen4(model.id);
   const isFluxKontext = getIsFluxKontext(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
-  const showImg2ImgMultiple = isNanoBanana;
+  const isSeedream = getIsSeedream(model.id);
+  const showImg2ImgMultiple = isNanoBanana || isSeedream;
 
-  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana;
+  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
 
   const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
 
@@ -481,7 +485,7 @@ export function GenerationFormContent() {
               ? fluxMode === fluxDraftAir
               : isSD3
               ? model.id === 983611
-              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen;
+              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen && !isChroma;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
               ? 10
@@ -493,13 +497,13 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen) {
+            if (isFlux || isSD3 || isQwen || isChroma) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext || isQwen) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -507,18 +511,27 @@ export function GenerationFormContent() {
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
             const disableAdditionalResources =
-              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana;
+              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana || isSeedream;
             const disableAdvanced =
-              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana || isSeedream;
             const disableNegativePrompt =
               isFlux ||
               isQwen ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
-              isNanoBanana;
+              isNanoBanana ||
+              isSeedream;
             const disableWorkflowSelect =
-              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext || isQwen || isNanoBanana;
+              isFlux ||
+              isSD3 ||
+              isImageGen ||
+              isHiDream ||
+              isFluxKontext ||
+              isQwen ||
+              isNanoBanana ||
+              isChroma ||
+              isSeedream;
             const disableDraft =
               !features.draft ||
               isOpenAI ||
@@ -528,17 +541,23 @@ export function GenerationFormContent() {
               isImagen4 ||
               isHiDream ||
               isFluxKontext ||
-              isNanoBanana;
+              isNanoBanana ||
+              isChroma ||
+              isSeedream;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen) || isOpenAI || isFluxKontext;
+              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma) ||
+              isOpenAI ||
+              isFluxKontext;
             const disableCfgScale = isFluxUltra;
-            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext;
+            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
             const disableSteps = isFluxUltra || isFluxKontext;
-            const disableClipSkip = isSDXL || isFlux || isQwen || isSD3 || isFluxKontext;
+            const disableClipSkip =
+              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
             const disableVae = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
-            const disableAspectRatio = isFluxUltra || isImg2Img || showImg2ImgMultiple;
+            const disableAspectRatio =
+              isFluxUltra || isImg2Img || (showImg2ImgMultiple && !isSeedream);
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -584,33 +603,6 @@ export function GenerationFormContent() {
                           </Text>
                         )}
                       </div>
-                    </div>
-                  )}
-                  {enableImageInput && (
-                    <InputSourceImageUpload
-                      name="sourceImage"
-                      label={isOpenAI ? 'Image (optional)' : undefined}
-                      warnOnMissingAiMetadata={isFluxKontext}
-                    />
-                  )}
-
-                  {showImg2ImgMultiple && (
-                    <div className="-mx-2">
-                      <InputSourceImageUploadMultiple
-                        name="images"
-                        max={7}
-                        warnOnMissingAiMetadata
-                        aspect="video"
-                      >
-                        {(previewItems) => (
-                          <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
-                            {previewItems.map((item, i) => (
-                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
-                            ))}
-                            <SourceImageUploadMultiple.Dropzone />
-                          </div>
-                        )}
-                      </InputSourceImageUploadMultiple>
                     </div>
                   )}
 
@@ -678,7 +670,7 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={isFluxStandard || isHiDream || isImageGen}
+                            hideVersion={isFluxStandard || isHiDream || (isImageGen && !isSeedream)}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -832,11 +824,39 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isQwen && !isSD3 && <ReadySection />}
+                          {!isFlux && !isQwen && !isSD3 && !isChroma && <ReadySection />}
                         </Card>
                       );
                     }}
                   </Watch>
+
+                  {enableImageInput && (
+                    <InputSourceImageUpload
+                      name="sourceImage"
+                      label={isOpenAI ? 'Image (optional)' : undefined}
+                      warnOnMissingAiMetadata={isFluxKontext}
+                    />
+                  )}
+
+                  {showImg2ImgMultiple && (
+                    <div className="-mx-2">
+                      <InputSourceImageUploadMultiple
+                        name="images"
+                        max={7}
+                        warnOnMissingAiMetadata
+                        aspect="video"
+                      >
+                        {(previewItems) => (
+                          <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
+                            {previewItems.map((item, i) => (
+                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                            ))}
+                            <SourceImageUploadMultiple.Dropzone />
+                          </div>
+                        )}
+                      </InputSourceImageUploadMultiple>
+                    </div>
+                  )}
 
                   {(isSD3 || isQwen) && (
                     <Alert className="overflow-visible">
@@ -1233,7 +1253,7 @@ export function GenerationFormContent() {
                     </>
                   )}
 
-                  {isFluxUltra && <InputSeed name="seed" label="Seed" />}
+                  {(isFluxUltra || isSeedream) && <InputSeed name="seed" label="Seed" />}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
@@ -1288,7 +1308,7 @@ export function GenerationFormContent() {
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
                                     presets={
-                                      isFlux || isQwen || isFluxKontext || isSD3
+                                      isFlux || isQwen || isFluxKontext || isSD3 || isChroma
                                         ? undefined
                                         : [
                                             { label: 'Creative', value: '4' },
@@ -1347,7 +1367,7 @@ export function GenerationFormContent() {
                                           sliderProps={sharedSliderProps}
                                           numberProps={sharedNumberProps}
                                           presets={
-                                            isFlux || isQwen || isSD3
+                                            isFlux || isQwen || isSD3 || isChroma
                                               ? undefined
                                               : [
                                                   {
@@ -1630,13 +1650,16 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const form = useGenerationForm();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const [baseModel, resources, vae] = form.watch(['baseModel', 'resources', 'vae']);
+  const [baseModel, model, resources, vae] = form.watch(['baseModel', 'model', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isOpenAI = baseModel === 'OpenAI';
+  const checkpoint = model;
+  const isSeedream = getIsSeedream(checkpoint.id);
+
   const hasCreatorTip =
-    (!isFlux && !isQwen && !isSD3 && !isOpenAI) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();

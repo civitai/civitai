@@ -11,7 +11,7 @@ import {
   handleError,
 } from '@civitai/client';
 import type * as z from 'zod';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -100,9 +100,11 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
-  // console.log('------');
-  // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
-  // console.log('------');
+  if (isDev) {
+    // console.log('------');
+    // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
+    // console.log('------');
+  }
 
   const { data, error, response } = await clientSubmitWorkflow({
     client,
