@@ -196,20 +196,19 @@ export function ModelCard({ data }: Props) {
           </div>
         </div>
       }
-      footer={({ safe }) => (
+      footer={
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
-          <BlurText
+          <Text
             component={Text}
             className={cardClasses.dropShadow}
             size="xl"
             fw={700}
             lineClamp={3}
             lh={1.2}
-            blur={safe !== undefined ? !safe : undefined}
           >
             {data.name}
-          </BlurText>
+          </Text>
           {data.rank && (
             <div className="flex flex-wrap items-center justify-between gap-1">
               {(!!data.rank.downloadCount ||
@@ -276,7 +275,7 @@ export function ModelCard({ data }: Props) {
             </div>
           )}
         </div>
-      )}
+      }
     />
   );
 }
