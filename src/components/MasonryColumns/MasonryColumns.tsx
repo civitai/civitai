@@ -8,7 +8,7 @@ import type {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import { AdUnitRenderable } from '~/components/Ads/Playwire/AdUnitFactory';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 
@@ -71,7 +71,13 @@ export function MasonryColumns<TData>({
                   />
                 );
               case 'ad':
-                return <data.data.AdUnit key={`ad_${index}`} />;
+                return (
+                  <AdUnitRenderable>
+                    <TwCard>
+                      <data.data.AdUnit key={`ad_${index}`} />
+                    </TwCard>
+                  </AdUnitRenderable>
+                );
             }
           })}
         </div>

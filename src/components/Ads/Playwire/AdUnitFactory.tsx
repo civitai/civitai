@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getRandomId } from '~/utils/string-helpers';
-import clsx from 'clsx';
 import { useAdsContext } from '~/components/Ads/Playwire/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -10,6 +9,7 @@ import {
   useContainerContext,
   useContainerProviderStore,
 } from '~/components/ContainerProvider/ContainerProvider';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 
 type SupportUsImageSize =
   | '120x600'
@@ -129,6 +129,17 @@ export function createAdunit({
 }) {
   return function Adunit(props: AdunitProps) {
     const { adsBlocked, ready } = useAdsContext();
+    const level = useDialogStore(
+      (state) => state.dialogs.filter((x) => x.type === 'routed-dialog').length
+    );
+    const levelRef = useRef<number | null>(null);
+    if (levelRef.current === null) levelRef.current = level;
+
+    if (levelRef.current !== level) {
+      console.log('hit me');
+      return null;
+    }
+
     return (
       <AdUnitRenderable browsingLevel={props.browsingLevel} hideOnBlocked={props.hideOnBlocked}>
         <div className={props.className}>

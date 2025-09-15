@@ -41,8 +41,6 @@ const useAdProviderStore = create<{
   adsBlocked: true,
 }));
 
-const useStore = create<{ status?: 'blocked' | 'ready' }>(() => ({}));
-
 const blockedUrls: string[] = [
   '/collections/6503138',
   '/collections/7514194',
@@ -50,6 +48,8 @@ const blockedUrls: string[] = [
   '/moderator',
 ];
 
+const publisherId = env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID;
+const websiteId = env.NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID;
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { domain } = useAppContext();
@@ -118,16 +118,14 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-      {adsEnabled &&
-        env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID &&
-        env.NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID && (
-          <>
-            <Script
-              id="playwire-onramp"
-              type="text/javascript"
-              data-cfasync="false"
-              dangerouslySetInnerHTML={{
-                __html: `
+      {adsEnabled && publisherId && websiteId && (
+        <>
+          <Script
+            id="playwire-onramp"
+            type="text/javascript"
+            data-cfasync="false"
+            dangerouslySetInnerHTML={{
+              __html: `
                   window.ramp = window.ramp || {};
                   window.ramp.que = window.ramp.que || [];
                   window.ramp.passiveMode = true;
@@ -136,17 +134,17 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                     dispatchEvent(new CustomEvent('ramp-ready'));
                   })
                 `,
-              }}
-            />
-            <Script
-              defer
-              src={`//cdn.intergient.com/${env.NEXT_PUBLIC_PLAYWIRE_PUBLISHER_ID}/${env.NEXT_PUBLIC_PLAYWIRE_WEBSITE_ID}/ramp.js`}
-              data-cfasync="false"
-              onError={handleLoadedError}
-            />
-            <ImpressionTracker />
-          </>
-        )}
+            }}
+          />
+          <Script
+            defer
+            src={`//cdn.intergient.com/${publisherId}/${websiteId}/ramp.js`}
+            data-cfasync="false"
+            onError={handleLoadedError}
+          />
+          <ImpressionTracker />
+        </>
+      )}
     </AdsContext.Provider>
   );
 }
