@@ -86,13 +86,13 @@ const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 const getAccountTypeDescription = (accountType: BuzzSpendType): string => {
   switch (accountType) {
     case 'yellow':
-      return 'Legacy Buzz purchased via Memberships or our store. Can still be purchased via Gift-Cards.';
+      return 'Yellow Buzz can be used for NSFW content and all other site features.';
     case 'blue':
       return 'Free Buzz earned from viewing ads or completing daily challenges.';
     case 'green':
       return 'Green Buzz purchased with credit cards. Can only be used for safe-for-work content.';
-    case 'red':
-      return 'Red Buzz purchased with crypto. Can be used for NSFW content and all other site features.';
+    // case 'red': // temporarily disabled
+    //   return 'Red Buzz purchased with crypto. Can be used for NSFW content and all other site features.';
     default:
       return 'Buzz for various platform activities.';
   }
@@ -101,13 +101,13 @@ const getAccountTypeDescription = (accountType: BuzzSpendType): string => {
 const getAccountTypeUsages = (accountType: BuzzSpendType): string[] => {
   switch (accountType) {
     case 'yellow':
-      return ['Tips', 'Generation', 'Training', 'Creator Club', 'Bounties'];
+      return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
     case 'blue':
       return ['Generation', 'Training'];
     case 'green':
       return ['Generation (SFW only)', 'Training (SFW only)', 'Tips', 'Creator Club'];
-    case 'red':
-      return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
+    // case 'red': // temporarily disabled
+    //   return ['Generation (including NSFW)', 'Training', 'Tips', 'Creator Club', 'Bounties'];
     default:
       return [];
   }

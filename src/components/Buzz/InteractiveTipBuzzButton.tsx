@@ -31,7 +31,7 @@ type Props = UnstyledButtonProps &
     entityId: number;
     entityType: string;
     hideLoginPopover?: boolean;
-    initialCurrencyType?: 'green' | 'yellow' | 'red';
+    initialCurrencyType?: 'green' | 'yellow'; // | 'red' - temporarily disabled
   };
 
 const CLICK_AMOUNT = 10;
@@ -43,8 +43,8 @@ const CONFIRMATION_TIMEOUT = 5000;
  */
 type BuzzTippingStore = {
   tips: Record<string, number>;
-  selectedCurrencyType: 'green' | 'yellow' | 'red' | null;
-  setSelectedCurrencyType: (currencyType: 'green' | 'yellow' | 'red') => void;
+  selectedCurrencyType: 'green' | 'yellow' | null; // | 'red' - temporarily disabled
+  setSelectedCurrencyType: (currencyType: 'green' | 'yellow') => void; // | 'red' - temporarily disabled
   onTip: ({
     entityType,
     entityId,
@@ -54,7 +54,7 @@ type BuzzTippingStore = {
     entityType: string;
     entityId: number;
     amount: number;
-    currencyType?: 'green' | 'yellow' | 'red';
+    currencyType?: 'green' | 'yellow'; // | 'red' - temporarily disabled
   }) => void;
 };
 
@@ -66,7 +66,7 @@ const useStore = create<BuzzTippingStore>()(
     immer((set) => ({
       tips: {},
       selectedCurrencyType: null,
-      setSelectedCurrencyType: (currencyType: 'green' | 'yellow' | 'red') => {
+      setSelectedCurrencyType: (currencyType: 'green' | 'yellow') => { // | 'red' - temporarily disabled
         set((state) => {
           state.selectedCurrencyType = currencyType;
         });
@@ -138,18 +138,18 @@ export function InteractiveTipBuzzButton({
 
     const greenAccount = balance.accounts.find((acc) => acc.type === 'green');
     const yellowAccount = balance.accounts.find((acc) => acc.type === 'yellow');
-    const redAccount = balance.accounts.find((acc) => acc.type === 'red');
+    // const redAccount = balance.accounts.find((acc) => acc.type === 'red'); // temporarily disabled
 
     const balances = {
       green: greenAccount?.balance || 0,
       yellow: yellowAccount?.balance || 0,
-      red: redAccount?.balance || 0,
+      // red: redAccount?.balance || 0, // temporarily disabled
     };
 
     // Return the currency type with the highest balance
     return Object.entries(balances).reduce((a, b) =>
       balances[a[0] as keyof typeof balances] > balances[b[0] as keyof typeof balances] ? a : b
-    )[0] as 'green' | 'yellow' | 'red';
+    )[0] as 'green' | 'yellow'; // | 'red' - temporarily disabled
   }, [initialCurrencyType, globalSelectedCurrency, balance?.accounts]);
 
   const selectedCurrencyType = globalSelectedCurrency || defaultCurrencyType;
@@ -170,11 +170,11 @@ export function InteractiveTipBuzzButton({
   // Pre-compute currency configs to avoid hook rules violations
   const greenConfig = useBuzzCurrencyConfig('green');
   const yellowConfig = useBuzzCurrencyConfig('yellow');
-  const redConfig = useBuzzCurrencyConfig('red');
+  // const redConfig = useBuzzCurrencyConfig('red'); // temporarily disabled
   const currencyConfigs = {
     green: greenConfig,
     yellow: yellowConfig,
-    red: redConfig,
+    // red: redConfig, // temporarily disabled
   };
 
   const [buzzCounter, setBuzzCounter] = useState(0);
@@ -497,7 +497,7 @@ export function InteractiveTipBuzzButton({
             {/* Currency Options (when expanded) */}
             {showCurrencySelector && (
               <Group gap={2} mb={2}>
-                {(['green', 'yellow', 'red'] as const).map((type) => {
+                {(['green', 'yellow'] as const).map((type) => { // 'red' temporarily disabled
                   const config = currencyConfigs[type];
                   const typeBalance =
                     balance?.accounts?.find((acc) => acc.type === type)?.balance || 0;

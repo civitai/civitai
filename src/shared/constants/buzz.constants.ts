@@ -61,6 +61,7 @@ type BuzzTypeConfig =
       purchasable?: boolean;
       bankable?: boolean;
       nsfw?: boolean;
+      disabled?: boolean;
     }
   | { type: 'bank'; value: BuzzApiAccountType }
   | { type: 'cash'; value: BuzzApiAccountType }
@@ -79,7 +80,7 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
   blue: { type: 'spend', value: 'Generation' },
   green: { type: 'spend', value: 'Green', bankable: true, purchasable: true },
   yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true },
-  red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true },
+  red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true, disabled: true },
   creatorprogrambank: { type: 'bank', value: 'CreatorProgramBank' },
   cashpending: { type: 'cash', value: 'CashPending' },
   cashsettled: { type: 'cash', value: 'CashSettled' },
@@ -88,7 +89,7 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
 
 export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[];
 export const buzzSpendTypes = buzzAccountTypes.filter(
-  (type) => buzzTypeConfig[type].type === 'spend'
+  (type) => buzzTypeConfig[type].type === 'spend' && !buzzTypeConfig[type].disabled
 ) as BuzzSpendType[];
 export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];

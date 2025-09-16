@@ -13,7 +13,7 @@ export interface BuzzTypeSelectorProps {
     text?: string;
     description?: React.ReactNode;
   };
-  redButton?: {
+  yellowButton?: {
     text?: string;
     description?: React.ReactNode;
   };
@@ -41,17 +41,17 @@ export function BuzzTypeSelector({
       </>
     ),
   },
-  redButton = {
-    text: 'Red Buzz',
+  yellowButton = {
+    text: 'Yellow Buzz',
     description: (
       <>
-        Can <b>only</b> be purchased using <b>crypto</b>.<br />
+        Can be purchased using <b>crypto</b>.<br />
         Can be used to generate <b>NSFW</b> content as well as anything else on the site.
       </>
     ),
   },
 }: BuzzTypeSelectorProps) {
-  const { classNames: redClassNames } = useBuzzCurrencyConfig('red');
+  const { classNames: yellowClassNames } = useBuzzCurrencyConfig('yellow');
   const { classNames: greenClassNames } = useBuzzCurrencyConfig('green');
 
   return (
@@ -93,19 +93,18 @@ export function BuzzTypeSelector({
               <div className="flex w-full flex-col items-center">
                 <Button
                   size="lg"
-                  color="red"
                   radius="xl"
-                  onClick={() => onSelect('red')}
+                  onClick={() => onSelect('yellow')}
                   leftSection={<IconBolt color="#fff" stroke={1.5} />}
-                  data-testid="buzz-type-red"
-                  className={`w-full ${redClassNames?.btn} px-6 py-4 text-lg`}
-                  aria-label="Buy Red Buzz"
+                  data-testid="buzz-type-yellow"
+                  className={`w-full ${yellowClassNames?.btn} px-6 py-4 text-lg`}
+                  aria-label={yellowButton.text}
                 >
-                  {redButton.text}
+                  {yellowButton.text}
                 </Button>
               </div>
-              <Text size="sm" className="mt-3 text-center text-red-700 dark:text-red-200">
-                {redButton.description}
+              <Text size="sm" className="mt-3 text-center text-yellow-700 dark:text-yellow-200">
+                {yellowButton.description}
               </Text>
             </div>
           </div>

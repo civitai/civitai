@@ -61,7 +61,7 @@ const presets = [
 ];
 
 // Define supported currency types for tipping
-const supportedCurrencyTypes = ['green', 'yellow', 'red'] as const;
+const supportedCurrencyTypes = ['green', 'yellow'] as const; // 'red'
 type SupportedCurrencyType = (typeof supportedCurrencyTypes)[number];
 
 export function SendTipModal({
@@ -118,7 +118,7 @@ export function SendTipModal({
   const currencyConfigs: Record<SupportedCurrencyType, ReturnType<typeof useBuzzCurrencyConfig>> = {
     green: greenConfig,
     yellow: yellowConfig,
-    red: redConfig,
+    // red: redConfig,
   };
 
   const { conditionalPerformTransaction } = useBuzzTransaction({

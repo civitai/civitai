@@ -136,7 +136,7 @@ export function MembershipPageWrapper({
                 subtitle="Regular membership purchases are temporarily disabled, but you can still
                       purchase prepaid memberships! Prepaid memberships give you all the same
                       benefits and can be stacked up!"
-                buyNowHref="https://buybuzz.io/collections/memberships"
+                buyNowHref="/gift-cards?type=memberships"
                 buyNowText="Purchase Now!"
               />
             </Center>

@@ -10,7 +10,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 
-export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow', 'red']) {
+export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow']) {
   const currentUser = useCurrentUser();
   const { data: initialData, isLoading } = trpc.buzz.getBuzzAccount.useQuery(undefined, {
     enabled: !!currentUser,

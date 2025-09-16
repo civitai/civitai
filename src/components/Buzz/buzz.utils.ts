@@ -112,7 +112,7 @@ export const useBuzzTransaction = (opts?: {
     message,
     purchaseSuccessMessage,
     performTransactionOnPurchase,
-    accountTypes = ['green', 'yellow', 'red'],
+    accountTypes = ['green', 'yellow'], // 'red'
   } = opts ?? {};
 
   const features = useFeatureFlags();

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { MembershipTypeSelector } from '~/components/Purchase/MembershipTypeSelector';
 import { RedMembershipUnavailable } from '~/components/Purchase/RedMembershipUnavailable';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
-import { GreenMembershipPlans } from '~/components/Purchase/GreenMembershipPlans';
+import { MembershipPlans } from '~/components/Purchase/MembershipPlans';
 import { MembershipPageWrapper } from '~/components/Purchase/MembershipPageWrapper';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
@@ -19,7 +19,7 @@ export default function Pricing() {
   const { reason, buzzType: queryBuzzType } = router.query as {
     returnUrl: string;
     reason: JoinRedirectReason;
-    buzzType?: 'green' | 'red';
+    buzzType?: 'green' | 'red' | 'yellow';
   };
   const features = useFeatureFlags();
   const paymentProvider = usePaymentProvider();
@@ -102,17 +102,20 @@ export default function Pricing() {
   }
 
   // Main membership plans view
+  const membershipTitle = selectedBuzzType === 'green' ? 'Green Memberships' : selectedBuzzType === 'yellow' ? 'Yellow Memberships' : 'Memberships';
+
   return (
-    <MembershipPageWrapper title="Green Memberships" reason={reason} showBuzzTopUp={true}>
+    <MembershipPageWrapper title={membershipTitle} reason={reason} showBuzzTopUp={true}>
       <div
         style={{
           // @ts-ignore
           '--buzz-color': buzzConfig.colorRgb,
         }}
       >
-        <GreenMembershipPlans
+        <MembershipPlans
           reason={reason}
           selectedBuzzType={selectedBuzzType}
+          onChangeBuzzType={() => setSelectedBuzzType(undefined)}
           interval={interval}
           onIntervalChange={setInterval}
           subscription={subscription}
