@@ -644,6 +644,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: user.id,
+        toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
         type: TransactionType.Purchase,
         externalTransactionId: invoice.id,
         amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.

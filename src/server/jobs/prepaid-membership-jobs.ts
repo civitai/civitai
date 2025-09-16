@@ -41,6 +41,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
         priceId: string;
         interval: string;
         tier: string;
+        buzzType: string | null;
       }[]
     >`
       SELECT
@@ -50,7 +51,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
         pr.id as "productId",
         p.id as "priceId",
         p.interval as "interval",
-        pr.metadata->>'tier' as "tier"
+        pr.metadata->>'tier' as "tier",
+        pr.metadata->>'buzzType' as "buzzType"
       FROM "CustomerSubscription" cs
       JOIN "Product" pr ON pr.id = cs."productId"
       JOIN "Price" p ON p.id = cs."priceId"
@@ -89,6 +91,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
         return {
           fromAccountId: 0,
           toAccountId: d.userId,
+          toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
           type: TransactionType.Purchase,
           externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}`,
           amount: amount,

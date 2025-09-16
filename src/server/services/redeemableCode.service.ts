@@ -354,6 +354,7 @@ export async function consumeRedeemableCode({
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: userId,
+            toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
             type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id

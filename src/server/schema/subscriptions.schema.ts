@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export type GetPlansSchema = z.infer<typeof getPlansSchema>;
 export const getPlansSchema = z.object({
@@ -25,6 +26,7 @@ export const subscriptionProductMetadataSchema = z
     queueLimit: z.coerce.number().positive().optional(),
     rewardsMultiplier: z.coerce.number().positive().default(1),
     purchasesMultiplier: z.coerce.number().positive().default(1),
+    buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
 
     // Makes it so that we include it when creating a paddle transaction.
     // Used for Save Details only.

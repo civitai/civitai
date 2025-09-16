@@ -653,6 +653,7 @@ export const manageSubscriptionTransactionComplete = async (
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: user.id,
+            toAccountType: (meta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
             type: TransactionType.Purchase,
             externalTransactionId,
             amount: meta.monthlyBuzz ?? 3000, // assume a min of 3000.
