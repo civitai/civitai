@@ -4,9 +4,10 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
-import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { redis, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/caches';
+import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 
 export const updateEntityMetric = async ({
@@ -30,39 +31,54 @@ export const updateEntityMetric = async ({
     metricValue: amount,
   });
 
-  // Inc postgres EntityMetric
+  // Update Redis EntityMetric
   try {
-    const dbData = await dbWrite.$executeRaw`
-      UPDATE "EntityMetric"
-      SET "metricValue" = "metricValue" + ${amount}
-      WHERE "entityType" = ${entityType}::"EntityMetric_EntityType_Type" AND "entityId" = ${entityId} AND "metricType" = ${metricType}::"EntityMetric_MetricType_Type"
-    `;
-    if (dbData === 0) {
-      if (clickhouse) {
-        const cData = await clickhouse.$query<{ total: number }>(`
-          SELECT sum(metricValue) as total
-          FROM entityMetricEvents
-          WHERE entityType = '${entityType}' AND entityId = ${entityId} AND metricType = '${metricType}'
-        `);
-        const existingVal = cData?.[0]?.total ?? 0;
-        const newVal = existingVal + amount;
+    // Atomic increment in Redis
+    const newValue = await entityMetricRedis.increment(
+      entityType,
+      entityId,
+      metricType,
+      amount
+    );
 
-        await dbWrite.$executeRaw`
-          INSERT INTO "EntityMetric" ("entityType", "entityId", "metricType", "metricValue")
-          VALUES (${entityType}::"EntityMetric_EntityType_Type", ${entityId}, ${metricType}::"EntityMetric_MetricType_Type", ${newVal})
-          ON CONFLICT ("entityType", "entityId", "metricType") DO UPDATE
-          SET "metricValue" = "EntityMetric"."metricValue" + ${amount}
-        `;
-      } else {
-        logToAxiom(
-          {
-            type: 'error',
-            name: 'No clickhouse client - update',
-            details: { data: logData },
-          },
-          'clickhouse'
-        ).catch();
+    // If this is the first write (value equals amount), check ClickHouse for existing data
+    // This handles the case where Redis doesn't have the data yet
+    if (newValue === amount && amount > 0 && clickhouse) {
+      // Use a distributed lock to prevent concurrent ClickHouse queries for the same metric
+      const lockKey = `entitymetric:lock:${entityType}:${entityId}:${metricType}` as RedisKeyTemplateCache;
+      const lockAcquired = await redis.setNX(lockKey, '1');
+
+      if (lockAcquired) {
+        try {
+          // Set a short TTL on the lock (5 seconds)
+          await redis.expire(lockKey, 5);
+
+          // Double-check the value hasn't been set by another process
+          const currentValue = await entityMetricRedis.getMetric(entityType, entityId, metricType);
+          if (currentValue === amount) {
+            const cData = await clickhouse.$query<{ total: number }>(`
+              SELECT sum(metricValue) as total
+              FROM entityMetricEvents
+              WHERE entityType = '${entityType}' AND entityId = ${entityId} AND metricType = '${metricType}'
+            `);
+            const existingVal = cData?.[0]?.total ?? 0;
+
+            if (existingVal > 0) {
+              // Set to correct value if we have historical data
+              await entityMetricRedis.setMetric(
+                entityType,
+                entityId,
+                metricType,
+                existingVal + amount
+              );
+            }
+          }
+        } finally {
+          // Release the lock
+          await redis.del(lockKey);
+        }
       }
+      // If we couldn't acquire the lock, another process is handling it
     }
 
     if (entityType === 'Image') {
