@@ -1743,7 +1743,7 @@ type ImageSearchInput = GetAllImagesInput & {
   //reviewId?: number;
 };
 
-export async function getImageFromSearch(input: ImageSearchInput) {
+export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   const fliptClient = await FliptSingleton.getInstance();
   if (fliptClient) {
@@ -1808,7 +1808,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
-
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
@@ -2026,10 +2025,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (afterDate) {
     // convert to minutes for better caching
     filters.push(
-      makeMeiliImageSearchFilter(
-        'sortAtUnix',
-        `> ${snapToInterval(afterDate.getTime())}`
-      )
+      makeMeiliImageSearchFilter('sortAtUnix', `> ${snapToInterval(afterDate.getTime())}`)
     );
   }
 
@@ -2081,7 +2077,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
-    limit: (limit * OVERFETCH_MULTIPLIER),
+    limit: limit * OVERFETCH_MULTIPLIER,
     offset,
   };
 
@@ -2112,20 +2108,16 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
 
       // User can see their own private content
-      if (hit.availability === Availability.Private && !isOwnContent)
-        return false;
+      if (hit.availability === Availability.Private && !isOwnContent) return false;
 
       // User can see their own blocked content
-      if (hit.blockedFor && !isOwnContent)
-        return false;
+      if (hit.blockedFor && !isOwnContent) return false;
 
       // User can see their own scheduled or unpublished content
-      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
-        return false;
+      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent) return false;
 
       // User can see their own unscanned content
-      if (hit.nsfwLevel === 0 && !isOwnContent)
-        return false;
+      if (hit.nsfwLevel === 0 && !isOwnContent) return false;
 
       // filter out items flagged with minor unless it's the owner or moderator
       if (hit.acceptableMinor) return isOwnContent;
@@ -2414,7 +2406,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
-
   if (postId) {
     postIds = [...(postIds ?? []), postId];
   }
@@ -2631,10 +2622,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   if (afterDate) {
     // convert to minutes for better caching
     filters.push(
-      makeMeiliImageSearchFilter(
-        'sortAtUnix',
-        `> ${snapToInterval(afterDate.getTime())}`
-      )
+      makeMeiliImageSearchFilter('sortAtUnix', `> ${snapToInterval(afterDate.getTime())}`)
     );
   }
 
@@ -2686,7 +2674,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
-    limit: (limit * OVERFETCH_MULTIPLIER),
+    limit: limit * OVERFETCH_MULTIPLIER,
     offset,
   };
 
@@ -2717,20 +2705,16 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
 
       // User can see their own private content
-      if (hit.availability === Availability.Private && !isOwnContent)
-        return false;
+      if (hit.availability === Availability.Private && !isOwnContent) return false;
 
       // User can see their own blocked content
-      if (hit.blockedFor && !isOwnContent)
-        return false;
+      if (hit.blockedFor && !isOwnContent) return false;
 
       // User can see their own scheduled or unpublished content
-      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
-        return false;
+      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent) return false;
 
       // User can see their own unscanned content
-      if (hit.nsfwLevel === 0 && !isOwnContent)
-        return false;
+      if (hit.nsfwLevel === 0 && !isOwnContent) return false;
 
       // filter out items flagged with minor unless it's the owner or moderator
       if (hit.acceptableMinor) return isOwnContent;
