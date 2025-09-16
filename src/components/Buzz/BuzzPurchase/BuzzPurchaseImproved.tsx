@@ -452,54 +452,13 @@ export const BuzzPurchaseImproved = ({
             )}
 
             {liveFeatures.buzzGiftCards && (
-              <Card className={classes.giftCardPromo} padding="md" radius="md">
-                <div className={classes.giftCardBackground}>
-                  <div className={classes.giftCardLayout}>
-                    <Group gap="md" wrap="nowrap" className={classes.giftCardContent}>
-                      <div className={classes.giftIconWrapper}>
-                        <IconGift size={24} className={classes.giftIcon} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <Text size="lg" fw={700} className={classes.giftCardTitle}>
-                          Buzz Gift Cards Available!
-                        </Text>
-                        <Text size="sm" className={classes.giftCardSubtitle}>
-                          Instantly redeemable digital gift-codes!
-                        </Text>
-                      </div>
-                    </Group>
-
-                    <Group gap="xs" wrap="nowrap" className={classes.giftCardButtons}>
-                      <Anchor
-                        component={NextLink}
-                        href="/gift-cards?type=buzz"
-                        className={classes.giftCardCta}
-                        onClick={() => {
-                          // Basiaclly makes it so the modal closes out.
-                          onCancel?.();
-                        }}
-                      >
-                        <Group gap="xs">
-                          <Text size="sm" fw={600}>
-                            Buy Now
-                          </Text>
-                          <IconExternalLink size={14} />
-                        </Group>
-                      </Anchor>
-                      <Anchor
-                        href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={classes.giftCardLearnMore}
-                      >
-                        <Text size="sm" fw={500}>
-                          Learn More
-                        </Text>
-                      </Anchor>
-                    </Group>
-                  </div>
-                </div>
-              </Card>
+              <PromoBanner
+                icon={<IconGift size={24} />}
+                title="Buzz Gift Cards Available!"
+                subtitle="Instantly redeemable digital gift-codes!"
+                buyNowHref="/gift-cards?type=buzz"
+                buyNowText="Buy Now"
+              />
             )}
 
             {isLoading || processing ? (
@@ -961,14 +920,6 @@ export const BuzzPurchaseImproved = ({
                         <Group gap="sm" wrap="wrap">
                           {selectedBuzzType === 'green' ? (
                             <>
-                              {features.emerchantpayPayments && (
-                                <BuzzEmerchantPayButton
-                                  unitAmount={unitAmount}
-                                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                                  disabled={!ctaEnabled}
-                                  buzzType={selectedBuzzType}
-                                />
-                              )}
                               <BuzzPurchasePaymentButton
                                 unitAmount={unitAmount}
                                 buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
@@ -981,14 +932,6 @@ export const BuzzPurchaseImproved = ({
                             </>
                           ) : (
                             <>
-                              {features.emerchantpayPayments && (
-                                <BuzzEmerchantPayButton
-                                  unitAmount={unitAmount}
-                                  buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
-                                  disabled={!ctaEnabled}
-                                  buzzType={selectedBuzzType}
-                                />
-                              )}
                               {features.coinbasePayments && (
                                 <>
                                   <BuzzCoinbaseButton
