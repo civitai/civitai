@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { IconBolt, IconGift } from '@tabler/icons-react';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -49,7 +49,7 @@ const schema = z
     currencyType: z.enum(['green', 'yellow', 'red']),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
-    message: 'Please enter a valid amount',
+    error: 'Please enter a valid amount',
     path: ['customAmount'],
   });
 

@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';

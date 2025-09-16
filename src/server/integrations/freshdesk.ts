@@ -4,7 +4,7 @@ import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/server/utils/concurrency-helpers';
-import { toBase64 } from '~/utils/string-helpers';
+import { toBase64 } from '~/utils/string-base64-helpers';
 
 export async function createFreshdeskToken(
   user: { id?: number; username?: string; email?: string },

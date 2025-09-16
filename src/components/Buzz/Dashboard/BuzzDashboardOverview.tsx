@@ -38,6 +38,8 @@ import Link from 'next/link';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -124,7 +126,6 @@ export const BuzzDashboardOverview = ({
 
   const transactionData = useBuzzTransactions(accountId, currentAccountType);
   const buzzConfig = useBuzzCurrencyConfig(currentAccountType);
-
   const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
     window: 'day',
     accountType: currentAccountType,
@@ -245,6 +246,7 @@ export const BuzzDashboardOverview = ({
 
                         <Anchor
                           target="_blank"
+                          rel="nofollow noreferrer"
                           href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
                           size="xs"
                         >

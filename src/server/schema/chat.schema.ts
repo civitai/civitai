@@ -1,5 +1,5 @@
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 export type CreateChatInput = z.infer<typeof createChatInput>;
@@ -18,7 +18,7 @@ export const modifyUserInput = z.object({
   chatMemberId: z.number(),
   // isOwner: z.boolean().optional(), // probably shouldn't be able to change this for now
   isMuted: z.boolean().optional(),
-  status: z.nativeEnum(ChatMemberStatus).optional(),
+  status: z.enum(ChatMemberStatus).optional(),
   lastViewedMessageId: z.number().optional(),
 });
 
@@ -26,7 +26,7 @@ export type CreateMessageInput = z.infer<typeof createMessageInput>;
 export const createMessageInput = z.object({
   chatId: z.number(),
   content: z.string().min(1).max(2000),
-  contentType: z.nativeEnum(ChatMessageType).optional().default('Markdown'),
+  contentType: z.enum(ChatMessageType).optional().default('Markdown'),
   referenceMessageId: z.number().optional(),
 });
 
@@ -64,4 +64,5 @@ export type UserSettingsChat = z.infer<typeof userSettingsChat>;
 export const userSettingsChat = z.object({
   muteSounds: z.boolean().optional(),
   acknowledged: z.boolean().optional(),
+  replaceBadWords: z.boolean().optional(),
 });

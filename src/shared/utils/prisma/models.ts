@@ -94,6 +94,8 @@ export type KeyScope = "Read" | "Write" | "Generate";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
+export type DomainColor = "red" | "green" | "blue" | "all";
+
 export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
@@ -132,7 +134,7 @@ export type BountyEntryMode = "Open" | "BenefactorsOnly";
 
 export type BountyEngagementType = "Favorite" | "Track";
 
-export type CsamReportType = "Image" | "TrainingData";
+export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage";
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
@@ -1712,6 +1714,7 @@ export interface Announcement {
   content: string;
   emoji: string | null;
   color: string;
+  domain: DomainColor[];
   createdAt: Date;
   updatedAt: Date;
   startsAt: Date | null;
@@ -2713,6 +2716,7 @@ export interface Changelog {
   disabled: boolean;
   titleColor: string | null;
   sticky: boolean;
+  domain: DomainColor[];
 }
 
 export interface NewOrderPlayer {
@@ -2757,6 +2761,10 @@ export interface ReportAutomated {
   report?: Report;
   metadata: JsonValue;
   createdAt: Date;
+}
+
+export interface RestrictedBaseModels {
+  baseModel: string;
 }
 
 export interface QuestionRank {

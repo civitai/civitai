@@ -1,8 +1,7 @@
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
-import type { ReactNode } from 'react';
-import { createContext, type Dispatch, type SetStateAction, useContext, useState } from 'react';
-import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { create } from 'zustand';
+import { AdUnitOutstreamWithCloseButton } from '~/components/Ads/AdUnitOutstream';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
 // TODO - check for any selector type imports in client files
@@ -17,45 +16,24 @@ type ChatState = {
   selectedUsers: Partial<UserWithCosmetics>[];
 };
 
-const ChatContext = createContext({
-  state: {} as ChatState,
-  setState: {} as Dispatch<SetStateAction<ChatState>>,
-});
-
-export const useChatContext = () => {
-  const context = useContext(ChatContext);
-  if (!context) throw new Error('ChatContext not in tree');
-  return context;
-};
-
-export const ChatContextProvider = ({
-  children,
-  value = {
-    open: false,
-    isCreating: false,
-    existingChatId: undefined,
-    selectedUsers: [],
-  } as ChatState,
-}: {
-  children: ReactNode;
-  value?: ChatState;
-}) => {
-  const [state, setState] = useState(value);
-
-  return <ChatContext.Provider value={{ state, setState }}>{children}</ChatContext.Provider>;
-};
+export const useChatStore = create<ChatState>(() => ({
+  open: false,
+  isCreating: false,
+  existingChatId: undefined,
+  selectedUsers: [],
+}));
 
 export function ChatPortal({ showFooter }: { showFooter: boolean }) {
-  const { state } = useChatContext();
+  const open = useChatStore((state) => state.open);
   const isMobile = useIsMobile();
   const isClient = useIsClient();
 
   // if (!state.open) return null;
 
-  if (!state.open)
+  if (!open)
     return isClient && !isMobile ? (
       <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
-        <AdUnitOutstream />
+        <AdUnitOutstreamWithCloseButton />
       </div>
     ) : null;
 

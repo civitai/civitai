@@ -1,5 +1,5 @@
 import { removeDuplicates } from '@tiptap/react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
@@ -288,7 +288,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * *', a
     return;
   }
 
-  log(`PickTemplars :: Candidates: ${candidates}`);
+  log(`PickTemplars :: Candidates: ${candidates.join(', ')}`);
 
   // Update the new templars:
   const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({

@@ -1,18 +1,13 @@
 import { Switch } from '@mantine/core';
 import React from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 export function AdContent() {
-  const currentUser = useCurrentUser();
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const setState = useBrowsingSettings((x) => x.setState);
 
   const updateUserSettingsMutation = useMutateUserSettings({
-    async onSuccess() {
-      await currentUser?.refresh();
-    },
     onError(error) {
       setState((state) => ({ allowAds: !state.allowAds }));
     },

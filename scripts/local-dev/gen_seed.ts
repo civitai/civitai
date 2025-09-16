@@ -1,6 +1,7 @@
 import { faker } from '@faker-js/faker';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
+import type { DatabaseError } from 'pg';
 import format from 'pg-format';
 // import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -12,6 +13,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
+import { baseModels } from '~/shared/constants/base-model.constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
   ArticleEngagementType,
@@ -51,7 +53,6 @@ import {
   insertRows,
   randPrependBad,
 } from './utils';
-import type { DatabaseError } from 'pg';
 // import { fetchBlob } from '~/utils/file-utils';
 
 // Usage: npx tsx ./scripts/local-dev/gen_seed.ts --rows=1000
@@ -74,6 +75,8 @@ const fbool = faker.datatype.boolean;
 // };
 
 // TODO fix tables ownership from doadmin to civitai
+
+// TODO seed logicalDb
 
 const setSerialNotif = async (table: string) => {
   // language=text
@@ -438,7 +441,7 @@ const genUsers = (num: number, includeCiv = false) => {
   for (let step = extraUsers.length + (includeCiv ? 0 : 1); step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isMuted = fbool(0.01);
-    let username = randPrependBad(faker.internet.userName(), '.');
+    let username = randPrependBad(faker.internet.username(), '.');
     if (seenUserNames.includes(username)) username = `${username}_${faker.number.int(1_000)}`;
     seenUserNames.push(username);
 
@@ -690,7 +693,7 @@ const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadTyp
       null, // fromImportId // TODO
       faker.number.int({ min: 1, max: 8 }), // index // TODO needs other indices?
       fbool(0.01), // inaccurate
-      rand(constants.baseModels), // baseModel
+      rand(baseModels), // baseModel
       rand(['{}', '{"imageNsfwLevel": 1}', '{"imageNsfwLevel": 8}']), // meta
       0, // earlyAccessTimeframe // TODO check model early access
       isPublished ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // publishedAt
@@ -3272,7 +3275,7 @@ const genBounties = (num: number, userIds: number[]) => {
       expiresAt.format('YYYY-MM-DD'), // expiresAt
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
-      rand([null, `{"baseModel": "${rand(constants.baseModels)}"}`]), // details
+      rand([null, `{"baseModel": "${rand(baseModels)}"}`]), // details
       rand(Object.values(BountyMode)), // mode
       rand(Object.values(BountyEntryMode)), // entryMode
       rand(Object.values(BountyType)), // type

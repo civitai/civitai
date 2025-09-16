@@ -1,9 +1,9 @@
-import * as z from 'zod/v4';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
+import * as z from 'zod';
+import { constants } from '~/server/common/constants';
 
 export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;
 export const transactionCreateSchema = z.object({
-  unitAmount: z.number().min(buzzConstants.minChargeAmount).max(buzzConstants.maxChargeAmount),
+  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
   currency: z.string(),
   usdAmount: z.number(),
   recaptchaToken: z.string(),

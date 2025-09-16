@@ -8,13 +8,14 @@ import {
   SignalMessages,
   NewOrderSignalActions,
   NotificationCategory,
-  NewOrderDamnedReason,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   acolyteFailedJudgments,
   allJudgmentsCounter,
   blessedBuzzCounter,
+  checkVotingRateLimit,
   correctJudgmentsCounter,
   expCounter,
   fervorCounter,
@@ -34,7 +35,7 @@ import type {
 } from '~/server/schema/games/new-order.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
-import { moderateImages, updateImageNsfwLevel } from '~/server/services/image.service';
+import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -45,7 +46,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
@@ -55,6 +56,67 @@ type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
 const FERVOR_COEFFICIENT = -0.0025;
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
+
+// Helper functions for atomic voting
+function getVoteLimitForRank(rank: NewOrderHighRankType): number {
+  switch (rank) {
+    case NewOrderRankType.Knight:
+      return newOrderConfig.limits.knightVotes;
+    case NewOrderRankType.Templar:
+      return newOrderConfig.limits.templarVotes;
+    case 'Inquisitor':
+      return 1; // Inquisitors decide immediately
+    default:
+      return 1;
+  }
+}
+
+async function findImageInSingleQueue({
+  imageId,
+  rankType,
+}: {
+  imageId: number;
+  rankType: NewOrderHighRankType[];
+}) {
+  // Check each rank type in priority order to find the image in exactly one queue
+  // For Templars: check Templar queue first, then Knight queue
+  // For others: only check their own queue
+  const rankPriority: NewOrderHighRankType[] = [
+    'Inquisitor',
+    NewOrderRankType.Templar,
+    NewOrderRankType.Knight,
+  ];
+
+  for (const rank of rankPriority) {
+    if (!rankType.includes(rank)) continue;
+
+    const pools = poolCounters[rank];
+    for (const pool of pools) {
+      const exists = await pool.exists(imageId);
+      if (exists) {
+        const value = await pool.getCount(imageId);
+        return { pool, value, rank };
+      }
+    }
+  }
+
+  return null;
+}
+
+async function notifyQueueUpdate(
+  rank: NewOrderHighRankType,
+  imageId: number,
+  action: NewOrderSignalActions
+) {
+  const topic = `${SignalTopic.NewOrderQueue}:${rank}` as const;
+  await signalClient
+    .topicSend({
+      topic,
+      target: SignalMessages.NewOrderQueueUpdate,
+      data: { imageId, action },
+    })
+    .catch((e) => handleLogError(e, `Failed to notify queue update: ${topic}`));
+}
 
 export async function joinGame({ userId }: { userId: number }) {
   const user = await dbRead.user.findUnique({
@@ -130,7 +192,13 @@ export async function smitePlayer({
   const activeSmiteCount = await dbWrite.newOrderSmite.count({
     where: { targetPlayerId: playerId, cleansedAt: null },
   });
-  if (activeSmiteCount >= 3) return resetPlayer({ playerId, withNotification: true });
+  if (activeSmiteCount >= 3) {
+    return resetPlayer({
+      playerId,
+      withNotification: true,
+      reason: 'Your New Order career has been reset due to excessive smites.',
+    });
+  }
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId });
   await signalClient
@@ -208,14 +276,6 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   return smite;
 }
 
-const damnedReasonToReviewType = {
-  [NewOrderDamnedReason.InappropriateMinors]: 'minor',
-  [NewOrderDamnedReason.RealisticMinors]: 'csam',
-  [NewOrderDamnedReason.DepictsRealPerson]: 'poi',
-  [NewOrderDamnedReason.Bestiality]: 'reported',
-  [NewOrderDamnedReason.Other]: 'reported',
-} as const;
-
 export async function addImageRating({
   playerId,
   imageId,
@@ -226,232 +286,325 @@ export async function addImageRating({
 }: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
+  // Use distributed lock to prevent race conditions
+  const result = await withDistributedLock(
+    {
+      key: `image-rating:${imageId}`,
+      ttl: 30, // 30 second lock
+      maxRetries: 5,
+      retryDelay: 200,
+    },
+    async () => {
+      return await processImageRating({
+        playerId,
+        imageId,
+        rating,
+        damnedReason,
+        chTracker,
+        isModerator,
+      });
+    }
+  );
+
+  if (result === null) {
+    // Could not acquire lock, likely another process is handling this image
+    throw throwBadRequestError('Image rating is currently being processed. Please try again.');
+  }
+
+  return result;
+}
+
+async function processImageRating({
+  playerId,
+  imageId,
+  rating,
+  damnedReason,
+  chTracker,
+  isModerator,
+}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  // Check player existence
   const player = await dbRead.newOrderPlayer.findUnique({
     where: { userId: playerId },
     select: playerInfoSelect,
   });
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
+  // Check image existence
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
     select: { id: true, nsfwLevel: true },
   });
-
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
+
+  // Skip rate limiting for moderators
+  if (!isModerator) {
+    const rateLimitResult = await checkVotingRateLimit(playerId);
+
+    // If abuse threshold exceeded, reset player career
+    if (rateLimitResult.isAbuse) {
+      // Log abuse detection for monitoring
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'new-order-abuse-detection',
+          details: {
+            playerId,
+            imageId,
+            action: 'career-reset',
+            reason: 'excessive-voting',
+          },
+          message: `Player ${playerId} exceeded abuse threshold and was reset`,
+        },
+        'new-order'
+      ).catch(() => null);
+
+      await resetPlayer({
+        playerId,
+        withNotification: true,
+        reason:
+          'Your account has been reset due to suspicious voting patterns. Please vote at a reasonable pace to avoid this in the future.',
+      });
+
+      throw throwBadRequestError('Account has been reset due to suspicious voting patterns.');
+    }
+
+    // Standard rate limiting
+    if (!rateLimitResult.allowed) {
+      // Log rate limit hits for monitoring (but only occasionally to avoid spam)
+      if (Math.random() < 0.1) {
+        // 10% sampling
+        logToAxiom(
+          {
+            type: 'info',
+            name: 'new-order-rate-limit',
+            details: {
+              playerId,
+              remaining: rateLimitResult.remaining,
+              resetTime: rateLimitResult.resetTime,
+            },
+            message: `Player ${playerId} hit rate limit`,
+          },
+          'new-order'
+        ).catch(() => null);
+      }
+
+      throw throwBadRequestError(
+        `Rate limit exceeded. Please wait ${Math.ceil(
+          (rateLimitResult.resetTime - Date.now()) / 1000
+        )} seconds before voting again.`
+      );
+    }
+  }
+
+  // Find which specific queue this image is in
+  // Templars can access both Templar and Knight queues (with Templar taking priority)
+  const allowedRankTypes = isModerator
+    ? (['Inquisitor', NewOrderRankType.Templar, NewOrderRankType.Knight] as NewOrderHighRankType[])
+    : player.rankType === NewOrderRankType.Templar
+    ? [NewOrderRankType.Templar, NewOrderRankType.Knight]
+    : [player.rankType];
 
   const valueInQueue = await isImageInQueue({
     imageId,
-    rankType: isModerator
-      ? ['Inquisitor', NewOrderRankType.Templar, NewOrderRankType.Knight]
-      : player.rankType === NewOrderRankType.Templar
-      ? [NewOrderRankType.Templar, NewOrderRankType.Knight]
-      : player.rankType,
+    rankType: allowedRankTypes,
   });
 
   if (!valueInQueue) {
-    //  We won't error out cause technically it might've already be cleared as an image.
+    // Image not found in any valid queue for this player
     return false;
   }
 
-  if (
-    valueInQueue.value >= newOrderConfig.limits.knightVotes &&
-    valueInQueue.rank === NewOrderRankType.Knight
-  ) {
-    // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
+  // Check if vote limits have been reached (using consistent logic)
+  const currentVoteCount = valueInQueue.value;
+  const voteLimit = getVoteLimitForRank(valueInQueue.rank);
+
+  if (currentVoteCount >= voteLimit) {
+    // Vote limit already reached, remove from queue
     await valueInQueue.pool.reset({ id: imageId });
-
-    await signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Knight`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
-
-    return false;
-  }
-
-  if (
-    valueInQueue.value >= newOrderConfig.limits.templarVotes &&
-    valueInQueue.rank === NewOrderRankType.Templar
-  ) {
-    // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
-    await valueInQueue.pool.reset({ id: imageId });
-    await signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Templar`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
-
+    await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
     return false;
   }
 
   // Update image nsfw level if the player is a mod
   if (isModerator) {
-    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+    await updateImageNsfwLevel({
+      id: imageId,
+      nsfwLevel: rating,
+      userId: playerId,
+      isModerator,
+      status: 'Actioned',
+    });
     await updatePendingImageRatings({ imageId, rating });
     await valueInQueue.pool.reset({ id: imageId });
 
     if (rating === NsfwLevel.Blocked) {
-      await moderateImages({
-        ids: [imageId],
-        reviewAction: 'delete',
-        reviewType: damnedReason ? damnedReasonToReviewType[damnedReason] : 'reported',
-      });
+      await handleBlockImages({ ids: [imageId] });
     }
 
-    await signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
+    await notifyQueueUpdate('Inquisitor', imageId, NewOrderSignalActions.RemoveImage);
 
     // Finish the rating process for mods
     return true;
   }
 
+  // Atomically increment vote count and check limits
+  const newVoteCount = await valueInQueue.pool.increment({ id: imageId });
+  await getImageRatingsCounter(imageId).increment({ id: `${player.rank.name}-${rating}` });
+
   let currentNsfwLevel: NsfwLevel | undefined = image.nsfwLevel;
   let movedQueue = false; // Used to track if the image was processed already
-  // Increase rating count
-  await getImageRatingsCounter(imageId).increment({ id: `${player.rank.name}-${rating}` });
-  // Increase rating count for the image in the queue.
-  await valueInQueue.pool.increment({ id: imageId });
 
+  // Check if we've reached vote limits after the atomic increment
   const reachedKnightVoteLimit =
+    player.rankType === NewOrderRankType.Knight &&
     valueInQueue.rank === NewOrderRankType.Knight &&
-    valueInQueue.value + 1 >= newOrderConfig.limits.knightVotes;
+    newVoteCount >= newOrderConfig.limits.knightVotes;
   const reachedTemplarVoteLimit =
+    player.rankType === NewOrderRankType.Templar &&
     valueInQueue.rank === NewOrderRankType.Templar &&
-    valueInQueue.value + 1 >= newOrderConfig.limits.templarVotes;
+    newVoteCount >= newOrderConfig.limits.templarVotes;
 
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
     // Image is now rated by enough players, we can process it.
     const _ratings = await getImageRatingsCounter(imageId).getAll();
     // Ensure we only consider ratings that are not zero:
-    const ratings = _ratings.filter((r) => Number(r.split('-')[1]) !== 0);
-    let processed = false;
+    const knightRatings = _ratings.filter(
+      (r) => r.startsWith(NewOrderRankType.Knight) && Number(r.split('-')[1]) !== 0
+    );
 
-    if (ratings.length === 0) {
-      throw throwBadRequestError('No ratings found for image');
+    if (knightRatings.length === 0) {
+      throw throwBadRequestError('No Knight ratings found for image');
     }
 
-    // Check if they all voted damned:
-    if (ratings.length === 1 && ratings[0].endsWith(`${NsfwLevel.Blocked}`)) {
-      processed = true;
-      movedQueue = true;
-      await addImageToQueue({
-        imageIds: imageId,
-        rankType: 'Inquisitor',
-        priority: 1,
-      });
-    }
+    // Get vote counts for each rating
+    const ratingCounts = await Promise.all(
+      knightRatings.map(async (r) => {
+        const rating = Number(r.split('-')[1]);
+        const count = await getImageRatingsCounter(imageId).getCount(r);
+        return { rating, count, key: r };
+      })
+    );
 
-    if (ratings.length > 1 && !processed) {
-      processed = true;
+    // Sort by count (descending) to find the highest voted rating
+    ratingCounts.sort((a, b) => b.count - a.count);
+    const highestVotedRating = ratingCounts[0];
+    let finalRating: NsfwLevel | undefined;
 
-      const majorityAgreeVote = (
-        await Promise.all(
-          ratings.map(async (r) => {
-            if (!r.startsWith(NewOrderRankType.Knight)) return null;
+    // Check if we have a clear majority (>= minKnightVotes = 4)
+    if (highestVotedRating.count >= newOrderConfig.limits.minKnightVotes) {
+      finalRating = highestVotedRating.rating as NsfwLevel;
 
-            const amount = await getImageRatingsCounter(imageId).getCount(r);
-            return amount >= newOrderConfig.limits.minKnightVotes ? r : null;
-          })
-        )
-      ).filter(isDefined)[0];
-
-      let majorityAgreeRating: NsfwLevel | undefined;
-      if (majorityAgreeVote) {
-        // If majority agrees on a rating, we can update the image nsfw level:
-        majorityAgreeRating = Number(majorityAgreeVote.split('-')[1]) as NsfwLevel;
-      }
-
-      // There are multiple entries, so we either uptake to templars, or, if 4 knights agree, update:
-      // Add to templars queue:
+      // Special case: If all knights voted for "Damned" (Blocked), escalate to Inquisitor
       if (
-        !majorityAgreeRating ||
-        (majorityAgreeRating < currentNsfwLevel &&
-          Flags.distance(majorityAgreeRating, currentNsfwLevel) > 1)
+        finalRating === NsfwLevel.Blocked &&
+        highestVotedRating.count === newOrderConfig.limits.knightVotes
       ) {
         movedQueue = true;
         await addImageToQueue({
           imageIds: imageId,
-          rankType: NewOrderRankType.Templar,
+          rankType: 'Inquisitor',
           priority: 1,
         });
       } else {
-        // Else, we're good :)
-        currentNsfwLevel = await updateImageNsfwLevel({
-          id: imageId,
-          nsfwLevel: majorityAgreeRating,
-          userId: playerId,
-          isModerator: true,
-          activity: 'setNsfwLevelKono',
-        });
+        // We have a majority decision - check if we should apply it or escalate to Templars
+        if (finalRating < currentNsfwLevel && Flags.distance(finalRating, currentNsfwLevel) > 1) {
+          // Significant downgrade - escalate to Templars
+          movedQueue = true;
+          await addImageToQueue({
+            imageIds: imageId,
+            rankType: NewOrderRankType.Templar,
+            priority: 1,
+          });
+        } else {
+          // Apply the majority decision
+          currentNsfwLevel = await updateImageNsfwLevel({
+            id: imageId,
+            nsfwLevel: finalRating,
+            userId: playerId,
+            isModerator: true,
+            activity: 'setNsfwLevelKono',
+            status: 'Actioned',
+          });
+        }
       }
+    } else {
+      // No clear majority - escalate to Templars
+      movedQueue = true;
+      await addImageToQueue({
+        imageIds: imageId,
+        rankType: NewOrderRankType.Templar,
+        priority: 1,
+      });
     }
 
-    const rating = Number(ratings[0].split('-')[1]);
-
-    if (rating !== currentNsfwLevel && !processed && !!currentNsfwLevel) {
-      // Raise to templars because the diff is more than 1 level down
-      if (rating < currentNsfwLevel && Flags.distance(rating, currentNsfwLevel) > 1) {
-        movedQueue = true;
-        await addImageToQueue({
-          imageIds: imageId,
-          rankType: NewOrderRankType.Templar,
-          priority: 1,
-        });
-      } else {
-        // Else, we're good :)
-        currentNsfwLevel = await updateImageNsfwLevel({
-          id: imageId,
-          nsfwLevel: rating,
-          userId: playerId,
-          isModerator: true,
-          activity: 'setNsfwLevelKono',
-        });
-      }
+    // Always update pending ratings when we have a final decision (not moved to another queue)
+    if (!movedQueue && finalRating !== undefined) {
+      await updatePendingImageRatings({ imageId, rating: finalRating });
     }
 
-    if (!movedQueue) await updatePendingImageRatings({ imageId, rating });
     // Clear image from the pool:
     await valueInQueue.pool.reset({ id: imageId });
-
-    await signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Knight`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
+    await notifyQueueUpdate(NewOrderRankType.Knight, imageId, NewOrderSignalActions.RemoveImage);
   }
 
   // Process Templar rating:
   if (reachedTemplarVoteLimit) {
     // Image is now rated by enough players, we can process it.
     const _ratings = await getImageRatingsCounter(imageId).getAll();
-    // Ensure we only consider ratings that are not zero:
-    const ratings = _ratings.filter((r) => Number(r.split('-')[1]) !== 0);
-    let processed = false;
+    // Ensure we only consider Templar ratings that are not zero:
+    const templarRatings = _ratings.filter(
+      (r) => r.startsWith(NewOrderRankType.Templar) && Number(r.split('-')[1]) !== 0
+    );
 
-    if (ratings.length === 0) {
-      throw throwBadRequestError('No ratings found for image');
+    if (templarRatings.length === 0) {
+      throw throwBadRequestError('No Templar ratings found for image');
     }
 
-    const templarKeys = ratings.filter((k) => k.startsWith(NewOrderRankType.Templar));
+    // Get vote counts for each Templar rating
+    const templarRatingCounts = await Promise.all(
+      templarRatings.map(async (r) => {
+        const rating = Number(r.split('-')[1]);
+        const count = await getImageRatingsCounter(imageId).getCount(r);
+        return { rating, count, key: r };
+      })
+    );
 
-    // Check if they all voted damned or have a disparity in ratings:
+    // Sort by count (descending) to find the highest voted rating
+    templarRatingCounts.sort((a, b) => b.count - a.count);
+    const highestVotedTemplarRating = templarRatingCounts[0];
+    let finalRating: NsfwLevel | undefined;
+
+    // Check if Templars agree (both voted the same) or if there's a single clear decision
     if (
-      (templarKeys.length === 1 && ratings[0].endsWith(`${NsfwLevel.Blocked}`)) ||
-      templarKeys.length > 1
+      templarRatingCounts.length === 1 ||
+      (templarRatingCounts.length > 1 &&
+        highestVotedTemplarRating.count > templarRatingCounts[1].count)
     ) {
-      processed = true;
+      // Templars agree or there's a clear winner
+      finalRating = highestVotedTemplarRating.rating as NsfwLevel;
+
+      // Special case: If Templars voted for "Damned" (Blocked), escalate to Inquisitor
+      if (finalRating === NsfwLevel.Blocked) {
+        movedQueue = true;
+        await addImageToQueue({
+          imageIds: imageId,
+          rankType: 'Inquisitor',
+          priority: 1,
+        });
+      } else {
+        // Apply the Templar decision
+        currentNsfwLevel = await updateImageNsfwLevel({
+          id: imageId,
+          nsfwLevel: finalRating,
+          userId: playerId,
+          isModerator: true,
+          activity: 'setNsfwLevelKono',
+          status: 'Actioned',
+        });
+      }
+    } else {
+      // Templars disagreed - escalate to Inquisitor
       movedQueue = true;
       await addImageToQueue({
         imageIds: imageId,
@@ -460,30 +613,14 @@ export async function addImageRating({
       });
     }
 
-    const rating = Number(ratings[0].split('-')[1]);
-
-    if (rating !== currentNsfwLevel && !processed) {
-      // Else, we're good :)
-      currentNsfwLevel = await updateImageNsfwLevel({
-        id: imageId,
-        nsfwLevel: rating,
-        userId: playerId,
-        isModerator: true,
-        activity: 'setNsfwLevelKono',
-      });
+    // Always update pending ratings when we have a final decision (not moved to another queue)
+    if (!movedQueue && finalRating !== undefined) {
+      await updatePendingImageRatings({ imageId, rating: finalRating });
     }
 
-    if (!movedQueue) await updatePendingImageRatings({ imageId, rating });
     // Clear image from the pool:
     await valueInQueue.pool.reset({ id: imageId });
-
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Templar`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
+    await notifyQueueUpdate(NewOrderRankType.Templar, imageId, NewOrderSignalActions.RemoveImage);
   }
 
   const isAcolyte = player.rankType === NewOrderRankType.Acolyte;
@@ -585,13 +722,7 @@ export async function addImageRating({
   // Failsafe to clear the image from the queue if it was rated by enough players
   if (reachedKnightVoteLimit || reachedTemplarVoteLimit) {
     await valueInQueue.pool.reset({ id: imageId });
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:${player.rankType}`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
+    await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
   }
 
   // Increase all counters
@@ -772,9 +903,11 @@ export function calculateFervor({
 export async function resetPlayer({
   playerId,
   withNotification,
+  reason,
 }: {
   playerId: number;
   withNotification?: boolean;
+  reason?: string;
 }) {
   await dbWrite.$transaction([
     // Reset player back to level 1
@@ -785,7 +918,7 @@ export async function resetPlayer({
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
       where: { targetPlayerId: playerId, cleansedAt: null },
-      data: { cleansedAt: new Date(), cleansedReason: 'Exceeded smite limit' },
+      data: { cleansedAt: new Date(), cleansedReason: reason ?? 'Exceeded smite limit' },
     }),
   ]);
 
@@ -826,7 +959,7 @@ export async function resetPlayer({
       type: 'new-order-game-over',
       key: `new-order-game-over:${playerId}:${new Date().getTime()}`,
       userId: playerId,
-      details: {},
+      details: { message: reason ?? 'Your New Order career has been reset.' },
     }).catch(handleLogError);
 }
 
@@ -1116,6 +1249,8 @@ export async function getPlayerHistory({
     `"userId" = ${playerId}`,
     `"createdAt" >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
+  // Ignoring error since we format the clickhouse params in custom $query
+  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
   if (cursor) AND.push(`"createdAt" < '${cursor}'`);
   if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
 

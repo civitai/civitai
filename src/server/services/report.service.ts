@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
   NotificationCategory,

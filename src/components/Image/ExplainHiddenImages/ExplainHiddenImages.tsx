@@ -15,7 +15,7 @@ import {
   browsingLevelLabels,
   flagifyBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 
 export function ExplainHiddenImages({
   hiddenBelowBrowsingLevel: hiddenByBrowsingLevel,

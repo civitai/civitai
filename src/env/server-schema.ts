@@ -1,5 +1,5 @@
 // @ts-check
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import {
   commaDelimitedStringArray,
@@ -13,12 +13,14 @@ import { isProd } from './other';
  * This way you can ensure the app isn't built with invalid env vars.
  */
 export const serverSchema = z.object({
+  DATABASE_IS_PROD: zc.booleanString.default(isProd),
   DATABASE_URL: z.url(),
   DATABASE_REPLICA_URL: z.url(),
   DATABASE_REPLICA_LONG_URL: z.url().optional(),
   DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
+  LOGICAL_REPLICA_DB_URL: z.url(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
@@ -62,10 +64,10 @@ export const serverSchema = z.object({
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.url(),
   S3_UPLOAD_BUCKET: z.string(),
-  S3_IMAGE_UPLOAD_KEY: z.string().optional(),
-  S3_IMAGE_UPLOAD_SECRET: z.string().optional(),
-  S3_IMAGE_UPLOAD_REGION: z.string().optional(),
-  S3_IMAGE_UPLOAD_ENDPOINT: z.url().optional(),
+  S3_IMAGE_UPLOAD_KEY: z.string(),
+  S3_IMAGE_UPLOAD_SECRET: z.string(),
+  S3_IMAGE_UPLOAD_REGION: z.string(),
+  S3_IMAGE_UPLOAD_ENDPOINT: z.url(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
   S3_IMAGE_UPLOAD_OVERRIDE: z.string().optional(),
   S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
@@ -116,8 +118,8 @@ export const serverSchema = z.object({
   CSAM_UPLOAD_REGION: z.string().default(''),
   CSAM_UPLOAD_ENDPOINT: z.string().default(''),
   NCMEC_URL: z.string().optional(),
-  NCMEC_USERNAME: z.string().optional(),
-  NCMEC_PASSWORD: z.string().optional(),
+  NCMEC_USERNAME: z.string().default(''),
+  NCMEC_PASSWORD: z.string().default(''),
   RESOURCE_RECOMMENDER_URL: z.url().optional(),
   DIRNAME: z.string().optional(),
   IMAGE_QUERY_CACHING: zc.booleanString,
@@ -248,4 +250,10 @@ export const serverSchema = z.object({
   EMERCHANTPAY_USERNAME: z.string().optional(),
   EMERCHANTPAY_PASSWORD: z.string().optional(),
   EMERCHANTPAY_WEBHOOK_SECRET: z.string().optional(),
+  // ZKP2P Related:
+  ZKP2P_BASE_URL: z.string().optional(),
+  ZKP2P_IFRAME_HOST: z.string().optional(),
+
+  FLIPT_URL: z.string(),
+  FLIPT_FETCHER_SECRET: z.string(),
 });

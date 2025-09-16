@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';

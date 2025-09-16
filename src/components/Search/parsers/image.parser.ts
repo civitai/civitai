@@ -1,5 +1,5 @@
 import type { IndexUiState, UiState } from 'instantsearch.js';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';

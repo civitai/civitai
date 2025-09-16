@@ -4,7 +4,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import * as rewardImports from '~/server/rewards';
 import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { clickhouse } from '~/server/clickhouse/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 const rewards = Object.values(rewardImports);
 export const processRewards = createJob('rewards-process', '*/1 * * * *', async () => {

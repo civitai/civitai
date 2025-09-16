@@ -16,12 +16,12 @@ import { IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import React, { useState } from 'react';
 
 import { Form, InputCheckboxGroup, InputDatePicker, useForm } from '~/libs/form';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import type { ClubAdminInvite } from '../../types/router';
 import { upsertClubAdminInviteInput } from '../../server/schema/clubAdmin.schema';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { showSuccessNotification } from '../../utils/notifications';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '../../utils/string-helpers';
 import { useMutateClubAdmin } from './club.utils';

@@ -13,8 +13,8 @@
 }
 
 .awardedBanner {
-  background: linear-gradient(45deg, var(--mantine-color-yellow-4), var(--mantine-color-yellow-1));
-  animation: moveBackground 5s ease infinite;
-  background-size: 200% 200%;
+  background-image: linear-gradient(90deg, var(--mantine-color-yellow-4), var(--mantine-color-yellow-1), var(--mantine-color-yellow-4)) !important;
+  background-size: 200% 100% !important;
+  animation: moveBackground 5s ease infinite !important;
   color: var(--mantine-color-yellow-7);
 }

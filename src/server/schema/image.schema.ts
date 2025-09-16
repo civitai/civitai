@@ -1,5 +1,5 @@
-import dayjs from 'dayjs';
-import * as z from 'zod/v4';
+import dayjs from '~/shared/utils/dayjs';
+import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
@@ -19,6 +19,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
+import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
+import { usernameSchema } from '~/shared/zod/username.schema';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -34,12 +36,10 @@ const imageEntitiesSchema = z.enum(imageEntities);
 export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
 export const comfyMetaSchema = z
   .object({
-    prompt: z.object({}).loose(),
-    workflow: z
-      .object({
-        nodes: z.object({}).loose().array().optional(),
-      })
-      .loose(),
+    prompt: z.looseObject({}),
+    workflow: z.looseObject({
+      nodes: z.looseObject({}).array().optional(),
+    }),
   })
   .partial();
 
@@ -94,7 +94,22 @@ export const imageMetadataResourceSchema = z.object({
   hash: z.string().optional(),
 });
 
+export const additionalResourceSchema = z.object({
+  name: z.string().optional(),
+  type: z.string().optional(),
+  strength: z.number().optional(),
+  strengthClip: z.number().optional(),
+});
+
+export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
+export const civitaiResourceSchema = z.object({
+  type: z.string().optional(),
+  weight: z.number().optional(),
+  modelVersionId: z.number(),
+});
+
 export const imageGenerationSchema = z.object({
+  baseModel: z.enum(baseModelGroups).optional(),
   prompt: undefinedString,
   negativePrompt: undefinedString,
   cfgScale: stringToNumber,
@@ -108,10 +123,13 @@ export const imageGenerationSchema = z.object({
   external: externalMetaSchema.optional(),
   effects: z.record(z.string(), z.any()).optional(),
   engine: z.string().optional(),
+  version: z.string().optional(),
   process: z.string().optional(),
   type: z.string().optional(),
   workflow: z.string().optional(),
   resources: imageMetadataResourceSchema.array().optional(),
+  additionalResources: additionalResourceSchema.array().optional(),
+  civitaiResources: civitaiResourceSchema.array().optional(),
   extra: z
     .object({
       remixOfId: z.number().optional(),
@@ -120,14 +138,7 @@ export const imageGenerationSchema = z.object({
     .catch(undefined),
 });
 
-export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
-export const civitaiResourceSchema = z.object({
-  type: z.string().optional(),
-  weight: z.number().optional(),
-  modelVersionId: z.number(),
-});
-
-export const imageMetaSchema = imageGenerationSchema.partial().loose();
+export const imageMetaSchema = z.looseObject({ ...imageGenerationSchema.shape });
 export const imageMetaOutput = imageGenerationSchema
   .extend({
     comfy: z
@@ -148,7 +159,7 @@ export const imageMetaOutput = imageGenerationSchema
     process: z.string().optional(),
     type: z.string().optional(),
   })
-  .loose();
+  .passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({
@@ -235,21 +246,19 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
-  needsReview: z.string().nullish(),
-  reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum([
-    'minor',
-    'poi',
-    'reported',
-    'csam',
-    'blocked',
-    'tag',
-    'newUser',
-    'appeal',
-    'modRule',
-  ]),
+  reviewAction: z.enum(['unblock', 'block']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
+export type ImageModerationUnblockSchema = {
+  ids: number[];
+  moderatorId?: number;
+};
+export type ImageModerationBlockSchema = {
+  ids?: number[];
+  userId?: number;
+  include?: Array<'user-notification' | 'phash-block'>;
+  moderatorId?: number;
+};
 
 export type GetModelVersionImagesSchema = z.infer<typeof getModelVersionImageSchema>;
 export const getModelVersionImageSchema = z.object({
@@ -305,7 +314,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
     // - from imagesQueryParamSchema
-    baseModels: z.enum(constants.baseModels).array().optional(),
+    baseModels: z.enum(baseModels).array().optional(),
     collectionId: z.number().optional(),
     collectionTagId: z.number().optional(),
     hideAutoResources: z.boolean().optional(),
@@ -331,7 +340,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.enum(MediaType)).optional(),
     useIndex: z.boolean().nullish(),
     userId: z.number().optional(),
-    username: zc.usernameValidationSchema.optional(),
+    username: usernameSchema.optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().default(false),
     requiringMeta: z.boolean().optional(),
@@ -436,7 +445,7 @@ export const getImageRatingRequestsSchema = paginationSchema.extend({
 export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
 export const imageRatingReviewInput = z.object({
   limit: z.number(),
-  cursor: z.string().optional(),
+  cursor: z.number().optional(),
 });
 
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;

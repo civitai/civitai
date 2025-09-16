@@ -27,11 +27,13 @@ import { isHolidaysTime } from '~/utils/date-helpers';
 import classes from './SupportButton.module.scss';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import React, { forwardRef } from 'react';
+import clsx from 'clsx';
 
+type Variant = 'primary' | 'gift' | 'heart' | 'sparkle' | 'royal' | 'premium';
 type SupportButtonOption = {
   text: string;
   icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
-  variant: 'primary' | 'gift' | 'heart' | 'sparkle' | 'royal' | 'premium';
+  variant: Variant;
   href: string;
 };
 
@@ -85,32 +87,14 @@ export const SupportButton = () => {
   const { seed } = useAppContext();
   const selectedOption = isHolidaysTime() ? holidayButton : new Random(seed).fromArray(options);
 
-  const getVariantStyles = (variant: SupportButtonOption['variant']) => {
-    switch (variant) {
-      case 'primary':
-        return classes.supportButtonPrimary;
-      case 'gift':
-        return classes.supportButtonGift;
-      case 'heart':
-        return classes.supportButtonHeart;
-      case 'sparkle':
-        return classes.supportButtonSparkle;
-      case 'royal':
-        return classes.supportButtonRoyal;
-      case 'premium':
-        return classes.supportButtonPremium;
-      default:
-        return classes.supportButtonPrimary;
-    }
-  };
-
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>
       <HoverCard.Target>
         <SupportButtonPolymorphic
           component={Link}
           href={selectedOption.href}
-          className={`${classes.supportButton} ${getVariantStyles(selectedOption.variant)}`}
+          className={`${classes.supportButtonMediaQuery}`}
+          classVariant={selectedOption.variant}
           variant="filled"
           size="xs"
           px="xs"
@@ -142,21 +126,47 @@ interface SupportButtonBaseProps
     Omit<React.ComponentPropsWithoutRef<'button'>, keyof ButtonProps> {
   icon?: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
   position?: FloatingPosition;
+  classVariant?: Variant;
 }
 
 const SupportButtonBase = forwardRef<HTMLButtonElement, SupportButtonBaseProps>(
-  ({ position, icon: Icon, children, ...props }, ref) => {
+  ({ position, icon: Icon, children, className, classVariant = 'primary', ...props }, ref) => {
+    const getVariantStyles = (variant: SupportButtonOption['variant']) => {
+      switch (variant) {
+        case 'primary':
+          return classes.supportButtonPrimary;
+        case 'gift':
+          return classes.supportButtonGift;
+        case 'heart':
+          return classes.supportButtonHeart;
+        case 'sparkle':
+          return classes.supportButtonSparkle;
+        case 'royal':
+          return classes.supportButtonRoyal;
+        case 'premium':
+          return classes.supportButtonPremium;
+        default:
+          return classes.supportButtonPrimary;
+      }
+    };
+
     return (
-      <HoverCard withArrow openDelay={400} closeDelay={100} position={position}>
+      <HoverCard withArrow openDelay={400} closeDelay={100} position={position} withinPortal>
         <HoverCard.Target>
           <Button
             ref={ref}
-            className={`${classes.supportButton} ${classes.supportButtonPrimary}`}
+            className={clsx(
+              `${classes.supportButton} ${getVariantStyles(classVariant)}`,
+              className
+            )}
             {...props}
-            classNames={{ label: 'flex gap-1' }}
+            classNames={{
+              inner: 'w-full',
+              label: 'flex gap-1 justify-between w-full',
+            }}
           >
             {children && (
-              <Text size="xs" fw={700} className={classes.supportButtonText}>
+              <Text component="span" size="xs" fw={700} className={classes.supportButtonText}>
                 {children}
               </Text>
             )}

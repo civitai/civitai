@@ -1,5 +1,5 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { CacheTTL, constants } from '~/server/common/constants';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
@@ -21,8 +21,8 @@ export const getAllCommentsSchema = z
     cursor: z.number(),
     modelId: z.number(),
     userId: z.number(),
-    filterBy: z.array(z.nativeEnum(ReviewFilter)),
-    sort: z.nativeEnum(ReviewSort).default(ReviewSort.Newest),
+    filterBy: z.array(z.enum(ReviewFilter)),
+    sort: z.enum(ReviewSort).default(ReviewSort.Newest),
     hidden: z.boolean().optional(),
   })
   .partial();
@@ -56,5 +56,5 @@ export const getCommentCountByModelSchema = z.object({
 export type ToggleReactionInput = z.infer<typeof toggleReactionInput>;
 export const toggleReactionInput = z.object({
   id: z.number(),
-  reaction: z.nativeEnum(ReviewReactions),
+  reaction: z.enum(ReviewReactions),
 });

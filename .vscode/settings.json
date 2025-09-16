@@ -1,5 +1,16 @@
 {
-  "editor.formatOnSave": true,
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "always",
+  },
+  "eslint.format.enable": true,
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+  "eslint.workingDirectories": [{ "mode": "auto" }],
   "editor.tabSize": 2,
   "files.eol": "\n",
   "[sql]": {
@@ -65,5 +76,75 @@
       "name": "clickhouse",
       "password": ""
     }
-  ]
+  ],
+  "files.associations": {
+    "*.md": "markdown"
+  },
+  "highlight.regexes": {
+    "(^|\\s)(@dev\\s*[:-]\\s*\\*)(.*)$": {
+      "filterFileRegex": ".*\\.(md|markdown|mdx)$",
+      "decorations": [
+        {},
+        {
+          "backgroundColor": "rgba(255, 235, 59, 0.3)",
+          "color": "#50FA7B",
+          "fontWeight": "bold",
+          "borderRadius": "3px",
+          "border": "1px solid rgba(255, 235, 59, 0.8)"
+        },
+        {
+          "color": "#50FA7B"
+        }
+      ]
+    },
+    "(^|\\s)(@dev\\s*[:-]\\s*)(.*)$": {
+      "filterFileRegex": ".*\\.(md|markdown|mdx)$",
+      "decorations": [
+        {},
+        {
+          "backgroundColor": "rgba(80, 250, 123, 0.15)",
+          "color": "#50FA7B",
+          "fontWeight": "bold"
+        },
+        {
+          "color": "#50FA7B"
+        }
+      ]
+    },
+    "(^|\\s)(@ai\\s*[:-]\\s*\\*)(.*)$": {
+      "filterFileRegex": ".*\\.(md|markdown|mdx)$",
+      "decorations": [
+        {},
+        {
+          "backgroundColor": "rgba(255, 235, 59, 0.3)",
+          "color": "#C678DD",
+          "fontWeight": "bold",
+          "borderRadius": "3px",
+          "border": "1px solid rgba(255, 235, 59, 0.8)"
+        },
+        {
+          "color": "#C678DD"
+        }
+      ]
+    },
+    "(^|\\s)(@ai\\s*[:-]\\s*)(.*)$": {
+      "filterFileRegex": ".*\\.(md|markdown|mdx)$",
+      "decorations": [
+        {},
+        {
+          "backgroundColor": "rgba(198, 120, 221, 0.15)",
+          "color": "#C678DD",
+          "fontWeight": "bold"
+        },
+        {
+          "color": "#C678DD"
+        }
+      ]
+    }
+  },
+  "highlight.maxMatches": 250,
+  "highlight.decorations": {
+    "rangeBehavior": 1
+  },
+  "highlight.regexFlags": "gm"
 }

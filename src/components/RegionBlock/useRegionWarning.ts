@@ -11,7 +11,7 @@ export function useRegionWarning() {
   const { isPendingBlock } = useIsRegionBlocked();
 
   // Generate content key based on region
-  const contentKey = region.countryCode || 'unknown';
+  const contentKey = region?.countryCode || 'unknown';
   const storageKey = `region-warning-dismissed-${contentKey}`;
 
   // Fetch markdown content from Redis

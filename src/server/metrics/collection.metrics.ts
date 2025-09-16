@@ -1,7 +1,14 @@
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getAffected,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -29,12 +36,13 @@ export const collectionMetrics = createMetricProcessor({
     );
   },
   async clearDay(ctx) {
-    await executeRefresh(ctx)`
-      UPDATE "CollectionMetric"
-        SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
+    // Too expensive
+    // await executeRefresh(ctx)`
+    //   UPDATE "CollectionMetric"
+    //     SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0
+    //   WHERE timeframe = 'Day'
+    //     AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+    // `;
   },
   rank: {
     table: 'CollectionRank',
@@ -48,7 +56,7 @@ async function getContributorTasks(ctx: MetricProcessorRunContext) {
     -- get recent collection contributors
     SELECT "collectionId" as id
     FROM "CollectionContributor"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -72,7 +80,7 @@ async function getContributorTasks(ctx: MetricProcessorRunContext) {
         )} as "contributorCount"
       FROM "CollectionContributor"
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "collectionId" IN (${ids})
+      WHERE "collectionId" = ANY(${ids}::int[])
       GROUP BY "collectionId", tf.timeframe
       ON CONFLICT ("collectionId", timeframe) DO UPDATE
         SET "followerCount" = EXCLUDED."followerCount", "contributorCount" = EXCLUDED."contributorCount", "updatedAt" = NOW()
@@ -88,26 +96,51 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
     -- get recent collection items
     SELECT "collectionId" as id
     FROM "CollectionItem"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getItemTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update collection item metrics
-      INSERT INTO "CollectionMetric" ("collectionId", timeframe, "itemCount")
-      SELECT
-        "collectionId",
-        tf.timeframe,
-        ${snippets.timeframeSum('"createdAt"')} as "itemCount"
-      FROM "CollectionItem"
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "collectionId" IN (${ids})
-      GROUP BY "collectionId", tf.timeframe
-      ON CONFLICT ("collectionId", timeframe) DO UPDATE
-        SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()
+
+    // First, aggregate data into JSON to avoid blocking - only get total count
+    const metrics = await getMetricJson(ctx)`
+      -- Aggregate collection item metrics into JSON (AllTime count only)
+      WITH counts AS (
+        SELECT
+          "collectionId",
+          COUNT(1) as "itemCount"
+        FROM "CollectionItem"
+        WHERE "collectionId" = ANY(${ids}::int[])
+        GROUP BY "collectionId"
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'collectionId', "collectionId",
+          'itemCount', "itemCount"
+        )
+      ) as data
+      FROM counts
     `;
+
+    // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert collection metrics for all timeframes using the AllTime count
+        INSERT INTO "CollectionMetric" ("collectionId", timeframe, "itemCount")
+        SELECT
+          (value->>'collectionId')::int,
+          tf.timeframe,
+          (value->>'itemCount')::int
+        FROM jsonb_array_elements($1::jsonb) AS value
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+        ON CONFLICT ("collectionId", timeframe) DO UPDATE
+          SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()`,
+        [JSON.stringify(metrics)]
+      );
+    }
+
     log('getItemTasks', i + 1, 'of', tasks.length, 'done');
   });
 

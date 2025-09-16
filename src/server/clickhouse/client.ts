@@ -1,6 +1,5 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { createClient } from '@clickhouse/client';
-import dayjs from 'dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import requestIp from 'request-ip';
@@ -12,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
+import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
   BountyEngagementType,
@@ -201,6 +201,7 @@ export const ActionType = [
   'Membership_Cancel',
   'Membership_Downgrade',
   'CSAM_Help_Triggered',
+  'ProfanitySearch',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -289,6 +290,37 @@ export class Tracker {
     });
   }
 
+  private async sendMany(
+    table: string,
+    data: object[] | ((args: { session: Session | null; actor: TrackRequest }) => object[])
+  ) {
+    if (!clickhouse) return;
+    await this.resolveSession();
+    const values =
+      typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
+
+    try {
+      await clickhouse.insert({
+        table,
+        values,
+        format: 'JSONEachRow',
+      });
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to track',
+          details: { table, data: JSON.stringify(data) },
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
+    }
+  }
+
   private async track(
     table: string,
     custom: object | ((session: Session | null) => object),
@@ -304,6 +336,23 @@ export class Tracker {
         ...actorMeta,
         ...customData,
       };
+    });
+  }
+
+  private async trackMany(
+    table: string,
+    custom: object[] | ((session: Session | null) => object[]),
+    options?: { skipActorMeta: boolean }
+  ) {
+    const { skipActorMeta = false } = options ?? {};
+
+    await this.sendMany(table, ({ session, actor }) => {
+      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+      const customData = typeof custom === 'function' ? custom(session) : custom;
+      return customData.map((custom) => ({
+        ...actorMeta,
+        ...custom,
+      }));
     });
   }
 
@@ -421,17 +470,19 @@ export class Tracker {
     return this.track('modelFileEvents', values);
   }
 
-  public image(values: {
-    type: ImageActivityType;
-    imageId: number;
-    nsfw: NsfwLevelDeprecated;
-    tags: string[];
-    ownerId: number;
-    tosReason?: string;
-    resources?: number[];
-    userId?: number;
-  }) {
-    return this.track('images', values);
+  public images(
+    values: {
+      type: ImageActivityType;
+      imageId: number;
+      nsfw: NsfwLevelDeprecated;
+      tags: string[];
+      ownerId: number;
+      tosReason?: string;
+      resources?: number[];
+      userId?: number;
+    }[]
+  ) {
+    return this.trackMany('images', values);
   }
 
   public bounty(values: { type: BountyActivity; bountyId: number; userId?: number }) {
@@ -546,9 +597,20 @@ export class Tracker {
     date: Date;
     valid?: boolean;
   }) {
+    return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
+  }
+
+  public zkp2pPayment(values: {
+    sessionId: string;
+    eventType: 'attempt' | 'success' | 'error' | 'abandoned';
+    paymentMethod: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'wise' | 'revolut';
+    usdAmount: number;
+    buzzAmount: number;
+    errorMessage?: string;
+  }) {
     return this.track(
-      'moderationRequests',
-      { ...values, createdAt: new Date() },
+      'zkp2p_payment_events',
+      { ...values, timestamp: new Date() },
       { skipActorMeta: true }
     );
   }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { isDev } from '~/env/other';
 
 export const createDebouncer = (timeout: number) => {
   let timer: NodeJS.Timeout | undefined;
@@ -18,7 +19,7 @@ export const useDebouncer = (timeout: number) => {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, []);
+  }, [timeout]);
 
   const debouncer = useCallback(
     (func: () => void) => {
@@ -37,7 +38,11 @@ export const createKeyDebouncer = (timeout: number) => {
   const debouncer = (key: string, fn: () => void) => {
     if (dictionary[key]) clearTimeout(dictionary[key]);
     dictionary[key] = setTimeout(() => {
-      fn();
+      try {
+        fn();
+      } catch (e) {
+        if (isDev) console.log(e);
+      }
       delete dictionary[key];
     }, timeout);
   };

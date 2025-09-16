@@ -1,9 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { events } from '~/server/events';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 const schema = z.object({
   eventName: z.string().trim().nonempty(),

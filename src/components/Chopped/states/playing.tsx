@@ -19,7 +19,7 @@ import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { generationPanel } from '~/store/generation.store';
 import { getRandom } from '~/utils/array-helpers';
 import { fetchBlob, getBase64 } from '~/utils/file-utils';
-import { resizeImage } from '~/utils/image-utils';
+import { resizeImage } from '~/shared/utils/canvas-utils';
 import { getRandomInt, numberWithCommas } from '~/utils/number-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 

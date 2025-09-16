@@ -1,8 +1,9 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
 import type { TRPCLink } from '@trpc/client';
-import { httpLink, loggerLink, splitLink } from '@trpc/client';
+import { httpLink, loggerLink } from '@trpc/client';
 import { createTRPCNext } from '@trpc/next';
+import type { NextPageContext } from 'next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
@@ -36,7 +37,7 @@ export const queryClient = new QueryClient({
 
 const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
-    const isAuthed = typeof window !== undefined ? window.isAuthed : false;
+    const isAuthed = typeof window !== 'undefined' ? window.isAuthed : false;
     const authed = removeEmpty({ authed: isAuthed || undefined });
     const input = { ...(op.input as any), ...authed };
 
@@ -48,18 +49,24 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
  * Get headers for each request
  * @see https://trpc.io/docs/v10/client/headers
  */
-function getHeaders() {
-  if (typeof window === 'undefined') return headers;
-  const fingerprint = window.localStorage.getItem('fingerprint') ?? '';
+function getHeaders(ctx?: NextPageContext) {
+  return function () {
+    const mergedHeaders = { ...ctx?.req?.headers, ...headers };
+    if (typeof window === 'undefined') return mergedHeaders;
+    const fingerprint = window.localStorage.getItem('fingerprint') ?? '';
 
-  return {
-    ...headers,
-    'x-fingerprint': fingerprint ? JSON.parse(fingerprint) : undefined,
+    return {
+      ...mergedHeaders,
+      'x-fingerprint': fingerprint ? JSON.parse(fingerprint) : undefined,
+    };
   };
 }
 
 export const trpc = createTRPCNext<AppRouter>({
-  config() {
+  config(opts) {
+    const { ctx } = opts;
+    const isClient = typeof window !== 'undefined';
+
     return {
       queryClient,
       transformer: superjson,
@@ -70,15 +77,19 @@ export const trpc = createTRPCNext<AppRouter>({
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
-        splitLink({
-          // do not batch post requests
-          condition: (op) => (op.type === 'query' ? op.context.skipBatch === true : true),
-          // when condition is true, use normal request
-          true: httpLink({ url, headers: getHeaders }),
-          // when condition is false, use batching
-          // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
-          false: httpLink({ url, headers: getHeaders }), // Let's disable batching for now
+        httpLink({
+          url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
+          headers: getHeaders(ctx),
         }),
+        // splitLink({
+        //   // do not batch post requests
+        //   condition: (op) => (op.type === 'query' ? op.context.skipBatch === true : true),
+        //   // when condition is true, use normal request
+        //   true: httpLink({ url, headers: getHeaders }),
+        //   // when condition is false, use batching
+        //   // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
+        //   false: httpLink({ url, headers: getHeaders }), // Let's disable batching for now
+        // }),
       ],
     };
   },

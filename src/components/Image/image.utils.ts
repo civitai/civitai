@@ -2,17 +2,16 @@ import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { periodModeSchema } from '~/server/schema/base.schema';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { baseModels } from '~/shared/constants/base-model.constants';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -29,7 +28,7 @@ export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
 export const imagesQueryParamSchema = z
   .object({
     baseModels: z
-      .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
+      .union([z.enum(baseModels).array(), z.enum(baseModels)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
     collectionId: numericString(),
@@ -44,7 +43,7 @@ export const imagesQueryParamSchema = z
     modelVersionId: numericString(),
     notPublished: booleanString(),
     period: z.enum(MetricTimeframe),
-    periodMode: periodModeSchema,
+    periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),
     prioritizedUserIds: numericStringArray(),
     reactions: z.preprocess(
@@ -65,7 +64,7 @@ export const imagesQueryParamSchema = z
     userId: numericString(),
     username: z.coerce.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),
-    withMeta: booleanString().default(false),
+    withMeta: booleanString().optional(),
     requiringMeta: booleanString(),
     remixOfId: numericString(),
   })

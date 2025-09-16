@@ -2,7 +2,7 @@ import { Input, Text, useComputedColorScheme, useMantineTheme } from '@mantine/c
 import type { DropzoneProps } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { DragEvent } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { constants, isOrchestratorUrl } from '~/server/common/constants';

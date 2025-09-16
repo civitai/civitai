@@ -1,13 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { CollectionItemStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 type MigrationType = z.infer<typeof migrationTypes>;
 const migrationTypes = z.enum([
@@ -44,10 +46,10 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'users',
     //   fn: migrateUsers,
     // },
-    // {
-    //   type: 'images',
-    //   fn: migrateImages,
-    // },
+    {
+      type: 'images',
+      fn: migrateImages,
+    },
     // {
     //   type: 'posts',
     //   fn: migratePosts,
@@ -64,14 +66,14 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'bountyEntries',
     //   fn: migrateBountyEntries,
     // },
-    {
-      type: 'modelVersions',
-      fn: migrateModelVersions,
-    },
-    {
-      type: 'models',
-      fn: migrateModels,
-    },
+    // {
+    //   type: 'modelVersions',
+    //   fn: migrateModelVersions,
+    // },
+    // {
+    //   type: 'models',
+    //   fn: migrateModels,
+    // },
     // {
     //   type: 'collections',
     //   fn: migrateCollections,
@@ -99,12 +101,16 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
+        const AND = [Prisma.sql`"createdAt" >= ${params.after}`];
+        if (params.before) {
+          AND.push(Prisma.sql`"createdAt" < ${params.before}`);
+        }
         const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
         WITH dates AS (
           SELECT
           MIN("createdAt") as start,
           MAX("createdAt") as end
-          FROM "Image" WHERE "createdAt" > ${params.after}
+          FROM "Image" WHERE ${Prisma.join(AND, ' AND ')}
         )
         SELECT MIN(id) as start, MAX(id) as end
         FROM "Image" i
@@ -117,7 +123,7 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
+      const { cancel, result } = await pgDbWrite.cancellableQuery<{ id: number }>(Prisma.sql`
         UPDATE "Image" i
         SET "nsfwLevel" = (
           SELECT COALESCE(MAX(t."nsfwLevel"), 0)
@@ -126,10 +132,16 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           WHERE toi."imageId" = i.id
             AND toi."disabled" IS FALSE
         )
-        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" AND NOT i."nsfwLevelLocked";
+        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" AND NOT i."nsfwLevelLocked"
+        RETURNING id;
       `);
       cancelFns.push(cancel);
-      await result();
+      const affectedImages = await result();
+
+      await queueImageSearchIndexUpdate({
+        ids: affectedImages.map((i) => i.id),
+        action: SearchIndexUpdateQueueAction.Update,
+      });
       console.log(`Updated images ${start} - ${end}`);
     },
   });

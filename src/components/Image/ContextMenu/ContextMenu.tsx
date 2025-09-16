@@ -36,17 +36,20 @@ export function ContextMenu({
 export function ImageContextMenuWrapper({
   image,
   children,
+  className,
   ...props
 }: { image: ImageContextMenuProps['image'] } & ActionIconProps) {
   return (
     <ImageProvider {...image}>
       {image.needsReview || image.ingestion === 'Blocked' ? (
-        <Group gap={4} className={props.className}>
+        <Group gap={4} className={className}>
           <NeedsReviewBadge image={image} />
           <ContextMenu {...props}>{children}</ContextMenu>
         </Group>
       ) : (
-        <ContextMenu {...props}>{children}</ContextMenu>
+        <ContextMenu className={className} {...props}>
+          {children}
+        </ContextMenu>
       )}
     </ImageProvider>
   );

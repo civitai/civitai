@@ -1,10 +1,10 @@
 import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import { moderateImages } from '~/server/services/image.service';
+import { handleUnblockImages } from '~/server/services/image.service';
 import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
@@ -46,14 +46,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     const imageChunks = chunk(imageIdsToUpdate, batchSize); // Process images in chunks
     for (const chunkIds of imageChunks) {
-      await moderateImages({
-        ids: chunkIds,
-        needsReview: null,
-        reviewAction: undefined,
-        reviewType: 'blocked',
-        userId,
-        force,
-      });
+      await handleUnblockImages({ ids: chunkIds });
     }
 
     const imageTags = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
@@ -64,17 +57,19 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     `;
 
     const tracker = new Tracker(req, res);
-    for (const image of images) {
-      const tags = imageTags.filter((x) => x.imageId === image.id).map((x) => x.tag);
-      tracker.image({
-        type: 'Restore',
-        imageId: image.id,
-        ownerId: image.userId,
-        nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-        userId,
-        tags,
-      });
-    }
+    tracker.images(
+      images.map((image) => {
+        const tags = imageTags.filter((x) => x.imageId === image.id).map((x) => x.tag);
+        return {
+          type: 'Restore',
+          imageId: image.id,
+          ownerId: image.userId,
+          nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+          userId,
+          tags,
+        };
+      })
+    );
 
     return res.status(200).json({
       images: images.length,

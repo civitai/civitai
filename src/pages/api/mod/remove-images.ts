@@ -1,64 +1,37 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
-import { chunk } from 'lodash-es';
+import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { reviewTypeToBlockedReasonKeys } from '~/server/services/image.service';
-import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getResourceIdsForImages,
   getTagNamesForImages,
-  moderateImages,
+  handleBlockImages,
 } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 
 const schema = z.object({
-  imageIds: z.array(z.number()),
+  imageIds: z.array(z.number()).optional(),
   userId: z.number().optional(),
-  reason: z.enum(reviewTypeToBlockedReasonKeys).optional(),
+  moderatorId: z.number().optional(),
+  reason: z.string().optional(),
 });
-
-// Process imageIds in chunks of 1000
-const BATCH_SIZE = 1000;
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds, userId, reason } = schema.parse(req.body);
-
-    // Respond immediately with the total count
-    res.status(200).json({
-      images: imageIds.length,
-    });
+    const { imageIds, userId, reason, moderatorId } = schema.parse(req.body);
 
     const tracker = new Tracker(req, res);
-    const imageIdChunks = chunk(imageIds, BATCH_SIZE);
-
-    // Process each chunk
-    for (const chunk of imageIdChunks) {
-      // Get images data
-      const images = await dbRead.image.findMany({
-        where: { id: { in: chunk } },
-        select: { nsfwLevel: true, userId: true, id: true },
-      });
-
+    const images = await handleBlockImages({ ids: imageIds, userId, moderatorId });
+    await Limiter({ batchSize: 1000 }).process(images, async (images) => {
+      const ids = images.map((x) => x.id);
       // Get additional data for this chunk
-      const imageTags = await getTagNamesForImages(chunk);
-      const imageResources = await getResourceIdsForImages(chunk);
-
-      // Moderate images for this chunk
-      await moderateImages({
-        ids: chunk,
-        needsReview: undefined,
-        reviewAction: 'delete',
-        reviewType: 'blocked',
-        userId,
-      });
-
-      // Track images for this chunk
-      for (const image of images) {
-        tracker.image({
+      const imageTags = await getTagNamesForImages(ids);
+      const imageResources = await getResourceIdsForImages(ids);
+      await tracker.images(
+        images.map((image) => ({
           type: 'DeleteTOS',
           imageId: image.id,
           ownerId: image.userId,
@@ -66,9 +39,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           tags: imageTags[image.id] ?? [],
           resources: imageResources[image.id] ?? [],
           tosReason: reason,
-        });
-      }
-    }
+        }))
+      );
+    });
+    res.status(200).json({ images: images.length });
   } catch (e) {
     const err = e as Error;
     logToAxiom({
@@ -77,5 +51,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       cause: err.cause,
       stack: err.stack,
     });
+    res.status(500);
   }
 });

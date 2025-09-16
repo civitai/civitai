@@ -40,7 +40,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
@@ -115,11 +115,19 @@ export function ImagesAsPostsInfinite({
     [gallerySettings?.hiddenTags]
   );
 
+  const hiddenImageIds = useMemo(
+    () =>
+      selectedVersionId && gallerySettings
+        ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
+        : [],
+    [selectedVersionId, gallerySettings]
+  );
+
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    hiddenImages: !showHidden ? gallerySettings?.hiddenImages : undefined,
+    hiddenImages: !showHidden ? hiddenImageIds : undefined,
     hiddenUsers: !showHidden ? hiddenUsers : undefined,
     hiddenTags: !showHidden ? hiddenTags : undefined,
     browsingLevel: intersection,
@@ -137,12 +145,12 @@ export function ImagesAsPostsInfinite({
   };
 
   useEffect(() => {
-    if (!gallerySettings?.hiddenImages.length) setShowHidden(false);
-  }, [gallerySettings?.hiddenImages]);
+    if (!hiddenImageIds.length) setShowHidden(false);
+  }, [hiddenImageIds]);
 
   const isMuted = currentUser?.muted ?? false;
   const hasModerationPreferences =
-    !!gallerySettings?.hiddenImages.length ||
+    !!hiddenImageIds.length ||
     !!gallerySettings?.hiddenUsers.length ||
     !!gallerySettings?.hiddenTags.length;
 
@@ -191,7 +199,7 @@ export function ImagesAsPostsInfinite({
                 <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
                 {showModerationOptions && (
                   <>
-                    {!!gallerySettings?.hiddenImages.length && (
+                    {!!hiddenImageIds.length && (
                       <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                         <LegacyActionIcon
                           variant="light"
@@ -235,7 +243,7 @@ export function ImagesAsPostsInfinite({
                 </Text>
               </Text>
             )}
-            {hasModerationPreferences ? (
+            {hasModerationPreferences && selectedVersionId ? (
               <Text size="xs" c="dimmed" mt="-md">
                 Some images have been hidden based on moderation preferences set by the creator,{' '}
                 <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>

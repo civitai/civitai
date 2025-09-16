@@ -1,21 +1,18 @@
-import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import type { BaseModelSetType } from '~/server/common/constants';
 import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   GenerationData,
   GenerationResource,
 } from '~/server/services/generation/generation.service';
-import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
   fluxKreaAir,
   fluxModeOptions,
@@ -24,7 +21,6 @@ import {
   generationSamplers,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
-  getBaseModelSetTypes,
   getClosestAspectRatio,
   getIsFluxUltra,
   getSizeFromAspectRatio,
@@ -46,6 +42,8 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
 
 // #region [schemas]
 
@@ -92,7 +90,7 @@ const formSchema = baseSchema
     if (data.workflow.startsWith('txt2img')) {
       if (!data.prompt || data.prompt.length === 0) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: 'Prompt cannot be empty',
           path: ['prompt'],
         });
@@ -101,7 +99,7 @@ const formSchema = baseSchema
 
     if (data.prompt.length > 1500) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt cannot be longer than 1500 characters',
         path: ['prompt'],
       });
@@ -128,7 +126,7 @@ const formSchema = baseSchema
         }
 
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message,
           params: { count },
           path: ['prompt'],
@@ -138,7 +136,7 @@ const formSchema = baseSchema
 
     if (data.workflow.startsWith('img2img') && !data.sourceImage) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Image is required',
         path: ['sourceImage'],
       });
@@ -202,9 +200,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   // if current vae doesn't match baseModel, set vae to undefined
   if (
     !vae ||
-    !getBaseModelSetTypes({ modelType: vae.model.type, baseModel: vae.baseModel }).includes(
-      baseModel as SupportedBaseModel
-    ) ||
+    !getGenerationBaseModelAssociatedGroups(vae.baseModel, vae.model.type).includes(baseModel) ||
     !vae.canGenerate
   )
     vae = null;
@@ -224,12 +220,11 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
       !resource.canGenerate
     )
       return false;
-    const baseModelSetKeys = getBaseModelSetTypes({
-      modelType: resource.model.type,
-      baseModel: resource.baseModel,
-      defaultType: baseModel as SupportedBaseModel,
-    });
-    return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
+    const baseModelSetKeys = getGenerationBaseModelAssociatedGroups(
+      resource.baseModel,
+      resource.model.type
+    );
+    return baseModelSetKeys.includes(baseModel);
   });
 
   if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
@@ -287,7 +282,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     [currentUser, status] // eslint-disable-line
   );
 
-  const prevBaseModelRef = useRef<BaseModelSetType | null>();
+  const prevBaseModelRef = useRef<BaseModelGroup | null>();
   const debouncer = useDebouncer(1000);
 
   const form = usePersistForm('generation-form-2', {
@@ -393,6 +388,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     const subscription = form.watch((watchedValues, { name }) => {
       const baseModel = watchedValues.baseModel;
       const prevBaseModel = prevBaseModelRef.current;
+      const fluxMode = watchedValues.fluxMode;
+
+      if (name === 'fluxMode') {
+        if (fluxMode === fluxKreaAir && baseModel !== 'FluxKrea') {
+          form.setValue('model', getGenerationConfig('FluxKrea').checkpoint);
+        } else if (fluxMode !== fluxKreaAir && baseModel === 'FluxKrea') {
+          form.setValue('model', getGenerationConfig('Flux1').checkpoint);
+        }
+      }
+
       // handle model change to update baseModel value
       if (name !== 'baseModel') {
         if (
@@ -410,7 +415,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ) {
           form.setValue('workflow', 'txt2img');
         }
-        const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];
+        const fluxBaseModels: BaseModelGroup[] = ['Flux1', 'Flux1Kontext'];
         if (!!baseModel && !!prevBaseModel) {
           if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel))
             form.setValue('cfgScale', 3.5);
@@ -441,8 +446,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (
         watchedValues.baseModel === 'Flux1' &&
         !!watchedValues.resources?.length &&
-        watchedValues.fluxMode !== fluxStandardAir &&
-        watchedValues.fluxMode !== fluxKreaAir
+        fluxMode !== fluxStandardAir &&
+        fluxMode !== fluxKreaAir
       ) {
         form.setValue('fluxMode', fluxStandardAir);
       }

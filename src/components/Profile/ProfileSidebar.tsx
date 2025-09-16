@@ -166,7 +166,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   );
 
   const shareBtn = (
-    <ShareButton url={router.asPath} title={`${user.username} Profile`}>
+    <ShareButton url={router.asPath} title={user.username ? `${user.username} Profile` : undefined}>
       <LegacyActionIcon
         size={30}
         radius="xl"

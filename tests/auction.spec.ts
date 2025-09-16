@@ -7,6 +7,11 @@ test.describe('bidding', () => {
   test('bid first', async ({ page }) => {
     await page.goto('/auctions');
 
+    const skipTour = page.getByRole('button', { name: 'Skip' });
+    if (await skipTour.isVisible()) {
+      await skipTour.click();
+    }
+
     await page.getByRole('button', { name: 'Select model' }).click();
 
     const confirmBtn = page.getByRole('button', { name: 'Close' });
@@ -15,7 +20,11 @@ test.describe('bidding', () => {
     }
 
     await page.getByText('ALL', { exact: true }).click();
-    await page.locator('div').getByRole('button', { name: 'Select' }).first().click();
+    await page
+      .getByTestId('resource-select-items')
+      .getByRole('button', { name: 'Select' })
+      .first()
+      .click();
     // TODO get name here...
 
     await page.getByRole('button', { name: '1st' }).click();

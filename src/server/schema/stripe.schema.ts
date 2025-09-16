@@ -1,5 +1,6 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { constants } from '~/server/common/constants';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
@@ -42,8 +43,8 @@ export const paymentIntentMetadataSchema = z.discriminatedUnion('type', [
 
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
-  unitAmount: z.number().min(buzzConstants.minChargeAmount).max(buzzConstants.maxChargeAmount),
-  currency: z.nativeEnum(Currency),
+  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
+  currency: z.enum(Currency),
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
   recaptchaToken: z.string(),

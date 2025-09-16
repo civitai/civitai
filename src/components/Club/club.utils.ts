@@ -1,5 +1,5 @@
 import { trpc } from '~/utils/trpc';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import type {
   GetInfiniteClubPostsSchema,
   GetInfiniteClubSchema,
@@ -12,17 +12,11 @@ import type {
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
-import { getPaginatedClubResourcesSchema } from '~/server/schema/club.schema';
-import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useMemo } from 'react';
-import {
-  applyUserPreferencesClub,
-  applyUserPreferencesClubPost,
-} from '~/components/Search/search.utils';
+import { applyUserPreferencesClubPost } from '~/components/Search/search.utils';
 import type { ClubPostGetAll } from '~/types/router';
-import { ClubGetAll, ClubTier, UserClub } from '~/types/router';
 import type {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
@@ -743,8 +737,8 @@ export const useQueryClubResources = (
 };
 
 export const useClubFilters = () => {
-  const storeFilters = useFiltersContext((state) => state.clubs);
-  return removeEmpty(storeFilters);
+  // const storeFilters = useFiltersContext((state) => state.clubs);
+  // return removeEmpty(storeFilters);
 };
 
 export const useQueryClubs = (

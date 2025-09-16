@@ -55,18 +55,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Status',
   },
   {
-    key: 'wiki',
-    href: '/wiki',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
-    children: 'Wiki',
-  },
-  {
     key: 'education',
     href: '/education',
     target: '_blank',
     rel: 'nofollow noreferrer',
-    children: '💡Education',
+    children: '💡 Education',
   },
   {
     key: 'creator-program',

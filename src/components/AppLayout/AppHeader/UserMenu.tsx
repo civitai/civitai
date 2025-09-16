@@ -121,7 +121,6 @@ export function UserMenu() {
 // }
 
 function PopoverContent() {
-  console.log('render');
   const { handleClose } = useUserMenuContext();
   const [accountSwitching, setAccountSwitching] = useState(false);
   function handleToggleAccountSwitching() {

@@ -1,7 +1,7 @@
 import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 

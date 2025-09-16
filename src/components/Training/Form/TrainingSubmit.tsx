@@ -19,7 +19,7 @@ import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tab
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -45,7 +45,7 @@ import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelec
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
   ModelVersionUpsertInput,

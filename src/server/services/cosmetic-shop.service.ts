@@ -24,6 +24,7 @@ import {
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -628,9 +629,11 @@ export const purchaseCosmeticShopItem = async ({
 export const getUserPreviewImagesForCosmetics = async ({
   userId,
   browsingLevel,
+  features,
   limit = 5,
 }: {
   userId: number;
+  features: FeatureAccess;
 } & GetPreviewImagesInput) => {
   const userImages = await getAllImages({
     userId,
@@ -642,6 +645,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     periodMode: 'stats',
     types: [MediaType.image],
     withMeta: false,
+    useLogicalReplica: features.logicalReplica,
   });
 
   const images = userImages.items.slice(0, limit);
@@ -673,6 +677,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       sort: ImageSort.Newest,
       types: [MediaType.image],
       withMeta: false,
+      useLogicalReplica: features.logicalReplica,
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);

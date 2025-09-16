@@ -1,6 +1,6 @@
-import dayjs from 'dayjs';
-import CustomParseFormat from 'dayjs/plugin/customParseFormat';
-import * as z from 'zod/v4';
+import dayjs from '~/shared/utils/dayjs';
+
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
@@ -30,8 +30,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-
-dayjs.extend(CustomParseFormat);
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -82,7 +81,7 @@ export const getAllModelsSchema = z.object({
     .optional(),
   checkpointType: z.enum(CheckpointType).optional(),
   baseModels: z
-    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+    .union([z.enum(baseModels), z.enum(baseModels).array()])
     .transform((rel) => {
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];
@@ -164,6 +163,7 @@ export type ModelGallerySettingsSchema = {
   tags?: number[] | undefined;
   images?: number[] | undefined;
   level?: number | undefined;
+  hiddenImages?: Record<string, number[]> | undefined;
   pinnedPosts?: Record<string, number[]> | undefined;
 };
 
@@ -171,7 +171,7 @@ export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput
 export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
-  hiddenImages: z.number().array(),
+  hiddenImages: z.record(z.string(), z.number().array()).optional(),
   level: z.number().optional(),
   pinnedPosts: z
     .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
@@ -197,11 +197,10 @@ export const modelUpsertSchema = licensingSchema.extend({
   minor: z.boolean().default(false).optional(),
   sfwOnly: z.boolean().default(false).optional(),
   meta: z
-    .object({
+    .looseObject({
       showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
     })
-    .passthrough()
     .transform((val) => val as ModelMeta | null)
     .nullish(),
   availability: z.enum(Availability).optional(),
@@ -260,6 +259,7 @@ export type ModelMeta = Partial<{
   declinedAt: string;
   showcaseCollectionId: number;
   cannotPromote: boolean;
+  cannotPublish: boolean;
   commentsLocked: boolean;
 }>;
 
@@ -348,7 +348,7 @@ export const getSimpleModelsInfiniteSchema = infiniteQuerySchema.extend({
 export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCoverageSchema>;
 export const toggleCheckpointCoverageSchema = z.object({
   id: z.number(),
-  versionId: z.number().nullish(),
+  versionId: z.number(),
 });
 
 export type SetModelCollectionShowcaseInput = z.infer<typeof setModelCollectionShowcaseSchema>;
@@ -389,4 +389,13 @@ export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>
 export const publishPrivateModelSchema = z.object({
   modelId: z.number(),
   publishVersions: z.boolean(),
+});
+
+export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
+export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
+  username: z.string().optional(),
+  dateFrom: z.date().optional(),
+  dateTo: z.date().optional(),
+  cannotPublish: z.boolean().optional(),
+  workflowId: z.string().optional(),
 });

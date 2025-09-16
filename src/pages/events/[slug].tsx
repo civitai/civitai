@@ -31,7 +31,7 @@ import {
   Tooltip as ChartTooltip,
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { InferGetServerSidePropsType } from 'next';
 import Image from 'next/image';
 import { forwardRef, Fragment, useMemo, useRef, useState } from 'react';

@@ -22,10 +22,10 @@ import {
   IconInfoCircle,
   IconTrash,
 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
@@ -55,7 +55,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
@@ -83,6 +83,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './BountyUpsertForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { stringToDate } from '~/utils/zod-helpers';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -110,19 +111,19 @@ const formSchema = upsertBountyInputSchema
     ),
   })
   .refine((data) => data.poi !== true, {
-    message: 'The creation of bounties intended to depict an actual person is prohibited',
+    error: 'The creation of bounties intended to depict an actual person is prohibited',
     path: ['poi'],
   })
   .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
     path: ['nsfw'],
   })
   .refine((data) => data.startsAt < data.expiresAt, {
-    message: 'Start date must be before expiration date',
+    error: 'Start date must be before expiration date',
     path: ['startsAt'],
   })
   .refine((data) => data.expiresAt > data.startsAt, {
-    message: 'Expiration date must be after start date',
+    error: 'Expiration date must be after start date',
     path: ['expiresAt'],
   });
 

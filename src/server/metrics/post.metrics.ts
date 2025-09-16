@@ -6,11 +6,12 @@ import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import type { PostMetric } from '~/shared/utils/prisma/models';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { templateHandler } from '~/server/db/db-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getJobDate } from '~/server/jobs/job';
 import { capitalize } from '~/utils/string-helpers';
+import type { Dayjs } from 'dayjs';
 
 const log = createLogger('metrics:post');
 
@@ -39,7 +40,6 @@ export const postMetrics = createMetricProcessor({
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', updateTasks.length);
 
-      const batchJson = JSON.stringify(batch);
       const metricInsertColumns = metrics.map((key) => `"${key}" INT[]`).join(', ');
       const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
       const metricValues = metrics
@@ -59,7 +59,7 @@ export const postMetrics = createMetricProcessor({
 
       await executeRefresh(ctx)`
         -- update post metrics
-        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("postId" INT, ${metricInsertColumns}))
+        WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("postId" INT, ${metricInsertColumns}))
         INSERT INTO "PostMetric" ("postId", "timeframe", "updatedAt", ${metricInsertKeys})
         SELECT
           d."postId",
@@ -125,7 +125,7 @@ export const postMetrics = createMetricProcessor({
         await executeRefresh(ctx)`
           UPDATE "PostMetric" pm
           SET "ageGroup" = '${capitalize(timePeriods[periodIndex + 1])}'::"MetricTimeframe"
-          WHERE pm."postId" IN (${ids})
+          WHERE pm."postId" = ANY(${ids}::int[])
             AND pm."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         `;
         log('update ageGroups', timePeriod, i + 1, 'of', ageGroupTasks.length, 'done');
@@ -170,7 +170,7 @@ async function getReactionTasks(ctx: MetricContext) {
       SELECT DISTINCT
         i."postId" AS id
       FROM "Image" i
-      WHERE i.id IN (${ids})
+      WHERE i.id = ANY(${ids}::int[])
         AND i.id BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
     `;
     postIds.filter(isDefined).forEach((x) => affected.add(x));
@@ -207,7 +207,7 @@ async function getCommentTasks(ctx: MetricContext) {
       t."postId" AS id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."postId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+    WHERE t."postId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
@@ -223,7 +223,7 @@ async function getCommentTasks(ctx: MetricContext) {
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE t."postId" IN (${ids})
-        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
+        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY t."postId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -238,7 +238,7 @@ async function getCollectionTasks(ctx: MetricContext) {
     SELECT DISTINCT
       "postId" AS id
     FROM "CollectionItem"
-    WHERE "postId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "postId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
@@ -266,7 +266,7 @@ type MetricKey = keyof PostMetric;
 type TimeframeData = [number, number, number, number, number];
 type MetricContext = MetricProcessorRunContext & {
   updates: Record<number, Record<MetricKey, TimeframeData | number>>;
-  lastViewUpdate: dayjs.Dayjs;
+  lastViewUpdate: Dayjs;
   setLastViewUpdate: () => void;
 };
 const metrics = [

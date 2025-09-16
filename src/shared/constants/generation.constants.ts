@@ -1,24 +1,26 @@
 import type { WorkflowStatus } from '@civitai/client';
 import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
-import type { BaseModelSetType, Sampler } from '~/server/common/constants';
+import type { Sampler } from '~/server/common/constants';
 import {
-  baseModelSets,
   generation,
   generationConfig,
   getGenerationConfig,
   maxUpscaleSize,
   minDownscaleSize,
 } from '~/server/common/constants';
-import { modelIdEngineMap } from '~/server/orchestrator/generation/generation.config';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import type { MediaType } from '~/shared/utils/prisma/enums';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import {
+  getBaseModelEcosystem,
+  getBaseModelGroup,
+  getBaseModelGroupsByMediaType,
+  getBaseModelMediaType,
+} from '~/shared/constants/base-model.constants';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
-import { getImageDimensions } from '~/utils/image-utils';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
@@ -37,29 +39,6 @@ export const generationServiceCookie = {
   name: 'generation-token',
   maxAge: 3600,
 };
-
-export function getRoundedWidthHeight({ width, height }: { width: number; height: number }) {
-  const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
-  const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
-  const ratio = Math.min(maxWidth / width, maxHeight / height);
-  return {
-    width: Math.ceil((width * ratio) / 64) * 64,
-    height: Math.ceil((height * ratio) / 64) * 64,
-  };
-}
-
-export async function getSourceImageFromUrl({ url, upscale }: { url: string; upscale?: boolean }) {
-  return getImageDimensions(url).then(({ width, height }) => {
-    let upscaleWidth: number | undefined;
-    let upscaleHeight: number | undefined;
-    if (upscale) {
-      const upscaled = getRoundedWidthHeight({ width: width * 1.5, height: height * 1.5 });
-      upscaleWidth = upscaled.width;
-      upscaleHeight = upscaled.height;
-    }
-    return { url, upscaleWidth, upscaleHeight, ...getRoundedWidthHeight({ width, height }) };
-  });
-}
 
 // #region [statuses]
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
@@ -90,7 +69,7 @@ export type InjectableResource = {
   id: number;
   triggerWord?: string;
   triggerType?: 'negative' | 'positive';
-  baseModelSetType?: BaseModelSetType;
+  baseModelSetType?: BaseModelGroup;
   sanitize?: (params: TextToImageParams) => Partial<TextToImageParams>;
 };
 
@@ -117,7 +96,7 @@ export const draftInjectableResources = [
 
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
-export function getInjectablResources(baseModelSetType: BaseModelSetType) {
+export function getInjectablResources(baseModelSetType: BaseModelGroup) {
   const isSdxl = getIsSdxl(baseModelSetType);
   let value = baseModelSetType;
   if (isSdxl) value = 'SDXL';
@@ -151,10 +130,10 @@ export const samplersToSchedulers = {
   'DPM fast': Scheduler.DPM_FAST,
   'DPM adaptive': Scheduler.DPM_ADAPTIVE,
   'LMS Karras': Scheduler.LMS_KARRAS,
-  'DPM2 Karras': Scheduler.DP_M2KARRAS,
-  'DPM2 a Karras': Scheduler.DP_M2AKARRAS,
-  'DPM++ 2S a Karras': Scheduler.DP_M2SAKARRAS,
-  'DPM++ 2M Karras': Scheduler.DP_M2MKARRAS,
+  'DPM2 Karras': Scheduler.DP_M2_KARRAS,
+  'DPM2 a Karras': Scheduler.DP_M2A_KARRAS,
+  'DPM++ 2S a Karras': Scheduler.DP_M2SA_KARRAS,
+  'DPM++ 2M Karras': Scheduler.DP_M2M_KARRAS,
   // 'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
   'DPM++ SDE Karras': Scheduler.DPMSDE_KARRAS,
   'DPM++ 3M SDE': Scheduler.DP_M3MSDE,
@@ -204,32 +183,13 @@ export const samplersToComfySamplers: Record<
 };
 
 // #region [utils]
-// some base models, such as SD1.5 can work with different base model set types
-
-export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelSetType) {
-  defaultType ??= 'SD1';
+export function getBaseModelSetType(baseModel?: string, defaultType: BaseModelGroup = 'SD1') {
   if (!baseModel) return defaultType;
-  return (Object.entries(baseModelSets).find(
-    ([key, baseModelSet]) =>
-      key.toLowerCase() === baseModel.toLocaleLowerCase() ||
-      (baseModelSet.baseModels as string[]).includes(baseModel)
-  )?.[0] ?? defaultType) as BaseModelSetType;
-}
-
-export function getBaseModelSet(baseModel?: string) {
-  const baseModelSetType = getBaseModelSetType(baseModel);
-  return baseModelSets[baseModelSetType] ?? [];
+  return getBaseModelGroup(baseModel ?? defaultType);
 }
 
 export function getIsSdxl(baseModel?: string) {
-  const baseModelSetType = getBaseModelSetType(baseModel);
-  return (
-    baseModelSetType === 'SDXL' ||
-    baseModelSetType === 'Pony' ||
-    baseModelSetType === 'SDXLDistilled' ||
-    baseModelSetType === 'Illustrious' ||
-    baseModelSetType === 'NoobAI'
-  );
+  return baseModel ? getBaseModelEcosystem(baseModel) === 'sdxl' : false;
 }
 
 export function getIsHiDream(baseModel?: string) {
@@ -239,7 +199,7 @@ export function getIsHiDream(baseModel?: string) {
 
 export function getIsFlux(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
-  return baseModelSetType === 'Flux1';
+  return baseModelSetType === 'Flux1' || baseModelSetType === 'FluxKrea';
 }
 
 export function getIsFluxStandard(modelId: number) {
@@ -251,16 +211,27 @@ export function getIsSD3(baseModel?: string) {
   return baseModelSetType === 'SD3' || baseModelSetType === 'SD3_5M';
 }
 
+export function getIsQwen(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Qwen';
+}
+
+export function getIsChroma(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Chroma';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
-) {
+): BaseModelGroup | undefined {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
-  if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
-  const resourceBaseModels = resources.map((x) => getBaseModelSetType(x.baseModel));
+  if (checkpoint) return getBaseModelGroup(checkpoint.baseModel);
+  const resourceBaseModels = resources.map((x) => getBaseModelGroup(x.baseModel));
   // image base models
   if (resourceBaseModels.some((baseModel) => baseModel === 'Pony')) return 'Pony';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SDXL')) return 'SDXL';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1')) return 'Flux1';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'FluxKrea')) return 'FluxKrea';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
     return 'Illustrious';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';
@@ -271,11 +242,14 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
     return 'Flux1Kontext';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Chroma')) return 'Chroma';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Seedream')) return 'Seedream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
-  for (const baseModelSet of videoBaseModelSetTypes) {
-    if (resources.some((x) => getBaseModelSetType(x.baseModel) === baseModelSet))
-      return baseModelSet;
+  for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
+    if (resources.some((x) => getBaseModelGroup(x.baseModel) === baseModelSet)) return baseModelSet;
   }
 }
 
@@ -285,22 +259,10 @@ export function getBaseModelFromResourcesWithDefault<
   return getBaseModelFromResources(resources) ?? 'SD1';
 }
 
-const videoBaseModelSetTypes: BaseModelSetType[] = [
-  'HyV1',
-  'WanVideo',
-  'WanVideo14B_I2V_480p',
-  'WanVideo14B_I2V_720p',
-  'WanVideo14B_T2V',
-  'WanVideo1_3B_T2V',
-  'LTXV',
-  'Veo3',
-];
 export function getResourceGenerationType(
-  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>,
-  resources: GenerationResource[]
+  baseModel: ReturnType<typeof getBaseModelFromResourcesWithDefault>
 ) {
-  if (resources.some((r) => modelIdEngineMap.get(r.model.id))) return 'video';
-  return videoBaseModelSetTypes.includes(baseModel) ? 'video' : ('image' as MediaType);
+  return getBaseModelMediaType(baseModel);
 }
 
 export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
@@ -382,196 +344,6 @@ export function sanitizeParamsByWorkflowDefinition(
 // #endregion
 
 // #region [config]
-const sdxlEcosystemPartialSupport = [
-  'SDXL 0.9',
-  'SDXL 1.0',
-  'SDXL 1.0 LCM',
-  ...baseModelSets.Pony.baseModels,
-  ...baseModelSets.Illustrious.baseModels,
-  ...baseModelSets.NoobAI.baseModels,
-];
-export type BaseModelResourceTypes = typeof baseModelResourceTypes;
-export type SupportedBaseModel = keyof BaseModelResourceTypes;
-export const baseModelResourceTypes = {
-  SD1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1.baseModels] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SD1.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD1.baseModels] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1.baseModels] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1.baseModels] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SD1.baseModels] },
-  ],
-  SDXL: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL.baseModels] },
-    {
-      type: ModelType.TextualInversion,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-      partialSupport: [
-        'SD 1.5',
-        ...baseModelSets.Pony.baseModels,
-        ...baseModelSets.Illustrious.baseModels,
-      ],
-    },
-    {
-      type: ModelType.LORA,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
-    },
-    {
-      type: ModelType.DoRA,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
-    },
-    {
-      type: ModelType.LoCon,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
-    },
-    {
-      type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
-    },
-  ],
-  Pony: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.Pony.baseModels },
-    {
-      type: ModelType.TextualInversion,
-      baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
-    },
-    {
-      type: ModelType.LORA,
-      baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.DoRA,
-      baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.LoCon,
-      baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-    },
-  ],
-  Illustrious: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.Illustrious.baseModels },
-    {
-      type: ModelType.TextualInversion,
-      baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
-    },
-    {
-      type: ModelType.LORA,
-      baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.DoRA,
-      baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.LoCon,
-      baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-    },
-  ],
-  NoobAI: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.NoobAI.baseModels },
-    {
-      type: ModelType.TextualInversion,
-      baseModels: baseModelSets.NoobAI.baseModels,
-      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
-    },
-    {
-      type: ModelType.LORA,
-      baseModels: baseModelSets.NoobAI.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.DoRA,
-      baseModels: baseModelSets.NoobAI.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.LoCon,
-      baseModels: baseModelSets.NoobAI.baseModels,
-      partialSupport: sdxlEcosystemPartialSupport,
-    },
-    {
-      type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL.baseModels],
-    },
-  ],
-  Flux1: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1.baseModels },
-    { type: ModelType.LORA, baseModels: baseModelSets.Flux1.baseModels },
-  ],
-  Flux1Kontext: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1Kontext.baseModels }],
-  // SD3: [
-  //   { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
-  //   { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
-  // ],
-  // SD3_5M: [
-  //   { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
-  //   { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
-  // ],
-  HiDream: [
-    { type: ModelType.Checkpoint, baseModels: baseModelSets.HiDream.baseModels },
-    { type: ModelType.LORA, baseModels: baseModelSets.HiDream.baseModels },
-  ],
-  HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
-  OpenAI: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.OpenAI.baseModels }],
-  Imagen4: [{ type: ModelType.Checkpoint, baseModels: baseModelSets.Imagen4.baseModels }],
-  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
-  // WanVideo1_3B_T2V: [
-  //   { type: ModelType.LORA, baseModels: baseModelSets.WanVideo1_3B_T2V.baseModels },
-  // ],
-  WanVideo14B_T2V: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo14B_T2V.baseModels }],
-  WanVideo14B_I2V_480p: [
-    {
-      type: ModelType.LORA,
-      baseModels: [
-        ...baseModelSets.WanVideo14B_I2V_480p.baseModels,
-        ...baseModelSets.WanVideo14B_I2V_720p.baseModels,
-      ],
-    },
-  ],
-  WanVideo14B_I2V_720p: [
-    {
-      type: ModelType.LORA,
-      baseModels: baseModelSets.WanVideo14B_I2V_720p.baseModels,
-      partialSupport: baseModelSets.WanVideo14B_I2V_480p.baseModels,
-    },
-  ],
-  Veo3: [],
-};
-export function getBaseModelResourceTypes(baseModel: string) {
-  if (baseModel in baseModelResourceTypes)
-    return baseModelResourceTypes[baseModel as SupportedBaseModel];
-}
-
-export function getImageGenerationBaseModels() {
-  return [
-    ...new Set(
-      Object.entries(baseModelResourceTypes)
-        .filter(([key]) => !videoBaseModelSetTypes.includes(key as BaseModelSetType))
-        .flatMap(([key, value]) => value.flatMap((x) => x.baseModels))
-    ),
-  ];
-}
-
 export const miscModelTypes: ModelType[] = [
   'AestheticGradient',
   'Hypernetwork',
@@ -600,27 +372,6 @@ export const fluxModeOptions = [
   { label: 'Ultra', value: fluxUltraAir },
 ];
 
-export function getBaseModelSetTypes({
-  modelType,
-  baseModel,
-  defaultType = 'SD1',
-}: {
-  modelType: ModelType;
-  baseModel?: string;
-  defaultType?: SupportedBaseModel;
-}) {
-  if (!baseModel) return [defaultType];
-  return Object.entries(baseModelResourceTypes)
-    .filter(([key, config]) => {
-      if (key === baseModel) return true;
-      const match = config.find((x) => x.type === modelType);
-      const baseModels = match?.baseModels ?? [];
-      const partialSupport = (match as any)?.partialSupport ?? [];
-      const combined = [...baseModels, ...partialSupport];
-      return combined.includes(baseModel);
-    })
-    .map(([key]) => key) as SupportedBaseModel[];
-}
 // #endregion
 
 // #region [workflows]

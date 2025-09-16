@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

@@ -39,7 +39,7 @@ export function UnblockImage({
   if (!currentUser?.isModerator) return null;
   const onClick = () => {
     if (skipConfirm) {
-      mutate({ ids: [imageId], reviewType: 'blocked' });
+      mutate({ ids: [imageId], reviewAction: 'unblock' });
     } else {
       openConfirmModal({
         modalId: 'unblock-confirm',
@@ -49,7 +49,7 @@ export function UnblockImage({
         labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
         closeOnConfirm,
         onConfirm: () => {
-          mutate({ ids: [imageId], reviewType: 'blocked' });
+          mutate({ ids: [imageId], reviewAction: 'unblock' });
           onUnblock?.(imageId);
         },
         zIndex: 1000,

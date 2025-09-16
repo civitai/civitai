@@ -11,7 +11,7 @@ import {
   Popover,
 } from '@mantine/core';
 import { IconPencilMinus, IconInfoSquareRounded } from '@tabler/icons-react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { useSession } from 'next-auth/react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,10 +20,6 @@ import { usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { CryptoTransactions } from '~/components/Account/CryptoTransactions';
-import { features } from 'process';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = z.object({
   id: z.number(),
@@ -34,7 +30,6 @@ export function ProfileCard() {
   const queryUtils = trpc.useUtils();
   const session = useCurrentUser();
   const { data } = useSession();
-  const features = useFeatureFlags();
 
   const currentUser = data?.user;
 
@@ -130,29 +125,14 @@ export function ProfileCard() {
               />
             </Grid.Col>
             <Grid.Col span={12}>
-              <Stack>
-                <Button
-                  type="submit"
-                  loading={isLoading}
-                  disabled={!form.formState.isDirty}
-                  fullWidth
-                >
-                  Save
-                </Button>
-                {features.coinbaseOnramp && (
-                  <Button
-                    color="teal"
-                    compact
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: CryptoTransactions,
-                      });
-                    }}
-                  >
-                    View Debit Card Transactions
-                  </Button>
-                )}
-              </Stack>
+              <Button
+                type="submit"
+                loading={isLoading}
+                disabled={!form.formState.isDirty}
+                fullWidth
+              >
+                Save
+              </Button>
             </Grid.Col>
           </Grid>
         </Stack>

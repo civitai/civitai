@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
@@ -11,9 +11,13 @@ import { getModelsWithVersions } from '~/server/services/model.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -25,9 +29,12 @@ const baseUrl = getBaseUrl();
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const parsedParams = schema.safeParse(req.query);
   if (!parsedParams.success)
-    return res
-      .status(400)
-      .json({ error: `Invalid id: ${parsedParams.error.issues[0].input as string}` });
+    return res.status(400).json({
+      error: z.prettifyError(parsedParams.error) ?? `Invalid id`,
+    });
+
+  const region = getRegion(req);
+  const isRestricted = isRegionRestricted(region);
 
   try {
     const { items } = await getModelsWithVersions({
@@ -39,7 +46,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         archived: true,
         period: 'AllTime',
         periodMode: 'published',
-        browsingLevel: allBrowsingLevelsFlag,
+        browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag,
       },
     });
     if (items.length === 0)

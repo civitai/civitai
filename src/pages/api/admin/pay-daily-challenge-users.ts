@@ -1,14 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { getChallengeDetails } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { withRetries } from '~/utils/errorHandling';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { numericString } from '~/utils/zod-helpers';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 const schema = z.object({
   challengeId: numericString(),

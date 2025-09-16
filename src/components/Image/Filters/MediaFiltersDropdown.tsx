@@ -26,8 +26,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/server/common/constants';
-import { activeBaseModels } from '~/server/common/constants'; // Add this import
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';

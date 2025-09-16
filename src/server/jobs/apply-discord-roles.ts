@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import type { DiscordRole } from '~/server/integrations/discord';
@@ -14,26 +14,33 @@ const applyDiscordActivityRoles = createJob(
   async () => {
     const discordRoles = await discord.getAllRoles();
 
-    const enthusiastRole = discordRoles.find((r) => r.name === 'Enthusiast');
-    if (enthusiastRole) {
-      const existingEntusiasts = await getAccountsInRole(enthusiastRole);
+    // Too Expensive...
+    // const enthusiastRole = discordRoles.find((r) => r.name === 'Enthusiast');
+    // if (enthusiastRole) {
+    //   const existingEntusiasts = await getAccountsInRole(enthusiastRole);
 
-      const enthusiastCutoff = dayjs().subtract(ENTHUSIAST_ROLE_CUTOFF, 'day').toDate();
-      const enthusiasts =
-        (
-          await dbWrite.$queryRaw<{ providerAccountId: string }[]>`
-        SELECT DISTINCT a."providerAccountId"
-        FROM "Image" i
-        JOIN "Account" a ON a."userId" = i."userId" AND a.provider = 'discord'
-        WHERE i."createdAt" > ${enthusiastCutoff}`
-        )?.map((x) => x.providerAccountId) ?? [];
+    //   const enthusiastCutoff = dayjs().subtract(ENTHUSIAST_ROLE_CUTOFF, 'day').toDate();
+    //   const enthusiasts =
+    //     (
+    //       await dbWrite.$queryRawUnsafe<{ providerAccountId: string }[]>(`
+    //     SELECT a."providerAccountId"
+    //     FROM "Account" a
+    //     WHERE a.provider = 'discord'
+    //       AND EXISTS (
+    //         SELECT 1
+    //         FROM "Image" i
+    //         WHERE i."userId" = a."userId"
+    //           AND i."createdAt" > $1
+    //         LIMIT 1
+    //       )`, enthusiastCutoff)
+    //     )?.map((x) => x.providerAccountId) ?? [];
 
-      const newEntusiasts = enthusiasts.filter((u) => !existingEntusiasts.includes(u));
-      await addRoleToAccounts(enthusiastRole, newEntusiasts);
+    //   const newEntusiasts = enthusiasts.filter((u) => !existingEntusiasts.includes(u));
+    //   await addRoleToAccounts(enthusiastRole, newEntusiasts);
 
-      const removedEntusiasts = existingEntusiasts.filter((u) => !enthusiasts.includes(u));
-      await removeRoleFromAccounts(enthusiastRole, removedEntusiasts);
-    }
+    //   const removedEntusiasts = existingEntusiasts.filter((u) => !enthusiasts.includes(u));
+    //   await removeRoleFromAccounts(enthusiastRole, removedEntusiasts);
+    // }
 
     const creatorRole = discordRoles.find((r) => r.name === 'Creator');
     if (creatorRole) {

@@ -95,7 +95,6 @@ import {
   fluxStandardAir,
   fluxUltraAir,
   fluxUltraAspectRatios,
-  getBaseModelResourceTypes,
   getIsFlux,
   getIsFluxStandard,
   getIsFluxUltra,
@@ -104,10 +103,11 @@ import {
   getIsHiDream,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
-  getImageGenerationBaseModels,
   fluxDraftAir,
   fluxKreaAir,
   getIsFluxKrea,
+  getIsQwen,
+  getIsChroma,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -140,6 +140,16 @@ import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
+import {
+  getGenerationBaseModelResourceOptions,
+  getGenerationBaseModelsByMediaType,
+} from '~/shared/constants/base-model.constants';
+import { getIsNanoBanana } from '~/shared/orchestrator/ImageGen/gemini.config';
+import {
+  InputSourceImageUploadMultiple,
+  SourceImageUploadMultiple,
+} from '~/components/Generation/Input/SourceImageUploadMultiple';
+import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 
 let total = 0;
 const tips = {
@@ -438,6 +448,8 @@ export function GenerationFormContent() {
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isQwen = getIsQwen(baseModel);
+  const isChroma = getIsChroma(baseModel);
 
   // HiDream
   const isHiDream = getIsHiDream(baseModel);
@@ -448,8 +460,11 @@ export function GenerationFormContent() {
   const isOpenAI = baseModel === 'OpenAI';
   const isImagen4 = getIsImagen4(model.id);
   const isFluxKontext = getIsFluxKontext(model.id);
+  const isNanoBanana = getIsNanoBanana(model.id);
+  const isSeedream = getIsSeedream(model.id);
+  const showImg2ImgMultiple = isNanoBanana || isSeedream;
 
-  const disablePriority = runsOnFalAI || isOpenAI;
+  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
 
   const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
 
@@ -471,7 +486,7 @@ export function GenerationFormContent() {
               ? fluxMode === fluxDraftAir
               : isSD3
               ? model.id === 983611
-              : features.draft && !!draft && !isImageGen && !isFlux;
+              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen && !isChroma;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
               ? 10
@@ -483,13 +498,13 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3) {
+            if (isFlux || isSD3 || isQwen || isChroma) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -497,34 +512,55 @@ export function GenerationFormContent() {
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
             const disableAdditionalResources =
-              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext;
-            const disableAdvanced = isFluxUltra || isOpenAI || isImagen4 || isHiDream;
+              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana || isSeedream;
+            const disableAdvanced =
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana || isSeedream;
             const disableNegativePrompt =
               isFlux ||
+              isQwen ||
               isOpenAI ||
               isFluxKontext ||
-              (isHiDream && hiDreamResource?.variant !== 'full');
+              (isHiDream && hiDreamResource?.variant !== 'full') ||
+              isNanoBanana ||
+              isSeedream;
             const disableWorkflowSelect =
-              isFlux || isSD3 || isImageGen || isHiDream || isFluxKontext;
+              isFlux ||
+              isSD3 ||
+              isImageGen ||
+              isHiDream ||
+              isFluxKontext ||
+              isQwen ||
+              isNanoBanana ||
+              isChroma ||
+              isSeedream;
             const disableDraft =
               !features.draft ||
               isOpenAI ||
               isFlux ||
+              isQwen ||
               isSD3 ||
               isImagen4 ||
               isHiDream ||
-              isFluxKontext;
+              isFluxKontext ||
+              isNanoBanana ||
+              isChroma ||
+              isSeedream;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3) || isOpenAI || isFluxKontext;
+              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma) ||
+              isOpenAI ||
+              isFluxKontext;
             const disableCfgScale = isFluxUltra;
-            const disableSampler = isFlux || isSD3 || isFluxKontext;
+            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
             const disableSteps = isFluxUltra || isFluxKontext;
-            const disableClipSkip = isSDXL || isFlux || isSD3 || isFluxKontext;
-            const disableVae = isFlux || isSD3 || isFluxKontext;
+            const disableClipSkip =
+              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
+            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
+            const disableAspectRatio =
+              isFluxUltra || isImg2Img || (showImg2ImgMultiple && !isSeedream);
 
-            const resourceTypes = getBaseModelResourceTypes(baseModel);
+            const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
               return (
                 <ResetGenerationPanel
@@ -569,13 +605,6 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                  )}
-                  {enableImageInput && (
-                    <InputSourceImageUpload
-                      name="sourceImage"
-                      label={isOpenAI ? 'Image (optional)' : undefined}
-                      warnOnMissingAiMetadata={isFluxKontext}
-                    />
                   )}
 
                   <div className="-mb-1 flex items-center gap-1">
@@ -639,10 +668,10 @@ export function GenerationFormContent() {
                                   baseModels:
                                     !!resources?.length || !!vae
                                       ? baseModels
-                                      : getImageGenerationBaseModels(),
+                                      : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={isFluxStandard || isHiDream || isImageGen}
+                            hideVersion={isFluxStandard || isHiDream || (isImageGen && !isSeedream)}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -796,13 +825,41 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isSD3 && <ReadySection />}
+                          {!isFlux && !isQwen && !isSD3 && !isChroma && <ReadySection />}
                         </Card>
                       );
                     }}
                   </Watch>
 
-                  {isSD3 && (
+                  {enableImageInput && (
+                    <InputSourceImageUpload
+                      name="sourceImage"
+                      label={isOpenAI ? 'Image (optional)' : undefined}
+                      warnOnMissingAiMetadata={isFluxKontext}
+                    />
+                  )}
+
+                  {showImg2ImgMultiple && (
+                    <div className="-mx-2">
+                      <InputSourceImageUploadMultiple
+                        name="images"
+                        max={7}
+                        warnOnMissingAiMetadata
+                        aspect="video"
+                      >
+                        {(previewItems) => (
+                          <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
+                            {previewItems.map((item, i) => (
+                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                            ))}
+                            <SourceImageUploadMultiple.Dropzone />
+                          </div>
+                        )}
+                      </InputSourceImageUploadMultiple>
+                    </div>
+                  )}
+
+                  {(isSD3 || isQwen) && (
                     <Alert className="overflow-visible">
                       This is an experimental build, as such pricing and results are subject to
                       change
@@ -1140,7 +1197,7 @@ export function GenerationFormContent() {
                     />
                   )}
 
-                  {!isFluxUltra && !isImg2Img && (
+                  {!disableAspectRatio && (
                     <div className="flex flex-col gap-0.5">
                       <Input.Label>Aspect Ratio</Input.Label>
                       <InputSegmentedControl
@@ -1197,7 +1254,7 @@ export function GenerationFormContent() {
                     </>
                   )}
 
-                  {isFluxUltra && <InputSeed name="seed" label="Seed" />}
+                  {(isFluxUltra || isSeedream) && <InputSeed name="seed" label="Seed" />}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
@@ -1241,16 +1298,7 @@ export function GenerationFormContent() {
                                         <Input.Label>CFG Scale</Input.Label>
                                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
                                           Controls how closely the image generation follows the text
-                                          prompt.{' '}
-                                          <Anchor
-                                            href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                                            target="_blank"
-                                            rel="nofollow noreferrer"
-                                            span
-                                          >
-                                            Learn more
-                                          </Anchor>
-                                          .
+                                          prompt.
                                         </InfoPopover>
                                       </div>
                                     }
@@ -1261,7 +1309,7 @@ export function GenerationFormContent() {
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
                                     presets={
-                                      isFlux || isFluxKontext || isSD3
+                                      isFlux || isQwen || isFluxKontext || isSD3 || isChroma
                                         ? undefined
                                         : [
                                             { label: 'Creative', value: '4' },
@@ -1283,16 +1331,7 @@ export function GenerationFormContent() {
                                         <Input.Label>Sampler</Input.Label>
                                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
                                           Each will produce a slightly (or significantly) different
-                                          image result.{' '}
-                                          <Anchor
-                                            href="https://wiki.civitai.com/wiki/Sampler"
-                                            target="_blank"
-                                            rel="nofollow noreferrer"
-                                            span
-                                          >
-                                            Learn more
-                                          </Anchor>
-                                          .
+                                          image result.
                                         </InfoPopover>
                                       </div>
                                     }
@@ -1320,16 +1359,7 @@ export function GenerationFormContent() {
                                             <div className="flex items-center gap-1">
                                               <Input.Label>Steps</Input.Label>
                                               <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                                The number of iterations spent generating an image.{' '}
-                                                <Anchor
-                                                  href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                                                  target="_blank"
-                                                  rel="nofollow noreferrer"
-                                                  span
-                                                >
-                                                  Learn more
-                                                </Anchor>
-                                                .
+                                                The number of iterations spent generating an image.
                                               </InfoPopover>
                                             </div>
                                           }
@@ -1338,7 +1368,7 @@ export function GenerationFormContent() {
                                           sliderProps={sharedSliderProps}
                                           numberProps={sharedNumberProps}
                                           presets={
-                                            isFlux || isSD3
+                                            isFlux || isQwen || isSD3 || isChroma
                                               ? undefined
                                               : [
                                                   {
@@ -1415,16 +1445,7 @@ export function GenerationFormContent() {
                                   <div className="flex items-center gap-1">
                                     <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
                                     <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                      These provide additional color and detail improvements.{' '}
-                                      <Anchor
-                                        href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
-                                        target="_blank"
-                                        rel="nofollow noreferrer"
-                                        span
-                                      >
-                                        Learn more
-                                      </Anchor>
-                                      .
+                                      These provide additional color and detail improvements.
                                     </InfoPopover>
                                   </div>
                                 }
@@ -1630,12 +1651,16 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const form = useGenerationForm();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const [baseModel, resources, vae] = form.watch(['baseModel', 'resources', 'vae']);
+  const [baseModel, model, resources, vae] = form.watch(['baseModel', 'model', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
+  const isQwen = getIsQwen(baseModel);
   const isOpenAI = baseModel === 'OpenAI';
+  const checkpoint = model;
+  const isSeedream = getIsSeedream(checkpoint.id);
+
   const hasCreatorTip =
-    (!isFlux && !isSD3 && !isOpenAI) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();

@@ -1,6 +1,6 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import type { PrismaClient } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';

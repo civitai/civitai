@@ -57,13 +57,13 @@ export const CommentForm = ({
   const editorRef = useRef<EditorCommandsRef | null>(null);
   const [focused, setFocused] = useState(autoFocus);
   const defaultValues = { ...comment, entityId, entityType };
-  if (replyTo)
+  if (replyTo && replyTo.username)
     defaultValues.content = `<span data-type="mention" data-id="mention:${replyTo.id}" data-label="${replyTo.username}" contenteditable="false">@${replyTo.username}</span>&nbsp;`;
   const form = useForm({
     schema: upsertCommentv2Schema,
     defaultValues,
     shouldUnregister: false,
-    mode: 'onChange',
+    mode: 'onBlur',
   });
 
   const suggestedMentions = useMemo(
@@ -81,6 +81,7 @@ export const CommentForm = ({
   const queryUtils = trpc.useUtils();
   const { mutate, isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
+      form.reset();
       // if it has an id, just set the data with state
       if (request.id) {
         // Response is minimally different but key components remain the same so any is used.

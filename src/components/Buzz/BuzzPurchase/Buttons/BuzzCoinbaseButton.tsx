@@ -16,7 +16,7 @@ export const BuzzCoinbaseButton = ({
   buzzAmount: number;
   buzzType?: BuzzSpendType;
 }) => {
-  const { createBuzzOrder, creatingBuzzOrder, creatingBuzzOrderOnramp } = useMutateCoinbase();
+  const { createBuzzOrder, creatingBuzzOrder } = useMutateCoinbase();
   const { isLoading: checkingHealth, healthy } = useCoinbaseStatus();
   const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
@@ -38,8 +38,8 @@ export const BuzzCoinbaseButton = ({
   return (
     <Stack gap={0}>
       <Button
-        disabled={disabled || creatingBuzzOrder || creatingBuzzOrderOnramp}
-        loading={creatingBuzzOrder || creatingBuzzOrderOnramp}
+        disabled={disabled || creatingBuzzOrder}
+        loading={creatingBuzzOrder}
         onClick={handleClick}
         size="md"
         radius="md"
@@ -49,7 +49,7 @@ export const BuzzCoinbaseButton = ({
         fw={500}
         fullWidth
       >
-        Pay with Crypto
+        Crypto
       </Button>
     </Stack>
   );

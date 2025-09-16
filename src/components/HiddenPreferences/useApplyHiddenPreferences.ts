@@ -7,8 +7,8 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
-import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit';
+import { Flags } from '~/shared/utils/flags';
+import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit-base';
 import { isDefined, paired } from '~/utils/type-guards';
 
 export function useApplyHiddenPreferences<

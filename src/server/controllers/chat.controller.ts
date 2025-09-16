@@ -22,8 +22,10 @@ import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
+  throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
@@ -35,7 +37,9 @@ import type { ChatCreateChat } from '~/types/router';
 export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = {} } = await getUserSettings(userId);
+    const { chat = { muteSounds: false, replaceBadWords: true, acknowledged: false } } =
+      await getUserSettings(userId);
+
     return chat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -149,7 +153,8 @@ export const createChatHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { id: userId, bannedAt } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
 
     const dedupedUserIds = uniq(input.userIds);
     if (dedupedUserIds.length < 2) {
@@ -574,7 +579,9 @@ export const createMessageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId, muted, isModerator } = ctx.user;
+    const { id: userId, muted, isModerator, bannedAt } = ctx.user;
+    if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
+
     return await createMessage({ ...input, userId, muted, isModerator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -630,6 +637,8 @@ export const isTypingHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    if (!env.SIGNALS_ENDPOINT) throw throwInternalServerError(new Error('No signals endpoint'));
+
     const { id: userId, muted } = ctx.user;
 
     const { chatId, isTyping } = input;

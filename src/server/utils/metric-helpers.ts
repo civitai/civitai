@@ -7,6 +7,7 @@ import type { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { imageMetricsCache } from '~/server/redis/caches';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 
 export const updateEntityMetric = async ({
   ctx,
@@ -63,7 +64,23 @@ export const updateEntityMetric = async ({
         ).catch();
       }
     }
-    if (entityType === 'Image') await imageMetricsCache.bust(entityId);
+
+    if (entityType === 'Image') {
+      let shouldBustCache = true;
+      const fliptClient = await FliptSingleton.getInstance();
+      if (fliptClient) {
+        const flag = fliptClient.evaluateBoolean({
+          flagKey: FLIPT_FEATURE_FLAGS.ENTITY_METRIC_NO_CACHE_BUST,
+          entityId: ctx.user?.id.toString() || 'anonymous',
+          context: {},
+        });
+        shouldBustCache = !flag.enabled;
+      }
+
+      if (shouldBustCache) {
+        await imageMetricsCache.bust(entityId);
+      }
+    }
   } catch (e) {
     const error = e as Error;
     // putting this into the clickhouse dataset for now

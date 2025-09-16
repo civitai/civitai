@@ -29,7 +29,7 @@ import {
   Tooltip as ChartTooltip,
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { Bar } from 'react-chartjs-2';
 import classes from '~/components/Buzz/buzz.module.scss';
@@ -128,12 +128,12 @@ export function DailyCreatorCompReward({
           yAlign: 'center',
           displayColors: false,
           padding: 12,
-          titleFont: { size: 14, weight: '600' },
+          titleFont: { size: 14, weight: 600 },
           titleAlign: 'center',
           bodyFont: { size: 20, weight: 'bold' },
           bodyColor: buzzConfig.color,
           bodyAlign: 'center',
-          footerFont: { size: 12, weight: '500' },
+          footerFont: { size: 12, weight: 500 },
           footerAlign: 'center',
           // external: externalTooltipHandler,
           callbacks: {

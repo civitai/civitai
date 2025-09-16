@@ -1,6 +1,6 @@
-import * as z from 'zod/v4';
-import type { santizeHtmlOptions } from '~/utils/html-helpers';
-import { sanitizeHtml } from '~/utils/html-helpers';
+import * as z from 'zod';
+import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
   z.preprocess((val, ctx) => {
@@ -11,7 +11,7 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
       return sanitizeHtml(str, options);
     } catch (e) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: (e as any).message,
       });
     }
@@ -27,7 +27,7 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
 //         return sanitizeHtml(val, options);
 //       } catch (e) {
 //         ctx.addIssue({
-//           code: z.ZodIssueCode.custom,
+//           code: 'custom',
 //           message: (e as any).message,
 //         });
 //       }

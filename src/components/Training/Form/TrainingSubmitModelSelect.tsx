@@ -17,7 +17,6 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
-import { baseModelSets } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -44,6 +43,7 @@ import {
 } from '~/store/training.store';
 import { stringifyAIR } from '~/shared/utils/air';
 import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
+import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
 
 const ModelSelector = ({
   selectedRun,
@@ -148,16 +148,16 @@ const ModelSelector = ({
 
                 const castBase = (
                   [
-                    ...baseModelSets.SDXL.baseModels,
-                    ...baseModelSets.SDXLDistilled.baseModels,
-                    ...baseModelSets.Pony.baseModels,
-                    ...baseModelSets.Illustrious.baseModels,
+                    ...getBaseModelsByGroup('SDXL'),
+                    ...getBaseModelsByGroup('SDXLDistilled'),
+                    ...getBaseModelsByGroup('Pony'),
+                    ...getBaseModelsByGroup('Illustrious'),
                   ] as string[]
                 ).includes(baseModel)
                   ? 'sdxl'
-                  : ([...baseModelSets.Flux1.baseModels] as string[]).includes(baseModel)
+                  : ([...getBaseModelsByGroup('Flux1')] as string[]).includes(baseModel)
                   ? 'flux'
-                  : ([...baseModelSets.SD3.baseModels] as string[]).includes(baseModel)
+                  : ([...getBaseModelsByGroup('SD3')] as string[]).includes(baseModel)
                   ? 'sd35'
                   : 'sd15';
 

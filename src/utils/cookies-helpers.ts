@@ -1,9 +1,9 @@
 import { setCookie as sc, deleteCookie } from 'cookies-next';
-import dayjs from 'dayjs';
 
 export function setCookie(key: string, data: any, expires?: Date) { // eslint-disable-line
+  const d = new Date();
   return sc(key, data, {
-    expires: expires || dayjs().add(1, 'year').toDate(),
+    expires: expires || new Date(d.setFullYear(d.getFullYear() + 1)),
   });
 }
 export function deleteCookies(keys: string[]) {

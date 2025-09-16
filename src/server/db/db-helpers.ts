@@ -15,7 +15,8 @@ type CancellableResult<R extends QueryResultRow = any> = {
 };
 export type AugmentedPool = Pool & {
   cancellableQuery: <R extends QueryResultRow = any>(
-    sql: Prisma.Sql | string
+    sql: Prisma.Sql | string,
+    params?: any[]
   ) => Promise<CancellableResult<R>>;
 };
 
@@ -24,13 +25,15 @@ type ClientInstanceType =
   | 'primaryRead'
   | 'primaryReadLong'
   | 'notification'
-  | 'notificationRead';
+  | 'notificationRead'
+  | 'logicalReplica';
 const instanceUrlMap: Record<ClientInstanceType, string> = {
   notification: env.NOTIFICATION_DB_URL,
   notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
   primary: env.DATABASE_URL,
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
+  logicalReplica: env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL,
 };
 
 export function getClient(
@@ -46,7 +49,11 @@ export function getClient(
   const connectionString = connectionStringUrl.toString();
 
   const isNotification = instance === 'notification' || instance === 'notificationRead';
-  const appBaseName = isNotification ? 'notif-pg' : 'node-pg';
+  const appBaseName = isNotification
+    ? 'notif-pg'
+    : instance === 'logicalReplica'
+    ? 'logical-pg'
+    : 'node-pg';
 
   const pool = new Pool({
     connectionString,
@@ -65,22 +72,39 @@ export function getClient(
   }) as AugmentedPool;
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
-    sql: Prisma.Sql | string
+    sql: Prisma.Sql | string,
+    params?: any[]
   ) {
     const connection = await pool.connect();
     const pidQuery = await connection.query('SELECT pg_backend_pid()');
     const pid = pidQuery.rows[0].pg_backend_pid;
 
-    // Fix dates
+    let queryText: string;
+    let queryParams: any[] | undefined;
+
     if (typeof sql === 'object') {
-      for (const i in sql.values) sql.values[i] = formatSqlType(sql.values[i]);
+      // Prisma.Sql object
+      queryText = sql.text;
+      queryParams = sql.values;
+      for (const i in queryParams) queryParams[i] = formatSqlType(queryParams[i]);
+    } else if (params !== undefined) {
+      // Plain string with parameters
+      queryText = sql;
+      queryParams = params;
+    } else {
+      // Plain string without parameters
+      queryText = sql;
+      queryParams = undefined;
     }
 
     // Logging
-    log(instance, sql);
+    log(instance, params !== undefined ? { text: queryText, values: queryParams } : sql);
 
     let done = false;
-    const query = connection.query<R>(sql);
+    const query =
+      queryParams !== undefined
+        ? connection.query<R>(queryText, queryParams)
+        : connection.query<R>(queryText);
     query.finally(() => {
       done = true;
       connection.release();
@@ -120,6 +144,32 @@ export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
   return function (sql: TemplateStringsArray, ...values: any[]) {
     const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
     return fn(sqlString);
+  };
+}
+
+export function parameterizedTemplateHandler<T>(
+  fn: (sql: string, params: any[]) => Promise<T> | T
+) {
+  return function (sql: TemplateStringsArray, ...values: any[]) {
+    const params: any[] = [];
+    const sqlString = sql.reduce((acc, part, i) => {
+      acc += part;
+      let value = values[i];
+      if (value === undefined) return acc;
+      if (typeof value === 'string') return acc + value;
+
+      // Determine if this should be treated as JSONB based on SQL context
+      const nextPart = sql[i + 1] || '';
+      const isJsonbContext = nextPart.includes('::jsonb') || nextPart.includes('::json');
+
+      // For JSONB contexts, stringify the object/array
+      if (typeof value === 'object' && isJsonbContext) value = JSON.stringify(value);
+
+      params.push(value);
+      acc += `$${params.length}`;
+      return acc;
+    }, '');
+    return fn(sqlString, params);
   };
 }
 
@@ -301,6 +351,25 @@ export function getExplainSql(value: typeof Prisma.Sql) {
     ${value}
   `;
   return combineSqlWithParams(obj.text, obj.values);
+}
+
+/**
+ * Helper function to safely encode JSON data for use in SQL queries.
+ * This properly escapes the JSON and wraps it in quotes for PostgreSQL.
+ *
+ * @param data - The data to encode as JSON
+ * @returns A string that can be safely interpolated into SQL as JSONB
+ *
+ * @example
+ * const metrics = await ctx.db.$queryRaw<{ data: any }[]>`...`;
+ * if (metrics?.[0]?.data) {
+ *   await executeRefresh(ctx)`
+ *     SELECT * FROM jsonb_array_elements(${jsonbArrayFrom(metrics[0].data)})
+ *   `;
+ * }
+ */
+export function jsonbArrayFrom(data: any): string {
+  return `'${JSON.stringify(data)}'::jsonb`;
 }
 
 export const dbKV = {

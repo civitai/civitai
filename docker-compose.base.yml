@@ -35,6 +35,18 @@ services:
     volumes:
       - notification-db:/var/lib/postgresql/data
 
+  logical-db:
+    build:
+      context: containers/logical-db
+      dockerfile: Dockerfile
+    ports:
+      - "15435:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - logical-db:/var/lib/postgresql/data
+
   redis:
     image: redis:7-bookworm
     command: redis-server --requirepass "redis"
@@ -127,6 +139,7 @@ volumes:
   prisma-pit:
   db:
   notification-db:
+  logical-db:
   redis:
   redis-sys:
   minio:

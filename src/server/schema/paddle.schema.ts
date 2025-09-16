@@ -1,6 +1,6 @@
 import type { CurrencyCode } from '@paddle/paddle-js';
-import * as z from 'zod/v4';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
+import * as z from 'zod';
+import { constants } from '~/server/common/constants';
 
 const buzzPurchaseMetadataSchema = z
   .object({
@@ -21,11 +21,11 @@ export const transactionMetadataSchema = z.discriminatedUnion('type', [buzzPurch
 
 export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;
 export const transactionCreateSchema = z.object({
-  unitAmount: z.number().min(buzzConstants.minChargeAmount).max(buzzConstants.maxChargeAmount),
+  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
   currency: z
     .string()
     .default('USD')
-    .refine((val) => val as CurrencyCode, { message: 'Only USD is supported' }),
+    .refine((val) => val as CurrencyCode, { error: 'Only USD is supported' }),
   metadata: transactionMetadataSchema.optional(),
   recaptchaToken: z.string(),
 });

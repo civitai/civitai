@@ -1,25 +1,37 @@
-// import { CloseButton, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-// import type { ButtonProps } from '@mantine/core';
-// import { Button, Card, Divider, Group } from '@mantine/core';
-// import { IconBrush } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
-import type { ImageMetaPopoverProps } from '~/components/Image/Meta/ImageMetaPopover.types';
-// import React from 'react';
-// import { CopyButton } from '~/components/CopyButton/CopyButton';
-// import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
-// import { useIsClient } from '~/providers/IsClientProvider';
-// import type { MediaType } from '~/shared/utils/prisma/enums';
-// import { generationPanel } from '~/store/generation.store';
-// import { encodeMetadata } from '~/utils/metadata';
-// import { trpc } from '~/utils/trpc';
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import type { ReactElement } from 'react';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 
-export const ImageMetaPopoverLazy = dynamic(
-  () => import('~/components/Image/Meta/ImageMetaPopoverLazy'),
-  { ssr: false }
-);
+const ImageMetaPopoverLazy = dynamic(() => import('~/components/Image/Meta/ImageMetaPopoverLazy'), {
+  ssr: false,
+});
 
-export function ImageMetaPopover2(props: ImageMetaPopoverProps) {
-  return <ImageMetaPopoverLazy {...props} />;
+export function ImageMetaPopover2({
+  imageId,
+  children,
+}: {
+  imageId: number;
+  children: ReactElement;
+  type?: MediaType;
+}) {
+  return (
+    <Popover className="relative flex items-center">
+      <PopoverButton className="flex cursor-pointer items-center justify-center border-none bg-transparent">
+        {children}
+      </PopoverButton>
+      <PopoverPanel
+        className="z-[500]"
+        anchor="top end"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <ImageMetaPopoverLazy imageId={imageId} />
+      </PopoverPanel>
+    </Popover>
+  );
 }
 
 // export function ImageMetaPopover2({

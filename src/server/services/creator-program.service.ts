@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -56,7 +56,7 @@ import {
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
@@ -261,6 +261,7 @@ async function getPoolValue(month?: Date) {
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
+      OR (type = 'redeemable' AND description LIKE 'Redeemed code KG-%')
     )
     AND fromAccountId = 0
     AND externalTransactionId NOT LIKE 'renewalBonus:%'
@@ -365,6 +366,21 @@ export async function bankBuzz(
 
   if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
     throw throwBadRequestError('User is banned from the Creator Program');
+  }
+
+  // Check if user has active membership
+  const activeMembership = await dbWrite.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: 'active',
+      currentPeriodEnd: {
+        gt: new Date(),
+      },
+    },
+  });
+
+  if (!activeMembership) {
+    throw throwBadRequestError('Active membership required to bank buzz');
   }
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });

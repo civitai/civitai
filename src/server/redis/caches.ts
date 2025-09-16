@@ -1,25 +1,28 @@
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL, constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { pgDbRead } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { stringifyAIR } from '~/shared/utils/air';
+import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
@@ -259,7 +262,10 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
           WHEN cs.status NOT IN ('active', 'trialing') THEN 1
           ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
         END as "rewardsMultiplier",
-        COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
+        CASE
+          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
+          ELSE COALESCE((p.metadata->>'purchasesMultiplier')::float, 1)
+        END as "purchasesMultiplier"
       FROM "User" u
       LEFT JOIN "CustomerSubscription" cs ON u.id = cs."userId"
       LEFT JOIN "Product" p ON p.id = cs."productId"
@@ -487,8 +493,8 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
         u.id,
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published' AND m.availability != 'Private') as "modelCount",
         (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL AND p.availability != 'Private') as "postCount",
-        COALESCE(im."imageCount", 0) as "imageCount",
-        COALESCE(im."videoCount", 0) as "videoCount",
+        COALESCE(im."imageCount"::INT, 0) as "imageCount",
+        COALESCE(im."videoCount"::INT, 0) as "videoCount",
         (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" IS NOT NULL AND a."publishedAt" <= NOW() AND a.availability != 'Private' AND a.status = 'Published'::"ArticleStatus") as "articleCount",
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() AND b.availability != 'Private') as "bountyCount",
         (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
@@ -615,20 +621,20 @@ export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
   key: REDIS_KEYS.CACHES.IMAGE_METRICS,
   idKey: 'imageId',
   lookupFn: async (ids) => {
-    const imageMetric = await dbRead.entityMetricImage.findMany({
-      where: { imageId: { in: ids } },
-      select: {
-        imageId: true,
-        reactionLike: true,
-        reactionHeart: true,
-        reactionLaugh: true,
-        reactionCry: true,
-        // reactionTotal: true,
-        comment: true,
-        collection: true,
-        buzz: true,
-      },
-    });
+    const query = `
+      SELECT 
+        "imageId",
+        "reactionLike",
+        "reactionHeart",
+        "reactionLaugh",
+        "reactionCry",
+        "comment",
+        "collection",
+        "buzz"
+      FROM "EntityMetricImage"
+      WHERE "imageId" = ANY($1::int[])
+    `;
+    const { rows: imageMetric } = await pgDbRead.query<ImageMetricLookup>(query, [ids]);
     return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
   },
   ttl: CacheTTL.sm,
@@ -660,6 +666,40 @@ export async function getUserFollows(userId: number) {
   const userFollows = await userFollowsCache.fetch(userId);
   return userFollows[userId]?.follows ?? [];
 }
+
+type ImageTagsCacheItem = {
+  imageId: number;
+  tags: ImageTagComposite[];
+};
+
+export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
+  key: REDIS_KEYS.CACHES.IMAGE_TAGS,
+  idKey: 'imageId',
+  ttl: CacheTTL.day,
+  staleWhileRevalidate: false,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+
+    const imageTags = await db.imageTag.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        ...imageTagCompositeSelect,
+      },
+      orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
+      take: 100,
+    });
+
+    const result = imageTags.reduce((acc, tag) => {
+      const { imageId, ...tagData } = tag;
+      acc[imageId] ??= { imageId, tags: [] };
+      acc[imageId].tags.push(tagData);
+      return acc;
+    }, {} as Record<number, ImageTagsCacheItem>);
+
+    return result;
+  },
+});
 
 type ModelTagCacheItem = {
   modelId: number;

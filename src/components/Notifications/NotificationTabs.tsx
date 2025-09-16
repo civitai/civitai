@@ -7,7 +7,7 @@ import {
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 

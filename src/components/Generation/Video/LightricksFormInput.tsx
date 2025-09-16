@@ -65,16 +65,7 @@ export function LightricksFormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>CFG Scale</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              Controls how closely the video generation follows the text prompt.
             </InfoPopover>
           </div>
         }
@@ -90,16 +81,7 @@ export function LightricksFormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>Steps</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              The number of iterations spent generating a video.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              The number of iterations spent generating a video.
             </InfoPopover>
           </div>
         }

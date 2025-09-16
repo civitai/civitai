@@ -1,26 +1,30 @@
 import type { SelectProps } from '@mantine/core';
 import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRef } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   Form,
   InputCheckbox,
   InputDatePicker,
+  InputMultiSelect,
   InputSelect,
   InputText,
   InputTextArea,
   useForm,
 } from '~/libs/form';
 import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
+import { DomainColor } from '~/shared/utils/prisma/enums';
 import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
+import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = z.object({
   title: z.string(),
   content: z.string(),
   color: z.string(),
+  domain: z.enum(DomainColor).array().default([DomainColor.all]),
   startsAt: z.date(),
   endsAt: z.date().nullish(),
   image: z.string().optional(),
@@ -28,6 +32,11 @@ const schema = z.object({
   linkText: z.string().optional(),
   linkUrl: z.string().optional(),
 });
+
+const domainColorOptions = Object.values(DomainColor).map((domain) => ({
+  value: domain,
+  label: `${capitalize(domain)} ${domain === DomainColor.all ? 'Servers' : 'Server'}`,
+}));
 
 export function AnnouncementEditModal({
   announcement,
@@ -49,6 +58,7 @@ export function AnnouncementEditModal({
     schema,
     defaultValues: {
       ...announcement,
+      domain: announcement?.domain ?? [DomainColor.all],
       startsAt: announcement?.startsAt
         ? isToday
           ? announcement.startsAt
@@ -73,6 +83,8 @@ export function AnnouncementEditModal({
   function handleSubmit(data: z.infer<typeof schema>) {
     const startsAtUtc = dayjs.utc(data.startsAt).toDate();
     const isToday = startsAtUtc.toDateString() === new Date().toDateString();
+    const { domain } = data;
+
     mutate({
       ...announcement,
       ...data,
@@ -89,10 +101,11 @@ export function AnnouncementEditModal({
             : undefined,
         image: data.image,
       },
+      domain: domain.length ? domain : [DomainColor.all],
     });
   }
 
-  const renderSelectOption: SelectProps['renderOption'] = ({ option, checked }) => {
+  const renderSelectOption: SelectProps['renderOption'] = ({ option }) => {
     return (
       <div>
         <div className="flex items-center gap-2">
@@ -108,6 +121,16 @@ export function AnnouncementEditModal({
       <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
         <InputText name="title" label="Title" />
         <InputTextArea name="content" label="Content" autosize />
+
+        <InputMultiSelect
+          name="domain"
+          label="Domain"
+          description="Select which server domains this announcement should appear on"
+          data={domainColorOptions}
+          placeholder="Select domains..."
+          searchable
+          clearable
+        />
 
         <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
           <InputText name="image" label="Image ID" />

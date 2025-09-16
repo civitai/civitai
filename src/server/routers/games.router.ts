@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.utils';
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
@@ -46,6 +46,8 @@ const newGameSchema = z.object({
 });
 
 async function createGameInstance(code: string) {
+  if (!clientEnv.NEXT_PUBLIC_CHOPPED_ENDPOINT) throw new Error('Chopped endpoint is not defined');
+
   const response = await fetch(`${clientEnv.NEXT_PUBLIC_CHOPPED_ENDPOINT}/chopped/new`, {
     method: 'POST',
     headers: {

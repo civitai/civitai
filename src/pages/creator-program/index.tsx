@@ -51,7 +51,7 @@ import {
   openCreatorScoreModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
@@ -456,14 +456,14 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                           current membership does not apply to join the Creator Program. Consider
                           upgrading to one our supported memberships.
                           <br />
-                          <NextLink href="/pricing">
-                            <Anchor>Upgrade Membership</Anchor>
-                          </NextLink>
+                          <Anchor component={NextLink} href="/pricing">
+                            Upgrade Membership
+                          </Anchor>
                         </p>
                       ) : (
-                        <NextLink href="/pricing">
-                          <Anchor>Become a Civitai Member Now!</Anchor>
-                        </NextLink>
+                        <Anchor component={NextLink} href="/pricing">
+                          Become a Civitai Member Now!
+                        </Anchor>
                       )
                     }
                   />
@@ -541,6 +541,10 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   {
     q: 'What types of Buzz can be Banked?',
     a: 'Any earned Yellow Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
+  },
+  {
+    q: 'Do I need an active membership to Bank Buzz?',
+    a: 'Yes, you must have an active Civitai membership to bank Buzz in the Creator Program. If your membership expires, you will not be able to bank additional Buzz until you renew your subscription.',
   },
   {
     q: 'What happens if cancel my Civitai Membership?',

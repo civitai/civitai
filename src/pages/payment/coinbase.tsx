@@ -1,26 +1,24 @@
 import {
-  Container,
-  Stack,
-  Title,
-  Text,
   Alert,
-  ThemeIcon,
-  Group,
   Button,
   Center,
-  Tooltip,
   Code,
-  Loader,
+  Container,
+  Group,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBarbell, IconBolt, IconBrush, IconCircleCheck } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { useRouter } from 'next/router';
-import { useGetTransactionStatus } from '~/components/Coinbase/util';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import animationClasses from '~/libs/animations.module.scss';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -38,8 +36,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CoinbaseSuccess() {
   const router = useRouter();
-  const { orderId, key } = router.query as { orderId?: string | null; key?: string | null };
-  const { isFailed, isSuccess } = useGetTransactionStatus(key);
+  const { orderId } = router.query as { orderId?: string | null; key?: string | null };
 
   return (
     <>
@@ -61,51 +58,16 @@ export default function CoinbaseSuccess() {
             Thank you! 🎉
           </Title>
           <Text size="lg" align="center" mb="lg">
-            Thank you so much for your support! It might take a few minutes for your crypto to go
-            through. Your buzz will be available in your account shortly after that.
+            Thank you so much for your support! Most transactions complete within a few minutes, but
+            in rare cases it may take a few hours for your crypto to process. Your Buzz will be
+            added to your account as soon as it&rsquo;s confirmed.
           </Text>
-          {key && (
-            <Alert color={isFailed ? 'red' : isSuccess ? 'green' : 'blue'} radius="sm">
-              <Stack>
-                {!isFailed && !isSuccess ? (
-                  <Stack align="center">
-                    <Text className="text-center">
-                      Your transaction is being processed. Please wait a few minutes for it to
-                      complete.
-                    </Text>
-                    <Loader />
-                  </Stack>
-                ) : isSuccess ? (
-                  <Text className="text-center">
-                    Your transaction has been successfully completed! You should have recevied your
-                    Buzz!
-                  </Text>
-                ) : (
-                  <>
-                    <Text>
-                      Your transaction has <span className="font-bold">failed to be processed</span>
-                      . You may contact support with the following ticket number:
-                    </Text>
-                    <CopyButton value={key}>
-                      {({ copy, copied }) => (
-                        <Tooltip label="Copied!" opened={copied}>
-                          <Code style={{ cursor: 'pointer', height: 'auto' }} onClick={copy} pr={2}>
-                            {key}
-                          </Code>
-                        </Tooltip>
-                      )}
-                    </CopyButton>
-                  </>
-                )}
-              </Stack>
-            </Alert>
-          )}
           {orderId && (
             <Alert>
               <Stack>
                 <Text>
-                  If you have any issues with your order, please contact support with the following
-                  Order ID:{' '}
+                  If your Buzz hasn&rsquo;t appeared in your account within 2 hours, please contact
+                  support with the following Order ID:{' '}
                 </Text>
 
                 <CopyButton value={orderId}>

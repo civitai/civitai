@@ -450,6 +450,15 @@ export const TagEngagementType = {
 
 export type TagEngagementType = (typeof TagEngagementType)[keyof typeof TagEngagementType];
 
+export const DomainColor = {
+  red: 'red',
+  green: 'green',
+  blue: 'blue',
+  all: 'all',
+} as const;
+
+export type DomainColor = (typeof DomainColor)[keyof typeof DomainColor];
+
 export const CosmeticType = {
   Badge: 'Badge',
   NamePlate: 'NamePlate',
@@ -633,6 +642,7 @@ export type BountyEngagementType = (typeof BountyEngagementType)[keyof typeof Bo
 export const CsamReportType = {
   Image: 'Image',
   TrainingData: 'TrainingData',
+  GeneratedImage: 'GeneratedImage',
 } as const;
 
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];

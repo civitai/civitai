@@ -17,7 +17,7 @@ import {
   getIsSafeBrowsingLevel,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.css';
 

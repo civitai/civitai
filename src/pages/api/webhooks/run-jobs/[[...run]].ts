@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
@@ -19,7 +19,6 @@ import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
-import { cleanupWaitingRampUpTransactions, processPendingTransactions } from '~/server/jobs/crypto';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
@@ -148,8 +147,6 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
-  processPendingTransactions,
-  cleanupWaitingRampUpTransactions,
 ];
 
 const log = createLogger('jobs', 'green');

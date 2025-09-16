@@ -1,7 +1,7 @@
 import type {
-  OpenAIGpt1CreateImageInput,
-  OpenAIGpt1EditImageInput,
-  OpenAIGpt1ImageGenInput,
+  OpenAiGpt1CreateImageInput,
+  OpenAiGpt1EditImageInput,
+  OpenAiGpt1ImageGenInput,
 } from '@civitai/client';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -37,7 +37,7 @@ export const openaiConfig = ImageGenConfig({
       height,
     };
   },
-  inputFn: ({ params }): OpenAIGpt1CreateImageInput | OpenAIGpt1EditImageInput => {
+  inputFn: ({ params }): OpenAiGpt1CreateImageInput | OpenAiGpt1EditImageInput => {
     const baseData = {
       engine: params.engine,
       model: 'gpt-image-1',
@@ -46,18 +46,18 @@ export const openaiConfig = ImageGenConfig({
       quantity: params.quantity,
       quality: params.quality,
       size: `${params.width}x${params.height}`,
-    } as Omit<OpenAIGpt1ImageGenInput, 'operation'>;
+    } as Omit<OpenAiGpt1ImageGenInput, 'operation'>;
     if (!params.sourceImage) {
       return {
         ...baseData,
         operation: 'createImage',
-      } satisfies OpenAIGpt1CreateImageInput;
+      } satisfies OpenAiGpt1CreateImageInput;
     } else {
       return {
         ...baseData,
         operation: 'editImage',
         images: [params.sourceImage.url],
-      } satisfies OpenAIGpt1EditImageInput;
+      } satisfies OpenAiGpt1EditImageInput;
     }
   },
 });

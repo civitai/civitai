@@ -18,7 +18,7 @@ export const parseBuzzTransactionDetails = (
   }
 
   const fallbackUrl = details.user && details.user !== 'a user' ? `/user/${details.user}` : '';
-  const baseNotification = `You received a tip of ${details.amount as string} Buzz from ${
+  const baseNotification = `You received a tip of ${String(details.amount)} Buzz from ${
     details.user ? `@${details.user}` : 'a user'
   }`;
 
@@ -201,4 +201,15 @@ export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: n
     platformFee,
     payoutAmount,
   };
+};
+
+export const usdcToBuzz = (usdcAmount: number): number => {
+  // USDC amount is the actual dollar value (e.g., 5.00 for $5)
+  // 1 USDC = 1000 Buzz
+  return Math.floor(usdcAmount * constants.buzz.buzzDollarRatio);
+};
+
+export const buzzToUsdc = (buzzAmount: number): number => {
+  // Returns USDC amount (e.g., 5.00 for 5000 Buzz)
+  return buzzAmount / constants.buzz.buzzDollarRatio;
 };

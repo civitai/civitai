@@ -1,10 +1,11 @@
 import type { Scheduler, TextToImageStepTemplate } from '@civitai/client';
-import { TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
+import { NsfwLevel, TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
@@ -112,10 +113,12 @@ export async function createTextToImage(
     token: string;
     experimental?: boolean;
     batchAll?: boolean;
+    isGreen?: boolean;
+    allowMatureContent: boolean;
   }
 ) {
   const step = await createTextToImageStep(args);
-  const { params, tips, user, experimental } = args;
+  const { params, tips, user, experimental, isGreen, allowMatureContent } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
   const workflow = (await submitWorkflow({
@@ -132,12 +135,9 @@ export async function createTextToImage(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   })) as TextToImageResponse;
 

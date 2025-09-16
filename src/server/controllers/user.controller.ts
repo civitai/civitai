@@ -113,7 +113,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
@@ -281,14 +281,23 @@ export const completeOnboardingHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { domain } = ctx;
     const { id } = ctx.user;
     const onboarding = Flags.addFlag(ctx.user.onboarding, input.step);
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
       case OnboardingSteps.TOS:
+        const now = new Date();
+        await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        await setUserSetting(
+          id,
+          domain === 'green' ? { tosGreenLastSeenDate: now } : { tosLastSeenDate: now }
+        );
+        break;
       case OnboardingSteps.RedTOS: {
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        await setUserSetting(id, { tosRedLastSeenDate: new Date() });
         break;
       }
       case OnboardingSteps.Profile: {

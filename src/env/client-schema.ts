@@ -1,5 +1,5 @@
 // @ts-check
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { isProd } from './other';
 
 /**
@@ -23,6 +23,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_POST_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID_ALT: z.string().optional(),
+  NEXT_PUBLIC_GPTT_UUID_GREEN: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.stringbool().default(true),
   NEXT_PUBLIC_LOG_TRPC: z.stringbool().default(false),
@@ -38,6 +39,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY: z.string().optional(),
   NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY: z.string().optional(),
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: z.string().optional(),
+  NEXT_PUBLIC_ZKP2P_IFRAME_HOST: z.string().optional(),
 });
 
 /**
@@ -62,6 +64,7 @@ export const clientEnv = {
   NEXT_PUBLIC_POST_LOOKUP_URL: process.env.NEXT_PUBLIC_POST_LOOKUP_URL,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_GPTT_UUID_ALT: process.env.NEXT_PUBLIC_GPTT_UUID_ALT,
+  NEXT_PUBLIC_GPTT_UUID_GREEN: process.env.NEXT_PUBLIC_GPTT_UUID_GREEN,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES,
   NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRP,
@@ -80,4 +83,5 @@ export const clientEnv = {
   NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY:
     process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
+  NEXT_PUBLIC_ZKP2P_IFRAME_HOST: process.env.NEXT_PUBLIC_ZKP2P_IFRAME_HOST,
 };

@@ -6,7 +6,6 @@ import {
   Card,
   Center,
   Collapse,
-  ComboboxItem,
   Divider,
   Group,
   Loader,
@@ -30,11 +29,11 @@ import {
   IconSortDescending,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ChangelogFiltersDropdown } from '~/components/Changelog/ChangelogFiltersDropdown';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -57,7 +56,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { createChangelogInput } from '~/server/schema/changelog.schema';
 import type { Changelog } from '~/server/services/changelog.service';
-import { ChangelogType } from '~/shared/utils/prisma/enums';
+import { ChangelogType, DomainColor } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -217,7 +216,7 @@ const ChangelogItem = ({
               <Text size="md">{dayjs(item.effectiveAt).format('MMM DD, YYYY')}</Text>
               {dayjs(item.updatedAt) > dayjs(item.createdAt).add(1, 'hour') && (
                 <Text size="sm" c="dimmed">
-                  Updated: {dayjs().to(dayjs(item.updatedAt))}
+                  Updated: {dayjs(item.updatedAt).format('MMM DD, YYYY h:mm a')}
                 </Text>
               )}
               {canEdit && item.disabled && (
@@ -318,6 +317,7 @@ const defaultValues: SchemaType = {
   tags: [],
   disabled: false,
   sticky: false,
+  domain: [DomainColor.all],
 };
 
 const CreateChangelog = ({
@@ -352,6 +352,7 @@ const CreateChangelog = ({
             link: existing.link ?? undefined,
             cta: existing.cta ?? undefined,
             titleColor: existing.titleColor ?? 'blue',
+            domain: existing.domain ?? [DomainColor.all],
           }
         : defaultValues
     );
@@ -470,6 +471,20 @@ const CreateChangelog = ({
                 data={allTagData}
                 loading={loadingTagData}
                 placeholder="Tags..."
+                clearable
+              />
+              <InputMultiSelect
+                name="domain"
+                label="Domain"
+                description="Select which server domains this changelog should appear on"
+                data={[
+                  { value: 'red', label: 'Red Server' },
+                  { value: 'green', label: 'Green Server' },
+                  { value: 'blue', label: 'Blue Server' },
+                  { value: 'all', label: 'All Servers' },
+                ]}
+                placeholder="Select domains..."
+                searchable
                 clearable
               />
               <InputText name="link" label="Link" placeholder="Link to commit/article..." />

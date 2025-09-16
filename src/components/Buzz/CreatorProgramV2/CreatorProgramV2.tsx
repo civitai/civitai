@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -28,7 +27,7 @@ import {
   IconSettings,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
 import React, { useEffect, useState } from 'react';
@@ -63,7 +62,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
-import { TosModal } from '~/components/ToSModal/TosModal';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -79,7 +77,7 @@ import {
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getAccountTypeLabel } from '~/utils/buzz';
@@ -93,6 +91,11 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import dynamic from 'next/dynamic';
+
+const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
+  ssr: false,
+});
 
 const cardProps: HTMLProps<HTMLDivElement> = {
   className: 'light:bg-gray-0 align-center flex flex-col rounded-lg p-4 dark:bg-dark-5',
@@ -159,11 +162,16 @@ const JoinCreatorProgramCard = () => {
     isLoading: buzzAccountsLoading,
   } = useQueryBuzz(['yellow', 'green']);
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
-  const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
-    buzz: buzzAccountTotal ?? 0,
-  });
+  // const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
+  //   buzz: buzzAccountTotal ?? 0,
+  // });
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
-  const isLoading = buzzAccountsLoading || isLoadingRequirements || isLoadingForecast;
+  const isLoading =
+    buzzAccountsLoading || isLoadingRequirements || isLoadingCompensationPool;
+  const forecasted = compensationPool
+    ? getForecastedValue(buzzAccountTotal ?? 0, compensationPool)
+    : undefined;
 
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -176,7 +184,7 @@ const JoinCreatorProgramCard = () => {
       component: TosModal,
       props: {
         slug: 'creator-program-v2-tos',
-        key: 'creatorProgramToSAccepted' as any,
+        fieldKey: 'creatorProgramToSAccepted' as const,
         onAccepted: async () => {
           try {
             await joinCreatorsProgram();
@@ -207,7 +215,7 @@ const JoinCreatorProgramCard = () => {
         <h3 className="text-xl font-bold">Join the Creator Program</h3>
 
         <div className="flex gap-1">
-          <p>
+          <Text component="div">
             Your{' '}
             <CurrencyBadge
               currency={Currency.BUZZ}
@@ -216,10 +224,10 @@ const JoinCreatorProgramCard = () => {
             />{' '}
             could be worth{' '}
             <span className="font-bold text-yellow-6">
-              ${numberWithCommas(formatToLeastDecimals(forecast.forecastedEarning))}
+              ${numberWithCommas(formatToLeastDecimals(forecasted ?? 0))}
             </span>
             !
-          </p>
+          </Text>
           <LegacyActionIcon variant="subtle" color="gray" onClick={openEarningEstimateModal}>
             <IconInfoCircle size={14} />
           </LegacyActionIcon>
@@ -380,6 +388,7 @@ const BankBuzzCard = () => {
     data: { accounts },
     isLoading: buzzAccountsLoading,
   } = useQueryBuzz(buzzBankTypes);
+  const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const buzzAccountTypeSelectorCB = useCombobox({
     onDropdownClose: () => {
       buzzAccountTypeSelectorCB.resetSelectedOption();
@@ -395,10 +404,12 @@ const BankBuzzCard = () => {
 
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
-  const isLoading = isLoadingCompensationPool || buzzAccountsLoading || isLoadingBanked;
+  const isLoading = isLoadingCompensationPool || buzzAccountsLoading || isLoadingBanked || isLoadingRequirements;
   const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
+
+  const hasActiveMembership = requirements?.validMembership;
 
   const handleBankBuzz = async () => {
     try {
@@ -447,9 +458,9 @@ const BankBuzzCard = () => {
                 }}
               >
                 <Combobox.Target withAriaAttributes={false}>
-                  <ActionIcon onClick={() => buzzAccountTypeSelectorCB.toggleDropdown()}>
+                  <LegacyActionIcon onClick={() => buzzAccountTypeSelectorCB.toggleDropdown()}>
                     <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzAccountType} size={18} />
-                  </ActionIcon>
+                  </LegacyActionIcon>
                 </Combobox.Target>
 
                 <Combobox.Dropdown>
@@ -479,6 +490,7 @@ const BankBuzzCard = () => {
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
+            disabled={!hasActiveMembership}
             onChange={(value) => {
               setToBank(Math.min(Number(value ?? 10000), maxBankable));
             }}
@@ -490,8 +502,12 @@ const BankBuzzCard = () => {
               },
             }}
             step={1000}
+            allowDecimal={false}
           />
-          <Tooltip label="Bank now!" position="top">
+          <Tooltip
+            label={hasActiveMembership ? 'Bank now!' : 'Active membership required to bank'}
+            position="top"
+          >
             <LegacyActionIcon
               miw={40}
               variant="filled"
@@ -499,6 +515,7 @@ const BankBuzzCard = () => {
               className="rounded-l-none"
               h="100%"
               loading={bankingBuzz}
+              disabled={!hasActiveMembership}
               onClick={() => {
                 dialogStore.trigger({
                   component: ConfirmDialog,
@@ -531,7 +548,7 @@ const BankBuzzCard = () => {
         <Button
           size="compact-xs"
           variant="outline"
-          disabled={toBank === maxBankable}
+          disabled={!hasActiveMembership || toBank === maxBankable}
           onClick={() => setToBank(maxBankable)}
         >
           Max
@@ -546,6 +563,23 @@ const BankBuzzCard = () => {
             <IconInfoCircle size={14} />
           </LegacyActionIcon>
         </div>
+
+        {!hasActiveMembership && (
+          <Alert color="red" className="mb-2 p-2">
+            <div className="flex items-center gap-2">
+              <IconLock size={24} className="shrink-0" />
+              <div className="flex flex-1 flex-col">
+                <p className="text-sm font-bold leading-tight">Active membership required</p>
+                <p className="text-sm leading-tight">
+                  You need an active Civitai membership to bank Buzz.{' '}
+                  <Anchor component={NextLink} href="/pricing" inherit>
+                    Upgrade your membership
+                  </Anchor>
+                </p>
+              </div>
+            </div>
+          </Alert>
+        )}
 
         <Alert color="yellow" className="mt-auto p-2">
           <div className="flex items-center gap-2">
@@ -896,7 +930,7 @@ const WithdrawCashCard = () => {
             <div className="flex">
               <NumberInput
                 label="Cash to Withdraw"
-                labelProps={{ className: 'hidden' }}
+                labelProps={{ className: '!hidden' }}
                 leftSection={<CurrencyIcon currency={Currency.USD} size={18} />}
                 value={toWithdraw}
                 min={MIN_WITHDRAWAL_AMOUNT / 100}

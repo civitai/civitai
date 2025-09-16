@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';

@@ -67,6 +67,7 @@ export function EdgeMedia({
   disablePoster,
   videoProps,
   imageProps,
+  optimized,
   ...imgProps
 }: EdgeMediaProps) {
   const imgRef = useRef<HTMLImageElement>(null);
@@ -92,6 +93,7 @@ export function EdgeMedia({
     original,
     skip,
     anim,
+    optimized,
   };
 
   switch (inferredType) {

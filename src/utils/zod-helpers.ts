@@ -1,8 +1,5 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { isValidDate } from '~/utils/date-helpers';
-import type { santizeHtmlOptions } from '~/utils/html-helpers';
-import { sanitizeHtml } from '~/utils/html-helpers';
-import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 
 export function coerceStringArray<I extends z.ZodArray<z.ZodString>>(schema?: I) {
   return z.preprocess(
@@ -121,25 +118,6 @@ export function booleanString() {
     .boolean()
     .or(z.stringbool())
     .or(z.number().transform((val) => val === 1));
-}
-
-export function sanitizedNullableString(options: santizeHtmlOptions) {
-  return z
-    .string()
-    .transform((val, ctx) => {
-      try {
-        if (!val) return;
-        const result = sanitizeHtml(val, options);
-        if (result.length === 0) return null;
-        return result;
-      } catch (e) {
-        ctx.addIssue({
-          code: 'custom',
-          message: (e as any).message,
-        });
-      }
-    })
-    .nullish();
 }
 
 export function zodEnumFromObjKeys<K extends string>(obj: Record<K, unknown>) {

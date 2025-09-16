@@ -75,6 +75,8 @@ import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ReviewTagsInput } from '~/components/Tags/ReviewTagsInput';
+import * as z from 'zod';
+import { isDefined } from '~/utils/type-guards';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -650,30 +652,18 @@ function ModerationControls({
   const router = useRouter();
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
-    async onMutate({ ids, needsReview, reviewAction }) {
+    async onMutate({ ids, reviewAction }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();
       queryUtils.image.getModeratorReviewQueue.setInfiniteData(
         filters,
         produce((data) => {
           if (!data?.pages?.length) return;
-
           for (const page of data.pages)
             for (const item of page.items) {
-              if (ids.includes(item.id)) {
-                item.needsReview =
-                  reviewAction !== null || needsReview === null ? null : item.needsReview;
-              }
+              if (ids.includes(item.id)) item.needsReview = null;
             }
         })
       );
-    },
-    onSuccess(_, input) {
-      const actions: string[] = [];
-      if (input.reviewAction === 'delete') actions.push('deleted');
-      else if (input.reviewAction === 'removeName') actions.push('name removed');
-      else if (!input.needsReview) actions.push('approved');
-
-      showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
     },
   });
 
@@ -713,24 +703,6 @@ function ModerationControls({
     },
   });
 
-  const handleRemoveNames = () => {
-    deselectAll();
-    moderateImagesMutation.mutate({
-      ids: selected,
-      reviewAction: 'removeName',
-      reviewType: view,
-    });
-  };
-
-  const handleNotPOI = () => {
-    deselectAll();
-    moderateImagesMutation.mutate({
-      ids: selected,
-      reviewAction: 'mistake',
-      reviewType: view,
-    });
-  };
-
   const handleReportCsam = () => {
     if (view === ModReviewType.CSAM) {
       const selectedImages = images.filter((x) => selected.includes(x.id));
@@ -748,28 +720,32 @@ function ModerationControls({
     }
   };
 
-  const handleDeleteSelected = () => {
+  function handlModerateImage(reviewAction: 'block' | 'unblock') {
     deselectAll();
     moderateImagesMutation.mutate(
       {
         ids: selected,
-        reviewAction: 'delete',
-        reviewType: view,
+        reviewAction,
       },
       {
-        onSuccess() {
+        onSuccess(_, input) {
+          showSuccessNotification({ message: `The images have been ${input.reviewAction}ed` });
           if (viewingReported) {
             const selectedReports = images
-              .filter((x) => selected.includes(x.id) && !!x.report)
-              // Explicit casting cause we know report is defined
-              .map((x) => x.report?.id as number);
-
-            return reportMutation.mutate({ ids: selectedReports, status: 'Actioned' });
+              .map((x) => (selected.includes(x.id) ? x.report?.id : undefined))
+              .filter(isDefined);
+            return reportMutation.mutate({
+              ids: selectedReports,
+              status: input.reviewAction === 'block' ? 'Actioned' : 'Unactioned',
+            });
           }
         },
       }
     );
-  };
+  }
+
+  const handleBlockSelected = () => handlModerateImage('block');
+  const handleUnblockSelected = () => handlModerateImage('unblock');
 
   const handleSelectAll = () => {
     selectMany(images.map((x) => x.id));
@@ -778,24 +754,6 @@ function ModerationControls({
   };
 
   const handleClearAll = () => deselectAll();
-
-  const handleApproveSelected = () => {
-    deselectAll();
-    if (viewingReported) {
-      const selectedReports = images
-        .filter((x) => selected.includes(x.id) && !!x.report)
-        // Explicit casting cause we know report is defined
-        .map((x) => x.report?.id as number);
-
-      return reportMutation.mutate({ ids: selectedReports, status: 'Unactioned' });
-    }
-
-    return moderateImagesMutation.mutate({
-      ids: selected,
-      needsReview: null,
-      reviewType: view,
-    });
-  };
 
   const handleRefresh = () => {
     handleClearAll();
@@ -837,7 +795,7 @@ function ModerationControls({
             <PopConfirm
               message={`Are you sure you want to approve ${selected.length} image(s)?`}
               position="bottom-end"
-              onConfirm={handleApproveSelected}
+              onConfirm={handleUnblockSelected}
               withArrow
               withinPortal
             >
@@ -848,41 +806,12 @@ function ModerationControls({
               </ButtonTooltip>
             </PopConfirm>
           )}
-          {view === ModReviewType.POI && (
-            <PopConfirm
-              message={`Are you sure these ${selected.length} image(s) are not real people?`}
-              position="bottom-end"
-              onConfirm={handleNotPOI}
-              withArrow
-              withinPortal
-            >
-              <ButtonTooltip label="Not POI" {...tooltipProps}>
-                <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
-                  <IconUserOff size="1.25rem" />
-                </LegacyActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-          )}
-          {view === ModReviewType.POI && (
-            <PopConfirm
-              message={`Are you sure you want to remove the name on ${selected.length} image(s)?`}
-              position="bottom-end"
-              onConfirm={handleRemoveNames}
-              withArrow
-              withinPortal
-            >
-              <ButtonTooltip label="Remove Name" {...tooltipProps}>
-                <LegacyActionIcon variant="outline" disabled={!selected.length} color="yellow">
-                  <IconUserMinus size="1.25rem" />
-                </LegacyActionIcon>
-              </ButtonTooltip>
-            </PopConfirm>
-          )}
+
           {view !== ModReviewType.Appeals && (
             <PopConfirm
               message={`Are you sure you want to delete ${selected.length} image(s)?`}
               position="bottom-end"
-              onConfirm={handleDeleteSelected}
+              onConfirm={handleBlockSelected}
               withArrow
               withinPortal
             >
@@ -967,7 +896,7 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
       resolvedMessage,
     });
     if (!result.success) {
-      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0]);
+      setError(z.prettifyError(result.error) ?? 'Invalid resolved message');
     } else {
       setError('');
     }

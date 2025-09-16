@@ -74,9 +74,9 @@ export function Limiter(args?: { batchSize?: number; limit?: number }) {
   const { limit = 5, batchSize = 500 } = args ?? {};
   const limiter = pLimit(limit);
 
-  async function process<T, R>(args: T[], fn: (args: T[]) => R | Promise<R>) {
+  async function process<T, R>(args: T[], fn: (args: T[], index: number) => R | Promise<R>) {
     return await Promise.all(
-      chunk(args, batchSize).map((chunked) => limiter(async () => fn(chunked)))
+      chunk(args, batchSize).map((chunked, index) => limiter(async () => fn(chunked, index)))
     ).then((res) => res.flat());
   }
 

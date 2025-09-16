@@ -1,14 +1,18 @@
-import type { IncomingHttpHeaders } from 'http';
+import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
+import type { NextApiRequest } from 'next';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
+import type { RegionInfo } from '~/server/utils/region-blocking';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
+const regionAvailability = ['restricted', 'nonRestricted'] as const;
 type ServerAvailability = keyof typeof serverDomainMap;
 export const serverDomainMap = {
   green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
@@ -21,6 +25,7 @@ const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTi
 type RoleAvailability = (typeof roleAvailablity)[number];
 const featureAvailability = [
   ...envAvailability,
+  ...regionAvailability,
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
@@ -85,7 +90,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Chats',
     description: 'Send and receive DMs from users across the site.',
-    availability: ['user'],
+    availability: ['blue', 'red', 'user'],
   },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
@@ -103,7 +108,8 @@ const featureFlags = createFeatureFlags({
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: ['public', 'blue', 'red'],
+  canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
+  isRestrictedRegion: ['restricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
@@ -115,8 +121,8 @@ const featureFlags = createFeatureFlags({
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
   privateModels: ['mod', 'granted'],
-  auctions: ['public'],
-  newOrderGame: ['public'],
+  auctions: ['blue', 'red', 'public'],
+  newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   annualMemberships: ['public'],
@@ -126,8 +132,13 @@ const featureFlags = createFeatureFlags({
   coinbaseOnramp: ['mod'],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
+  zkp2pPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
+  logicalReplica: ['public'],
+  modelVersionPopularity: ['public'],
+  kinguinIframe: ['dev'],
+  trainingModelsModeration: ['granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -138,16 +149,94 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 type FeatureAccessContext = {
   user?: SessionUser;
   host?: string;
-  req?: {
-    headers: IncomingHttpHeaders;
-    // url?: string;
-  };
+  req: NextApiRequest | IncomingMessage;
 };
+
+/**
+ * Unified region access checking that combines global restrictions with feature-specific controls
+ * Priority order: Global restrictions > Feature excludes > Feature includes
+ */
+function checkRegionAccess(
+  feature: FeatureFlag,
+  availability: FeatureAvailability[],
+  req?: NextApiRequest | IncomingMessage
+): boolean {
+  // Bypass all region checks in dev mode
+  if (isDev) {
+    return true;
+  }
+
+  // Check if feature has any region requirements
+  const regionRequirements = availability.filter((x) =>
+    regionAvailability.includes(x as (typeof regionAvailability)[number])
+  );
+  const hasFeatureRegions = !!feature.regions;
+
+  // If no region requirements at all, allow access
+  if (regionRequirements.length === 0 && !hasFeatureRegions) {
+    return true;
+  }
+
+  // Get region info (only once)
+  let region: RegionInfo | undefined;
+  if (req) {
+    region = getRegion(req);
+  }
+
+  // If region info is required but not available, deny access
+  if ((regionRequirements.length > 0 || hasFeatureRegions) && !region?.countryCode) {
+    return hasFeatureRegions ? false : true; // Only deny if feature has specific geo restrictions
+  }
+
+  if (!region) return true; // Should not happen at this point, but safe fallback
+
+  const isGloballyRestricted = isRegionRestricted(region);
+  const countryCode = region.countryCode?.toUpperCase();
+
+  // Check global region availability requirements (restricted/nonRestricted)
+  if (regionRequirements.length > 0) {
+    const globalMatch = regionRequirements.some((requirement) => {
+      return requirement === 'restricted'
+        ? isGloballyRestricted
+        : requirement === 'nonRestricted'
+        ? !isGloballyRestricted
+        : false;
+    });
+
+    // If global requirements are not met, deny access
+    if (!globalMatch) return false;
+  }
+
+  // Check feature-specific region restrictions
+  if (hasFeatureRegions && countryCode) {
+    const { include, exclude } = feature.regions!;
+
+    // CRITICAL: Global restrictions always override feature includes
+    // If region is globally restricted, deny access regardless of feature includes
+    if (isGloballyRestricted && include && include.includes(countryCode)) {
+      return false;
+    }
+
+    // Check exclude list (blacklist) - always deny if in exclude
+    if (exclude && exclude.length > 0 && exclude.includes(countryCode)) {
+      return false;
+    }
+
+    // Check include list (whitelist) - only allow if in include list when list exists
+    if (include && include.length > 0) {
+      return include.includes(countryCode);
+    }
+  }
+
+  return true;
+}
+
 const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext
 ) => {
-  const { availability } = featureFlags[key];
+  const feature = featureFlags[key];
+  const { availability } = feature;
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
@@ -194,12 +283,30 @@ const hasFeature = (
     }
   }
 
-  return envRequirement && serverMatch && (grantedAccess || roleAccess);
+  // Check basic access (env, server, roles) before region checks
+  const hasBasicAccess = envRequirement && serverMatch && (grantedAccess || roleAccess);
+  if (!hasBasicAccess) return false;
+
+  // Mod and granted users bypass region restrictions
+  const isMod = user?.isModerator;
+  const hasGrantedPermission = grantedAccess;
+
+  if (isMod || hasGrantedPermission) {
+    // Avoids the double region check for mods/granted users
+    return true;
+  }
+
+  // Check region access for regular users
+  const regionAccess = checkRegionAccess(feature, availability, req);
+  if (!regionAccess) return false;
+
+  return true;
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;
 export const getFeatureFlags = (ctx: FeatureAccessContext) => {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
+
   return keys.reduce<FeatureAccess>((acc, key) => {
     acc[key] = hasFeature(key, ctx);
     return acc;
@@ -208,6 +315,7 @@ export const getFeatureFlags = (ctx: FeatureAccessContext) => {
 
 export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
   const obj = {} as FeatureAccess & { features: FeatureAccess };
+
   for (const key in featureFlags) {
     Object.defineProperty(obj, key, {
       get() {
@@ -232,28 +340,40 @@ export const toggleableFeatures = Object.entries(featureFlags)
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;
+
+type GeoRestrictions = {
+  include?: string[]; // Whitelist regions (country codes)
+  exclude?: string[]; // Blacklist regions (country codes)
+};
+
 type FeatureFlag = {
   displayName: string;
   description?: string;
   availability: FeatureAvailability[];
   toggleable: boolean;
   default?: boolean;
+  regions?: GeoRestrictions; // Optional geo restrictions
 };
 
-function createFeatureFlags<T extends Record<string, FeatureFlag | FeatureAvailability[]>>(
-  flags: T
-) {
+// Simplified: Support either simple arrays or objects with any FeatureFlag properties
+type FeatureFlagInput =
+  | FeatureAvailability[] // Legacy format: ['public']
+  | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
+
+function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };
   const envOverrides = getEnvOverrides();
 
   for (const [key, value] of Object.entries(flags)) {
-    if (Array.isArray(value))
-      features[key as keyof T] = {
-        availability: value,
-        toggleable: false,
-        displayName: getDisplayName(key),
-      };
-    else features[key as keyof T] = value;
+    // Convert arrays to object format for consistency
+    const flagData = Array.isArray(value) ? { availability: value } : value;
+
+    // Build the feature flag with defaults for missing properties
+    features[key as keyof T] = {
+      displayName: getDisplayName(key), // Default display name
+      toggleable: false, // Default not toggleable
+      ...flagData, // Spread all provided properties (overrides defaults)
+    } as FeatureFlag;
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];

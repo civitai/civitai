@@ -5,33 +5,31 @@ import {
   Currency,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
-import * as z from 'zod/v4';
+import dayjs from '~/shared/utils/dayjs';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
-import utc from 'dayjs/plugin/utc';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
-dayjs.extend(utc);
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
   z.object({
     query: z.string().optional(),
-    types: z.nativeEnum(BountyType).array().optional(),
-    mode: z.nativeEnum(BountyMode).optional(),
-    status: z.nativeEnum(BountyStatus).optional(),
+    types: z.enum(BountyType).array().optional(),
+    mode: z.enum(BountyMode).optional(),
+    status: z.enum(BountyStatus).optional(),
     nsfw: z.boolean().optional(),
-    period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime),
-    sort: z.nativeEnum(BountySort).default(BountySort.Newest),
-    engagement: z.enum(['tracking', 'supporter', 'favorite', 'awarded', 'active']).optional(),
+    period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
+    sort: z.enum(BountySort).default(BountySort.Newest),
+    engagement: z.enum(constants.bounties.engagementTypes).optional(),
     userId: z.number().optional(),
-    baseModels: z.enum(constants.baseModels).array().optional(),
+    baseModels: z.enum(baseModels).array().optional(),
     limit: z.coerce.number().min(1).max(200).default(60),
     excludedUserIds: z.number().array().optional(),
   })
@@ -39,7 +37,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
 
 export type BountyDetailsSchema = z.infer<typeof bountyDetailsSchema>;
 export const bountyDetailsSchema = z.object({
-  baseModel: z.enum(constants.baseModels),
+  baseModel: z.enum(baseModels),
   modelSize: z.enum(constants.modelFileSizes),
   modelFormat: z.enum(constants.modelFileFormats),
 });
@@ -47,14 +45,12 @@ export const bountyDetailsSchema = z.object({
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
-  description: getSanitizedStringSchema().refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  description: z.string().nonempty(),
   unitAmount: z
     .number()
     .min(constants.bounties.minCreateAmount)
     .max(constants.bounties.maxCreateAmount),
-  currency: z.nativeEnum(Currency),
+  currency: z.enum(Currency),
   expiresAt: stringToDate(
     z
       .date()
@@ -66,10 +62,10 @@ export const createBountyInputSchema = z.object({
   startsAt: z.coerce
     .date()
     .min(dayjs.utc(stripTime(new Date())).toDate(), 'Start date must be in the future'),
-  mode: z.nativeEnum(BountyMode),
-  type: z.nativeEnum(BountyType),
+  mode: z.enum(BountyMode),
+  type: z.enum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
-  entryMode: z.nativeEnum(BountyEntryMode),
+  entryMode: z.enum(BountyEntryMode),
   minBenefactorUnitAmount: z.number().min(1),
   maxBenefactorUnitAmount: z.number().optional(),
   entryLimit: z.number().min(1).optional(),

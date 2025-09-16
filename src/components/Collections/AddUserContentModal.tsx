@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   AspectRatio,
   Button,
@@ -7,7 +6,6 @@ import {
   Divider,
   Group,
   Modal,
-  ScrollArea,
   Select,
   Stack,
   Text,
@@ -57,15 +55,7 @@ export function AddUserContentModal({ collectionId }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
-  const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
-
-  const handleDropImages = async (droppedFiles: File[]) => {
-    deselectAll();
-    setError('');
-    for (const file of droppedFiles) {
-      uploadToCF(file);
-    }
-  };
+  const { files, resetFiles } = useCFImageUpload();
 
   const handleClose = () => {
     resetFiles();
@@ -164,34 +154,32 @@ export function AddUserContentModal({ collectionId }: Props) {
         </Button>
 
         <Divider label="or select from your library" labelPosition="center" />
-        <ScrollAreaProvider>
-          <ScrollArea.Autosize mah="500px">
-            <MasonryProvider
-              columnWidth={constants.cardSizes.image}
-              maxColumnCount={4}
-              maxSingleColumnWidth={450}
-            >
-              <MasonryContainer m={0} p={0} px={0}>
-                <ImagesInfinite
-                  filters={{
-                    collectionId: undefined,
-                    userId: currentUser?.id,
-                    period: 'AllTime',
-                    sort: ImageSort.Newest,
-                    hidden: undefined,
-                    types: undefined,
-                    withMeta: undefined,
-                    followed: undefined,
-                    fromPlatform: undefined,
-                    hideAutoResources: undefined,
-                    hideManualResources: undefined,
-                  }}
-                  renderItem={SelectableImageCardMemoized}
-                  disableStoreFilters
-                />
-              </MasonryContainer>
-            </MasonryProvider>
-          </ScrollArea.Autosize>
+        <ScrollAreaProvider style={{ maxHeight: '500px', overflowY: 'auto' }}>
+          <MasonryProvider
+            columnWidth={constants.cardSizes.image}
+            maxColumnCount={4}
+            maxSingleColumnWidth={450}
+          >
+            <MasonryContainer m={0} p={0} px={0}>
+              <ImagesInfinite
+                filters={{
+                  collectionId: undefined,
+                  userId: currentUser?.id,
+                  period: 'AllTime',
+                  sort: ImageSort.Newest,
+                  hidden: undefined,
+                  types: undefined,
+                  withMeta: undefined,
+                  followed: undefined,
+                  fromPlatform: undefined,
+                  hideAutoResources: undefined,
+                  hideManualResources: undefined,
+                }}
+                renderItem={SelectableImageCardMemoized}
+                disableStoreFilters
+              />
+            </MasonryContainer>
+          </MasonryProvider>
         </ScrollAreaProvider>
         {(availableTags?.length ?? 0) > 0 && (
           <Select

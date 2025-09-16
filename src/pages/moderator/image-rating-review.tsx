@@ -16,7 +16,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');
-  const [cursor, setCursor] = useState<string | undefined>();
+  const [cursor, setCursor] = useState<number | undefined>();
   const { data, isLoading, isFetching } = trpc.image.getImageRatingRequests.useQuery({
     limit: Number(limit),
     cursor,

@@ -1,7 +1,7 @@
 import type { ComfyStepTemplate } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
+import { NsfwLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
@@ -23,6 +23,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -111,10 +112,12 @@ export async function createComfy(
     user: SessionUser;
     token: string;
     experimental?: boolean;
+    isGreen?: boolean;
+    allowMatureContent: boolean;
   }
 ) {
   const step = await createComfyStep(args);
-  const { user, tips, params, experimental } = args;
+  const { user, tips, params, experimental, isGreen, allowMatureContent } = args;
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
@@ -133,12 +136,9 @@ export async function createComfy(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   })) as TextToImageResponse;
 

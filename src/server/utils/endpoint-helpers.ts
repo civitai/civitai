@@ -2,7 +2,7 @@ import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isArray } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session, SessionUser } from 'next-auth';

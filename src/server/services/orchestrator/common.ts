@@ -1,29 +1,29 @@
 import type {
+  ComfyOutput,
   ComfyStep,
   HaiperVideoGenOutput,
+  ImageBlob,
+  ImageGenOutput,
   ImageGenStep,
+  TextToImageOutput,
   TextToImageStep,
   VideoBlob,
+  VideoGenOutput,
   VideoGenStep,
   Workflow,
   WorkflowStatus,
+  VideoEnhancementStep,
   WorkflowStep,
+  WorkflowStepJob,
 } from '@civitai/client';
-import {
-  createCivitaiClient,
-  ImageJobNetworkParams,
-  Priority,
-  TextToImageInput,
-} from '@civitai/client';
-import { uniq, uniqBy } from 'lodash-es';
+import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { env } from '~/env/server';
-import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
-import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
@@ -32,44 +32,47 @@ import type {
   generateImageSchema,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import type { UserTier } from '~/server/schema/user.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { getResourceData } from '~/server/services/generation/generation.service';
-import type { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import type {
   GeneratedImageWorkflow,
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
-import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { getWorkflow, queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import type { InjectableResource } from '~/shared/constants/generation.constants';
 import {
   allInjectableResourceIds,
   fluxDraftAir,
-  fluxModeOptions,
-  fluxModelId,
   fluxUltraAir,
   fluxUltraAirId,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
-  getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
+  getIsChroma,
   getIsFlux,
   getIsFluxStandard,
+  getIsQwen,
   getIsSD3,
-  getRoundedWidthHeight,
-  samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { hiDreamModelId } from '~/shared/orchestrator/hidream.config';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
+import { Availability } from '~/shared/utils/prisma/enums';
+import { includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/shared/utils/air';
+import { parseAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import { getRoundedWidthHeight } from '~/utils/image-utils';
+
+type WorkflowStepAggregate =
+  | ComfyStep
+  | ImageGenStep
+  | TextToImageStep
+  | VideoGenStep
+  | VideoEnhancementStep;
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -173,7 +176,8 @@ export async function getGenerationResourceData(
   );
 
   // remove any resources that may not be supported by the generator
-  const availableResourceTypes = getBaseModelResourceTypes(baseModel)?.map((x) => x.type) ?? [];
+  const availableResourceTypes =
+    getGenerationBaseModelResourceOptions(baseModel)?.map((x) => x.type) ?? [];
   const availableResources = resources.filter((x) =>
     availableResourceTypes.includes(x.model.type as any)
   );
@@ -210,7 +214,10 @@ export async function parseGenerateImageInput({
 }) {
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
-  if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
+  if (originalParams.workflow.startsWith('txt2img')) {
+    originalParams.sourceImage = null;
+    originalParams.images = null;
+  }
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
   if (originalParams.sourceImage) {
@@ -222,7 +229,9 @@ export async function parseGenerateImageInput({
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
-  if (isFlux) {
+  const isQwen = getIsQwen(originalParams.baseModel);
+
+  if (isFlux || isQwen) {
     // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
     // originalResources = [{ id: version, strength: 1 }];
@@ -239,6 +248,12 @@ export async function parseGenerateImageInput({
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
     }
+  }
+
+  const isChroma = getIsChroma(originalParams.baseModel);
+  if (isChroma) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);
@@ -502,48 +517,19 @@ function formatImageGenStep({
   resources?: GenerationResource[];
   workflowId: string;
 }) {
-  const { input, output, jobs } = step as ImageGenStep;
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
   const { params, resources: stepResources = [] } = metadata;
-
-  const { width = 1024, height = 1024 } =
-    params?.sourceImage ?? (params as { width?: number; height?: number });
-
-  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
-    (acc, job, i) => ({
-      ...acc,
-      [job.id]:
-        output?.images
-          ?.filter((x) => (x.jobId ? x.jobId === job.id : true))
-          .map((image) => ({
-            type: 'image',
-            workflowId,
-            stepName: step.name,
-            jobId: job.id,
-            id: image.id,
-            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            seed: params?.seed ? params.seed + i : undefined,
-            completed: job.completedAt ? new Date(job.completedAt) : undefined,
-            url: image.url as string,
-            width: image.width ?? width,
-            height: image.height ?? height,
-            blockedReason: image.blockedReason,
-          })) ?? [],
-    }),
-    {}
-  );
-
-  const images = Object.values(groupedImages).flat();
 
   return {
     $type: 'imageGen' as const,
     timeout: step.timeout,
     name: step.name,
     params: params!,
-    images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
+    completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -556,90 +542,9 @@ function formatVideoGenStep({
   workflowId: string;
   resources: GenerationResource[];
 }) {
-  const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params: VideoGenerationSchema2 };
   const params = videoMetadata.params ?? {};
 
-  // handle legacy source image
-  let sourceImage = 'sourceImage' in params ? params.sourceImage : undefined;
-  if (
-    'width' in params &&
-    'height' in params &&
-    'sourceImage' in params &&
-    typeof params.sourceImage === 'string'
-  ) {
-    sourceImage = {
-      width: params.width as number,
-      height: params.height as number,
-      url: params.sourceImage,
-    };
-  }
-
-  let width: number | undefined;
-  let height: number | undefined;
-  let aspectRatio = 1;
-
-  if (sourceImage) {
-    width = sourceImage?.width;
-    height = sourceImage?.height;
-    if (!('aspectRatio' in params)) aspectRatio = width && height ? width / height : 16 / 9;
-    else {
-      const [rw, rh] = (params.aspectRatio as string).split(':').map(Number);
-      aspectRatio = rw / rh;
-    }
-  } else {
-    switch (params.engine) {
-      case 'minimax':
-        aspectRatio = 16 / 9;
-        break;
-      case 'mochi':
-        width = 848;
-        height = 480;
-        aspectRatio = width / height;
-        break;
-      default: {
-        if (!params.aspectRatio) params.aspectRatio = '16:9';
-        const [rw, rh] = params.aspectRatio.split(':').map(Number);
-        aspectRatio = rw / rh;
-        break;
-      }
-    }
-  }
-
-  if (typeof aspectRatio === 'string') {
-    const [rw, rh] = (aspectRatio as string).split(':').map(Number);
-    aspectRatio = rw / rh;
-  }
-
-  const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
-    (acc, job, i) => ({
-      ...acc,
-      [job.id]:
-        [output?.video as VideoBlob]
-          ?.filter(isDefined)
-          .filter((x) => x.jobId === job.id)
-          .map((image) => ({
-            type: 'video',
-            progress: (output as HaiperVideoGenOutput).progress ?? 0,
-            workflowId,
-            stepName: step.name,
-            jobId: job.id,
-            id: image.id,
-            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            reason: (output as HaiperVideoGenOutput).message ?? undefined,
-            seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
-            completed: job.completedAt ? new Date(job.completedAt) : undefined,
-            url: image.url + '.mp4',
-            width: output?.video?.width ?? width ?? 1080,
-            height: output?.video?.height ?? height ?? 1080,
-            queuePosition: job.queuePosition,
-            aspectRatio,
-            blockedReason: image.blockedReason,
-          })) ?? [],
-    }),
-    {}
-  );
-  const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
   const stepResources = (params && 'resources' in params ? params.resources ?? [] : [])?.map(
     ({ air, strength }) => {
@@ -665,14 +570,15 @@ function formatVideoGenStep({
   if ('type' in params && (params.type === 'txt2vid' || params.type === 'img2vid'))
     params.process = params.type;
 
-  if (!params.process && baseModel) {
-    const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
-    if (wanProcess) (params as any).process = wanProcess as any;
-  }
-
   if (baseModel === 'WanVideo') {
     if (params.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
     else baseModel = 'WanVideo14B_I2V_720p';
+  }
+
+  const match = baseModel ? wan21BaseModelMap.find((x) => x.baseModel === baseModel) : undefined;
+  if (match) {
+    (params as any).process = match.process;
+    (params as any).resolution = match.resolution;
   }
 
   return {
@@ -683,14 +589,14 @@ function formatVideoGenStep({
     params: removeEmpty({
       ...params!,
       baseModel,
-      sourceImage: sourceImage,
       // workflow: videoMetadata.params?.workflow,
       quantity: 1,
     }) as typeof params,
-    images: videos,
     status: step.status,
     metadata,
-    resources: combineResourcesWithInputResource(resources, stepResources),
+    resources: combinedResources,
+    completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -703,7 +609,7 @@ function formatTextToImageStep({
   resources?: GenerationResource[];
   workflowId: string;
 }) {
-  const { input, output, jobs } = step as TextToImageStep;
+  const { input } = step as TextToImageStep;
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
   const stepResources = getResources(step);
 
@@ -712,32 +618,6 @@ function formatTextToImageStep({
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
   const injectable = getInjectablResources(baseModel);
-
-  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
-    (acc, job, i) => ({
-      ...acc,
-      [job.id]:
-        output?.images
-          ?.filter((x) => x.jobId === job.id)
-          .map((image) => ({
-            type: 'image',
-            workflowId,
-            stepName: step.name,
-            jobId: job.id,
-            id: image.id,
-            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            seed: input.seed ? input.seed + i : undefined,
-            completed: job.completedAt ? new Date(job.completedAt) : undefined,
-            url: image.url as string,
-            width: image.width ?? input.width,
-            height: image.height ?? input.height,
-            blockedReason: image.blockedReason,
-          })) ?? [],
-    }),
-    {}
-  );
-
-  const images = Object.values(groupedImages).flat();
 
   const injectableIds = Object.values(injectable)
     .map((x) => x?.id)
@@ -766,10 +646,11 @@ function formatTextToImageStep({
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
     params: removeEmpty(data),
-    images,
     status: step.status,
     metadata: metadata,
     resources: resources.filter((x) => !injectableIds.includes(x.id)),
+    completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -782,45 +663,8 @@ export function formatComfyStep({
   resources?: GenerationResource[];
   workflowId: string;
 }) {
-  const { output, jobs, metadata = {} } = step as ComfyStep;
+  const { metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
-
-  // if (params?.aspectRatio) {
-  //   const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
-  //   params.width = size.width;
-  //   params.height = size.height;
-  // }
-
-  const { width = 512, height = 512 } =
-    (params?.sourceImage && typeof params.sourceImage !== 'string' ? params.sourceImage : params) ??
-    {};
-
-  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
-    (acc, job, i) => ({
-      ...acc,
-      [job.id]:
-        output?.blobs
-          ?.filter((x) => x.jobId === job.id)
-          .map((image) => ({
-            type: 'image',
-            workflowId,
-            stepName: step.name,
-
-            jobId: job.id,
-            id: image.id,
-            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            seed: params?.seed ? params.seed + i : undefined,
-            completed: job.completedAt ? new Date(job.completedAt) : undefined,
-            url: image.url as string,
-            width: width,
-            height: height,
-            blockedReason: image.blockedReason,
-          })) ?? [],
-    }),
-    {}
-  );
-
-  const images = Object.values(groupedImages).flat();
 
   const upscale =
     params && 'upscale' in params
@@ -831,20 +675,17 @@ export function formatComfyStep({
       : {};
 
   const data = { ...params!, ...upscale } as TextToImageParams;
-  // if(data.workflow === 'img2img-upscale"') {
-  //   delete (data as any).nsfw;
-  //   delete (data as any).
-  // }
 
   return {
     $type: 'comfy' as const,
     timeout: step.timeout,
     name: step.name,
     params: data,
-    images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
+    completedAt: step.completedAt,
+    ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
 
@@ -854,7 +695,11 @@ export type GeneratedImageWorkflowModel = AsyncReturnType<
 export async function queryGeneratedImageWorkflows({
   user,
   ...props
-}: Parameters<typeof queryWorkflows>[0] & { token: string; user?: SessionUser }) {
+}: Parameters<typeof queryWorkflows>[0] & {
+  token: string;
+  user?: SessionUser;
+  allowMatureContent: boolean;
+}) {
   const { nextCursor, items } = await queryWorkflows(props);
 
   return {
@@ -874,3 +719,127 @@ export async function queryGeneratedImageWorkflows({
 //   if (!status.membershipPriority) return Priority.NORMAL;
 //   return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
 // }
+
+function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBlob> | undefined {
+  switch (step.$type) {
+    case 'comfy':
+      return step.output?.blobs?.map((blob) => ({ ...blob, type: 'image' }));
+    case 'imageGen':
+    case 'textToImage':
+      return step.output?.images.map((image) => ({ ...image, type: 'image' }));
+    case 'videoGen':
+    case 'videoEnhancement':
+      return step.output?.video ? [{ ...step.output.video, type: 'video' }] : undefined;
+  }
+}
+
+export type NormalizedWorkflowStepOutput = ReturnType<
+  typeof formatWorkflowStepOutput
+>['images'][number];
+function formatWorkflowStepOutput({
+  workflowId,
+  step,
+}: {
+  workflowId: string;
+  step: WorkflowStepAggregate;
+}) {
+  const items = normalizeOutput(step) ?? [];
+  const seed = 'seed' in step.input ? step.input.seed : undefined;
+
+  const images = items.map((item, index) => {
+    const job = step.jobs?.find((x) => x.id === item.jobId);
+    // eslint-disable-next-line prefer-const
+    let { width, height, ...restItem } = item;
+    let aspect: number | undefined;
+    if (!width || !height) {
+      const params = (step.metadata?.params ?? {}) as {
+        width?: number;
+        height?: number;
+        sourceImage?: SourceImageProps;
+        images?: SourceImageProps[];
+        engine?: string;
+        aspectRatio?: string;
+      };
+
+      width = params.width;
+      height = params.height;
+
+      if (!width || !height) {
+        if (params.aspectRatio) {
+          const split = params.aspectRatio.split(':').map(Number);
+          width = split[0];
+          height = split[1];
+        } else {
+          const image = params.sourceImage ?? params.images?.[0];
+          if (image) {
+            width = image.width;
+            height = image.height;
+          }
+        }
+      }
+
+      let aspect = !!width && !!height ? width / height : undefined;
+      if (!aspect && params.engine && step.$type === 'videoGen') {
+        switch (params.engine) {
+          case 'minimax':
+            aspect = 16 / 9;
+          case 'mochi':
+            aspect = 1.325;
+            break;
+          default: {
+            if (!params.aspectRatio) params.aspectRatio = '16:9';
+            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            aspect = rw / rh;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!width || !height) {
+      width = 512;
+      height = 512;
+    }
+
+    if (!aspect) aspect = width / height;
+    return {
+      ...restItem,
+      url: (item.url && item.type === 'video' ? `${item.url}.mp4` : item.url) as string,
+      workflowId,
+      stepName: step.name,
+      seed: seed ? seed + index : undefined,
+      status: item.available ? 'succeeded' : job?.status ?? ('unassignend' as WorkflowStatus),
+      queuePosition: job?.queuePosition,
+      aspect,
+    };
+  });
+  const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+
+  return {
+    images,
+    errors,
+  };
+}
+
+export type WorkflowStatusUpdate = AsyncReturnType<typeof getWorkflowStatusUpdate>;
+export async function getWorkflowStatusUpdate({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const result = await getWorkflow({ token, path: { workflowId: workflowId as string } });
+  if (result) {
+    return {
+      id: workflowId,
+      status: result.status!,
+      steps: result.steps?.map((step) => ({
+        name: step.name,
+        status: step.status,
+        completedAt: step.completedAt,
+        ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
+      })),
+    };
+  }
+}

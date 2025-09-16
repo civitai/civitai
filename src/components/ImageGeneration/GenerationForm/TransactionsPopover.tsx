@@ -20,7 +20,7 @@ export function TransactionsPopover({ data }: { data: TransactionInfo[] }) {
           </Card.Section>
           <Card.Section className="flex flex-col gap-1 px-3 py-1">
             {data.map((transaction, i) => {
-              const color = transaction.accountType === 'user' ? 'yellow' : 'blue';
+              const color = transaction.accountType === 'yellow' ? 'yellow' : 'blue';
               return (
                 <div key={i} className="flex items-center justify-between ">
                   <Text c={color} className="font-semibold">

@@ -22,7 +22,7 @@ import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationFo
 import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
-import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
+import { WanFormInput } from '~/components/Generation/Video/WanFormInput/WanFormInput';
 import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput';
 import { KlingFormInput } from '~/components/Generation/Video/KlingFormInput';
 import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput';
@@ -35,6 +35,7 @@ import { GenForm } from '~/components/Generation/Form/GenForm';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -109,9 +110,14 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   useEffect(() => {
     if (storeData && config) {
       // const registered = Object.keys(form.getValues());
-      const { params, resources } = storeData;
-      const validated = config.softValidate({ ...params, resources });
-      form.reset(validated, { keepDefaultValues: true });
+      const { params, resources, runType } = storeData;
+      let data = params;
+      if (runType === 'patch') {
+        const formData = form.getValues();
+        data = { ...formData, ...params };
+      }
+      const validated = config.softValidate(data);
+      form.reset({ ...validated, resources }, { keepDefaultValues: true });
 
       generationStore.clearData();
     }
@@ -184,7 +190,8 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const isUploadingImageValue = useIsMutating({
     mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
   });
-  const isUploadingImage = isUploadingImageValue === 1;
+  const isUploadingMultiple = useImagesUploadingStore((state) => state.uploading.length > 0);
+  const isUploadingImage = isUploadingImageValue === 1 || isUploadingMultiple;
   const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
     { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage && canQuery }

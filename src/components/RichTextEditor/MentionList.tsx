@@ -69,7 +69,7 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
   }));
 
   return (
-    <Paper radius="md" withBorder>
+    <Paper className="relative z-50" radius="md" withBorder>
       <Stack gap={0}>
         {items.length > 0
           ? items.map((item, index) => (

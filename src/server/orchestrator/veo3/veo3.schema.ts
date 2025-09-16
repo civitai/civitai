@@ -1,5 +1,5 @@
 import type { Veo3VideoGenInput } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import type { ResourceInput } from '~/server/orchestrator/infrastructure/base.schema';
 import {
@@ -16,7 +16,7 @@ import { parseAIR } from '~/utils/string-helpers';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const veo3AspectRatios = ['16:9', '1:1', '9:16'] as const;
-export const veo3Duration = [8] as const;
+export const veo3Durations = [4, 6, 8];
 
 export const veo3ModelOptions = [
   {
@@ -66,6 +66,13 @@ export function getVeo3ProcessFromAir(air: string) {
   return veo3ModelOptions.find((x) => x.value === air)?.process ?? 'txt2vid';
 }
 
+/*
+// TODO
+- add duration
+- add aspectRatios 16:9, 9:16
+
+*/
+
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('veo3').default('veo3').catch('veo3'),
   // sourceImage: sourceImageSchema.nullish(),
@@ -73,7 +80,7 @@ const schema = baseVideoGenerationSchema.extend({
   negativePrompt: negativePromptSchema,
   enablePromptEnhancer: z.boolean().default(false),
   aspectRatio: z.enum(veo3AspectRatios).optional().catch('16:9'),
-  duration: numberEnum(veo3Duration).default(8).catch(8),
+  duration: numberEnum(veo3Durations).default(8).catch(8),
   generateAudio: z.boolean().optional(),
   seed: seedSchema,
   resources: resourceSchema.array().nullable().default(null),
@@ -108,6 +115,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
     if (data.process === 'txt2vid') {
       delete data.images;
     } else if (data.process === 'img2vid') {
+      data.duration = 8;
       const image = data.images?.[0];
       if (image) {
         data.aspectRatio = findClosestAspectRatio(image, [...veo3AspectRatios]);

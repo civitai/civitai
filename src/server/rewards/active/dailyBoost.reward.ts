@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { createBuzzEvent } from '../base.reward';
 
 export const dailyBoostReward = createBuzzEvent({

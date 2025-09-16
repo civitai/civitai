@@ -2,7 +2,7 @@ import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { CollectionType, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -16,14 +16,16 @@ import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient } from '~/server/meilisearch/client';
 import { isDefined } from '~/utils/type-guards';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 type Metadata = {
   currentPage?: number;
@@ -66,7 +68,11 @@ export default MixedAuthEndpoint(async function handler(
 
   const parsedParams = modelsEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
-  const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
+
+  // Check if request is from restricted region and override browsing level
+  const region = getRegion(req);
+  let browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
 
   // Handle pagination
   const { limit, page, cursor, query, ids: queryIds, ...data } = parsedParams.data;
@@ -100,17 +106,22 @@ export default MixedAuthEndpoint(async function handler(
   let searchIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
+    const browsingLevelValues = Flags.instanceToArray(browsingLevel);
     // Fetch IDs from Meilisearch
-    const meiliResult = await searchClient?.index(MODELS_SEARCH_INDEX).search(query, {
-      limit,
-      filter: [cursor ? `id < ${cursor}` : undefined].filter(isDefined),
-      attributesToRetrieve: ['id'],
-      sort: ['id:desc'],
-    });
-    // @ts-ignore
+    const meiliResult = await searchClient
+      ?.index(MODELS_SEARCH_INDEX)
+      .search<{ id: number }>(query, {
+        limit: limit ? limit + 1 : undefined,
+        filter: [
+          cursor ? `id < ${String(cursor)}` : undefined,
+          `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
+        ].filter(isDefined),
+        attributesToRetrieve: ['id'],
+        sort: ['id:desc'],
+      });
+
+    meiliNextCursor = meiliResult?.hits.pop()?.id.toString();
     searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
-    meiliNextCursor =
-      meiliResult?.hits?.length === limit ? searchIds[searchIds.length - 1]?.toString() : undefined;
   }
 
   try {

@@ -1,6 +1,5 @@
 import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Badge,
   Button,
@@ -34,8 +33,9 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
+import clsx from 'clsx';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -80,6 +80,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -223,12 +224,18 @@ export function ImageDetail2() {
     </>
   );
 
+  const title = `${image?.type === 'video' ? 'Video' : 'Image'} posted ${
+    image.user.username ? `by ${image.user.username}` : 'to civitai'
+  }`;
+
   return (
     <>
       <Meta
-        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
+        title={title}
         images={image}
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
+        links={[
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/images/${image.id}`, rel: 'canonical' },
+        ]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
@@ -259,7 +266,7 @@ export function ImageDetail2() {
                             <div className="flex gap-1">
                               <ImageGuard2.BlurToggle
                                 {...sharedBadgeProps}
-                                className={`${sharedBadgeProps.className} @md:hidden`}
+                                className={clsx('@md:hidden', sharedBadgeProps.className)}
                               />
                               {/* Disable view count  */}
                               {/* <Badge {...sharedBadgeProps}>
@@ -288,7 +295,7 @@ export function ImageDetail2() {
                               </DownloadImage>
                               <ShareButton
                                 url={shareUrl}
-                                title={`Image by ${image.user.username}`}
+                                title={title}
                                 collect={{ type: CollectionType.Image, imageId: image.id }}
                               >
                                 <LegacyActionIcon {...sharedActionIconProps}>
@@ -494,7 +501,8 @@ export function ImageDetail2() {
                           </Text>
                         </AlertWithIcon>
                       )}
-                      {!hideAds && <AdUnitSide_2 />}
+                      {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
+                      {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
                       <VotableTags
                         entityType="image"
                         entityId={image.id}
@@ -519,6 +527,7 @@ export function ImageDetail2() {
                       <ImageGenerationData imageId={image.id} />
                       {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
+                      {!hideAds && <AdUnitSide_3 />}
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconBrandWechat />

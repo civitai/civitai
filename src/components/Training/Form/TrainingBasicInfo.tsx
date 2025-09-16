@@ -1,11 +1,11 @@
 import { Badge, Button, Group, Image, Input, Radio, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import type {
   ModelVersionUpsertInput,

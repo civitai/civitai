@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconCircleCheck } from '@tabler/icons-react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

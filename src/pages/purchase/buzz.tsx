@@ -1,7 +1,7 @@
 import { Alert, Center, Container, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -43,12 +43,13 @@ const schema = z.object({
   returnUrl: z.string().optional(),
   minBuzzAmount: z.coerce.number().optional(),
   buzzType: z.enum(['yellow', 'green', 'red']).optional(),
+  success: z.string().optional(),
 });
 
 export default function PurchaseBuzz() {
   const router = useRouter();
-  const { returnUrl, minBuzzAmount, buzzType } = schema.parse(router.query);
-  const [success, setSuccess] = useState<boolean>(false);
+  const { returnUrl, minBuzzAmount, buzzType, success: successParam } = schema.parse(router.query);
+  const [success, setSuccess] = useState<boolean>(successParam === 'true');
 
   const handlePurchaseSuccess = () => {
     if (returnUrl) {
@@ -93,7 +94,7 @@ export default function PurchaseBuzz() {
   }
 
   return (
-    <Container size="xl" mb="lg">
+    <Container size="xl" mb="lg" pt="sm">
       {minBuzzAmount && (
         <Alert radius="sm" color="info" mb="xl">
           <Stack gap={0}>
@@ -109,12 +110,6 @@ export default function PurchaseBuzz() {
           </Stack>
         </Alert>
       )}
-      <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
-        <Group gap="xs" wrap="nowrap" justify="center">
-          <CurrencyIcon currency={Currency.BUZZ} size={24} />
-          <Title order={2}>Buy Buzz now</Title>
-        </Group>
-      </Alert>
       <BuzzPurchaseImproved
         onPurchaseSuccess={handlePurchaseSuccess}
         minBuzzAmount={minBuzzAmount}

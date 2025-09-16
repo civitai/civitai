@@ -1,8 +1,7 @@
-import { Container, Title } from '@mantine/core';
-import fs from 'fs';
-import matter from 'gray-matter';
+import { Container, Stack, Text, Title } from '@mantine/core';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
+import { useRouter } from 'next/router';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -10,90 +9,83 @@ import { Meta } from '~/components/Meta/Meta';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { formatDate } from '~/utils/date-helpers';
 
-const contentRoot = 'src/static-content';
-// export const getStaticPaths: GetStaticPaths = async () => {
-//   const files = await getFilesWithExtension(contentRoot, ['.md']);
+// Helper function to sanitize slug segments
+function sanitizeSlug(slug: string | string[] | undefined): string[] {
+  if (!slug) return [];
 
-//   const paths = files.map((fileName) => ({
-//     params: {
-//       slug: fileName
-//         .replace(contentRoot + '/', '')
-//         .replace('.md', '')
-//         .split('/'),
-//     },
-//   }));
+  const slugArray = Array.isArray(slug) ? slug : [slug];
+  return slugArray.filter(Boolean).map((s) => s.replace(/[^a-zA-Z0-9-_]/g, ''));
+}
 
-//   return {
-//     paths,
-//     fallback: false,
-//   };
-// };
-
-// export const getStaticProps: GetStaticProps<{
-//   frontmatter: MixedObject;
-//   content: string;
-// }> = async ({ params }) => {
-//   let { slug } = params ?? {};
-//   if (!slug) return { notFound: true };
-//   if (!Array.isArray(slug)) slug = [slug];
-
-//   const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
-//   const { data: frontmatter, content } = matter(fileName);
-//   return {
-//     props: {
-//       frontmatter,
-//       content,
-//     },
-//   };
-// };
-
-export const getServerSideProps = createServerSideProps({
+export const getServerSideProps = createServerSideProps<{ slug?: string[] }>({
   useSSG: true,
-  resolver: async ({ ctx }) => {
+  resolver: async ({ ctx, ssg }) => {
     let { slug } = ctx.params ?? {};
     if (!slug) return { notFound: true };
     if (!Array.isArray(slug)) slug = [slug];
 
+    // Sanitize slug to prevent directory traversal
+    const sanitizedSlugArray = sanitizeSlug(slug);
+    if (sanitizedSlugArray.length === 0) return { notFound: true };
+
     try {
-      const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
-      const { data: frontmatter, content } = matter(fileName);
+      if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlugArray });
+
       return {
-        props: {
-          title: frontmatter.title as string | null,
-          description: frontmatter.description as string | null,
-          content,
-        },
+        props: { slug: sanitizedSlugArray },
       };
-    } catch {
+    } catch (error) {
+      console.error('Error loading content:', error);
       return { notFound: true };
     }
   },
 });
 
 export default function ContentPage({
-  title,
-  description,
-  content,
+  slug: slugFromProps,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const router = useRouter();
+
+  const sanitizedRouterSlug = sanitizeSlug(router.query.slug);
+  const slug = slugFromProps && slugFromProps.length > 0 ? slugFromProps : sanitizedRouterSlug;
+
+  const { data: content, isLoading } = trpc.content.get.useQuery(
+    { slug },
+    { enabled: slug.length > 0 }
+  );
+
+  if (slug.length === 0 || isLoading) return <PageLoader />;
+  if (!content) return null;
+
+  const { title, description, lastmod, content: markdownContent } = content;
+
+  const slugString = slug.join('/');
+
   return (
     <>
       <Meta
-        title={title ? `${title} | Civitai` : undefined}
-        description={description ?? truncate(removeTags(content), { length: 150 })}
-        links={
-          env.NEXT_PUBLIC_BASE_URL && title
-            ? [{ href: `${env.NEXT_PUBLIC_BASE_URL}/content/${title}`, rel: 'canonical' }]
-            : undefined
-        }
+        title={`${title} | Civitai`}
+        description={description ?? truncate(removeTags(markdownContent), { length: 150 })}
+        links={[
+          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/content/${slugString}`, rel: 'canonical' },
+        ]}
       />
       <Container size="md" pt="sm">
-        <Title order={1} mb="sm">
-          {title}
-        </Title>
+        <Stack mb="lg" gap={0}>
+          <Title order={1}>{title}</Title>
+          {lastmod ? (
+            <Text c="dimmed" size="sm">
+              Last modified: {formatDate(lastmod, undefined, true)}
+            </Text>
+          ) : null}
+        </Stack>
         <TypographyStylesWrapper>
-          <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>
+          <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{markdownContent}</CustomMarkdown>
         </TypographyStylesWrapper>
       </Container>
     </>

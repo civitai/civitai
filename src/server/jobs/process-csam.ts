@@ -6,7 +6,7 @@ import {
   getCsamsToRemoveContent,
   getCsamsToReport,
   processCsamReport,
-} from '~/server/services/csam.service';
+} from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 
 const sendCsamReportsJob = createJob(

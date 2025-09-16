@@ -1,7 +1,7 @@
 import type { MantineSize } from '@mantine/core';
 import { Stack, Text, Group } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 

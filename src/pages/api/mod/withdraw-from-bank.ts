@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getMonthAccount } from '~/server/services/creator-program.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';

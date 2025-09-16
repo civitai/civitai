@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';

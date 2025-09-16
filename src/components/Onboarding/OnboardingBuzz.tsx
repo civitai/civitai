@@ -30,7 +30,7 @@ import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortBu
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,
@@ -45,7 +45,7 @@ const referralSchema = z.object({
     .string()
     .trim()
     .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
-      message: `Referral codes must be at least ${
+      error: `Referral codes must be at least ${
         constants.referrals.referralCodeMinLength + 1
       } characters long`,
     })

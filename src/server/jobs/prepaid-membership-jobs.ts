@@ -1,7 +1,8 @@
 import { chunk } from 'lodash-es';
+import dayjs from '~/shared/utils/dayjs';
+import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import dayjs from 'dayjs';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
@@ -10,15 +11,26 @@ import type {
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
 
+const schema = z.object({
+  date: z.coerce.date().optional(),
+});
+
 export const deliverPrepaidMembershipBuzz = createJob(
   'deliver-civitai-membership-buzz',
   '0 1 * * *', // We should run this after the expire not before.
-  async () => {
+  async (ctx) => {
     const now = dayjs();
     const date = now.format('YYYY-MM');
 
     // Get the current day of the month
-    const currentDay = now.date();
+    let currentDay = now.date();
+    const parseResult = schema.safeParse(ctx.req?.query);
+    const dateOverride =
+      parseResult.success && parseResult.data.date ? parseResult.data.date : undefined;
+    if (dateOverride) {
+      // Override currentDay with the parsed date's day
+      currentDay = dateOverride.getDate();
+    }
 
     const data = await dbWrite.$queryRaw<
       {
@@ -112,7 +124,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           "updatedAt" = NOW()
         FROM (
           SELECT
-            (value ->> 'id')::string AS "id",
+            (value ->> 'id')::text AS "id",
             value AS data
           FROM json_array_elements(${JSON.stringify(
             data.map((d) => ({
@@ -126,7 +138,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
     }
 
     // Grant cosmetics for Civitai membership holders
-    await deliverMonthlyCosmetics({});
+    await deliverMonthlyCosmetics({ dateOverride });
 
     console.log(`Delivered buzz to ${data.length} Civitai membership holders`);
   }

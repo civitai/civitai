@@ -8,12 +8,14 @@ import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
   session: Session | null,
   features: ReturnType<typeof getFeatureFlagsLazy>
 ) => {
+  const domain = getRequestDomainColor(ctx.req) ?? 'blue';
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
@@ -22,12 +24,12 @@ export const getServerProxySSGHelpers = async (
       features,
       track: new Tracker(),
       ip: null as any,
-      res: null as any,
+      res: ctx.res as any,
       cache: null as any,
-      req: null as any,
+      req: ctx.req as any,
       fingerprint: null as any,
-      // Can't properly get this because we don't have a request,
-      // we have no clue about the request here.
+      domain,
+      // Now we can properly get domain from the request
     },
     transformer: superjson,
   });

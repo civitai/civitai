@@ -19,6 +19,7 @@ import {
   IconWeight,
   IconX,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useStepContext } from '~/components/Generation/Providers/StepProvider';
@@ -27,14 +28,13 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
-import {
-  getBaseModelResourceTypes,
-  getBaseModelSetType,
-} from '~/shared/constants/generation.constants';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
-import clsx from 'clsx';
 
 type Props = {
   resource: GenerationResourceSchema;
@@ -55,7 +55,9 @@ export const ResourceSelectCard = (props: Props) => {
   const { resource } = props;
   const isPartiallySupported = useMemo(() => {
     if (!stepContext?.baseModel) return false;
-    const resources = getBaseModelResourceTypes(stepContext.baseModel);
+    const resources = getGenerationBaseModelResourceOptions(
+      stepContext.baseModel as BaseModelGroup
+    );
     return !!resources?.some((r) => {
       const baseModelType = getBaseModelSetType(resource.baseModel);
       return (
@@ -91,6 +93,7 @@ function CheckpointInfo({
   groupPosition,
   isPartiallySupported,
 }: Props) {
+  const features = useFeatureFlags();
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
@@ -144,7 +147,7 @@ function CheckpointInfo({
               {resource.name}
             </Text>
           )}
-          {selectSource === 'generation' && (
+          {selectSource === 'generation' && features.modelVersionPopularity && (
             <ModelVersionPopularity
               versionId={resource.id}
               isCheckpoint={resource.model.type === ModelType.Checkpoint}

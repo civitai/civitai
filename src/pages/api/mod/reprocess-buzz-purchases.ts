@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import * as z from 'zod';
 import { getPaymentIntentsForBuzz } from '~/server/services/stripe.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaymentIntentsForBuzzSchema } from '~/server/schema/stripe.schema';
@@ -6,7 +7,9 @@ import { getPaymentIntentsForBuzzSchema } from '~/server/schema/stripe.schema';
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const results = getPaymentIntentsForBuzzSchema.safeParse(req.query);
   if (!results.success) {
-    return res.status(400).json({ ok: false, error: results.error.flatten().fieldErrors });
+    return res
+      .status(400)
+      .json({ ok: false, error: z.prettifyError(results.error) ?? 'Validation failed' });
   }
 
   try {

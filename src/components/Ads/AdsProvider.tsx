@@ -66,7 +66,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = isDev
-    ? false
+    ? true
     : !features.isGreen &&
       features.isBlue &&
       (allowAds || !isMember) &&
@@ -182,7 +182,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       )}
       {adsEnabled && (
         <Script
-          async
+          defer
           src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
           onError={handleLoadedError}
           onLoad={handleLoaded}

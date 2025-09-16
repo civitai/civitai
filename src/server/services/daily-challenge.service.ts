@@ -8,7 +8,7 @@ import { articleWhereSchema } from '~/server/schema/article.schema';
 import { getArticles } from '~/server/services/article.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { isFutureDate, startOfDay } from '~/utils/date-helpers';
 
 export async function getAllDailyChallenges() {

@@ -2,36 +2,34 @@
 .wrapper {
   max-width: 1200px;
   margin: 0 auto;
-  padding: var(--mantine-spacing-sm);
   width: 100%;
-  
+
   // Global buzz text color class
   :global(.text-buzz) {
     color: rgb(var(--buzz-color)) !important;
   }
-  
   // Mobile improvements for better readability
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs);
-    
+
     .mantine-Stack-root {
       gap: var(--mantine-spacing-sm);
     }
-    
+
     .mantine-Card-root {
       padding: var(--mantine-spacing-sm) !important;
       margin-bottom: var(--mantine-spacing-sm);
     }
-    
+
     .mantine-Text-root {
       line-height: 1.4;
     }
-    
+
     .mantine-Button-root {
       height: 44px;
       font-size: var(--mantine-font-size-sm);
     }
-    
+
     .mantine-Group-root {
       gap: var(--mantine-spacing-xs);
     }
@@ -49,7 +47,7 @@
     var(--mantine-color-blue-7)
   );
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  
+
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm) !important;
   }
@@ -57,12 +55,11 @@
 
 /* Gift Card Promo - Clean and Eye-catching */
 .giftCardPromo {
-  background: linear-gradient(135deg, 
-    rgb(var(--buzz-color)) 0%, 
+  background: linear-gradient(135deg,
+    rgb(var(--buzz-color)) 0%,
     rgba(var(--buzz-color), 0.8) 100%);
   border: 2px solid rgb(var(--buzz-color));
   box-shadow: 0 4px 20px rgba(var(--buzz-color), 0.25);
-  
   @media (max-width: theme('screens.md')) {
     padding: var(--mantine-spacing-md) !important;
   }
@@ -70,7 +67,7 @@
 
 .giftCardButtons {
   margin-left: auto;
-  
+
   @media (max-width: theme('screens.md')) {
     margin-left: 0;
     width: 100%;
@@ -82,7 +79,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  
+
   @media (max-width: theme('screens.md')) {
     flex-direction: column;
     gap: var(--mantine-spacing-md);
@@ -93,7 +90,7 @@
 .giftCardContent {
   flex: 1;
   min-width: 0;
-  
+
   @media (max-width: theme('screens.md')) {
     justify-content: center;
     text-align: center;
@@ -108,7 +105,7 @@
 .giftCardTitle {
   color: var(--mantine-color-dark-9);
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8);
-  
+
   @media (max-width: theme('screens.xs')) {
     font-size: 1rem;
   }
@@ -128,7 +125,7 @@
   justify-content: center;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   flex-shrink: 0;
-  
+
   @media (max-width: theme('screens.xs')) {
     display: none;
   }
@@ -148,13 +145,13 @@
   border-radius: var(--mantine-radius-sm);
   transition: all 0.2s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  
+
   &:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
     background: rgba(255, 255, 255, 0.95);
   }
-  
+
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
     font-size: var(--mantine-font-size-xs);
@@ -167,12 +164,12 @@
   font-weight: 500;
   padding: var(--mantine-spacing-sm);
   transition: all 0.2s ease;
-  
+
   &:hover {
     color: white !important;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
-  
+
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-xs);
     font-size: var(--mantine-font-size-xs);
@@ -184,16 +181,15 @@
   background: var(--buzz-gradient);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: white;
-  box-shadow: 
+  box-shadow:
     0 4px 20px rgba(var(--buzz-color), 0.15),
     0 2px 8px rgba(0, 0, 0, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  
   .title {
     color: white;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
-  
+
   .subtitle {
     color: rgba(255, 255, 255, 0.95);
   }
@@ -243,7 +239,7 @@
   &.packageCardDisabled {
     opacity: 0.5;
     cursor: not-allowed;
-    
+
     &:hover {
       transform: none;
       border-color: light-dark(rgba(var(--buzz-color), 0.3), rgba(var(--buzz-color), 0.6));
@@ -313,22 +309,21 @@
     linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
   );
   border: 1px solid light-dark(rgba(var(--buzz-color), 0.2), rgba(var(--buzz-color), 0.6));
-  
   // Mobile improvements
   @media (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm) !important;
-    
+
     .mantine-Group-root {
       flex-direction: column;
       align-items: stretch;
       gap: var(--mantine-spacing-sm);
     }
-    
+
     .mantine-Button-root {
       width: 100%;
       justify-content: center;
     }
-    
+
     .mantine-Divider-root {
       margin: var(--mantine-spacing-sm) 0;
     }
@@ -348,78 +343,20 @@
   }
 }
 
-.benefitsBreakdown {
-  display: flex;
-  flex-direction: column;
-  gap: var(--mantine-spacing-sm);
-
-  // Mobile stacking and spacing
-  @container (max-width: theme('screens.xs')) {
-    gap: var(--mantine-spacing-xs);
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-  }
-}
-
-.benefitRow {
-  // Mobile-specific layout improvements
-  @container (max-width: theme('screens.xs')) {
-    flex-direction: column !important;
-    align-items: flex-start !important;
-    gap: var(--mantine-spacing-xs) !important;
-    padding: var(--mantine-spacing-sm);
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    margin-bottom: var(--mantine-spacing-xs);
-    
-    // Add a subtle separator instead of borders
-    &:not(:last-child) {
-      border-bottom: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
-      padding-bottom: var(--mantine-spacing-sm);
-    }
-  }
-}
-
-.benefitInfo {
-  // Mobile text improvements
-  @container (max-width: theme('screens.xs')) {
-    width: 100%;
-    
-    div {
-      text-align: left;
-    }
-    
-    .mantine-Text-root {
-      line-height: 1.4;
-      word-break: break-word;
-    }
-  }
-}
-
-.benefitBadge {
-  // Mobile badge positioning
-  @container (max-width: theme('screens.xs')) {
-    align-self: flex-end;
-    margin-top: 0;
-    font-size: var(--mantine-font-size-xs);
-  }
-}
+// Removed old complex benefit breakdown styles - now using simpler inline styles
 
 .membershipInfo {
   // Mobile membership info
   @container (max-width: theme('screens.xs')) {
     padding: var(--mantine-spacing-sm);
     margin: var(--mantine-spacing-sm) 0;
-    
+
     .mantine-Group-root {
       flex-direction: column;
       align-items: stretch;
       gap: var(--mantine-spacing-sm);
     }
-    
+
     .mantine-ThemeIcon-root {
       align-self: center;
     }
@@ -433,11 +370,11 @@
     padding-top: var(--mantine-spacing-sm);
     border-top: 1px solid var(--mantine-color-gray-3);
     text-align: center;
-    
+
     @media (prefers-color-scheme: dark) {
       border-top-color: var(--mantine-color-dark-4);
     }
-    
+
     .mantine-Group-root {
       justify-content: center;
       flex-wrap: wrap;
@@ -488,7 +425,7 @@
 .giftCardLink {
   color: rgb(var(--buzz-color));
   text-decoration: none;
-  
+
   &:hover {
     text-decoration: underline;
   }
@@ -497,7 +434,7 @@
 .cryptoLink {
   color: rgb(var(--buzz-color));
   text-decoration: none;
-  
+
   &:hover {
     text-decoration: underline;
   }
@@ -519,24 +456,24 @@
     border-radius: var(--mantine-radius-sm);
     border: 1px solid light-dark(var(--mantine-color-blue-1), var(--mantine-color-dark-5));
     transition: all 0.2s ease;
-    
+
     &:hover {
       background: light-dark(var(--mantine-color-blue-0), var(--mantine-color-dark-7));
       border-color: light-dark(var(--mantine-color-blue-3), var(--mantine-color-blue-7));
     }
-    
+
     // Mobile responsive
     @media (max-width: theme('screens.xs')) {
       flex-direction: column;
       align-items: flex-start;
       gap: var(--mantine-spacing-sm);
-      
+
       .mantine-Group-root {
         justify-content: flex-start;
         flex-wrap: wrap;
         gap: var(--mantine-spacing-xs);
       }
-      
+
       .mantine-Badge-root {
         align-self: flex-end;
         margin-top: var(--mantine-spacing-xs);
@@ -556,17 +493,17 @@
   background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-8));
   border: 1px solid light-dark(var(--mantine-color-blue-2), var(--mantine-color-dark-5));
   transition: all 0.2s ease;
-  
+
   &:hover {
     border-color: light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-7));
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    
+
     @media (prefers-color-scheme: dark) {
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     }
   }
-  
+
   @container (max-width: theme('screens.xs')) {
     .mantine-Group-root {
       flex-direction: column;
@@ -578,10 +515,10 @@
 
 .bulkBenefitInfo {
   flex: 1;
-  
+
   @container (max-width: theme('screens.xs')) {
     width: 100%;
-    
+
     .mantine-Group-root {
       flex-wrap: wrap;
       justify-content: flex-start;

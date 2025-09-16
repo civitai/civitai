@@ -28,7 +28,7 @@ import type { CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 

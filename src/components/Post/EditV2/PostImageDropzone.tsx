@@ -1,6 +1,5 @@
-import { Anchor, Progress, Text } from '@mantine/core';
-import { useEffect, useState } from 'react';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import { Progress } from '@mantine/core';
+import { useEffect } from 'react';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -13,6 +12,7 @@ import type { PostDetailEditable } from '~/server/services/post.service';
 import {
   orchestratorMediaTransmitter,
   useExternalMetaStore,
+  useOrchestratorUrlStore,
 } from '~/store/post-image-transmitter.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -41,7 +41,7 @@ export function PostImageDropzone({
   // #region [mutations]
   const createPostMutation = trpc.post.create.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
-    onSuccess: (data, payload) => {
+    onSuccess: (data) => {
       setImages((images) => {
         const resolvingIndex = images.findIndex((x) => x.type === 'resolving');
         if (resolvingIndex > -1) images.splice(resolvingIndex, 1);
@@ -50,14 +50,6 @@ export function PostImageDropzone({
         else images.push({ type: 'added', data: { ...data, index: data.index! } });
         return images;
       });
-
-      if (payload.postId) {
-        queryUtils.post.getEdit.setData({ id: payload.postId }, (old) => {
-          if (!old) return old;
-
-          return { ...old, images: [...(old.images || []), data] };
-        });
-      }
     },
   });
   // #endregion
@@ -127,6 +119,7 @@ export function PostImageDropzone({
   };
   // #endregion
 
+  const orchestratorTransferredMedia = useOrchestratorUrlStore((state) => state.data);
   // #region [orchestrator files]
   useEffect(() => {
     async function handleSrc() {
@@ -135,7 +128,7 @@ export function PostImageDropzone({
       if (files.length) handleUpload([...files]);
     }
     handleSrc();
-  }, []); // eslint-disable-line
+  }, [orchestratorTransferredMedia]); // eslint-disable-line
   // #endregion
 
   return (

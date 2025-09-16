@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import React from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

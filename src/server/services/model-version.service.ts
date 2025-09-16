@@ -1,15 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import {
-  CacheTTL,
-  constants,
-  nsfwRestrictedBaseModels,
-  type BaseModel,
-} from '~/server/common/constants';
+import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -66,12 +61,13 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -197,7 +193,7 @@ export const upsertModelVersion = async ({
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true },
+    select: { nsfw: true, meta: true },
   });
 
   // Validate NSFW + restricted base model combination
@@ -213,6 +209,12 @@ export const upsertModelVersion = async ({
         ', '
       )}`
     );
+  }
+
+  // Check if trying to publish a model version when model is marked as cannotPublish
+  const modelMeta = model.meta as ModelMeta | null;
+  if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
+    throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
   }
 
   if (
@@ -327,6 +329,7 @@ export const upsertModelVersion = async ({
           select: {
             id: true,
             availability: true,
+            meta: true,
           },
         },
         monetization: {
@@ -396,6 +399,12 @@ export const upsertModelVersion = async ({
       ? // Ensures we keep relevant data such as buzzTransactionId even if the user changes something.
         { ...earlyAccessConfig, ...updatedEarlyAccessConfig }
       : updatedEarlyAccessConfig;
+
+    // Check if trying to publish a model version when model is marked as cannotPublish
+    const existingModelMeta = existingVersion.model.meta as ModelMeta | null;
+    if (existingModelMeta?.cannotPublish && data.status === ModelStatus.Published) {
+      throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+    }
 
     const version = await dbWrite.modelVersion.update({
       where: { id },
@@ -533,6 +542,23 @@ export const updateModelVersionById = async ({
   id,
   data,
 }: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
+  // Check if trying to publish a model version when model is marked as cannotPublish
+  if (data.status === ModelStatus.Published) {
+    const modelVersion = await dbWrite.modelVersion.findUniqueOrThrow({
+      where: { id },
+      select: {
+        model: {
+          select: { meta: true },
+        },
+      },
+    });
+    
+    const modelMeta = modelVersion.model.meta as ModelMeta | null;
+    if (modelMeta?.cannotPublish) {
+      throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+    }
+  }
+
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
   await preventReplicationLag('model', result.modelId);
   await preventReplicationLag('modelVersion', id);
@@ -562,7 +588,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
       name: true,
       baseModel: true,
       earlyAccessConfig: true,
-      model: { select: { id: true, userId: true, name: true, nsfw: true } },
+      model: { select: { id: true, userId: true, name: true, nsfw: true, meta: true } },
     },
   });
 
@@ -581,6 +607,14 @@ export const publishModelVersionsWithEarlyAccess = async ({
         }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
           ', '
         )}`
+      );
+    }
+
+    // Check if model is marked as cannotPublish
+    const modelMeta = version.model.meta as ModelMeta | null;
+    if (modelMeta?.cannotPublish) {
+      throw throwBadRequestError(
+        `Model version "${version.name}" cannot be published due to moderation restrictions.`
       );
     }
   }
@@ -696,7 +730,7 @@ export const publishModelVersionById = async ({
       baseModel: true,
       earlyAccessConfig: true,
       model: {
-        select: { userId: true, name: true, availability: true, publishedAt: true, nsfw: true },
+        select: { userId: true, name: true, availability: true, publishedAt: true, nsfw: true, meta: true },
       },
     },
   });
@@ -714,6 +748,12 @@ export const publishModelVersionById = async ({
         ', '
       )}`
     );
+  }
+
+  // Check if model is marked as cannotPublish
+  const modelMeta = currentVersion.model.meta as ModelMeta | null;
+  if (modelMeta?.cannotPublish) {
+    throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
   }
 
   const version = await dbWrite.$transaction(
@@ -956,9 +996,9 @@ export const getModelVersionsByModelType = async ({
 }: GetModelVersionByModelTypeProps) => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
-    const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.baseModels.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
+    const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
+    if (baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';

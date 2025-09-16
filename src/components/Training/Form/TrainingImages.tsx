@@ -1,6 +1,5 @@
 import {
   Accordion,
-  ActionIcon,
   Anchor,
   Badge,
   Button,
@@ -60,6 +59,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
@@ -72,17 +72,17 @@ import {
   TrainingImagesTagViewer,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import type { BaseModel } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import {
   IMAGE_MIME_TYPE,
   MIME_TYPES,
   VIDEO_MIME_TYPE,
   ZIP_MIME_TYPE,
 } from '~/shared/constants/mime-types';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
@@ -108,7 +108,6 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const TrainingImagesCaptions = dynamic(
   () =>
@@ -922,11 +921,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         let label = imgData.label;
 
         if (triggerWord.length) {
-          const separator = labelType === 'caption' ? '.' : ',';
-          const regMatch = new RegExp(`^${triggerWord}(${separator}|$)`);
+          const separator = labelType === 'caption' ? '' : ',';
+          const regMatch =
+            labelType === 'caption'
+              ? new RegExp(`^${triggerWord}( |$)`)
+              : new RegExp(`^${triggerWord}(${separator}|$)`);
 
           if (!regMatch.test(label)) {
-            label = label.length > 0 ? [triggerWord, label].join(`${separator} `) : triggerWord;
+            label =
+              label.length > 0
+                ? labelType === 'caption'
+                  ? [triggerWord, label].join(' ')
+                  : [triggerWord, label].join(`${separator} `)
+                : triggerWord;
           }
         }
 
@@ -936,7 +943,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
         // TODO [bw] unregister here
 
-        zip.file(`${filenameBase}.${imgData.type.split('/').pop()}`, imgBlob);
+        zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
       })
     );
     // TODO [bw] handle error
@@ -1570,7 +1577,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   .map((imgData, index) => {
                     return (
                       <Card
-                        key={index}
+                        key={`${imgData.url}-${index}`}
                         shadow="sm"
                         radius="sm"
                         withBorder

@@ -17,11 +17,11 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
-import * as z from 'zod/v4';
+import React, { useEffect, useMemo } from 'react';
+import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -144,7 +144,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     data: memoizedImageData,
   });
   const [image] = items;
-  if (image && !images.length) setImages([image]);
+
+  // Move setState to useEffect to avoid render-phase side effects
+  useEffect(() => {
+    if (image && !images.length) {
+      setImages([image]);
+    }
+  }, [image, images.length, setImages]);
 
   if (isLoading) return <PageLoader />;
   if (!article || isBlocked || disableArticles) return <NotFound />;

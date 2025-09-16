@@ -27,6 +27,7 @@ export function getSuggestions(options?: Options) {
           });
           if (!props.clientRect) return;
           (component.element as HTMLElement).style.position = 'absolute';
+          (component.element as HTMLElement).style.zIndex = '300';
 
           document.body.appendChild(component.element);
 

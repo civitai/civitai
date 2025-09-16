@@ -1,5 +1,5 @@
 import { TagsOnTagsType, TagTarget, TagType } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { taggableEntitySchema, tagVotableEntitySchema } from '~/libs/tags';
 import { ModReviewType, TagSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
@@ -29,13 +29,13 @@ export const getTagsInput = getAllQuerySchema.extend({
       return val === 'true' || val === true;
     }, z.boolean().default(false))
     .optional(),
-  types: z.nativeEnum(TagType).array().optional(),
-  entityType: z.nativeEnum(TagTarget).array().optional(),
+  types: z.enum(TagType).array().optional(),
+  entityType: z.enum(TagTarget).array().optional(),
   modelId: z.number().optional(),
   excludedTagIds: z.number().array().optional(),
   unlisted: z.boolean().optional(),
   categories: z.boolean().optional(),
-  sort: z.nativeEnum(TagSort).optional(),
+  sort: z.enum(TagSort).optional(),
   nsfwLevel: z.number().optional(),
   include: z.enum(['nsfwLevel', 'isCategory']).array().optional(),
   moderation: z.boolean().optional(),
@@ -44,12 +44,12 @@ export type GetTagsInput = z.infer<typeof getTagsInput>;
 
 export type GetTagsForReviewInput = z.infer<typeof getTagsForReviewSchema>;
 export const getTagsForReviewSchema = getAllQuerySchema.extend({
-  reviewType: z.nativeEnum(ModReviewType),
+  reviewType: z.enum(ModReviewType),
 });
 
 export const getTrendingTagsSchema = z.object({
   limit: z.number().optional(),
-  entityType: z.nativeEnum(TagTarget).array(),
+  entityType: z.enum(TagTarget).array(),
   includeNsfw: z.boolean().optional(),
   excludedTagIds: z.number().array().optional(),
   unlisted: z.boolean().optional(),
@@ -94,7 +94,7 @@ export type RemoveTagVotesSchema = z.infer<typeof removeTagVotesSchema>;
 
 export const adjustTagsSchema = z.object({
   tags: tagIdsOrNamesSchema,
-  relationship: z.nativeEnum(TagsOnTagsType).optional(),
+  relationship: z.enum(TagsOnTagsType).optional(),
   entityIds: z.number().array(),
   entityType: taggableEntitySchema,
 });

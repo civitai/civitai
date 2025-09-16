@@ -1,25 +1,28 @@
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { usernameSchema } from '~/server/schema/user.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { baseModels } from '~/shared/constants/base-model.constants';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,
   NsfwLevelDeprecated,
   nsfwLevelMapDeprecated,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import {
   booleanString,
@@ -27,6 +30,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import { usernameSchema } from '~/shared/zod/username.schema';
 
 export const config = {
   api: {
@@ -44,10 +48,10 @@ const imagesEndpointSchema = z.object({
   imageId: numericString().optional(),
   username: usernameSchema.optional(),
   userId: numericString().optional(),
-  period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-  sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+  period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+  sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
   nsfw: z
-    .union([z.nativeEnum(NsfwLevelDeprecated), booleanString()])
+    .union([z.enum(NsfwLevelDeprecated), booleanString()])
     .optional()
     .transform((value) => {
       if (!value) return undefined;
@@ -66,7 +70,7 @@ const imagesEndpointSchema = z.object({
     )
     .optional(),
   type: z.enum(MediaType).optional(),
-  baseModels: commaDelimitedEnumArray([...constants.baseModels]).optional(),
+  baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
 });
@@ -93,8 +97,14 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       ({ skip } = getPagination(limit, page));
     }
 
-    const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    // Check if request is from restricted region and override browsing level
+    const region = getRegion(req);
+    let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
+
     const fn = data.modelId || data.imageId ? getAllImages : getAllImagesIndex;
+
+    const features = getFeatureFlags({ user: session?.user, req });
 
     const { items, nextCursor } = await fn({
       ...data,
@@ -110,6 +120,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       user: session?.user,
       disableMinor: true,
       disablePoi: true,
+      useLogicalReplica: features.logicalReplica,
     });
 
     const metadata: Metadata = {

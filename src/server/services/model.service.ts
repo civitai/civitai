@@ -1,13 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
 import {
   CacheTTL,
   constants,
@@ -19,6 +19,7 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
@@ -30,6 +31,7 @@ import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  GetTrainingModerationFeedSchema,
   IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
@@ -126,6 +128,8 @@ import type {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { Flags } from '~/shared/utils/flags';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -264,9 +268,14 @@ export const getModelsRaw = async ({
 
   // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
   let searchModelIds: number[] = [];
-  if (query && searchClient) {
+  if (query && searchClient && (!ids || ids.length === 0)) {
     const request: SearchParams = {
       limit: take ?? 100,
+      filter: [
+        browsingLevel
+          ? `nsfwLevel IN [${Flags.instanceToArray(browsingLevel).join(',')}]`
+          : undefined,
+      ].filter(isDefined),
     };
 
     const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
@@ -707,9 +716,8 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
+    nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
     models.pop(); //Remove excess model
-    // Use final item as cursor to grab next page
-    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
@@ -1329,26 +1337,72 @@ export const permaDeleteModelById = async ({
 }: GetByIdInput & {
   userId: number;
 }) => {
-  const deletedModel = await dbWrite.$transaction(async (tx) => {
-    const model = await tx.model.findUnique({
-      where: { id },
-      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
-    });
-    if (!model) return null;
+  const deletionResult = await dbWrite.$transaction(
+    async (tx) => {
+      const model = await tx.model.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          userId: true,
+          nsfwLevel: true,
+          modelVersions: { select: { id: true } },
+        },
+      });
+      if (!model) return { deletedModel: null, imagesToDelete: [] };
 
-    await tx.post.deleteMany({
-      where: {
-        userId: model.userId,
-        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-      },
-    });
+      // Get posts to find associated images
+      const posts = await tx.post.findMany({
+        where: {
+          userId: model.userId,
+          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+        },
+        select: { id: true },
+      });
+      const postIds = posts.map((post) => post.id);
 
-    const deletedModel = await tx.model.delete({ where: { id } });
-    return deletedModel;
-  });
+      // Get images to delete and queue search index updates
+      let imagesToDelete: { id: number }[] = [];
+      if (postIds.length > 0) {
+        imagesToDelete = await tx.image.findMany({
+          where: { postId: { in: postIds } },
+          select: { id: true },
+        });
 
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBidsForModel({ modelId: id });
+        await tx.image.deleteMany({
+          where: { postId: { in: postIds } },
+        });
+      }
+
+      await tx.post.deleteMany({
+        where: {
+          userId: model.userId,
+          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+        },
+      });
+
+      const deletedModel = await tx.model.delete({ where: { id } });
+      return { deletedModel, imagesToDelete };
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
+
+  const { deletedModel, imagesToDelete } = deletionResult;
+
+  if (deletedModel) {
+    // Delete model bids
+    await deleteBidsForModel({ modelId: deletedModel.id });
+    // Queue model search index updates
+    await modelsSearchIndex.queueUpdate([
+      { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    // Queue image search index updates
+    if (imagesToDelete.length > 0) {
+      await queueImageSearchIndexUpdate({
+        ids: imagesToDelete.map((img) => img.id),
+        action: SearchIndexUpdateQueueAction.Delete,
+      });
+    }
+  }
 
   return deletedModel;
 };
@@ -1397,6 +1451,18 @@ export const upsertModel = async (
   if (input.description) await throwOnBlockedLinkDomain(input.description);
   if (!input.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
+  }
+
+  // Check model name and description for profanity
+  const profanityFilter = createProfanityFilter();
+  const textToCheck = [input.name, input.description].filter(Boolean).join(' ');
+  const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+  // If profanity is detected, mark model as NSFW and add to locked properties
+  if (hasProfanity && !input.nsfw) {
+    input.nsfw = true;
+    // Add nsfw to lockedProperties to prevent users from changing it
+    input.lockedProperties = [...(input.lockedProperties ?? []), 'nsfw'];
   }
 
   const {
@@ -1685,6 +1751,9 @@ export const publishModelById = async ({
   meta?: ModelMeta;
   republishing?: boolean;
 }) => {
+  if (meta?.cannotPublish) {
+    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+  }
   const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -2362,7 +2431,7 @@ export const getGalleryHiddenPreferences = async ({
 }: {
   settings: ModelGallerySettingsSchema;
 }) => {
-  const { tags, users, images, level, pinnedPosts } = settings;
+  const { tags, users, level, pinnedPosts = {}, hiddenImages = {} } = settings;
   const hiddenTags =
     tags && tags.length
       ? await dbRead.tag.findMany({
@@ -2382,9 +2451,9 @@ export const getGalleryHiddenPreferences = async ({
   return {
     hiddenTags,
     hiddenUsers,
-    hiddenImages: images ?? [],
+    hiddenImages,
     level: level ?? allBrowsingLevelsFlag,
-    pinnedPosts: pinnedPosts ?? {},
+    pinnedPosts,
   };
 };
 
@@ -3084,6 +3153,7 @@ export const privateModelFromTraining = async ({
         ...data,
         availability: Availability.Private,
         status: ModelStatus.Published,
+        sfwOnly: true, // Private models only allow sfw generation
       },
     });
 
@@ -3241,6 +3311,32 @@ export const toggleCannotPromote = async ({
   };
 };
 
+export const toggleCannotPublish = async ({
+  id,
+  isModerator,
+}: GetByIdInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+  const model = await getModel({ id, select: { id: true, meta: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+  const modelMeta = model.meta as ModelMeta | null;
+  const currentCannotPublish = modelMeta?.cannotPublish ?? false;
+  const cannotPublish = !currentCannotPublish;
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: {
+      meta: modelMeta ? { ...modelMeta, cannotPublish } : { cannotPublish },
+    },
+    select: { id: true, meta: true },
+  });
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  return {
+    id: updated.id,
+    meta: updated.meta as ModelMeta | null,
+  };
+};
+
 export async function getTopWeeklyEarners(fresh = false) {
   if (fresh) await bustFetchThroughCache(REDIS_KEYS.CACHES.TOP_EARNERS);
 
@@ -3294,3 +3390,122 @@ export async function getTopWeeklyEarners(fresh = false) {
 
   return results;
 }
+
+export const getTrainingModelsForModerators = async ({
+  limit = DEFAULT_PAGE_SIZE,
+  cursor,
+  username,
+  dateFrom,
+  dateTo,
+  cannotPublish,
+  workflowId,
+}: GetTrainingModerationFeedSchema) => {
+  const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
+  const cursorWhere = cursor ? { id: { lt: cursor } } : {};
+
+  const where: Prisma.ModelWhereInput = {
+    ...cursorWhere,
+    uploadType: ModelUploadType.Trained,
+    deletedAt: null,
+    ...(username && {
+      user: {
+        username,
+      },
+    }),
+    ...(dateFrom && {
+      createdAt: {
+        gte: dateFrom,
+        ...(dateTo && { lte: dateTo }),
+      },
+    }),
+    ...(dateTo && !dateFrom && {
+      createdAt: {
+        lte: dateTo,
+      },
+    }),
+    ...(cannotPublish !== undefined && {
+      meta: cannotPublish
+        ? { path: ['cannotPublish'], equals: true }
+        : { not: { path: ['cannotPublish'], equals: true } },
+    }),
+    modelVersions: {
+      some: {
+        files: {
+          some: {
+            type: 'Training Data',
+            dataPurged: false,
+            ...(workflowId && {
+              metadata: {
+                path: ['trainingResults', 'workflowId'],
+                equals: workflowId,
+              },
+            }),
+          },
+        },
+      },
+    },
+  };
+
+  const items = await dbRead.model.findMany({
+    take,
+    skip,
+    where,
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+      status: true,
+      createdAt: true,
+      publishedAt: true,
+      meta: true,
+      user: {
+        select: simpleUserSelect,
+      },
+      modelVersions: {
+        where: {
+          files: {
+            some: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          baseModel: true,
+          trainingStatus: true,
+          createdAt: true,
+          files: {
+            where: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+            select: {
+              id: true,
+              name: true,
+              url: true,
+              sizeKB: true,
+              createdAt: true,
+              metadata: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
+
+  return {
+    items,
+    nextCursor,
+  };
+};

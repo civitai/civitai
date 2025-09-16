@@ -2,8 +2,8 @@ import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { preprocessImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { preprocessVideo } from '~/utils/media-preprocessors/video.preprocessor';
 
-export * from './image.preprocessor';
-export * from './video.preprocessor';
+export { auditImageMeta } from './image.preprocessor';
+export { getVideoData } from './video.preprocessor';
 
 type SharedProps = { name: string; mimeType: string };
 type ProcessedImage = { type: 'image' } & AsyncReturnType<typeof preprocessImage>;

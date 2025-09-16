@@ -464,6 +464,9 @@ export const REDIS_SYS_KEYS = {
      */
     REGION_WARNING: 'system:content:region-warning',
   },
+  CACHES: {
+    IMAGE_EXISTS: 'feed:image:exists',
+  },
 } as const;
 
 // Cached data
@@ -525,6 +528,7 @@ export const REDIS_KEYS = {
     IMAGE_METRICS: 'packed:caches:image-metrics',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
+    IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',
@@ -533,6 +537,10 @@ export const REDIS_KEYS = {
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
     NEW_ORDER: {
       RANKS: 'new-order:ranks',
+      RATE_LIMIT: {
+        MINUTE: 'new-order:rate-limit:minute',
+        HOUR: 'new-order:rate-limit:hour',
+      },
     },
     TOP_EARNERS: 'packed:caches:top-earners',
   },

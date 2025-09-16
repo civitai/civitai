@@ -1,20 +1,14 @@
-import type { NSFWLevel } from '@civitai/client';
-import { headBlob } from '@civitai/client';
-
+import type { NsfwLevel } from '@civitai/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwInternalServerError,
-} from '~/server/utils/errorHandling';
 
-export const nsfwNsfwLevels: NSFWLevel[] = ['r', 'x', 'xxx'];
+export const nsfwNsfwLevels: NsfwLevel[] = ['r', 'x', 'xxx'];
 export async function getBlobData({ token, blobId }: { token: string; blobId: string }) {
   const client = createOrchestratorClient(token);
+  const { baseUrl } = client.getConfig();
 
-  console.log(client.getConfig().baseUrl);
+  if (!baseUrl) throw new Error('invalid orchestrator client');
 
-  const response = await fetch(`${client.getConfig().baseUrl}/v2/consumer/blobs/${blobId}`, {
+  const response = await fetch(`${baseUrl}/v2/consumer/blobs/${blobId}`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -22,31 +16,10 @@ export async function getBlobData({ token, blobId }: { token: string; blobId: st
   if (!response.ok) throw new Error('unable to fetch blob data');
 
   return {
-    nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NSFWLevel | null,
+    nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NsfwLevel | null,
   };
+}
 
-  // const { error, data, response, request } = await headBlob({
-  //   client,
-  //   path: { blobId },
-  // }).catch((error) => {
-  //   console.log('--------------------------');
-  //   throw error;
-  // });
-  // if (error) {
-  //   switch (error.status) {
-  //     case 400:
-  //       throw throwBadRequestError(error.detail);
-  //     case 401:
-  //       throw throwAuthorizationError(error.detail);
-
-  //     default:
-  //       if (error.detail?.startsWith('<!DOCTYPE'))
-  //         throw throwInternalServerError('Generation services down');
-  //       throw error;
-  //   }
-  // }
-
-  // return {
-  //   nsfwLevel: response.headers.get('x-nsfw-level')?.toLocaleLowerCase() as NSFWLevel | null,
-  // };
+export async function getBlobUrl() {
+  //
 }

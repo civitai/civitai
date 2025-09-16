@@ -1,7 +1,7 @@
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -15,7 +15,6 @@ import type {
   GetAllModelsInput,
   ToggleCheckpointCoverageInput,
 } from '~/server/schema/model.schema';
-import { usernameSchema } from '~/server/schema/user.schema';
 import {
   Availability,
   CheckpointType,
@@ -28,12 +27,14 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
+import { baseModels } from '~/shared/constants/base-model.constants';
+import { usernameSchema } from '~/shared/zod/username.schema';
 
 const modelQueryParamSchema = z
   .object({
-    period: z.nativeEnum(MetricTimeframe),
+    period: z.enum(MetricTimeframe),
     periodMode: periodModeSchema,
-    sort: z.nativeEnum(ModelSort),
+    sort: z.enum(ModelSort),
     query: z.string(),
     user: z.string(),
     username: usernameSchema.transform(postgresSlugify),
@@ -50,18 +51,18 @@ const modelQueryParamSchema = z
     excludedImageTagIds: z.array(z.coerce.number()),
     baseModels: z.preprocess(
       (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.enum(constants.baseModels))
+      z.array(z.enum(baseModels))
     ),
     clubId: z.coerce.number().optional(),
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
     types: z
-      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.nativeEnum(ModelType).array())
+      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),
-    checkpointType: z.nativeEnum(CheckpointType).optional(),
+    checkpointType: z.enum(CheckpointType).optional(),
     supportsGeneration: booleanString().optional(),
     status: z
-      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.nativeEnum(ModelStatus).array())
+      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelStatus).array())
       .optional(),
     fileFormats: z
       .preprocess(
@@ -70,7 +71,7 @@ const modelQueryParamSchema = z
       )
       .optional(),
     fromPlatform: booleanString().optional(),
-    availability: z.nativeEnum(Availability).optional(),
+    availability: z.enum(Availability).optional(),
     disablePoi: z.boolean().optional(),
     disableMinor: z.boolean().optional(),
     isFeatured: booleanString().optional(),

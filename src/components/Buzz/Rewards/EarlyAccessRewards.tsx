@@ -19,7 +19,7 @@ import {
   PointElement,
   Tooltip as ChartTooltip,
 } from 'chart.js';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import classes from '~/components/Buzz/buzz.module.scss';

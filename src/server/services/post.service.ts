@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
+import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -272,7 +273,7 @@ export const getPostsInfinite = async ({
   }
 
   // sorting
-  let orderBy = 'p."publishedAt" DESC NULLS LAST';
+  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC NULLS LAST';
   if (sort === PostSort.MostComments) {
     orderBy = `pm."commentCount" DESC`;
     AND.push(Prisma.sql`pm."commentCount" > 0`);
@@ -288,7 +289,7 @@ export const getPostsInfinite = async ({
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    const cursorValue = cursorProp === 'p."publishedAt"' ? new Date(cursor) : Number(cursor);
+    const cursorValue = cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"' ? new Date(cursor) : Number(cursor);
     if (cursorProp)
       AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
   }
@@ -707,7 +708,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
   }
 
-  await bustCachesForPost(id);
+  await bustCachesForPosts(id);
   const [result] = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
     DELETE FROM "Post"
     WHERE id = ${id}
@@ -826,7 +827,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
       user,
       message: 'Failure parsing JSON data from external URL.',
       domain: src,
-      issues: detailParse.error.issues,
+      issues: z.flattenError(detailParse.error),
     });
   }
 
@@ -936,24 +937,25 @@ export const addPostImage = async ({
   }
 
   await preventReplicationLag('postImages', props.postId);
-  await bustCachesForPost(props.postId);
+  await bustCachesForPosts(props.postId);
 
   return image;
 };
 
-export async function bustCachesForPost(postId: number) {
-  const [result] = await dbRead.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
+export async function bustCachesForPosts(postIds: number | number[]) {
+  const ids = Array.isArray(postIds) ? postIds : [postIds];
+  const results = await dbRead.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
     SELECT m."userId" = p."userId" as "isShowcase",
            p."modelVersionId"
     FROM "Post" p
            JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
            JOIN "Model" m ON m."id" = mv."modelId"
-    WHERE p."id" = ${postId}
+    WHERE p."id" IN (${Prisma.join(ids)})
   `;
 
-  if (result?.isShowcase) {
-    await deleteImagesForModelVersionCache(result.modelVersionId);
-  }
+  await deleteImagesForModelVersionCache(
+    results.filter((x) => x.isShowcase).map((x) => x.modelVersionId)
+  );
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -1122,7 +1124,7 @@ export const addResourceToPostImage = async ({
   for (const image of images) {
     if (!!image.postId) {
       await preventReplicationLag('postImages', image.postId);
-      await bustCachesForPost(image.postId);
+      await bustCachesForPosts(image.postId);
     }
   }
 
@@ -1169,7 +1171,7 @@ export const removeResourceFromPostImage = async ({
 
   if (!!image.postId) {
     await preventReplicationLag('postImages', image.postId);
-    await bustCachesForPost(image.postId);
+    await bustCachesForPosts(image.postId);
   }
 
   return deleted;
@@ -1181,7 +1183,7 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
   );
 
   await updatePostNsfwLevel(postId);
-  await bustCachesForPost(postId);
+  await bustCachesForPosts(postId);
 
   return transaction;
 };

@@ -7,8 +7,9 @@ import type {
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';
-import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
+import { decodeUserComment } from '~/utils/encoding-helpers';
 import { parseAIR } from '~/utils/string-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
 
@@ -32,7 +33,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       exif.prompt = comfyJson;
       exif.workflow = comfyJson;
       if (exif.userComment) {
-        const extrasJson = decodeBigEndianUTF16(exif.userComment);
+        const extrasJson = decodeUserComment(exif.userComment);
         try {
           exif.extraMetadata = JSON.parse(extrasJson)?.extraMetadata;
           // Fix for bad json
@@ -49,7 +50,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     if (exif?.parameters) {
       generationDetails = exif.parameters;
     } else if (exif?.userComment) {
-      generationDetails = decodeBigEndianUTF16(exif.userComment);
+      generationDetails = decodeUserComment(exif.userComment);
     }
 
     if (generationDetails) {
@@ -276,7 +277,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     if (isCivitComfy) {
-      metadata.civitaiResources ??= [];
+      const civitaiResources = (metadata.civitaiResources ?? []) as CivitaiResource[];
+
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
         const resource: CivitaiResource = {
@@ -285,14 +287,23 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         };
         const weight = additionalResources.find((x) => x.name === air)?.strength;
         if (weight) resource.weight = weight;
-        (metadata.civitaiResources as CivitaiResource[]).push(resource);
+        const index = civitaiResources.findIndex(
+          (x) => x.modelVersionId === resource.modelVersionId
+        );
+        if (index > -1) civitaiResources[index] = resource;
+        else civitaiResources.push(resource);
+        metadata.civitaiResources = civitaiResources;
+
+        const additionalResourceIndex = additionalResources.findIndex((x) => x.name === air);
+        if (additionalResourceIndex > -1)
+          metadata.additionalResources?.splice(additionalResourceIndex, 1);
       }
     }
 
     // Map to automatic1111 terms for compatibility
     a1111Compatability(metadata);
 
-    return metadata;
+    return removeEmpty(metadata);
   },
   encode: (meta) => {
     const comfy =

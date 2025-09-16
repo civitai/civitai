@@ -113,9 +113,9 @@ export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow' }: Props) 
         <FeatureList data={earnings} />
       ) : (
         <ContainerGrid2 gutter={20}>
-          {earnings.map((item) => (
-            <ContainerGrid2.Col key={item.key} span={{ base: 12, sm: 4, md: 3 }}>
-              <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
+          {earnings.map(({ key, ...item }) => (
+            <ContainerGrid2.Col key={key} span={{ base: 12, sm: 4, md: 3 }}>
+              <FeatureCard {...item} withCTA={item.withCTA ?? withCTA} />
             </ContainerGrid2.Col>
           ))}
         </ContainerGrid2>
@@ -165,11 +165,12 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
       target: '_blank',
       rel: 'noreferrer nofollow',
       href: `https://civitai.retool.com/form/cdf269fb-c9b1-4da4-8601-6367c2358a36?userId=${
-        userId ?? ''
+        userId as number
       }`,
       children: 'Apply Now',
       rightSection: <IconArrowRight size={14} />,
     },
+    withCTA: !!userId, // Only show if userId is available
   },
   {
     key: 'badges',
@@ -209,9 +210,9 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
         <FeatureList data={spendings} />
       ) : (
         <ContainerGrid2 gutter={20}>
-          {spendings.map((item) => (
-            <ContainerGrid2.Col key={item.key} span={{ base: 12, sm: 4, md: 3 }}>
-              <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
+          {spendings.map(({ key, ...item }) => (
+            <ContainerGrid2.Col key={key} span={{ base: 12, sm: 4, md: 3 }}>
+              <FeatureCard {...item} withCTA={item.withCTA ?? withCTA} />
             </ContainerGrid2.Col>
           ))}
         </ContainerGrid2>

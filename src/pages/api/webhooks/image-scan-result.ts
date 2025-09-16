@@ -1,7 +1,7 @@
 import { isDev } from '~/env/other';
 import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
 import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -14,7 +14,7 @@ import {
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -91,8 +91,8 @@ const schema = z.object({
   tags: tagSchema.array().nullish(),
   hash: z.string().nullish(),
   vectors: z.array(z.number().array()).nullish(),
-  status: z.nativeEnum(Status),
-  source: z.nativeEnum(TagSource),
+  status: z.enum(Status),
+  source: z.enum(TagSource),
   context: z
     .object({
       movie_rating: z.string().optional(),
@@ -118,6 +118,8 @@ const schema = z.object({
 function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
+
+const KONO_NSFW_SAMPLING_RATE = 20;
 
 export default WebhookEndpoint(async function imageTags(req, res) {
   if (req.method === 'GET' && req.query.imageId) {
@@ -192,7 +194,7 @@ async function isBlocked(hash: string) {
   const [{ count }] = await clickhouse.$query<{ count: number }>`
     SELECT cast(count() as int) as count
     FROM blocked_images
-    WHERE bitCount(bitXor(hash, ${hash})) < 5
+    WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
   `;
 
   return count > 0;
@@ -253,7 +255,13 @@ async function updateImage(
           rankType: NewOrderRankType.Knight,
         };
 
-        if (flags.nsfw) queueDetails.priority = 2;
+        // Sampling logic: Only include 5% of NSFW images to reduce queue congestion
+        let shouldAddToQueue = true;
+        if (flags.nsfw) {
+          queueDetails.priority = 2;
+          // Use image ID for deterministic sampling (5% inclusion rate)
+          shouldAddToQueue = id % KONO_NSFW_SAMPLING_RATE === 0; // 1/20 = 5%
+        }
 
         if (reviewKey) {
           data.needsReview = reviewKey;
@@ -261,7 +269,12 @@ async function updateImage(
 
           if (reviewKey === 'minor') queueDetails.priority = 1;
           if (reviewKey === 'poi') queueDetails.priority = 2;
-        } else {
+
+          // never add images needing review regardless of sampling
+          shouldAddToQueue = false;
+        }
+
+        if (shouldAddToQueue) {
           // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
           await addImageToQueue({
             imageIds: id,
@@ -666,7 +679,7 @@ const reviewConditions: ReviewCondition[] = [
   {
     condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
     reviewer: 'moderators',
-    tags: ['bestiality', 'animal'],
+    tags: ['bestiality'],
   },
   // {
   //   condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
@@ -819,6 +832,16 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     blocked: tag.nsfwLevel === NsfwLevel.Blocked,
   }));
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
+
+  // Check if image has restricted base models using materialized view
+  const [{ hasRestrictedBaseModel }] = await dbRead.$queryRaw<
+    { hasRestrictedBaseModel: boolean }[]
+  >`
+    SELECT EXISTS (
+      SELECT 1 FROM "RestrictedImagesByBaseModel" ribm
+      WHERE ribm."imageId" = ${image.id}
+    ) as "hasRestrictedBaseModel"
+  `;
 
   let reviewKey: string | null = null;
   const flags = {
@@ -1006,6 +1029,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     data.blockedFor = BlockedReason.AiNotVerified;
   }
 
+  if (flags.nsfw && hasRestrictedBaseModel) {
+    data.ingestion = ImageIngestionStatus.Blocked;
+    data.blockedFor = BlockedReason.TOS;
+  }
+
   if (flags.nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
     // Determine if we need to block the image
     const { success, blockedFor } = auditMetaData({ prompt }, flags.nsfw);
@@ -1036,14 +1064,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     data: removeEmpty({ ...data, ...moderationRulesImageData }),
     flags,
     reviewKey,
-    tagsForReview:
-      reviewKey === 'minor'
-        ? minorTags
-        : reviewKey === 'poi'
-        ? poiTags
-        : reviewKey === 'tag'
-        ? reviewTags
-        : undefined,
+    tagsForReview: [...minorTags, ...poiTags, ...reviewTags],
     scans: image.scanJobs.scans,
   };
 }

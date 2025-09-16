@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
@@ -51,7 +51,7 @@ export default PublicEndpoint(
     if (!queryResults.success)
       return res
         .status(400)
-        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.fileId}` });
+        .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid fileId' });
 
     const { fileId } = queryResults.data;
 

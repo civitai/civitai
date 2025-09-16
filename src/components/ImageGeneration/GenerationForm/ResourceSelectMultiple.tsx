@@ -1,8 +1,7 @@
 import type { ButtonProps, InputWrapperProps } from '@mantine/core';
-import { Button, Divider, Input, Stack, Text } from '@mantine/core';
+import { Button, Divider, Input, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo, useRef } from 'react';
-import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -77,7 +76,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // removes resources that have unsupported types
     useEffect(() => {
-      if (_values.length > 0 && _values.length !== value?.length)
+      if (_values.length > 0 && !value?.every((v) => _values.some((x) => x.id === v.id)))
         onChange?.(_values.length ? _values : null);
       else {
         setTimeout(() => {
@@ -85,7 +84,11 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
           if (updated.length !== value?.length) onChange?.(updated.length ? updated : null);
         }, 0);
       }
-    }, [_values, stringDependency]); //eslint-disable-line
+    }, [_values]); //eslint-disable-line
+
+    // useEffect(() => {
+    //   if (value?.every((v) => !_values.some((x) => x.id === v.id))) onChange?.(_values);
+    // }, [value]);
 
     const handleOpenModal = () => {
       select({

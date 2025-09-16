@@ -1,5 +1,6 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import * as z from 'zod/v4';
+import * as z from 'zod';
+import { buzzAccountTypes } from '~/shared/constants/buzz.constants';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 
 export type GetSignalsAccessTokenResponse = z.infer<typeof getSignalsAccessTokenResponse>;

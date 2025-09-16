@@ -22,10 +22,10 @@ import {
   IconQuestionMark,
   IconTrash,
 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
@@ -53,7 +53,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import {
@@ -75,13 +75,15 @@ import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
+// const tooltipProps: Partial<TooltipProps> = {
+//   maw: 300,
+//   multiline: true,
+//   position: 'bottom',
+//   withArrow: true,
+// };
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -97,18 +99,23 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 };
 
 const formSchema = createBountyInputSchema
+  .extend({
+    description: getSanitizedStringSchema().refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty'),
+  })
   .omit({
     images: true,
   })
   .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => data.startsAt < data.expiresAt, {
-    message: 'Start date must be before expiration date',
+    error: 'Start date must be before expiration date',
     path: ['startsAt'],
   })
   .refine((data) => data.expiresAt > data.startsAt, {
-    message: 'Expiration date must be after start date',
+    error: 'Expiration date must be after start date',
     path: ['expiresAt'],
   });
 

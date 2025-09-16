@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
 // const ALERT_VOLUME = 1000;

@@ -3,7 +3,6 @@ import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -11,6 +10,7 @@ import {
   ImageSort,
   ModelSort,
   NotificationCategory,
+  NsfwLevel,
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
@@ -42,6 +42,7 @@ import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getAllImages, ingestImage } from '~/server/services/image.service';
@@ -986,10 +987,12 @@ export type CollectionItemExpanded = {
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
+  useLogicalReplica = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
+  useLogicalReplica?: boolean;
 }) => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -1139,6 +1142,7 @@ export const getCollectionItemsByCollectionId = async ({
           includeBaseModel: true,
           pending: forReview,
           withMeta: false,
+          useLogicalReplica,
         })
       : { items: [] };
 
