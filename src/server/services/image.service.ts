@@ -1743,7 +1743,627 @@ type ImageSearchInput = GetAllImagesInput & {
   //reviewId?: number;
 };
 
-export async function getImagesFromSearch(input: ImageSearchInput) {
+export async function getImageFromSearch(input: ImageSearchInput) {
+  let searchFn = getImagesFromSearchPreFilter;
+  const fliptClient = await FliptSingleton.getInstance();
+  if (fliptClient) {
+    const flag = fliptClient.evaluateBoolean({
+      flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
+      entityId: input.currentUserId?.toString() || 'anonymous',
+      context: {},
+    });
+    if (flag.enabled) searchFn = getImagesFromSearchPostFilter;
+  }
+
+  return searchFn(input);
+}
+
+export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
+  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  let { postIds = [] } = input;
+
+  const {
+    sort,
+    modelVersionId,
+    types,
+    withMeta,
+    fromPlatform,
+    notPublished,
+    scheduled,
+    username,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    period,
+    isModerator,
+    currentUserId,
+    excludedUserIds,
+    hideAutoResources,
+    hideManualResources,
+    hidden,
+    followed,
+    limit = 100,
+    offset,
+    entry,
+    postId,
+    reviewId,
+    modelId,
+    prioritizedUserIds,
+    useCombinedNsfwLevel,
+    remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    requiringMeta,
+    poiOnly,
+    minorOnly,
+    blockedFor,
+    useLogicalReplica,
+    // TODO check the unused stuff in here
+  } = input;
+  let { browsingLevel, userId } = input;
+
+  const sorts: MeiliImageSort[] = [];
+  const filters: string[] = [];
+
+
+  if (postId) {
+    postIds = [...(postIds ?? []), postId];
+  }
+
+  // Past POI cut-off, don't even return for owners
+  if (disablePoi) {
+    filters.push(`(NOT poi = true)`);
+  }
+  if (disableMinor) {
+    filters.push(`(NOT minor = true)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      filters.push(`poi = true`);
+    }
+    if (minorOnly) {
+      filters.push(`minor = true`);
+    }
+    if (blockedFor?.length) {
+      filters.push(`blockedFor IN [${strArray(blockedFor)}]`);
+    }
+  }
+
+  // Filter
+  //------------------------
+  if (hidden) {
+    if (!currentUserId) throw throwAuthorizationError();
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId: currentUserId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (imageIds.length) {
+      filters.push(makeMeiliImageSearchFilter('id', `IN [${imageIds.join(',')}]`));
+    } else {
+      return { data: [], nextCursor: undefined };
+    }
+  }
+
+  if (username && !userId) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    userId = targetUser.id;
+
+    logToAxiom(
+      { type: 'info', message: 'Using username instead of userId' },
+      'temp-search'
+    ).catch();
+  }
+
+  // could throw authorization error here
+  if (currentUserId && followed) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
+    } else {
+      return { data: [], nextCursor: undefined };
+    }
+  }
+
+  // nb: commenting this out while we try checking existence in the db
+  // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  // if (lastExistedAt) {
+  //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  // }
+
+  // NSFW Level
+  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
+  else browsingLevel = onlySelectableLevels(browsingLevel);
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+
+  if (isModerator && includesNsfwContent) browsingLevels.push(0);
+
+  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
+    ? 'combinedNsfwLevel'
+    : 'nsfwLevel';
+  const nsfwFilters = [
+    makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
+  ];
+  // Allow users to see their own unscanned content on their user page
+  if (currentUserId && userId === currentUserId)
+    nsfwFilters.push(makeMeiliImageSearchFilter(nsfwLevelField, `= 0`));
+
+  filters.push(`(${nsfwFilters.join(' OR ')})`);
+
+  // NSFW License Restrictions Filter
+  // Filter out images with R/X/XXX NSFW levels that use restricted base models
+  if (nsfwRestrictedBaseModels.length > 0) {
+    const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
+
+    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
+    filters.push(
+      `NOT (${nsfwLevelField} IN [${nsfwBrowsingLevelsArray.join(
+        ','
+      )}] AND baseModel IN [${restrictedBaseModelsQuoted.join(',')}])`
+    );
+  }
+
+  if (modelVersionId) {
+    const versionFilters = [makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)];
+
+    if (!hideAutoResources) {
+      versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
+    }
+    if (!hideManualResources) {
+      versionFilters.push(
+        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
+      );
+    }
+
+    filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  if (remixOfId) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
+  }
+
+  if (remixesOnly && !nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
+  }
+
+  if (nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
+  }
+
+  if (excludedTagIds?.length) {
+    // Needed support for this in order to properly support multiple domains.
+    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
+  }
+
+  /*
+  // TODO this won't work, can't do custom sort
+  if (prioritizedUserIds?.length) {
+    // why do this?
+    // if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+
+    // If system user, show community images
+    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1) {
+      sorts.push(makeMeiliImageSearchSort('index', 'asc'))
+      // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`
+    } else {
+      // For everyone else, only show their images.
+      filters.push(makeMeiliImageSearchFilter('userId', `IN [${prioritizedUserIds.join(',')}]`));
+      sorts.push(makeMeiliImageSearchSort('postedToId', 'asc'));
+      sorts.push(makeMeiliImageSearchSort('index', 'asc'));
+      // orderBy = `(i."postId" * 100) + i."index"`; // Order by oldest post first
+    }
+  }
+  */
+
+  if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (requiringMeta) {
+    filters.push(`("blockedFor" = ${BlockedReason.AiNotVerified})`);
+  }
+  if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
+
+  // Publish Date Filtering
+  const snappedNow = snapToInterval(Date.now());
+  if (isModerator) {
+    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+    else if (scheduled)
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+    else {
+      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+      if (currentUserId) {
+        publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      }
+      filters.push(`(${publishedFilters.join(' OR ')})`);
+    }
+  } else if (userId) {
+    // For specific user's content, allow seeing scheduled/notPublished content for owners
+    // Filtering is handled in post
+  } else {
+    // General feed queries - apply published filter for caching
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`));
+  }
+
+  if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
+  if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
+  if (tools?.length) filters.push(makeMeiliImageSearchFilter('toolIds', `IN [${tools.join(',')}]`));
+  if (techniques?.length)
+    filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
+  if (postIds?.length)
+    filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
+  if (baseModels?.length)
+    filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
+
+  // TODO why were we doing this at all?
+  // if (userIds) {
+  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
+  //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
+  // }
+
+  if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
+  else if (excludedUserIds)
+    filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
+
+  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  //  how?
+  // if (reviewId) {}
+
+  // Handle period filter
+  let afterDate: Date | undefined;
+  if (period && period !== 'AllTime') {
+    const now = dayjs();
+    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
+  }
+  if (afterDate) {
+    // convert to minutes for better caching
+    filters.push(
+      makeMeiliImageSearchFilter(
+        'sortAtUnix',
+        `> ${snapToInterval(afterDate.getTime())}`
+      )
+    );
+  }
+
+  // nb: this is for dev 08-19
+  // if (!isProd) {
+  // filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
+  // }
+
+  // TODO log more of these
+  // Log properties we don't support yet
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cantProcess: Record<string, any> = {
+    reviewId,
+    modelId,
+    prioritizedUserIds,
+  };
+  if (reviewId || modelId || prioritizedUserIds) {
+    const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
+    logToAxiom({ type: 'info', input: JSON.stringify(missingKeys) }, 'temp-search').catch();
+  }
+
+  // Sort
+  //------------------------
+
+  let searchSort: MeiliImageSort;
+  if (sort === ImageSort.MostComments) {
+    searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
+  } else if (sort === ImageSort.MostReactions) {
+    searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
+  } else if (sort === ImageSort.MostCollected) {
+    searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
+  } else if (sort === ImageSort.Oldest) {
+    searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
+  } else {
+    searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
+    // - to avoid dupes (for any ascending query), we need to filter on that attribute
+    if (entry) {
+      // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
+      filters.push(
+        makeMeiliImageSearchFilter('sortAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
+      );
+    }
+  }
+  sorts.push(searchSort);
+  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+
+  // Overfetch to ensure we have enough results after post-query filtering
+  const OVERFETCH_MULTIPLIER = 1.5;
+  const request: SearchParams = {
+    filter: filters.join(' AND '),
+    sort: sorts,
+    limit: (limit * OVERFETCH_MULTIPLIER),
+    offset,
+  };
+
+  const route = 'getImagesFromSearch';
+  const endTimer = requestDurationSeconds.startTimer({ route });
+  requestTotal.inc({ route }); // count every request up front
+
+  try {
+    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
+    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
+      .index(METRICS_SEARCH_INDEX)
+      .search(null, request);
+
+    let nextCursor: number | undefined;
+    if (results.hits.length > limit) {
+      results.hits.pop();
+      // - if we have no entrypoint, it's the first request, and set one for the future
+      //   else keep it the same
+      nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
+    }
+
+    // Apply post-query user-specific filtering
+    const filteredHits = results.hits.filter((hit) => {
+      if (!hit.url)
+        // check for good data
+        return false;
+
+      const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
+
+      // User can see their own private content
+      if (hit.availability === Availability.Private && !isOwnContent)
+        return false;
+
+      // User can see their own blocked content
+      if (hit.blockedFor && !isOwnContent)
+        return false;
+
+      // User can see their own scheduled or unpublished content
+      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
+        return false;
+
+      // User can see their own unscanned content
+      if (hit.nsfwLevel === 0 && !isOwnContent)
+        return false;
+
+      // filter out items flagged with minor unless it's the owner or moderator
+      if (hit.acceptableMinor) return isOwnContent;
+      // filter out non-scanned unless it's the owner or moderator
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+
+      return isOwnContent || (isModerator && includesNsfwContent);
+    });
+
+    // Trim results back to requested limit after filtering
+    const limitedHits = filteredHits.slice(0, limit + 1);
+
+    // Get all image IDs from limited results
+    const searchImageIds = limitedHits.map((hit) => hit.id);
+    const filteredHitIds = [...new Set(searchImageIds)];
+
+    let cacheExistenceEnabled = false;
+
+    const fliptClient = await FliptSingleton.getInstance();
+    if (fliptClient) {
+      const flag = fliptClient.evaluateBoolean({
+        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+        entityId: currentUserId?.toString() || 'anonymous',
+        context: {},
+      });
+      cacheExistenceEnabled = flag.enabled;
+    }
+    ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
+
+    if (!cacheExistenceEnabled) {
+      cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
+
+      // BASIC DB CHECK (default)
+      const dbIdResp = await dbRead.image.findMany({
+        where: { id: { in: filteredHitIds } },
+        select: { id: true },
+      });
+
+      const idSet = new Set(dbIdResp.map((r) => r.id));
+      const filtered = limitedHits.filter((h) => idSet.has(h.id));
+
+      const droppedCount = limitedHits.length - filtered.length;
+      droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
+
+      const imageMetrics = await getImageMetricsObject(filtered);
+      const fullData = filtered.map((h) => {
+        const match = imageMetrics[h.id];
+        return {
+          ...h,
+          stats: {
+            likeCountAllTime: match?.reactionLike ?? 0,
+            laughCountAllTime: match?.reactionLaugh ?? 0,
+            heartCountAllTime: match?.reactionHeart ?? 0,
+            cryCountAllTime: match?.reactionCry ?? 0,
+            commentCountAllTime: match?.comment ?? 0,
+            collectedCountAllTime: match?.collection ?? 0,
+            tippedAmountCountAllTime: match?.buzz ?? 0,
+            dislikeCountAllTime: 0,
+            viewCountAllTime: 0,
+          },
+        };
+      });
+
+      if (fullData.length) {
+        sysRedis.packed
+          .sAdd(
+            REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
+            fullData.map((i) => i.id)
+          )
+          .catch((e) => {
+            const err = e as Error;
+            logToAxiom(
+              {
+                type: 'search-redis-error',
+                error: err.message,
+                cause: err.cause,
+                stack: err.stack,
+              },
+              'temp-search'
+            ).catch();
+          });
+      }
+
+      endTimer();
+      return { data: fullData, nextCursor };
+    }
+
+    // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
+    const checkImageExistence = async (imageIds: number[]) => {
+      // Preserve original order and remove duplicates
+      const uniqueIds = [...new Set(imageIds)];
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}`);
+
+      // Check cached results first (1 minute TTL)
+      const cachedResults = await sysRedis.packed.mGet(cacheKeys as any);
+
+      // Separate cached and uncached IDs
+      const uncachedIds: number[] = [];
+      const cachedMap = new Map<number, boolean>();
+      let cacheMiss = 0;
+
+      for (let i = 0; i < uniqueIds.length; i++) {
+        const id = uniqueIds[i];
+        const cachedResult = cachedResults[i];
+
+        if (cachedResult === 'true') {
+          cachedMap.set(id, true);
+        } else if (cachedResult === 'false') {
+          cachedMap.set(id, false);
+        } else {
+          uncachedIds.push(id);
+          cacheMiss++;
+        }
+      }
+
+      let hitType: 'full' | 'partial' | 'miss';
+      if (cacheMiss === 0) {
+        hitType = 'full';
+      } else if (cacheMiss === uniqueIds.length) {
+        hitType = 'miss';
+      } else {
+        hitType = 'partial';
+      }
+
+      cacheHitRequestsTotal.inc({ route, hit_type: hitType });
+
+      // Query DB for uncached IDs
+      let dbResults: { id: number }[] = [];
+      if (uncachedIds.length > 0) {
+        dbResults = await dbRead.image.findMany({
+          where: { id: { in: uncachedIds } },
+          select: { id: true },
+        });
+
+        const dbIdSet = new Set(dbResults.map((r) => r.id));
+
+        // Update cache with DB results (1-minute TTL)
+        const cacheUpdates: Record<string, string> = {};
+        for (const id of uncachedIds) {
+          const exists = dbIdSet.has(id);
+          cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
+          cachedMap.set(id, exists);
+        }
+
+        if (Object.keys(cacheUpdates).length > 0) {
+          await sysRedis.packed.mSet(cacheUpdates);
+          await Promise.all(
+            Object.keys(cacheUpdates).map((key) => sysRedis.expire(key as any, 600))
+          );
+        }
+      }
+
+      // Filter hits based on existence check while preserving order
+      let dropped = 0;
+      const existenceFiltered = limitedHits.filter((hit) => {
+        const exists = cachedMap.get(hit.id);
+        const keep = exists !== false; // treat undefined as exists=true
+        if (!keep) {
+          dropped++;
+        }
+        return keep;
+      });
+
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
+
+      return existenceFiltered.filter((x) => imageIds.includes(x.id));
+    };
+
+    // Apply the (flagged) existence check
+    const filtered = await checkImageExistence(filteredHitIds);
+
+    const imageMetrics = await getImageMetricsObject(filtered);
+
+    const fullData = filtered.map((h) => {
+      const match = imageMetrics[h.id];
+      return {
+        ...h,
+        stats: {
+          likeCountAllTime: match?.reactionLike ?? 0,
+          laughCountAllTime: match?.reactionLaugh ?? 0,
+          heartCountAllTime: match?.reactionHeart ?? 0,
+          cryCountAllTime: match?.reactionCry ?? 0,
+
+          commentCountAllTime: match?.comment ?? 0,
+          collectedCountAllTime: match?.collection ?? 0,
+          tippedAmountCountAllTime: match?.buzz ?? 0,
+
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
+        },
+      };
+    });
+
+    if (fullData.length) {
+      sysRedis.packed
+        .sAdd(
+          REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
+          fullData.map((i) => i.id)
+        )
+        .catch((e) => {
+          const err = e as Error;
+          logToAxiom(
+            {
+              type: 'search-redis-error',
+              error: err.message,
+              cause: err.cause,
+              stack: err.stack,
+            },
+            'temp-search'
+          ).catch();
+        });
+    }
+
+    endTimer();
+    return {
+      data: fullData,
+      nextCursor,
+    };
+  } catch (error) {
+    const err = error as Error;
+    logToAxiom(
+      {
+        type: 'search-error',
+        error: err.message,
+        cause: err.cause,
+        input: removeEmpty(input),
+        request,
+      },
+      'temp-search'
+    ).catch();
+
+    endTimer();
+    return { data: [], nextCursor: undefined };
+  }
+}
+
+export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
