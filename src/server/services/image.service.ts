@@ -1794,28 +1794,14 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
-  if (!isModerator) {
-    filters.push(
-      // Avoids exposing private resources to the public
-      `((NOT availability = ${Availability.Private})${
-        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
-      })`
-    );
-
-    filters.push(
-      // Avoids blocked resources to the public
-      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${
-        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
-      })`
-    );
-  }
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
   }
 
+  // Past POI cut-off, don't even return for owners
   if (disablePoi) {
-    filters.push(`(NOT poi = true${currentUserId ? ` OR "userId" = ${currentUserId}` : ''})`);
+    filters.push(`(NOT poi = true)`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -1894,11 +1880,10 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
-  const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
-  if (currentUserId)
-    nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+  // Allow users to see their own unscanned content on their user page
+  if (currentUserId && userId === currentUserId)
+    nsfwFilters.push(makeMeiliImageSearchFilter(nsfwLevelField, `= 0`));
 
-  nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   // NSFW License Restrictions Filter
@@ -1972,6 +1957,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
+  // Publish Date Filtering
+  const snappedNow = snapToInterval(Date.now());
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
@@ -1983,16 +1970,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
+  } else if (userId) {
+    // For specific user's content, allow seeing scheduled/notPublished content for owners
+    // Filtering is handled in post
   } else {
-    // Users should only see published stuff or things they own
-    // convert to minutes for better caching
-    const publishedFilters = [
-      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snapToInterval(Math.round(Date.now()))}`),
-    ];
-    if (currentUserId) {
-      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-    }
-    filters.push(`(${publishedFilters.join(' OR ')})`);
+    // General feed queries - apply published filter for caching
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`));
   }
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
@@ -2030,7 +2013,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     filters.push(
       makeMeiliImageSearchFilter(
         'sortAtUnix',
-        `> ${snapToInterval(Math.round(afterDate.getTime()))}`
+        `> ${snapToInterval(afterDate.getTime())}`
       )
     );
   }
@@ -2078,10 +2061,12 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   sorts.push(searchSort);
   sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
+  // Overfetch to ensure we have enough results after post-query filtering
+  const OVERFETCH_MULTIPLIER = 1.5;
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
-    limit: limit + 1,
+    limit: (limit * OVERFETCH_MULTIPLIER),
     offset,
   };
 
@@ -2103,20 +2088,43 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
     }
 
+    // Apply post-query user-specific filtering
     const filteredHits = results.hits.filter((hit) => {
       if (!hit.url)
         // check for good data
         return false;
+
+      const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
+
+      // User can see their own private content
+      if (hit.availability === Availability.Private && !isOwnContent)
+        return false;
+
+      // User can see their own blocked content
+      if (hit.blockedFor && !isOwnContent)
+        return false;
+
+      // User can see their own scheduled or unpublished content
+      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
+        return false;
+
+      // User can see their own unscanned content
+      if (hit.nsfwLevel === 0 && !isOwnContent)
+        return false;
+
       // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
+      if (hit.acceptableMinor) return isOwnContent;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
 
-      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
+      return isOwnContent || (isModerator && includesNsfwContent);
     });
 
-    // Get all image IDs from search results
-    const searchImageIds = filteredHits.map((hit) => hit.id);
+    // Trim results back to requested limit after filtering
+    const limitedHits = filteredHits.slice(0, limit + 1);
+
+    // Get all image IDs from limited results
+    const searchImageIds = limitedHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
 
     let cacheExistenceEnabled = false;
@@ -2142,9 +2150,9 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       });
 
       const idSet = new Set(dbIdResp.map((r) => r.id));
-      const filtered = results.hits.filter((h) => idSet.has(h.id));
+      const filtered = limitedHits.filter((h) => idSet.has(h.id));
 
-      const droppedCount = results.hits.length - filtered.length;
+      const droppedCount = limitedHits.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
       const imageMetrics = await getImageMetricsObject(filtered);
@@ -2258,7 +2266,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
       // Filter hits based on existence check while preserving order
       let dropped = 0;
-      const filteredHits = results.hits.filter((hit) => {
+      const existenceFiltered = limitedHits.filter((hit) => {
         const exists = cachedMap.get(hit.id);
         const keep = exists !== false; // treat undefined as exists=true
         if (!keep) {
@@ -2269,7 +2277,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
       droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
 
-      return filteredHits.filter((x) => imageIds.includes(x.id));
+      return existenceFiltered.filter((x) => imageIds.includes(x.id));
     };
 
     // Apply the (flagged) existence check
