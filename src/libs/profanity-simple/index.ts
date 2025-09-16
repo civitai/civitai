@@ -29,8 +29,6 @@ export interface ProfanityFilterOptions {
   replacementStyle: 'asterisk' | 'grawlix' | 'remove';
 }
 
-const MIN_WORD_LENGTH = 3; // Minimum length of words to include in filter
-
 /**
  * Create mappings between whitelist words and profane substrings they contain
  */
@@ -161,20 +159,16 @@ export class SimpleProfanityFilter {
     const nsfwWords = getCachedNsfwWords();
     const wordsToAdd = nsfwWords.allWords; // includes both original + generated variations
 
-    // Filter out very short words to prevent false positives like "Uber" -> "U**r"
-    // Words shorter than 3 characters can cause unwanted substring matches
-    const filteredWords = wordsToAdd.filter((word) => word.length >= MIN_WORD_LENGTH);
-
-    const patterns = assignIncrementingIds(filteredWords.map((word) => pattern`${word}`));
+    const patterns = assignIncrementingIds(wordsToAdd.map((word) => pattern`${word}`));
 
     // Add words to dataset with their whitelisted terms
     patterns.forEach((p, index) => {
-      const word = filteredWords[index];
+      const word = wordsToAdd[index];
       const whitelistTerms = this.whitelistMappings.get(word) || [];
 
       const phrase = dataset.addPhrase((phrase) => {
         let phraseBuilder = phrase
-          .setMetadata({ originalWord: word.replace('|', '') })
+          .setMetadata({ originalWord: word.replace(/\|/g, '') })
           .addPattern(p.pattern);
 
         // Add whitelisted terms to this phrase
