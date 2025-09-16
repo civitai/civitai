@@ -165,12 +165,7 @@ export class SimpleProfanityFilter {
     // Words shorter than 3 characters can cause unwanted substring matches
     const filteredWords = wordsToAdd.filter((word) => word.length >= MIN_WORD_LENGTH);
 
-    const patterns = assignIncrementingIds(
-      filteredWords.map((word) =>
-        // If word is short, add boundary to prevent substring matches
-        word.length <= MIN_WORD_LENGTH ? pattern`|${word}` : pattern`${word}`
-      )
-    );
+    const patterns = assignIncrementingIds(filteredWords.map((word) => pattern`${word}`));
 
     // Add words to dataset with their whitelisted terms
     patterns.forEach((p, index) => {
@@ -178,7 +173,9 @@ export class SimpleProfanityFilter {
       const whitelistTerms = this.whitelistMappings.get(word) || [];
 
       const phrase = dataset.addPhrase((phrase) => {
-        let phraseBuilder = phrase.setMetadata({ originalWord: word }).addPattern(p.pattern);
+        let phraseBuilder = phrase
+          .setMetadata({ originalWord: word.replace('|', '') })
+          .addPattern(p.pattern);
 
         // Add whitelisted terms to this phrase
         whitelistTerms.forEach((whitelistedTerm) => {
