@@ -7,6 +7,8 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
+import { populateEntityMetrics } from '~/server/redis/entity-metric-populate';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -617,28 +619,65 @@ type ImageMetricLookup = {
   collection: number | null;
   buzz: number | null;
 };
-export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
-  key: REDIS_KEYS.CACHES.IMAGE_METRICS,
-  idKey: 'imageId',
-  lookupFn: async (ids) => {
-    const query = `
-      SELECT 
-        "imageId",
-        "reactionLike",
-        "reactionHeart",
-        "reactionLaugh",
-        "reactionCry",
-        "comment",
-        "collection",
-        "buzz"
-      FROM "EntityMetricImage"
-      WHERE "imageId" = ANY($1::int[])
-    `;
-    const { rows: imageMetric } = await pgDbRead.query<ImageMetricLookup>(query, [ids]);
-    return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
+// Direct Redis entity metrics fetch with ClickHouse population
+// Implements the same interface as CachedObject for compatibility
+export const imageMetricsCache: Pick<
+  CachedObject<ImageMetricLookup>,
+  'fetch' | 'bust' | 'refresh' | 'flush'
+> = {
+  fetch: async (ids: number | number[]): Promise<Record<string, ImageMetricLookup>> => {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (ids.length === 0) return {};
+
+    // Use imported modules
+
+    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
+    await populateEntityMetrics('Image', ids);
+
+    // Fetch from Redis
+    const metricsMap = await entityMetricRedis.getBulkMetrics('Image', ids);
+
+    const results: Record<string, ImageMetricLookup> = {};
+    for (const id of ids) {
+      const metrics = metricsMap.get(id);
+      results[id] = {
+        imageId: id,
+        reactionLike: metrics?.ReactionLike || null,
+        reactionHeart: metrics?.ReactionHeart || null,
+        reactionLaugh: metrics?.ReactionLaugh || null,
+        reactionCry: metrics?.ReactionCry || null,
+        comment: metrics?.Comment || null,
+        collection: metrics?.Collection || null,
+        buzz: metrics?.Buzz || null,
+      };
+    }
+    return results;
   },
-  ttl: CacheTTL.sm,
-});
+
+  bust: async (ids: number | number[]) => {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (ids.length === 0) return;
+
+    // Use imported module
+
+    // Delete from Redis to force re-fetch from ClickHouse
+    await Promise.all(ids.map((id) => entityMetricRedis.delete('Image', id)));
+  },
+
+  refresh: async (ids: number | number[], skipCache?: boolean) => {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (ids.length === 0) return;
+
+    // Use imported module
+
+    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
+    await populateEntityMetrics('Image', ids, true);
+  },
+
+  flush: async () => {
+    // Clear all image metrics from Redis - Not Supported
+  },
+};
 
 type UserFollowsCacheItem = {
   userId: number;

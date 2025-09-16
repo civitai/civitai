@@ -2341,9 +2341,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 const getImageMetricsObject = async (data: { id: number }[]) => {
-  let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
   try {
-    imageMetrics = await getImageMetrics(data.map((d) => d.id));
+    return await imageMetricsCache.fetch(data.map((d) => d.id));
   } catch (e) {
     const error = e as Error;
     logToAxiom(
@@ -2356,142 +2355,8 @@ const getImageMetricsObject = async (data: { id: number }[]) => {
       },
       'clickhouse'
     ).catch();
+    return {};
   }
-  return imageMetrics;
-};
-
-const getImageMetrics = async (ids: number[]) => {
-  if (!ids.length) return {};
-
-  const metricsData = await imageMetricsCache.fetch(ids);
-  type PgDataType = (typeof metricsData)[number];
-
-  // - get images with no data at all
-  const missingIds = ids.filter((i) => !metricsData[i]);
-  // - get images where some of the properties are null
-  const missingData = Object.values(metricsData)
-    .filter((d) => Object.values(d).some((v) => !isDefined(v)))
-    .map((x) => x.imageId);
-  const missing = [...new Set([...missingIds, ...missingData])];
-
-  let clickData: DeepNonNullable<PgDataType>[] = [];
-  // - If missing data in postgres, get latest from clickhouse
-  if (missing.length > 0) {
-    if (clickhouse) {
-      // - find the missing IDs' data in clickhouse
-      clickData = await withRetries(
-        () =>
-          clickhouse!.$query<DeepNonNullable<PgDataType>>(`
-          SELECT entityId                                              as "imageId",
-                 SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
-                 SUM(if(metricType = 'ReactionHeart', metricValue, 0)) as "reactionHeart",
-                 SUM(if(metricType = 'ReactionLaugh', metricValue, 0)) as "reactionLaugh",
-                 SUM(if(metricType = 'ReactionCry', metricValue, 0))   as "reactionCry",
-                 -- SUM(if(
-                 --         metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
-                 --     ))                                                as "reactionTotal",
-                 SUM(if(metricType = 'Comment', metricValue, 0))       as "comment",
-                 SUM(if(metricType = 'Collection', metricValue, 0))    as "collection",
-                 SUM(if(metricType = 'Buzz', metricValue, 0))          as "buzz"
-          FROM entityMetricEvents
-          WHERE entityType = 'Image'
-            AND entityId IN (${missing.join(',')})
-          GROUP BY imageId
-        `),
-        3,
-        300
-      );
-
-      // - if there is nothing at all in clickhouse, fill this with zeroes
-      const missingClickIds = missingIds.filter(
-        (i) => !clickData.map((c) => c.imageId).includes(i)
-      );
-      for (const mci of missingClickIds) {
-        clickData.push({
-          imageId: mci,
-          reactionLike: 0,
-          reactionHeart: 0,
-          reactionLaugh: 0,
-          reactionCry: 0,
-          comment: 0,
-          collection: 0,
-          buzz: 0,
-        });
-      }
-
-      // TODO if we somehow have some data in PG but none at all in CH, these datapoints won't get resolved
-      const missingClickData = missingData.filter(
-        (i) => !clickData.map((c) => c.imageId).includes(i)
-      );
-      if (missingClickData.length) {
-        if (isProd)
-          logToAxiom(
-            {
-              type: 'info',
-              name: 'Missing datapoints in clickhouse',
-              details: {
-                ids: missingClickData,
-              },
-            },
-            'clickhouse'
-          ).catch();
-      }
-
-      const dataToInsert = clickData
-        .map((cd) =>
-          [
-            EntityMetric_MetricType_Type.ReactionLike,
-            EntityMetric_MetricType_Type.ReactionHeart,
-            EntityMetric_MetricType_Type.ReactionLaugh,
-            EntityMetric_MetricType_Type.ReactionCry,
-            EntityMetric_MetricType_Type.Comment,
-            EntityMetric_MetricType_Type.Collection,
-            EntityMetric_MetricType_Type.Buzz,
-          ].map((mt) => ({
-            entityType: EntityMetric_EntityType_Type.Image,
-            entityId: cd.imageId,
-            metricType: mt,
-            metricValue: cd[lowerFirst(mt) as keyof typeof cd],
-          }))
-        )
-        .flat();
-
-      try {
-        await dbWrite.entityMetric.createMany({
-          data: dataToInsert,
-          skipDuplicates: true,
-        });
-      } catch (e) {
-        const error = e as Error;
-        logToAxiom(
-          {
-            type: 'error',
-            name: 'Failed to insert EntityMetric cache',
-            message: error.message,
-            stack: error.stack,
-            cause: error.cause,
-          },
-          'clickhouse'
-        ).catch();
-      }
-    } else {
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'No clickhouse client - fetch',
-        },
-        'clickhouse'
-      ).catch();
-    }
-  }
-
-  return [...Object.values(metricsData), ...clickData].reduce((acc, row) => {
-    const { imageId, ...rest } = row;
-    acc[imageId] = Object.fromEntries(
-      Object.entries(rest).map(([k, v]) => [k, isDefined(v) ? Math.max(0, v) : v])
-    ) as Omit<PgDataType, 'imageId'>;
-    return acc;
-  }, {} as { [p: number]: Omit<PgDataType, 'imageId'> });
 };
 
 export async function getTagNamesForImages(imageIds: number[]) {
