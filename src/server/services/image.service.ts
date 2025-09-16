@@ -337,13 +337,18 @@ export async function handleUnblockImages({
             "needsReview" = NULL,
             "blockedFor" = NULL,
             "metadata" = "metadata" - 'ruleId' - 'ruleReason', -- Remove ruleId and ruleReason from metadata
-            "ingestion" = 'Scanned',
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
-                ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END`
+                ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
                 : Prisma.sql``
             }
+            ${
+              ['minor', 'poi', 'newUser', 'bestiality'].includes(needsReview)
+                ? Prisma.sql`"scannedAt" = NOW(),`
+                : Prisma.sql``
+            }
+            "ingestion" = 'Scanned'
           WHERE id IN (${Prisma.join(groupedIds)});
         `
       ),

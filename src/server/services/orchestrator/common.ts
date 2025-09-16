@@ -50,6 +50,7 @@ import {
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getInjectablResources,
+  getIsChroma,
   getIsFlux,
   getIsFluxStandard,
   getIsQwen,
@@ -213,7 +214,10 @@ export async function parseGenerateImageInput({
 }) {
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
-  if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
+  if (originalParams.workflow.startsWith('txt2img')) {
+    originalParams.sourceImage = null;
+    originalParams.images = null;
+  }
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
   if (originalParams.sourceImage) {
@@ -226,6 +230,7 @@ export async function parseGenerateImageInput({
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
   const isQwen = getIsQwen(originalParams.baseModel);
+
   if (isFlux || isQwen) {
     // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
@@ -243,6 +248,12 @@ export async function parseGenerateImageInput({
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
     }
+  }
+
+  const isChroma = getIsChroma(originalParams.baseModel);
+  if (isChroma) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);

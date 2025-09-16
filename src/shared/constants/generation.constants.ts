@@ -216,6 +216,11 @@ export function getIsQwen(baseModel?: string) {
   return baseModelSetType === 'Qwen';
 }
 
+export function getIsChroma(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Chroma';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
@@ -239,6 +244,8 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Chroma')) return 'Chroma';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Seedream')) return 'Seedream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {

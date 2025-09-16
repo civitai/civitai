@@ -17,7 +17,9 @@ export function ImageGenConfig<
 }) {
   function getParamsMetadata({ params }: { params: GenerateImageSchema['params'] }) {
     const { priority, ...rest } = params;
-    return metadataFn(rest);
+    const seed =
+      !('seed' in rest) || !rest.seed ? Math.floor(Math.random() * maxRandomSeed) : rest.seed;
+    return metadataFn({ ...rest, seed });
   }
 
   function getImageMetadata(args: GenerateImageSchema) {

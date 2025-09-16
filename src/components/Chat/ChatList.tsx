@@ -25,6 +25,7 @@ import {
   IconEar,
   IconEarOff,
   IconEye,
+  IconMessageExclamation,
   IconPlugConnected,
   IconSearch,
   IconTool,
@@ -50,6 +51,7 @@ import { trpc } from '~/utils/trpc';
 import styles from './ChatList.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { BlurText } from '~/components/BlurText/BlurText';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
@@ -92,6 +94,7 @@ export function ChatList() {
   // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
 
   const muteSounds = userSettings?.muteSounds ?? false;
+  const replaceBadWords = userSettings?.replaceBadWords ?? true;
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -219,9 +222,11 @@ export function ChatList() {
   }, [currentUser?.id, data, searchInput, activeTab]);
 
   const handleMute = () => {
-    modifySettings({
-      muteSounds: !muteSounds,
-    });
+    modifySettings({ muteSounds: !muteSounds });
+  };
+
+  const handleReplaceBadWords = () => {
+    modifySettings({ replaceBadWords: !replaceBadWords });
   };
 
   return (
@@ -251,6 +256,17 @@ export function ChatList() {
                 onClick={() => markAsRead()}
               >
                 {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Label>Moderation</Menu.Label>
+              <Menu.Item
+                color="yellow"
+                leftSection={<IconMessageExclamation size={18} />}
+                onClick={handleReplaceBadWords}
+              >
+                {replaceBadWords
+                  ? 'Disable conversation moderation'
+                  : 'Enable conversation moderation'}
               </Menu.Item>
             </Menu.Dropdown>
           </Menu>
@@ -398,7 +414,7 @@ export function ChatList() {
                       </Highlight>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
-                        <Text
+                        <BlurText
                           size="xs"
                           style={{
                             whiteSpace: 'nowrap',
@@ -406,9 +422,10 @@ export function ChatList() {
                             textOverflow: 'ellipsis',
                             minWidth: 0,
                           }}
+                          blur={replaceBadWords}
                         >
                           {d.messages[0].content}
-                        </Text>
+                        </BlurText>
                       )}
                     </Stack>
                     {isModSender && (

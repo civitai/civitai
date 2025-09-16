@@ -8,6 +8,7 @@ type BaseModelConfigToSatisfy = {
   hidden?: boolean;
   ecosystem?: string;
   engine?: string;
+  family?: string;
 };
 type BaseModelConfig = typeof baseModelConfig;
 export type BaseModel = BaseModelConfig[number]['name'];
@@ -78,6 +79,7 @@ const baseModelConfig = [
     group: 'SDXLDistilled',
     hidden: true,
   },
+  { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD' },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
@@ -300,6 +302,22 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     ],
   },
   {
+    group: 'Chroma',
+    support: [
+      {
+        modelTypes: [
+          ModelType.Checkpoint,
+          ModelType.TextualInversion,
+          ModelType.LORA,
+          ModelType.DoRA,
+          ModelType.LoCon,
+          ModelType.VAE,
+        ],
+        baseModels: ['Chroma'],
+      },
+    ],
+  },
+  {
     group: 'NoobAI',
     support: [
       {
@@ -372,6 +390,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
   },
   {
+    group: 'Seedream',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedream'] }],
+  },
+  {
     group: 'WanVideo',
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video'] }],
   },
@@ -379,6 +401,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'WanVideo14B_T2V',
     support: [
       { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 14B t2v'] },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B', 'Wan Video 2.2 I2V-A14B', 'Wan Video 2.2 TI2V-5B'],
+      },
     ],
   },
   {
@@ -393,6 +421,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 14B i2v 720p'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B', 'Wan Video 2.2 I2V-A14B', 'Wan Video 2.2 TI2V-5B'],
+      },
+    ],
   },
   {
     group: 'WanVideo14B_I2V_720p',
@@ -402,7 +436,13 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 14B i2v 720p'],
       },
     ],
-    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] }],
+    partialSupport: [
+      { modelTypes: [ModelType.LORA], baseModels: ['Wan Video 14B i2v 480p'] },
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 2.2 T2V-A14B', 'Wan Video 2.2 I2V-A14B', 'Wan Video 2.2 TI2V-5B'],
+      },
+    ],
   },
   {
     group: 'WanVideo-22-T2V-A14B',
@@ -410,6 +450,12 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Wan Video 2.2 T2V-A14B'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
       },
     ],
   },
@@ -421,11 +467,23 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         baseModels: ['Wan Video 2.2 I2V-A14B'],
       },
     ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+      },
+    ],
   },
   {
     group: 'WanVideo-22-TI2V-5B',
     support: [
       { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Wan Video 2.2 TI2V-5B'] },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+      },
     ],
   },
   {
