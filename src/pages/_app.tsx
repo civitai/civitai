@@ -137,7 +137,6 @@ function MyApp(props: CustomAppProps) {
     <AppProvider
       seed={seed}
       canIndex={canIndex}
-      settings={settings}
       region={region}
       allowMatureContent={allowMatureContent}
     >

@@ -49,7 +49,7 @@ export function UserSettingsProvider({
             curr.setState(reverseChanged);
             if (error instanceof Error)
               showErrorNotification({
-                title: 'Failed to update user settings',
+                title: 'Failed to update',
                 error,
               });
           });

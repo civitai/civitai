@@ -19,8 +19,8 @@ export default PublicEndpoint(
       }
     } catch (e) {
       if (e instanceof Error) {
-        res.status(500).json({ error: e.message });
-      } else res.status(500).end();
+        res.status(400).json({ error: e.message });
+      } else res.status(400).end();
     }
   },
   ['GET', 'POST']

@@ -19,16 +19,11 @@ import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { useState } from 'react';
-import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
-import {
-  useTipaltiConfigurationUrl,
-  useUserPaymentConfiguration,
-} from '~/components/UserPaymentConfiguration/util';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
-import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useUserSettings } from '~/providers/UserSettingsProvider';
 
@@ -37,27 +32,17 @@ const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
+  const setState = useUserSettings((state) => state.setState);
   const [acceptedCoC, setAcceptedCoC] = useState(false);
   const { data, isLoading } = trpc.content.get.useQuery({
     slug: 'creators-program-coc',
   });
-
-  const updateUserSettings = useMutateUserSettings({
-    onError() {
-      showErrorNotification({
-        title: 'Failed to accept code of conduct',
-        error: new Error('Something went wrong, please try again later.'),
-      });
-    },
-  });
-  const handleConfirm = async () => {
+  const handleConfirm = () => {
     if (!acceptedCoC) {
       return;
     }
 
-    await updateUserSettings.mutate({
-      creatorsProgramCodeOfConductAccepted: new Date(),
-    });
+    setState({ creatorsProgramCodeOfConductAccepted: new Date() });
 
     handleClose();
     onAccepted();
@@ -89,14 +74,10 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
             </Stack>
           </ScrollArea.Autosize>
           <Group ml="auto">
-            <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
+            <Button onClick={handleClose} color="gray">
               Go back
             </Button>
-            <Button
-              onClick={handleConfirm}
-              disabled={!acceptedCoC}
-              loading={updateUserSettings.isLoading}
-            >
+            <Button onClick={handleConfirm} disabled={!acceptedCoC}>
               Accept
             </Button>
           </Group>

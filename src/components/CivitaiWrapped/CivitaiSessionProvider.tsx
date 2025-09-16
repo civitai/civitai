@@ -24,7 +24,6 @@ export function CivitaiSessionProvider({
   const { region } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
-  // const { data: settings } = trpc.user.getSettings.useQuery();
 
   const sessionUser = useMemo(() => {
     if (!user)
