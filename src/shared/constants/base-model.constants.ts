@@ -46,6 +46,7 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Pony', type: 'image', group: 'Pony', ecosystem: 'sdxl' },
+  { name: 'Pony V7', type: 'image', group: 'PonyV7', ecosystem: 'auraflow' },
   { name: 'Qwen', type: 'image', group: 'Qwen', ecosystem: 'qwen' },
   {
     name: 'Stable Cascade',
@@ -271,6 +272,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.VAE],
         baseModels: sdxlBaseModels,
+      },
+    ],
+  },
+  {
+    group: 'PonyV7',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint],
+        baseModels: ['Pony V7'],
       },
     ],
   },

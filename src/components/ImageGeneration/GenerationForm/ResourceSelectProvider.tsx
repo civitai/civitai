@@ -6,8 +6,8 @@ import type {
   ResourceSelectSource,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 type GenerationResourceWithImage = GenerationResource & {
   image: SearchIndexDataMap['models'][number]['images'][number];
@@ -40,7 +40,7 @@ export function ResourceSelectProvider({
   ...props
 }: { children: React.ReactNode } & ResourceSelectModalProps) {
   const dialog = useDialogContext();
-  const { generation } = useCurrentUserSettings();
+  const generation = useUserSettings(x => x.generation);
   const [filters, setFilters] = useState<ResourceFilter>({
     types: [],
     baseModels: [],

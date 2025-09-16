@@ -19,7 +19,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
-import { getUserBookmarkCollections } from '~/server/services/user.service';
+import { getUserBookmarkCollections, getUserSettings } from '~/server/services/user.service';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
@@ -140,9 +140,11 @@ export default MixedAuthEndpoint(async function handler(
       user,
     });
 
+    const { filePreferences } = await getUserSettings(user?.id);
+
     const preferredFormat = {
-      type: user?.filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
-      metadata: user?.filePreferences,
+      type: filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
+      metadata: filePreferences,
     };
     const primaryFileOnly = data.primaryFileOnly === true;
 

@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { RegionInfo } from '~/server/utils/region-blocking';
-import { trpc } from '~/utils/trpc';
 
 type AppContext = {
   seed: number;
@@ -17,10 +15,8 @@ export function useAppContext() {
 }
 export function AppProvider({
   children,
-  settings,
   ...appContext
-}: { children: React.ReactNode; settings: UserSettingsSchema; region: RegionInfo } & AppContext) {
-  trpc.user.getSettings.useQuery(undefined, { initialData: settings });
+}: { children: React.ReactNode; region: RegionInfo } & AppContext) {
   const [state] = useState(appContext);
 
   return <Context.Provider value={state}>{children}</Context.Provider>;

@@ -2,6 +2,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useState } from 'react';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   nsfwBrowsingLevelsFlag,
@@ -43,7 +44,7 @@ export function BrowsingLevelProvider({
   const userBrowsingLevel = useBrowsingSettings((state) =>
     state.showNsfw ? state.browsingLevel : publicBrowsingLevelsFlag
   );
-  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const blurNsfw = useUserSettings((x) => x.blurNsfw);
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
   const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
 

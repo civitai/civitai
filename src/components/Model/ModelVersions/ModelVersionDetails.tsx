@@ -123,6 +123,7 @@ import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export function ModelVersionDetails({
   model,
@@ -131,6 +132,7 @@ export function ModelVersionDetails({
   onBrowseClick,
   onFavoriteClick,
 }: Props) {
+  const filePreferences = useUserSettings((x) => x.filePreferences);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
@@ -172,7 +174,7 @@ export function ModelVersionDetails({
   const isOwnerOrMod = isOwner || user?.isModerator;
 
   const primaryFile = getPrimaryFile(version.files, {
-    metadata: user?.filePreferences,
+    metadata: filePreferences,
   });
   const hashes = primaryFile?.hashes ?? [];
 

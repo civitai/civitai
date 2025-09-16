@@ -15,11 +15,10 @@ import type { TourSettingsSchema } from '~/server/schema/user.schema';
 import type { StepWithData } from '~/types/tour';
 import type { TourKey } from '~/components/Tours/tours';
 import { tourSteps } from '~/components/Tours/tours';
-import { trpc } from '~/utils/trpc';
 import dynamic from 'next/dynamic';
 import type { StoreHelpers } from 'react-joyride';
-import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));
 
@@ -81,16 +80,12 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   }));
   const helpers = useRef<StoreHelpers | null>(null);
 
-  const { data: userSettings, isInitialLoading } = trpc.user.getSettings.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
-
-  const updateUserSettingsMutation = useMutateUserSettings();
+  const tourSettings = useUserSettings((x) => x.tourSettings);
+  const setUserSettingsState = useUserSettings((x) => x.setState);
 
   const getCurrentTourData = useCallback(
-    (key?: TourKey | null) =>
-      key ? userSettings?.tourSettings?.[key] ?? localTour[key] : undefined,
-    [userSettings?.tourSettings, localTour]
+    (key?: TourKey | null) => (key ? tourSettings?.[key] ?? localTour[key] : undefined),
+    [tourSettings, localTour]
   );
 
   const currentTourData = useMemo(
@@ -117,18 +112,11 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
 
       if (opts?.step != null && activeTour && !alreadyCompleted) {
         const tourSettings = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
-        if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+        if (currentUser) setUserSettingsState({ tourSettings });
         setLocalTour((old) => ({ ...old, ...tourSettings }));
       }
     },
-    [
-      currentUser,
-      getCurrentTourData,
-      state.activeTour,
-      state.forceRun,
-      setLocalTour,
-      updateUserSettingsMutation,
-    ]
+    [currentUser, getCurrentTourData, state.activeTour, state.forceRun, setLocalTour]
   );
 
   const closeTour = useCallback<TourContextState['closeTour']>(
@@ -141,7 +129,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
           const tourSettings = {
             [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
           };
-          if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+          if (currentUser) setUserSettingsState({ tourSettings });
           setLocalTour((old) => ({ ...old, ...tourSettings }));
         }
       }
@@ -153,14 +141,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         forceRun: opts?.reset ? false : old.forceRun,
       }));
     },
-    [
-      state.activeTour,
-      state.currentStep,
-      getCurrentTourData,
-      currentUser,
-      updateUserSettingsMutation,
-      setLocalTour,
-    ]
+    [state.activeTour, state.currentStep, getCurrentTourData, currentUser, setLocalTour]
   );
 
   const setSteps = (steps: TourState['steps']) => {
@@ -168,8 +149,6 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    if (isInitialLoading) return;
-
     // Set initial step based on user settings
     const currentStep = currentTourData?.currentStep ?? 0;
     setState((old) => ({ ...old, currentStep, returnUrl: path }));
@@ -183,10 +162,10 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       default:
         break;
     }
-  }, [isInitialLoading, tourKey]);
+  }, [tourKey]);
 
   const completed = currentTourData?.completed;
-  const run = (state.running && !completed && !isInitialLoading) || state.forceRun;
+  const run = (state.running && !completed) || state.forceRun;
 
   return (
     <TourContext.Provider

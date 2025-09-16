@@ -832,11 +832,13 @@ export const getDownloadCommandHandler = async ({
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
     >;
 
+    const settings = await getUserSettings(ctx.user.id);
+
     const file =
       type != null || format != null
         ? castedFiles[0]
         : getPrimaryFile(castedFiles, {
-            metadata: ctx.user?.filePreferences,
+            metadata: settings.filePreferences,
           });
     if (!file) throw throwNotFoundError();
 

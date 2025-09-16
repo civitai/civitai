@@ -6,7 +6,6 @@ import type { getUserBanDetails } from '~/utils/user-helpers';
 interface ExtendedUser {
   id: number;
   showNsfw: boolean;
-  blurNsfw: boolean; // client only
   browsingLevel: number;
   onboarding: number;
   username?: string;
@@ -21,21 +20,10 @@ interface ExtendedUser {
   tier?: UserTier;
   muted?: boolean;
   bannedAt?: Date;
-  autoplayGifs?: boolean; // client only - could be cookie setting
   permissions?: string[];
-  filePreferences?: UserFilePreferences;
-  leaderboardShowcase?: string; // client only
   referral?: { id: number }; // client only
-  memberInBadState?: boolean;
   meta?: UserMeta;
-  allowAds?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
-  redBrowsingLevel?: number;
-  // TODO.briant - clean up user session data
-  /*
-    remove `deletedAt` from session user data
-    remove `emailVerified`, update user account page to make call to get current user data
-   */
 }
 
 declare module 'next-auth' {

@@ -11,6 +11,7 @@ import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { devtools } from 'zustand/middleware';
 import type { AdConfig } from '~/components/Ads/Old/ads.utils';
 import { getAdConfig } from '~/components/Ads/Old/ads.utils';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -38,7 +39,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
-  const allowAds = useBrowsingSettings((x) => x.allowAds);
+  const allowAds = useUserSettings((x) => x.allowAds);
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
   // const [cmpLoaded, setCmpLoaded] = useState(false);
 

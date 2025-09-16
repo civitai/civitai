@@ -94,15 +94,6 @@ export const userUpdateSchema = z.object({
   nameplateId: z.number().nullish(),
   profileDecorationId: z.number().nullish(),
   profileBackgroundId: z.number().nullish(),
-  autoplayGifs: z.boolean().optional(),
-  filePreferences: z
-    .object({
-      format: z.string().optional(),
-      size: z.string().optional(),
-      fp: z.string().optional(),
-      imageFormat: z.string().optional(),
-    })
-    .optional(),
   leaderboardShowcase: z.string().nullish(),
   userReferralCode: z.string().optional(),
   source: z.string().optional(),
@@ -214,7 +205,9 @@ export const userAssistantPersonality = z.enum(['civbot', 'civchan']);
 export type UserAssistantPersonality = z.infer<typeof userAssistantPersonality>;
 
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
-export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
+export type UserSettingsSchema = Omit<z.infer<typeof userSettingsSchema>, 'filePreferences'> & {
+  filePreferences?: Partial<UserFilePreferences>;
+};
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   features: z.record(z.string(), z.boolean()).optional(),
@@ -241,6 +234,18 @@ export const userSettingsSchema = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+
+  // the following props are not part of the json blob. They live on the User db schema
+  blurNsfw: z.boolean().optional(),
+  autoplayGifs: z.boolean().optional(),
+  filePreferences: z
+    .object({
+      format: z.string().optional(),
+      size: z.string().optional(),
+      fp: z.string().optional(),
+      imageFormat: z.string().optional(),
+    })
+    .optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -328,11 +333,9 @@ export const computeDeviceFingerprintSchema = z.object({ fingerprint: z.string()
 export type UpdateContentSettingsInput = z.infer<typeof updateContentSettingsSchema>;
 export const updateContentSettingsSchema = z.object({
   showNsfw: z.boolean().optional(),
-  blurNsfw: z.boolean().optional(),
   browsingLevel: z.number().optional(),
   disableHidden: z.boolean().optional(),
-  allowAds: z.boolean().optional(),
-  autoplayGifs: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
   domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 

@@ -9,6 +9,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 declare global {
   interface Window {
@@ -64,7 +65,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
-  const allowAds = useBrowsingSettings((x) => x.allowAds);
+  const allowAds = useUserSettings((x) => x.allowAds);
   const adsEnabled = isDev
     ? true
     : !features.isGreen &&

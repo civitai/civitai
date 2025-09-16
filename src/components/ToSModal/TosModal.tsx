@@ -22,6 +22,7 @@ import type { SetUserSettingsInput } from '~/server/schema/user.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { formatDate } from '~/utils/date-helpers';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 export default function TosModal({
   onAccepted,
@@ -39,22 +40,10 @@ export default function TosModal({
   const { data, isLoading } = trpc.content.get.useQuery({
     slug,
   });
-  const queryUtils = trpc.useUtils();
 
   const { ref: headerRef, height: headerHeight } = useElementSize();
   const { ref: footerRef, height: footerHeight } = useElementSize();
-
-  const updateUserSettings = trpc.user.setSettings.useMutation({
-    async onSuccess(res) {
-      queryUtils.user.getSettings.setData(undefined, (old) => ({ ...old, ...res }));
-    },
-    onError() {
-      showErrorNotification({
-        title: 'Failed to accept ToS',
-        error: new Error('Something went wrong, please try again later.'),
-      });
-    },
-  });
+  const setState = useUserSettings((state) => state.setState);
 
   const getScrollAreaMaxHeight = () => {
     const elementGaps = 16 * 3;
@@ -69,7 +58,7 @@ export default function TosModal({
     if (!acceptedCoC) return;
     setLoading(true);
 
-    updateUserSettings.mutate({ [fieldKey]: new Date() });
+    setState({ [fieldKey]: new Date() });
 
     handleClose();
     await onAccepted();
@@ -119,14 +108,10 @@ export default function TosModal({
               size="sm"
             />
             <Group ml="auto">
-              <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
+              <Button onClick={handleClose} color="gray">
                 Go back
               </Button>
-              <Button
-                onClick={handleConfirm}
-                disabled={!acceptedCoC}
-                loading={updateUserSettings.isLoading || loading}
-              >
+              <Button onClick={handleConfirm} disabled={!acceptedCoC} loading={loading}>
                 Accept
               </Button>
             </Group>

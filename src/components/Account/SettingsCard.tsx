@@ -10,18 +10,14 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import produce from 'immer';
-import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-// import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
-import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { toggleableFeatures } from '~/server/services/feature-flags.service';
 import { titleCase } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
+import { useCallback } from 'react';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
 const normalizedToggleableFeatures = toggleableFeatures.filter(
@@ -33,19 +29,11 @@ const assistantToggleableFeatures = toggleableFeatures.filter(
 
 export function SettingsCard() {
   const user = useCurrentUser();
-  const queryUtils = trpc.useUtils();
   const flags = useFeatureFlags();
 
-  const { mutate, isLoading } = trpc.user.update.useMutation({
-    async onSuccess() {
-      await queryUtils.model.getAll.invalidate();
-      await user?.refresh();
-      showSuccessNotification({ message: 'User profile updated' });
-    },
-  });
-
-  const { assistantPersonality } = useCurrentUserSettings();
-  const { mutate: mutateSetting, isLoading: isLoadingSetting } = useMutateUserSettings();
+  const filePreferences = useUserSettings((state) => state.filePreferences);
+  const assistantPersonality = useUserSettings((state) => state.assistantPersonality);
+  const setState = useUserSettings((state) => state.setState);
 
   if (!user) return null;
 
@@ -70,14 +58,12 @@ export function SettingsCard() {
                 label: 'Unoptimized (jpeg, png)',
               },
             ]}
-            value={user.filePreferences?.imageFormat ?? 'metadata'}
+            value={filePreferences?.imageFormat ?? 'metadata'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, imageFormat: value as ImageFormat },
+              }))
             }
-            disabled={isLoading}
           />
         </Group>
 
@@ -87,14 +73,12 @@ export function SettingsCard() {
             label="Preferred Format"
             name="fileFormat"
             data={validModelFormats}
-            value={user.filePreferences?.format ?? 'SafeTensor'}
+            value={filePreferences?.format ?? 'SafeTensor'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, format: value as ModelFileFormat },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, format: value as ModelFileFormat },
+              }))
             }
-            disabled={isLoading}
           />
           <Select
             label="Preferred Size"
@@ -103,14 +87,12 @@ export function SettingsCard() {
               value: size,
               label: titleCase(size),
             }))}
-            value={user.filePreferences?.size ?? 'pruned'}
+            value={filePreferences?.size ?? 'pruned'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, size: value as ModelFileSize },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, size: value as ModelFileSize },
+              }))
             }
-            disabled={isLoading}
           />
           <Select
             label="Preferred Precision"
@@ -119,14 +101,12 @@ export function SettingsCard() {
               value,
               label: value.toUpperCase(),
             }))}
-            value={user.filePreferences?.fp ?? 'fp16'}
+            value={filePreferences?.fp ?? 'fp16'}
             onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, fp: value as ModelFileFp },
-              })
+              setState((state) => ({
+                filePreferences: { ...state.filePreferences, fp: value as ModelFileFp },
+              }))
             }
-            disabled={isLoading}
           />
         </Group>
 
@@ -153,7 +133,6 @@ export function SettingsCard() {
                       </Group>
                     }
                     name="assistantPersonality"
-                    disabled={isLoadingSetting || !flags.assistantPersonality}
                     data={[
                       {
                         value: 'civbot',
@@ -167,7 +146,7 @@ export function SettingsCard() {
                     value={assistantPersonality ?? 'civbot'}
                     onChange={(value: string | null) => {
                       if (flags.assistantPersonality) {
-                        mutateSetting({ assistantPersonality: value as UserAssistantPersonality });
+                        setState({ assistantPersonality: value as UserAssistantPersonality });
                       }
                     }}
                   />
@@ -189,8 +168,8 @@ export function SettingsCard() {
 }
 
 function AutoplayGifsToggle() {
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
-  const setState = useBrowsingSettings((x) => x.setState);
+  const autoplayGifs = useUserSettings((x) => x.autoplayGifs);
+  const setState = useUserSettings((x) => x.setState);
 
   return (
     <Switch
@@ -203,52 +182,34 @@ function AutoplayGifsToggle() {
 }
 
 function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
-  const flags = useFeatureFlags();
-  const queryUtils = trpc.useUtils();
-  const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
-    async onMutate(payload) {
-      await queryUtils.user.getFeatureFlags.cancel();
-      const prevData = queryUtils.user.getFeatureFlags.getData();
-
-      queryUtils.user.getFeatureFlags.setData(
-        undefined,
-        produce((old) => {
-          if (!old) return;
-          old[payload.feature] = payload.value ?? !old[payload.feature];
-        })
-      );
-
-      return { prevData };
-    },
-    async onSuccess() {
-      await queryUtils.user.getFeatureFlags.invalidate();
-    },
-    onError(_error, _payload, context) {
-      showErrorNotification({
-        title: 'Failed to toggle feature',
-        error: new Error('Something went wrong, please try again later.'),
-      });
-      queryUtils.user.getFeatureFlags.setData(undefined, context?.prevData);
-    },
-  });
-
-  function toggleFlag(key: keyof FeatureAccess, value: boolean) {
-    toggleFeatureFlagMutation.mutate({ feature: key, value });
-  }
-
   return (
     <>
       {data.map((feature) => (
-        <Switch
-          name={feature.key}
-          key={feature.key}
-          label={feature.displayName}
-          checked={flags[feature.key]}
-          onChange={(e) => toggleFlag(feature.key, e.target.checked)}
-          description={feature.description}
-          styles={{ track: { flex: '0 0 1em' } }}
-        />
+        <FeatureToggleSwitch key={feature.key} data={feature} />
       ))}
     </>
+  );
+}
+
+function FeatureToggleSwitch({ data }: { data: (typeof toggleableFeatures)[number] }) {
+  const setState = useUserSettings((state) => state.setState);
+  const checked = useUserSettings(
+    useCallback((state) => state.features?.[data.key] ?? data.default, [data.key, data.default])
+  );
+
+  function toggleFlag(value: boolean) {
+    setState((state) => ({ features: { ...state.features, [data.key]: value } }));
+  }
+
+  return (
+    <Switch
+      name={data.key}
+      key={data.key}
+      label={data.displayName}
+      checked={checked}
+      onChange={(e) => toggleFlag(e.target.checked)}
+      description={data.description}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
   );
 }

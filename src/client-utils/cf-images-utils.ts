@@ -1,9 +1,8 @@
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 import { env } from '~/env/client';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
@@ -109,7 +108,7 @@ export function getInferredMediaType(
 }
 
 export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
-  const currentUser = useCurrentUser();
+  const filePreferences = useUserSettings((state) => state.filePreferences);
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
@@ -129,9 +128,7 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
   if (!anim) type = 'image';
   const shouldOptimize = options?.width && options.width <= 450;
   const optimized =
-    options?.optimized ||
-    shouldOptimize ||
-    currentUser?.filePreferences?.imageFormat === 'optimized';
+    options?.optimized || shouldOptimize || filePreferences?.imageFormat === 'optimized';
 
   return {
     url: getEdgeUrl(src, {
@@ -146,7 +143,7 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
 }
 
 export function useGetEdgeUrl(src?: string | null, options: Omit<EdgeUrlProps, 'src'> = {}) {
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const autoplayGifs = useUserSettings((state) => state.autoplayGifs);
   if (!options.anim && !autoplayGifs) options.anim = false;
   return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs, src]);
 }

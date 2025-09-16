@@ -186,8 +186,8 @@ export const userRouter = router({
   toggleFeature: protectedProcedure
     .input(toggleFeatureInputSchema)
     .mutation(toggleUserFeatureFlagHandler),
-  getSettings: protectedProcedure.query(getUserSettingsHandler),
-  setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
+  // getSettings: protectedProcedure.query(getUserSettingsHandler),
+  // setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
   getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
   getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),

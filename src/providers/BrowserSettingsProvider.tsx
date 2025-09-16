@@ -9,7 +9,6 @@ import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { devtools } from 'zustand/middleware';
 import type { NsfwLevel } from '~/server/common/enums';
-import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 const Context = createContext<ContentSettingsStore | null>(null);
@@ -30,7 +29,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const snapshotRef = useRef<Partial<StoreState>>({});
   const storeRef = useRef<ContentSettingsStore | null>(null);
   if (!storeRef.current) {
-    storeRef.current = createContentSettingsStore({ ...settings, domain });
+    storeRef.current = createContentSettingsStore(settings);
     snapshotRef.current = settings;
   }
 
@@ -48,12 +47,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       debouncer(() => {
         const changed = getChanged({ ...curr, domain }, { ...snapshotRef.current, domain });
         if (Object.keys(changed).length > 0) {
-          // The reason why we pass domain it's cause that way we can store the content values on different places depending
-          // on how it makes sense. For instance, for RED - Browssing level is stored under the name `redBrowsingLevel` inside the user settings.
-          mutate({
-            ...changed,
-            domain,
-          });
+          mutate(changed);
           snapshotRef.current = curr;
         }
 
@@ -85,12 +79,8 @@ export function useBrowsingSettings<T>(selector: (state: StoreState & StoreState
 
 type StoreState = {
   showNsfw: boolean;
-  blurNsfw: boolean;
   browsingLevel: number;
   disableHidden: boolean;
-  allowAds: boolean;
-  autoplayGifs: boolean;
-  domain: ColorDomain;
 };
 
 type SetStateCallback = (state: StoreState) => Partial<StoreState>;

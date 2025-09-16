@@ -478,7 +478,7 @@ export const REDIS_KEYS = {
     BASE: 'user',
     SESSION: 'session:data2',
     CACHE: 'packed:user',
-    SETTINGS: 'user:settings',
+    SETTINGS: 'user:settings2',
   },
   SESSION: {
     BASE: 'session',

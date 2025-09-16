@@ -4,7 +4,7 @@ import { IconCat, IconMessageChatbot, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { AssistantChat, getAssistantUUID } from '~/components/Assistant/AssistantChat';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { useUserSettings } from '~/providers/UserSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isApril1 } from '~/utils/date-helpers';
@@ -16,7 +16,7 @@ export function AssistantButton({ ...props }: ButtonProps) {
   const [open, setOpen] = useState(false);
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { assistantPersonality } = useCurrentUserSettings();
+  const assistantPersonality = useUserSettings((state) => state.assistantPersonality);
 
   if (!currentUser || !features.assistant) return null;
 
