@@ -5,7 +5,7 @@ import type {
 import { clickhouse } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
-import { redis, type RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/caches';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
@@ -34,18 +34,14 @@ export const updateEntityMetric = async ({
   // Update Redis EntityMetric
   try {
     // Atomic increment in Redis
-    const newValue = await entityMetricRedis.increment(
-      entityType,
-      entityId,
-      metricType,
-      amount
-    );
+    const newValue = await entityMetricRedis.increment(entityType, entityId, metricType, amount);
 
     // If this is the first write (value equals amount), check ClickHouse for existing data
     // This handles the case where Redis doesn't have the data yet
     if (newValue === amount && amount > 0 && clickhouse) {
       // Use a distributed lock to prevent concurrent ClickHouse queries for the same metric
-      const lockKey = `entitymetric:lock:${entityType}:${entityId}:${metricType}` as RedisKeyTemplateCache;
+      const lockKey =
+        `${REDIS_KEYS.ENTITY_METRICS.BASE}:lock:${entityType}:${entityId}:${metricType}` as RedisKeyTemplateCache;
       const lockAcquired = await redis.setNX(lockKey, '1');
 
       if (lockAcquired) {

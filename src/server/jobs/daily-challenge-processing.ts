@@ -23,6 +23,7 @@ import {
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { randomizeCollectionItems } from '~/server/services/collection.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
@@ -781,12 +782,11 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
   }
 
   // Fetch engagement metrics from Redis
-  const { entityMetricRedis, EntityMetricsHelper } = await import('~/server/redis/entity-metric.redis');
-  const imageIds = judgedEntriesRaw.map(entry => entry.imageId);
+  const imageIds = judgedEntriesRaw.map((entry) => entry.imageId);
   const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
 
   // Calculate engagement (sum of all metrics except Buzz)
-  const judgedEntriesWithEngagement = judgedEntriesRaw.map(entry => {
+  const judgedEntriesWithEngagement = judgedEntriesRaw.map((entry) => {
     const metrics = metricsMap.get(entry.imageId);
     // @ai: Using static helper to avoid object creation overhead
     const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
