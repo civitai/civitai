@@ -32,6 +32,7 @@ const buzzPurchaseMetadataSchema = z
     unitAmount: z.coerce.number().positive(),
     userId: z.coerce.number().positive(),
     transactionId: z.string().optional(),
+    buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
   })
   .passthrough();
 

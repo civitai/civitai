@@ -16,6 +16,7 @@ import {
   Grid,
   Divider,
   Tooltip,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
   IconBolt,
@@ -35,7 +36,6 @@ import {
 } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Fragment } from 'react';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
@@ -44,7 +44,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
-import { Currency } from '~/shared/utils/prisma/enums';
 import type { Price } from '~/shared/utils/prisma/models';
 import {
   formatCurrencyForDisplay,
@@ -55,7 +54,6 @@ import {
 import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { BuzzZkp2pButton } from '~/components/Buzz/BuzzZkp2pButton';
@@ -67,6 +65,19 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import classes from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.module.scss';
 import clsx from 'clsx';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Modal } from '@mantine/core';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { Elements, PaymentElement } from '@stripe/react-stripe-js';
+import { useStripePromise } from '~/providers/StripeProvider';
+import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
+import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
+import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
+import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
@@ -124,6 +135,21 @@ const BuzzPurchasePaymentButton = ({
 
   const { processCompleteBuzzTransaction } = useMutatePaddle();
 
+  const { completeStripeBuzzPurchaseMutation } = useQueryBuzzPackages({
+    onPurchaseSuccess: () => {
+      onPurchaseSuccess?.();
+    },
+  });
+
+  const getPaymentIntentMutation = trpc.stripe.getPaymentIntent.useMutation({
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Could not create payment intent',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   const handleStripeSubmit = async () => {
     if (!onValidate()) {
       return;
@@ -133,7 +159,57 @@ const BuzzPurchasePaymentButton = ({
       return;
     }
 
-    // Implementation would go here for Stripe integration
+    try {
+      const metadata: PaymentIntentMetadataSchema = {
+        type: 'buzzPurchase',
+        unitAmount,
+        buzzAmount,
+        userId: currentUser.id as number,
+        buzzType: buzzType,
+      };
+
+      const result = await getPaymentIntentMutation.mutateAsync({
+        unitAmount,
+        currency: Currency.USD,
+        metadata,
+        recaptchaToken: 'test-token', // await getToken()
+      });
+
+      if (result.clientSecret) {
+        // Open Stripe payment modal with the client secret
+        dialogStore.trigger({
+          component: StripeTransactionModal,
+          props: {
+            clientSecret: result.clientSecret,
+            unitAmount,
+            buzzAmount,
+            message: (
+              <Stack>
+                <Text>
+                  You are about to purchase{' '}
+                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+                </Text>
+                <Text>Please fill in your data and complete your purchase.</Text>
+              </Stack>
+            ),
+            successMessage,
+            onSuccess: async (stripePaymentIntentId) => {
+              // Complete the buzz purchase transaction
+              await completeStripeBuzzPurchaseMutation({
+                amount: buzzAmount,
+                details: metadata,
+                stripePaymentIntentId,
+              });
+
+              onPurchaseSuccess?.();
+            },
+          },
+        });
+      }
+    } catch (error) {
+      // Error handling is already done in the mutation
+      console.error('Failed to create Stripe payment intent:', error);
+    }
   };
 
   const handlePaddleSubmit = async () => {
@@ -168,15 +244,15 @@ const BuzzPurchasePaymentButton = ({
     });
   };
 
+  // Force Stripe for green buzz, otherwise use default provider
+  const shouldUseStripe = buzzType === 'green' || paymentProvider === 'Stripe';
+  const shouldUsePaddle = buzzType !== 'green' && paymentProvider === 'Paddle';
+
   return (
     <Button
       disabled={disabled || features.disablePayments}
       onClick={
-        paymentProvider === 'Paddle'
-          ? handlePaddleSubmit
-          : paymentProvider === 'Stripe'
-          ? handleStripeSubmit
-          : undefined
+        shouldUsePaddle ? handlePaddleSubmit : shouldUseStripe ? handleStripeSubmit : undefined
       }
       size="md"
       radius="md"
@@ -190,7 +266,7 @@ const BuzzPurchasePaymentButton = ({
       ) : (
         <Group gap="sm">
           <Text size="sm" fw={500}>
-            Complete Purchase
+            {buzzType === 'green' ? 'Pay with Card' : 'Complete Purchase'}
           </Text>
           {!!unitAmount && (
             <Badge size="sm" variant="light" color={buzzConfig.color} c="white">
@@ -228,7 +304,7 @@ const RedeemableCodesSection = ({
           </ThemeIcon>
           <div style={{ flex: 1 }}>
             <Text size="sm" fw={500}>
-              Don't see a supported payment option?
+              Don&rsquo;t see a supported payment option?
             </Text>
             <Text size="xs" c="dimmed">
               Purchase gift cards with Apple Pay, Google Pay, credit cards, and more
@@ -1086,6 +1162,114 @@ export const BuzzPurchaseImproved = ({
         )}
       </Grid>
     </div>
+  );
+};
+
+// Stripe Transaction Modal Component
+type StripeTransactionModalProps = {
+  clientSecret: string;
+  unitAmount: number;
+  buzzAmount: number;
+  message?: React.ReactNode;
+  successMessage?: React.ReactNode;
+  onSuccess?: (paymentIntentId: string) => Promise<void>;
+};
+
+const StripeTransactionModal = ({
+  clientSecret,
+  unitAmount,
+  buzzAmount,
+  message,
+  successMessage,
+  onSuccess,
+}: StripeTransactionModalProps) => {
+  const dialog = useDialogContext();
+  const stripePromise = useStripePromise();
+  const colorScheme = useComputedColorScheme('dark');
+
+  const options: StripeElementsOptions = {
+    clientSecret,
+    appearance: { theme: colorScheme === 'dark' ? 'night' : 'stripe' },
+    locale: 'en',
+  };
+
+  return (
+    <Modal {...dialog} size="lg" title="Complete Payment">
+      <Stack>
+        {message && <div>{message}</div>}
+        {stripePromise && (
+          <Elements stripe={stripePromise} key={clientSecret} options={options}>
+            <StripePaymentForm
+              clientSecret={clientSecret}
+              onSuccess={onSuccess}
+              onCancel={dialog.onClose}
+              successMessage={successMessage}
+            />
+          </Elements>
+        )}
+      </Stack>
+    </Modal>
+  );
+};
+
+const StripePaymentForm = ({
+  clientSecret,
+  onSuccess,
+  onCancel,
+  successMessage,
+}: {
+  clientSecret: string;
+  onSuccess?: (paymentIntentId: string) => Promise<void>;
+  onCancel: () => void;
+  successMessage?: React.ReactNode;
+}) => {
+  const { errorMessage, onConfirmPayment, processingPayment, paymentIntentStatus } =
+    useStripeTransaction({
+      clientSecret,
+      onPaymentSuccess: async (paymentIntent) => {
+        if (onSuccess) {
+          await onSuccess(paymentIntent.id);
+        }
+      },
+    });
+
+  const paymentElementOptions: StripePaymentElementOptions = {
+    layout: 'tabs',
+  };
+
+  if (paymentIntentStatus === 'succeeded') {
+    return (
+      <Stack>
+        {successMessage || <Text>Payment successful!</Text>}
+        <Button onClick={onCancel}>Close</Button>
+      </Stack>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={async (e) => {
+        e.preventDefault();
+        await onConfirmPayment();
+      }}
+    >
+      <Stack gap="md">
+        <PaymentElement options={paymentElementOptions} />
+        {errorMessage && (
+          <Text c="red" size="sm">
+            {errorMessage}
+          </Text>
+        )}
+        <Group justify="flex-end">
+          <Button variant="outline" color="gray" onClick={onCancel} disabled={processingPayment}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={processingPayment} loading={processingPayment}>
+            {processingPayment ? 'Processing...' : 'Complete Payment'}
+          </Button>
+        </Group>
+      </Stack>
+    </form>
   );
 };
 

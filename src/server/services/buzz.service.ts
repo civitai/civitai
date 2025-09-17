@@ -470,6 +470,7 @@ export async function completeStripeBuzzTransaction({
       amount: buzzAmount,
       fromAccountId: 0,
       toAccountId: userId,
+      toAccountType: (metadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
       type: TransactionType.Purchase,
       description: `Purchase of ${amount} Buzz. ${
         purchasesMultiplier && purchasesMultiplier > 1

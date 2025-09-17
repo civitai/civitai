@@ -18,6 +18,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -193,7 +194,11 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     Upgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Annual)' : ''}
                   </Button>
                 ) : (
-                  <SubscribeButton priceId={priceId} disabled={ctaDisabled}>
+                  <SubscribeButton
+                    priceId={priceId}
+                    disabled={ctaDisabled}
+                    forceProvider={meta.buzzType === 'green' ? PaymentProvider.Stripe : undefined}
+                  >
                     <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
                     </Button>

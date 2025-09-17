@@ -183,13 +183,13 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
   );
 }
 
-export function SubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
+export function SubscribeButton({ children, priceId, onSuccess, disabled, forceProvider }: Props) {
   const currentUser = useCurrentUser();
   const paymentProvider = usePaymentProvider();
   const featureFlags = useFeatureFlags();
   const { subscriptionPaymentProvider } = useActiveSubscription();
 
-  const provider = subscriptionPaymentProvider ?? paymentProvider;
+  const provider = forceProvider ?? subscriptionPaymentProvider ?? paymentProvider;
 
   const handleAddEmail = () => {
     openContextModal({
@@ -255,4 +255,5 @@ type Props = {
   priceId: string;
   onSuccess?: () => void;
   disabled?: boolean;
+  forceProvider?: PaymentProvider;
 };
