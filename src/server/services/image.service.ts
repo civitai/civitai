@@ -566,6 +566,7 @@ export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
   ImageScanType.Hash,
   ImageScanType.Clavata,
+  ImageScanType.SpineRating,
 ];
 
 export const ingestImage = async ({

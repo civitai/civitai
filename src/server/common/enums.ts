@@ -94,6 +94,7 @@ export enum ImageScanType {
   MinorDetection = 6,
   HiveDemographics = 7,
   Clavata = 8,
+  SpineRating = 9,
 }
 
 // export enum CommentV2Sort {
