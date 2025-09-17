@@ -168,6 +168,8 @@ const BuzzPurchasePaymentButton = ({
         buzzType: buzzType,
       };
 
+      console.log('Creating Stripe payment intent with metadata:', metadata);
+
       const result = await getPaymentIntentMutation.mutateAsync({
         unitAmount,
         currency: Currency.USD,
@@ -187,7 +189,8 @@ const BuzzPurchasePaymentButton = ({
               <Stack>
                 <Text>
                   You are about to purchase{' '}
-                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} type={buzzType} />
+                  .
                 </Text>
                 <Text>Please fill in your data and complete your purchase.</Text>
               </Stack>
@@ -251,6 +254,7 @@ const BuzzPurchasePaymentButton = ({
   return (
     <Button
       disabled={disabled || features.disablePayments}
+      loading={getPaymentIntentMutation.isLoading}
       onClick={
         shouldUsePaddle ? handlePaddleSubmit : shouldUseStripe ? handleStripeSubmit : undefined
       }
@@ -266,13 +270,12 @@ const BuzzPurchasePaymentButton = ({
       ) : (
         <Group gap="sm">
           <Text size="sm" fw={500}>
-            {buzzType === 'green' ? 'Pay with Card' : 'Complete Purchase'}
+            {getPaymentIntentMutation.isLoading
+              ? 'Setting up payment...'
+              : buzzType === 'green'
+              ? 'Pay with Card'
+              : 'Complete Purchase'}
           </Text>
-          {!!unitAmount && (
-            <Badge size="sm" variant="light" color={buzzConfig.color} c="white">
-              ${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}
-            </Badge>
-          )}
         </Group>
       )}
     </Button>
@@ -998,7 +1001,7 @@ export const BuzzPurchaseImproved = ({
                             <>
                               <BuzzPurchasePaymentButton
                                 unitAmount={unitAmount}
-                                buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                buzzAmount={buzzAmount}
                                 onPurchaseSuccess={onPurchaseSuccess}
                                 onValidate={onValidate}
                                 disabled={!ctaEnabled}
@@ -1012,7 +1015,7 @@ export const BuzzPurchaseImproved = ({
                                 <>
                                   <BuzzCoinbaseButton
                                     unitAmount={unitAmount}
-                                    buzzAmount={buzzCalculation.totalBuzz ?? buzzAmount}
+                                    buzzAmount={buzzAmount}
                                     onPurchaseSuccess={onPurchaseSuccess}
                                     disabled={!ctaEnabled}
                                     purchaseSuccessMessage={purchaseSuccessMessage}
@@ -1189,14 +1192,52 @@ const StripeTransactionModal = ({
 
   const options: StripeElementsOptions = {
     clientSecret,
-    appearance: { theme: colorScheme === 'dark' ? 'night' : 'stripe' },
+    appearance: {
+      theme: colorScheme === 'dark' ? 'night' : 'stripe',
+      variables: {
+        colorPrimary: 'rgb(var(--buzz-color))',
+        borderRadius: '8px',
+      },
+    },
     locale: 'en',
   };
 
   return (
-    <Modal {...dialog} size="lg" title="Complete Payment">
-      <Stack>
-        {message && <div>{message}</div>}
+    <Modal {...dialog} size="lg" withCloseButton={false}>
+      <Stack gap="md">
+        <div>
+          <Title order={3} size="lg" mb="xs">
+            Complete Payment
+          </Title>
+          <Text c="dimmed" size="sm">
+            Secure payment powered by Stripe
+          </Text>
+        </div>
+
+        {message && (
+          <Card padding="md" radius="md" withBorder>
+            <div>{message}</div>
+          </Card>
+        )}
+
+        <Card padding="md" radius="md" withBorder>
+          <Stack gap="md">
+            <Group justify="space-between" align="flex-start">
+              <Text size="md" fw={600}>
+                Payment Summary
+              </Text>
+              <div style={{ textAlign: 'right' }}>
+                <Text size="xl" fw={700} c="green">
+                  ${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  For {numberWithCommas(buzzAmount)} Buzz
+                </Text>
+              </div>
+            </Group>
+          </Stack>
+        </Card>
+
         {stripePromise && (
           <Elements stripe={stripePromise} key={clientSecret} options={options}>
             <StripePaymentForm
@@ -1239,10 +1280,26 @@ const StripePaymentForm = ({
 
   if (paymentIntentStatus === 'succeeded') {
     return (
-      <Stack>
-        {successMessage || <Text>Payment successful!</Text>}
-        <Button onClick={onCancel}>Close</Button>
-      </Stack>
+      <Card padding="md" radius="md" withBorder>
+        <Stack align="center" gap="md">
+          <ThemeIcon size="xl" variant="light" color="green" radius="xl">
+            <IconBolt size={24} />
+          </ThemeIcon>
+          <div style={{ textAlign: 'center' }}>
+            <Text size="lg" fw={600} c="green" mb="xs">
+              Payment Successful!
+            </Text>
+            {successMessage || (
+              <Text size="sm" c="dimmed">
+                Your Buzz has been added to your account.
+              </Text>
+            )}
+          </div>
+          <Button onClick={onCancel} color="green" variant="light" fullWidth>
+            Close
+          </Button>
+        </Stack>
+      </Card>
     );
   }
 
@@ -1254,18 +1311,48 @@ const StripePaymentForm = ({
       }}
     >
       <Stack gap="md">
-        <PaymentElement options={paymentElementOptions} />
+        <Card padding="md" radius="md" withBorder>
+          <Stack gap="md">
+            <Text size="md" fw={600} mb="xs">
+              Payment Information
+            </Text>
+            <PaymentElement options={paymentElementOptions} />
+          </Stack>
+        </Card>
+
         {errorMessage && (
-          <Text c="red" size="sm">
-            {errorMessage}
-          </Text>
+          <Card padding="md" radius="md" withBorder>
+            <Group gap="sm">
+              <ThemeIcon size="sm" variant="light" color="red">
+                <IconInfoCircle size={14} />
+              </ThemeIcon>
+              <Text c="red" size="sm" style={{ flex: 1 }}>
+                {errorMessage}
+              </Text>
+            </Group>
+          </Card>
         )}
-        <Group justify="flex-end">
-          <Button variant="outline" color="gray" onClick={onCancel} disabled={processingPayment}>
+
+        <Divider />
+
+        <Group justify="space-between">
+          <Button
+            variant="outline"
+            color="gray"
+            onClick={onCancel}
+            disabled={processingPayment}
+            size="md"
+          >
             Cancel
           </Button>
-          <Button type="submit" disabled={processingPayment} loading={processingPayment}>
-            {processingPayment ? 'Processing...' : 'Complete Payment'}
+          <Button
+            type="submit"
+            disabled={processingPayment}
+            loading={processingPayment}
+            size="md"
+            leftSection={<IconCreditCard size={18} />}
+          >
+            {processingPayment ? 'Processing Payment...' : 'Complete Payment'}
           </Button>
         </Group>
       </Stack>
