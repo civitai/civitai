@@ -94,7 +94,10 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
 
   const redirectToPrepaidPage = features.disablePayments && features.prepaidMemberships;
-  const ctaDisabled = disabledDueToProvider || disabledDueToYearlyPlan || !redirectToPrepaidPage;
+  const ctaDisabled =
+    disabledDueToProvider ||
+    disabledDueToYearlyPlan ||
+    (features.disablePayments && !redirectToPrepaidPage);
 
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',

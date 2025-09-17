@@ -204,7 +204,11 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled, forceP
 
   if (currentUser && !currentUser.email)
     return (
-      <Button onClick={handleAddEmail} style={{ height: 50 }} disabled={featureFlags.disablePayments}>
+      <Button
+        onClick={handleAddEmail}
+        style={{ height: 50 }}
+        disabled={featureFlags.disablePayments}
+      >
         <Stack align="center" gap={0}>
           <Text align="center" style={{ lineHeight: 1.1 }}>
             Subscribe
