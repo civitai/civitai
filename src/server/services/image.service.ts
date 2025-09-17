@@ -4943,7 +4943,6 @@ export async function updateImageNsfwLevel({
           nsfwLevel,
           imageId: id,
           userId: userId,
-          // -5 means it was added to the queue, 3 means it was locked so mods should see.
           weight: current.userId === userId ? 3 : 1,
         },
         update: { nsfwLevel },
