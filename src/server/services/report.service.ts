@@ -184,23 +184,26 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
                 where: { id },
                 select: { nsfwLevel: true, nsfwLevelLocked: true },
               });
-              if (image && !image.nsfwLevelLocked) {
+              if (image) {
                 const moderated = await getModeratedTags();
                 const ratings = moderated
                   .filter((x) => tagNames.includes(x.name))
                   .map((x) => x.nsfwLevel);
                 const maxRating = Math.max(...ratings);
                 if (maxRating > image.nsfwLevel) {
-                  await dbWrite.imageRatingRequest.upsert({
-                    where: { imageId_userId: { imageId: id, userId: userId } },
-                    create: {
-                      nsfwLevel: maxRating,
-                      imageId: id,
-                      userId: userId,
-                      weight: 3,
-                    },
-                    update: { nsfwLevel: maxRating },
-                  });
+                  await Promise.all([
+                    dbWrite.imageRatingRequest.upsert({
+                      where: { imageId_userId: { imageId: id, userId: userId } },
+                      create: {
+                        nsfwLevel: maxRating,
+                        imageId: id,
+                        userId: userId,
+                        weight: 3,
+                      },
+                      update: { nsfwLevel: maxRating },
+                    }),
+                    dbWrite.image.update({ where: { id }, data: { nsfwLevelLocked: false } }),
+                  ]);
                 }
               }
             }
