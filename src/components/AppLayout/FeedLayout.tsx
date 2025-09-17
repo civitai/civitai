@@ -13,7 +13,6 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
       >
         {children}
       </MasonryProvider>
-      <RenderAdUnitOutstream minContainerWidth={3200} />
     </>
   );
 }

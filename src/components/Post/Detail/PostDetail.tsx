@@ -187,7 +187,6 @@ export function PostDetailContent({ postId }: Props) {
         isLoading={!!(post?.collectionId && isLoadingPostCollection)}
       >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
-        <RenderAdUnitOutstream minContainerWidth={1964} />
         <ReactionSettingsProvider
           settings={{
             hideReactions: collectionItems.some((ci) =>
