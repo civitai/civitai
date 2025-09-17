@@ -37,7 +37,9 @@ import type { ChatCreateChat } from '~/types/router';
 export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = {} } = await getUserSettings(userId);
+    const { chat = { muteSounds: false, replaceBadWords: false, acknowledged: false } } =
+      await getUserSettings(userId);
+
     return chat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

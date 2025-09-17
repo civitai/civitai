@@ -611,6 +611,9 @@ export const REDIS_KEYS = {
   NEW_ORDER: {
     RATED: 'new-order:rated',
   },
+  ENTITY_METRICS: {
+    BASE: 'entitymetric',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

@@ -43,6 +43,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
+import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -135,16 +136,10 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 };
 
 type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
-export const createReport = async ({
-  userId,
-  type,
-  id,
-  isModerator,
-  ...data
-}: CreateReportProps) => {
+export const createReport = async ({ userId, id, isModerator, ...data }: CreateReportProps) => {
   // Add report type to details for notifications
   if (!data.details) data.details = {};
-  (data.details as MixedObject).reportType = reportTypeNameMap[type];
+  (data.details as MixedObject).reportType = reportTypeNameMap[data.type];
 
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
@@ -153,7 +148,7 @@ export const createReport = async ({
     data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
           userId,
-          reportType: type,
+          reportType: data.type,
           entityReportId: id,
           reason: data.reason,
         })
@@ -167,27 +162,65 @@ export const createReport = async ({
         ...data,
         userId,
         status: statusOverrides[data.reason] ?? ReportStatus.Pending,
-        [type]: {
+        [data.type]: {
           create: {
-            [reportTypeConnectionMap[type]]: id,
+            [reportTypeConnectionMap[data.type]]: id,
           },
         },
       },
     });
 
     // handle NSFW
+
     if (data.reason === ReportReason.NSFW) {
-      switch (type) {
+      switch (data.type) {
         case ReportEntity.Model:
         case ReportEntity.Image:
-          await addTagVotes({
-            userId,
-            type,
-            id,
-            tags: data.details.tags ?? [],
-            isModerator,
-            vote: 1,
-          });
+          //.creates an ImageRatingRequest if the tags included in the report have a higher nsfwLevel than the current image nsfwLevel
+          async function createImageRatingRequest() {
+            const tagNames = 'tags' in data.details ? data.details.tags : undefined;
+            if (!!tagNames?.length) {
+              const image = await dbWrite.image.findFirst({
+                where: { id },
+                select: { nsfwLevel: true, nsfwLevelLocked: true },
+              });
+              if (image) {
+                const moderated = await getModeratedTags();
+                const ratings = moderated
+                  .filter((x) => tagNames.includes(x.name))
+                  .map((x) => x.nsfwLevel);
+                const maxRating = Math.max(...ratings);
+                if (maxRating > image.nsfwLevel) {
+                  await Promise.all([
+                    dbWrite.imageRatingRequest.upsert({
+                      where: { imageId_userId: { imageId: id, userId: userId } },
+                      create: {
+                        nsfwLevel: maxRating,
+                        imageId: id,
+                        userId: userId,
+                        weight: 3,
+                      },
+                      update: { nsfwLevel: maxRating },
+                    }),
+                    dbWrite.image.update({ where: { id }, data: { nsfwLevelLocked: false } }),
+                  ]);
+                }
+              }
+            }
+          }
+
+          await Promise.all([
+            createImageRatingRequest(),
+            addTagVotes({
+              userId,
+              type: data.type,
+              id,
+              tags: data.details.tags ?? [],
+              isModerator,
+              vote: 1,
+            }),
+          ]);
+
           break;
         case ReportEntity.Collection:
           await tx.collection.update({ where: { id }, data: { nsfw: true } });
@@ -209,7 +242,7 @@ export const createReport = async ({
 
     // handle TOS violations
     if (data.reason === ReportReason.TOSViolation)
-      switch (type) {
+      switch (data.type) {
         case ReportEntity.Image:
           await dbWrite.imageEngagement.create({
             data: {
@@ -221,7 +254,7 @@ export const createReport = async ({
           break;
       }
 
-    if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
+    if (data.reason === ReportReason.CSAM && data.type === ReportEntity.Image) {
       await dbWrite.report.updateMany({
         where: {
           reason: { not: ReportReason.CSAM },

@@ -541,6 +541,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
+  'Pony V7': baseLicenses['openrail++'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
@@ -705,6 +706,25 @@ export const generationConfig = {
       model: {
         id: 257749,
         name: 'Pony Diffusion V6 XL',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  PonyV7: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2152373,
+      name: 'v7.0',
+      trainedWords: [],
+      baseModel: 'PonyV7',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1901521,
+        name: 'Pony V7',
         type: 'Checkpoint',
       },
     } as GenerationResource,
