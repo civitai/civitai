@@ -803,6 +803,7 @@ async function processScanResult({
     }
     case TagSource.WD14:
     case TagSource.Clavata:
+    case TagSource.Hive:
     case TagSource.SpineRating: {
       await getTagsFromIncomingTags({ id, source, tags: incomingTags });
 
