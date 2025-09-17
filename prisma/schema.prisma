@@ -1700,6 +1700,7 @@ enum TagSource {
   MinorDetection
   HiveDemographics
   Clavata
+  SpineRating
 }
 
 model TagsOnImageNew {
