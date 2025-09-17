@@ -5070,7 +5070,7 @@ export async function getImageRatingRequests({
   //   LIMIT ${limit + 1}
   // `;
 
-  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+  const query = Prisma.sql`
       WITH image_rating_requests AS (
         SELECT
           "imageId",
@@ -5100,7 +5100,7 @@ export async function getImageRatingRequests({
         i."createdAt"
       FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
-      WHERE (irr.total >= 3 OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours'))
+      WHERE irr.total >= 3
         AND i."blockedFor" IS NULL
         AND i."nsfwLevelLocked" = FALSE
         AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
@@ -5109,6 +5109,8 @@ export async function getImageRatingRequests({
       ORDER BY i."id" ASC
       LIMIT ${limit + 1}
   `;
+
+  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`${query}`;
 
   let nextCursor: number | undefined;
   if (limit && results.length > limit) {
