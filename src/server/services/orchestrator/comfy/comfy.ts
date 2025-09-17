@@ -83,6 +83,9 @@ export async function createComfyStep(
   const timeSpan = new TimeSpan(0, 10, 0);
   // add one minute for each additional resource minus the checkpoint
   timeSpan.addMinutes(Object.keys(resources).length - 1);
+  const isPrivateGen = resources.some(
+    (r) => r.availability === Availability.Private || !!r.epochDetails
+  );
 
   return {
     $type: 'comfy',
@@ -98,11 +101,7 @@ export async function createComfyStep(
       resources: input.resources,
       params: removeEmpty(input.params),
       remixOfId: input.remixOfId,
-      maxNsfwLevel: resources.some(
-        (r) => r.availability === Availability.Private || !!r.epochDetails
-      )
-        ? 'pG13'
-        : undefined,
+      maxNsfwLevel: isPrivateGen ? 'pG13' : undefined,
     },
   } as ComfyStepTemplate;
 }
