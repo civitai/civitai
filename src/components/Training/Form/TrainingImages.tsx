@@ -108,6 +108,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
 const TrainingImagesCaptions = dynamic(
   () =>
@@ -236,6 +237,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
   const isVideo = thisMediaType === 'video';
   const thisDefaultTrainingState = isVideo ? defaultTrainingStateVideo : defaultTrainingState;
+  const domainColor = useDomainColor();
+  const isGreen = domainColor === 'green';
 
   const {
     updateImage,
@@ -1106,7 +1109,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       const issues: string[] = [];
 
-      const { blockedFor, success } = auditPrompt(triggerWord);
+      const { blockedFor, success } = auditPrompt(triggerWord, undefined, isGreen);
       if (!success) {
         issues.push(...blockedFor);
         if (!triggerWordInvalid) {
@@ -1120,7 +1123,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       imageList.forEach((i) => {
         if (i.label.length > 0) {
-          const { blockedFor, success } = auditPrompt(i.label);
+          const { blockedFor, success } = auditPrompt(i.label, undefined, isGreen);
           if (!success) {
             issues.push(...blockedFor);
             if (!i.invalidLabel) {
@@ -1488,7 +1491,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
                     onBlur={() => {
-                      const { blockedFor, success } = auditPrompt(triggerWord);
+                      const { blockedFor, success } = auditPrompt(triggerWord, undefined, isGreen);
                       if (!success) {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
