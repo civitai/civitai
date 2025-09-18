@@ -107,7 +107,9 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   useDidUpdate(() => {
     if (ready && !adsBlocked) {
-      window.PageOS.newPageView();
+      window.ramp.que.push(() => {
+        window.PageOS.newPageView();
+      });
     }
   }, [router.pathname]);
 
