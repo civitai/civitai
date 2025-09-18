@@ -155,6 +155,7 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
+import { request } from 'http';
 
 const {
   cacheHitRequestsTotal,
@@ -2347,6 +2348,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         error: err.message,
         cause: err.cause,
         input: removeEmpty(input),
+        request,
       },
       'temp-search'
     ).catch();
@@ -2997,8 +2999,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         error: err.message,
         cause: err.cause,
         input: removeEmpty(input),
-        iterations: iteration || 0,
-        totalProcessed: totalProcessed || 0,
+        request,
       },
       'temp-search'
     ).catch();
