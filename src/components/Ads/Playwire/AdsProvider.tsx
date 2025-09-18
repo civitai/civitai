@@ -1,3 +1,4 @@
+import { useDidUpdate } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import Script from 'next/script';
 import React, { createContext, useContext, useEffect } from 'react';
@@ -104,11 +105,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
+  useDidUpdate(() => {
     if (ready && !adsBlocked) {
       window.PageOS.newPageView();
     }
-  }, [router.pathname, ready, adsBlocked]);
+  }, [router.pathname]);
 
   return (
     <AdsContext.Provider
