@@ -67,6 +67,9 @@ import {
   userByReferralCodeSchema,
   userOnboardingSchema,
   userUpdateSchema,
+  requestEmailChangeSchema,
+  verifyEmailChangeSchema,
+  validateEmailTokenSchema,
 } from '~/server/schema/user.schema';
 import {
   computeFingerprint,
@@ -82,6 +85,11 @@ import {
   updateContentSettings,
   updateUserById,
 } from '~/server/services/user.service';
+import {
+  requestEmailChange,
+  confirmEmailChange,
+  validateEmailChangeToken,
+} from '~/server/services/email-verification.service';
 import {
   guardedProcedure,
   moderatorProcedure,
@@ -116,6 +124,17 @@ export const userRouter = router({
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
+  requestEmailChange: protectedProcedure
+    .input(requestEmailChangeSchema)
+    .mutation(async ({ input, ctx }) => {
+      return requestEmailChange(ctx.user.id, input.newEmail);
+    }),
+  validateEmailToken: publicProcedure.input(validateEmailTokenSchema).query(async ({ input }) => {
+    return validateEmailChangeToken(input.token);
+  }),
+  verifyEmailChange: publicProcedure.input(verifyEmailChangeSchema).mutation(async ({ input }) => {
+    return confirmEmailChange(input.token);
+  }),
   updateBrowsingMode: guardedProcedure
     .input(updateBrowsingModeSchema)
     .mutation(async ({ input, ctx }) => {

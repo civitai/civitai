@@ -480,6 +480,7 @@ export const REDIS_KEYS = {
     CACHE: 'packed:user',
     SETTINGS: 'user:settings',
   },
+  EMAIL_VERIFICATION: 'email:verification',
   SESSION: {
     BASE: 'session',
   },
