@@ -21,7 +21,6 @@ import {
 } from 'obscenity';
 
 import { getCachedNsfwWords } from './word-processor';
-import { isDefined } from '~/utils/type-guards';
 import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
 
 export interface ProfanityFilterOptions {
@@ -31,6 +30,7 @@ export interface ProfanityFilterOptions {
 
 /**
  * Create mappings between whitelist words and profane substrings they contain
+ * Optimized to avoid repeated toLowerCase() calls
  */
 function createWhitelistMappings(
   profaneWords: string[],
@@ -38,13 +38,19 @@ function createWhitelistMappings(
 ): Map<string, string[]> {
   const mappings = new Map<string, string[]>();
 
+  // Preprocess whitelist to lowercase once for efficiency
+  const lowerWhitelist = whitelist.map((word) => ({
+    original: word,
+    lower: word.toLowerCase(),
+  }));
+
   // For each profane word, find whitelist words that contain it as a substring
   profaneWords.forEach((profaneWord) => {
-    const matchingWhitelistWords = whitelist.filter(
-      (whitelistWord) =>
-        whitelistWord.toLowerCase().includes(profaneWord.toLowerCase()) &&
-        whitelistWord.toLowerCase() !== profaneWord.toLowerCase() // Don't map exact matches
-    );
+    const lowerProfane = profaneWord.toLowerCase();
+
+    const matchingWhitelistWords = lowerWhitelist
+      .filter(({ lower }) => lower.includes(lowerProfane) && lower !== lowerProfane)
+      .map(({ original }) => original);
 
     if (matchingWhitelistWords.length > 0) {
       mappings.set(profaneWord, matchingWhitelistWords);
@@ -60,6 +66,7 @@ export class SimpleProfanityFilter {
   private options: ProfanityFilterOptions;
   private dataset: DataSet<{ originalWord: string }>;
   private whitelistMappings: Map<string, string[]>;
+  private readonly nsfwWords: ReturnType<typeof getCachedNsfwWords>;
 
   constructor(options: Partial<ProfanityFilterOptions> = {}) {
     this.options = {
@@ -67,13 +74,15 @@ export class SimpleProfanityFilter {
       ...options,
     };
 
+    // Cache NSFW words once during construction
+    this.nsfwWords = getCachedNsfwWords();
+
     // Initialize dataset with default English dictionary
     this.dataset = new DataSet();
     this.dataset.addAll(englishDataset);
 
     // Initialize whitelist mappings
-    const nsfwWords = getCachedNsfwWords();
-    this.whitelistMappings = createWhitelistMappings(nsfwWords.originalWords, whitelistWords);
+    this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelistWords);
 
     this.initializeMatcher();
     this.initializeCensor();
@@ -83,13 +92,6 @@ export class SimpleProfanityFilter {
    * Check if text contains profanity
    */
   isProfane(text: string): boolean {
-    return this.matcher.hasMatch(text);
-  }
-
-  /**
-   * Check if text contains profanity (alias for isProfane)
-   */
-  hasMatch(text: string): boolean {
     return this.matcher.hasMatch(text);
   }
 
@@ -106,19 +108,29 @@ export class SimpleProfanityFilter {
    */
   analyze(text: string) {
     const matches = this.matcher.getAllMatches(text, true); // sorted by position
+
+    if (matches.length === 0) {
+      return {
+        isProfane: false,
+        matchCount: 0,
+        matches: [],
+      };
+    }
+
+    // Efficiently extract unique original words in single pass
+    const uniqueWords = new Set<string>();
+    matches.forEach((match) => {
+      const payload = this.dataset.getPayloadWithPhraseMetadata(match);
+      const originalWord = payload.phraseMetadata?.originalWord;
+      if (originalWord) {
+        uniqueWords.add(originalWord);
+      }
+    });
+
     return {
-      isProfane: matches.length > 0,
+      isProfane: true,
       matchCount: matches.length,
-      matches: Array.from(
-        new Set(
-          matches
-            .map((match) => {
-              return this.dataset.getPayloadWithPhraseMetadata(match);
-            })
-            .map((payload) => payload.phraseMetadata?.originalWord)
-            .filter(isDefined)
-        )
-      ),
+      matches: Array.from(uniqueWords),
     };
   }
 
@@ -154,16 +166,20 @@ export class SimpleProfanityFilter {
   private extendWithCustomDataset(
     dataset: DataSet<{ originalWord: string }>
   ): DataSet<{ originalWord: string }> {
-    // Use the existing word processor that handles regex cleaning, deduplication,
-    // and word variations from all metadata lists
-    const nsfwWords = getCachedNsfwWords();
-    const wordsToAdd = nsfwWords.allWords; // includes both original + generated variations
+    // Use the cached NSFW words to avoid repeated calls
+    const wordsToAdd = this.nsfwWords.allWords; // includes both original + generated variations
+    const filteredWords = wordsToAdd.filter((word) => word.length >= 3); // Filter out very short words
 
-    const patterns = assignIncrementingIds(wordsToAdd.map((word) => pattern`${word}`));
+    // Early return if no words to add
+    if (filteredWords.length === 0) {
+      return dataset;
+    }
+
+    const patterns = assignIncrementingIds(filteredWords.map((word) => pattern`${word}`));
 
     // Add words to dataset with their whitelisted terms
     patterns.forEach((p, index) => {
-      const word = wordsToAdd[index];
+      const word = filteredWords[index];
       const whitelistTerms = this.whitelistMappings.get(word) || [];
 
       const phrase = dataset.addPhrase((phrase) => {
@@ -171,10 +187,12 @@ export class SimpleProfanityFilter {
           .setMetadata({ originalWord: word.replace(/\|/g, '') })
           .addPattern(p.pattern);
 
-        // Add whitelisted terms to this phrase
-        whitelistTerms.forEach((whitelistedTerm) => {
-          phraseBuilder = phraseBuilder.addWhitelistedTerm(whitelistedTerm);
-        });
+        // Add whitelisted terms to this phrase (optimize for common case of no terms)
+        if (whitelistTerms.length > 0) {
+          whitelistTerms.forEach((whitelistedTerm) => {
+            phraseBuilder = phraseBuilder.addWhitelistedTerm(whitelistedTerm);
+          });
+        }
 
         return phraseBuilder;
       });
