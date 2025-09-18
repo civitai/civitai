@@ -155,7 +155,6 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
-import { request } from 'http';
 
 const {
   cacheHitRequestsTotal,
@@ -2688,6 +2687,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   let iteration = 0;
   let totalProcessed = 0;
   let nextCursor: number | undefined;
+  const request: SearchParams = {
+    filter: filters.join(' AND '),
+    sort: sorts,
+  };
 
   try {
     while (accumulatedHits.length < limit + 1 && iteration < MAX_ITERATIONS) {
@@ -2697,12 +2700,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       }
 
       const requestLimit = Math.min(batchSize, MAX_TOTAL_PROCESSED - totalProcessed);
-      const request: SearchParams = {
-        filter: filters.join(' AND '),
-        sort: sorts,
-        limit: requestLimit,
-        offset: currentOffset,
-      };
+      request.limit = requestLimit;
+      request.offset = currentOffset;
+
+      console.dir({ iteration, request }, { depth: null });
 
       // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
       const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
