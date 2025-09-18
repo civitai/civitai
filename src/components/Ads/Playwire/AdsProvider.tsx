@@ -16,6 +16,7 @@ declare global {
     googletag: any;
     adngin: any;
     ramp: any;
+    PageOS: any;
   }
 }
 
@@ -105,7 +106,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (ready && !adsBlocked) {
-      window.ramp.spaAds({ countPageview: true, path: window.location.pathname });
+      window.PageOS.newPageView();
     }
   }, [router.pathname, ready, adsBlocked]);
 
