@@ -2703,8 +2703,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.limit = requestLimit;
       request.offset = currentOffset;
 
-      console.dir({ iteration, request }, { depth: null });
-
       // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
       const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
         .index(METRICS_SEARCH_INDEX)
