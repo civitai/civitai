@@ -170,11 +170,11 @@ function MyApp(props: CustomAppProps) {
                               <ActivityReportingProvider>
                                 <ReferralsProvider {...cookies.referrals}>
                                   <FiltersProvider>
-                                    <AdsProvider>
-                                      <PaddleProvider>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
+                                    <PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <BrowserRouterProvider>
+                                            <AdsProvider>
                                               <IntersectionObserverProvider>
                                                 <ToursProvider>
                                                   <AuctionContextProvider>
@@ -190,11 +190,11 @@ function MyApp(props: CustomAppProps) {
                                                   </AuctionContextProvider>
                                                 </ToursProvider>
                                               </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </PaddleProvider>
-                                    </AdsProvider>
+                                            </AdsProvider>
+                                          </BrowserRouterProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaddleProvider>
                                   </FiltersProvider>
                                 </ReferralsProvider>
                               </ActivityReportingProvider>

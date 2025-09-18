@@ -4,6 +4,7 @@ import Script from 'next/script';
 import React, { createContext, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { env } from '~/env/client';
 import { isDev } from '~/env/other';
@@ -105,13 +106,15 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const { asPath } = useBrowserRouter();
+
   useDidUpdate(() => {
     if (ready && !adsBlocked) {
       window.ramp.que.push(() => {
-        window.PageOS.newPageView();
+        window.PageOS.session.newPageView();
       });
     }
-  }, [router.pathname]);
+  }, [asPath]);
 
   return (
     <AdsContext.Provider
