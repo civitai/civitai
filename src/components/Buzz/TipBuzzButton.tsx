@@ -8,7 +8,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTrackEvent } from '../TrackView/track.utils';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
+import { SendTipModal } from '~/components/Modals/SendTipModal';
 
 type Props = ButtonProps & {
   toUserId: number;

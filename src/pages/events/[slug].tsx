@@ -56,7 +56,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client';
-import { constants } from '~/server/common/constants';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -64,6 +63,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import classes from './[slug].module.scss';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -547,7 +547,7 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
   const { donate, donating } = useMutateEvent();
 
   const handleSubmit = () => {
-    if (!amount || amount <= 0 || amount > constants.buzz.maxTipAmount) return;
+    if (!amount || amount <= 0 || amount > buzzConstants.maxTipAmount) return;
 
     const performTransaction = async () => {
       try {
@@ -571,7 +571,7 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
         value={amount}
         onChange={(value) => setAmount(typeof value === 'number' ? value : undefined)}
         min={1}
-        max={constants.buzz.maxTipAmount}
+        max={buzzConstants.maxTipAmount}
         rightSectionWidth="25%"
         hideControls
       />

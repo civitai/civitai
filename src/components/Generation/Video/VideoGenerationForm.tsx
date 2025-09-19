@@ -34,6 +34,7 @@ import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
@@ -51,7 +52,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   const [error, setError] = useState<string>();
   const [isLoadingDebounced, setIsLoadingDebounced] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    type: 'Generation',
+    accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance

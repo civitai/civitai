@@ -27,7 +27,6 @@ import {
   IconMoodDollar,
 } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
@@ -54,7 +53,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
+import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
@@ -574,15 +573,6 @@ export const BuzzPurchase = ({
             <div className="flex flex-col gap-3 md:flex-row">
               {features.coinbasePayments && (
                 <BuzzCoinbaseButton
-                  unitAmount={unitAmount}
-                  buzzAmount={buzzAmount}
-                  onPurchaseSuccess={onPurchaseSuccess}
-                  disabled={!ctaEnabled}
-                  purchaseSuccessMessage={purchaseSuccessMessage}
-                />
-              )}
-              {features.nowpaymentPayments && (
-                <BuzzNowPaymentsButton
                   unitAmount={unitAmount}
                   buzzAmount={buzzAmount}
                   onPurchaseSuccess={onPurchaseSuccess}

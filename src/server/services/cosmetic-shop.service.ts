@@ -3,7 +3,7 @@ import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
@@ -19,7 +19,11 @@ import type {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -30,6 +34,7 @@ import {
   MediaType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
   return dbRead.cosmeticShopItem.findUniqueOrThrow({
@@ -512,16 +517,22 @@ export const purchaseCosmeticShopItem = async ({
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
 
   // Confirms user has enough buzz:
-  const transaction = await createBuzzTransaction({
-    fromAccountId: userId, // bank
-    toAccountId: 0,
+  const prefix = `purchase-cosmetic-${shopItem.id}-${userId}`;
+  const data = await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    // Can use a combination of all these accounts:
+    fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
+      isNsfw: false,
+    }),
+    toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
     description: `Cosmetic purchase - ${shopItem.title}`,
+    externalTransactionIdPrefix: prefix,
   });
 
-  const transactionId = transaction.transactionId;
-  if (!transactionId) {
+  const transactionId = prefix;
+  if (!transactionId || (data.transactionCount ?? 0) === 0) {
     throw new Error('There was an error creating the transaction');
   }
 
@@ -573,6 +584,7 @@ export const purchaseCosmeticShopItem = async ({
 
           await Promise.all(
             paidToUsers.map((paidToUserId) =>
+              // TODO.RedSplit: In the future, we might (?) want to use a different type of transaction here.
               createBuzzTransaction({
                 fromAccountId: 0,
                 toAccountId: paidToUserId,
@@ -597,7 +609,7 @@ export const purchaseCosmeticShopItem = async ({
         data: {
           shopItemId,
           userId,
-          transaction,
+          transactionId,
           error: e,
         },
       });
@@ -605,12 +617,9 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: userId,
-      amount: shopItem.unitAmount,
-      type: TransactionType.Refund,
-      description: 'Reason: An error happening while grating the cosmetic',
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: prefix,
+      description: `Failed to purchase cosmetic - ${shopItem.title}`,
     });
 
     throw new Error('Failed to purchase cosmetic');

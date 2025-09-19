@@ -6,13 +6,14 @@ import {
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
 import { paginationSchema } from './base.schema';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export type CreateBuzzWithdrawalRequestSchema = z.infer<typeof createBuzzWithdrawalRequestSchema>;
 export const createBuzzWithdrawalRequestSchema = z.object({
   amount: z
     .number()
-    .min(constants.buzz.minBuzzWithdrawal)
-    .default(constants.buzz.minBuzzWithdrawal),
+    .min(buzzConstants.minBuzzWithdrawal)
+    .default(buzzConstants.minBuzzWithdrawal),
   provider: z
     .nativeEnum(UserPaymentConfigurationProvider)
     .default(UserPaymentConfigurationProvider.Tipalti),

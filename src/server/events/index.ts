@@ -6,7 +6,7 @@ import { holiday2024 } from '~/server/events/holiday2024.event';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import {
   createBuzzTransaction,
@@ -273,7 +273,7 @@ export const eventEngine = {
       const buzzAccount = await getUserBuzzAccount({ accountId });
       teamScores.push({
         team,
-        score: buzzAccount?.balance ?? 0,
+        score: buzzAccount[0]?.balance ?? 0,
         rank: 0,
       });
     }

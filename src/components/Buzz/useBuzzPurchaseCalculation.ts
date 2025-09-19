@@ -13,10 +13,10 @@ export const useBuzzPurchaseCalculation = (buzzAmount: number) => {
   return {
     isLoading: multipliersLoading,
     baseBuzz: buzzAmount,
-    yellowBuzzBonus: calculation.yellowBuzzAdded,
+    yellowBuzzBonus: calculation.mainBuzzAdded,
     blueBuzzBonus: calculation.blueBuzzAdded,
     totalBuzz: calculation.totalBuzz,
-    hasBonus: calculation.yellowBuzzAdded > 0 || calculation.blueBuzzAdded > 0,
+    hasBonus: calculation.mainBuzzAdded > 0 || calculation.blueBuzzAdded > 0,
     purchasesMultiplier,
     bulkBuzzMultiplier: calculation.bulkBuzzMultiplier,
   };
