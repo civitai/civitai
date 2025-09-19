@@ -77,7 +77,7 @@ import { isDefined } from '~/utils/type-guards';
 
 const maxRuns = 5;
 
-const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
+const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan', 'chroma'];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -300,6 +300,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (r.baseType === 'chroma' && (!r.negativePrompt || !r.negativePrompt.trim())) {
+        showErrorNotification({
+          error: new Error('A negative prompt is required for Chroma training.'),
+          autoClose: false,
+        });
+        return;
+      }
+
       if (r.params.targetSteps > maxSteps) {
         showErrorNotification({
           error: new Error(
@@ -368,7 +376,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     finishedRuns = 0;
 
     runs.forEach(async (run, idx) => {
-      const { base, baseType, params, customModel, samplePrompts, staging, highPriority } = run;
+      const {
+        base,
+        baseType,
+        params,
+        customModel,
+        samplePrompts,
+        negativePrompt,
+        staging,
+        highPriority,
+      } = run;
       const { optimizerArgs, ...paramData } = params;
 
       if (isInvalidRapid(baseType, paramData.engine)) {
@@ -408,6 +425,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           baseModelType: baseType,
           params: paramData,
           samplePrompts,
+          ...(negativePrompt && { negativePrompt }),
           staging,
           highPriority,
         },
@@ -544,7 +562,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Stack
         className={clsx(
-          'sticky top-0 z-10 mb-[-5px] bg-white pb-[5px] dark:bg-dark-7',
+          'dark:bg-dark-7 sticky top-0 z-10 mb-[-5px] bg-white pb-[5px]',
           !multiMode && 'hidden'
         )}
       >
@@ -751,7 +769,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             w="fit-content"
             px="md"
             py="xs"
-            className="self-end bg-gray-0 dark:bg-dark-6"
+            className="bg-gray-0 dark:bg-dark-6 self-end"
           >
             <Group gap="sm">
               <Badge>

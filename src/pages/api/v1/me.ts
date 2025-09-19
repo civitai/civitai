@@ -13,6 +13,6 @@ export default AuthedEndpoint(async function handler(
     username: user.username,
     tier: user.tier,
     status: user.bannedAt ? 'banned' : user.muted ? 'muted' : 'active',
-    isMember: user.tier && user.tier !== 'free',
+    isMember: user.tier ? user.tier !== 'free' : false,
   });
 });

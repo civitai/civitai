@@ -42,7 +42,14 @@ export const orchestratorMediaTransmitter = {
           const blob = await fetchBlob(url);
           if (!blob) return;
           const lastIndex = url.lastIndexOf('/');
-          const name = url.substring(lastIndex + 1);
+          let name = url.substring(lastIndex + 1);
+          // Clean filename by removing query parameters and fragments
+          name = name.split('?')[0].split('#')[0];
+          // Extract only the filename with one extension to avoid duplicated extensions
+          const extensionMatch = name.match(/^([^.]+\.[a-zA-Z0-9]{2,5})/);
+          if (extensionMatch) {
+            name = extensionMatch[1];
+          }
           return {
             file: new File([blob], name, { type: blob.type }),
             meta,

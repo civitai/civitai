@@ -677,10 +677,9 @@ export async function getResourceData(
 
   function getEpochDetails(
     resource: ReturnType<typeof transformGenerationData>,
-    modelFiles: ModelFileCached[],
-    hasSelectedEpoch: boolean
+    modelFiles: ModelFileCached[]
   ) {
-    if (resource.status !== 'Published' && !hasSelectedEpoch) {
+    if (resource.status !== 'Published') {
       const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
       if (trainingFile) {
         const epoch = args.find((x) => x.id === resource.id)?.epoch;
@@ -691,6 +690,7 @@ export async function getResourceData(
       }
     }
     delete resource.epochNumber;
+
     return null;
   }
 
@@ -710,8 +710,7 @@ export async function getResourceData(
       additionalResourceCost = false;
     }
 
-    const hasSelectedEpoch = !!primaryFile?.metadata.selectedEpochUrl;
-    const epochDetails = getEpochDetails(resource, modelFiles, hasSelectedEpoch);
+    const epochDetails = getEpochDetails(resource, modelFiles);
 
     return {
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,

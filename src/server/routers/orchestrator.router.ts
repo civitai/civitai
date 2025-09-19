@@ -308,7 +308,7 @@ export const orchestratorRouter = router({
       userId: ctx.user.id,
       token: ctx.token,
       experimental: ctx.experimental,
-      // isGreen: ctx.features.isGreen,
+      isGreen: ctx.features.isGreen,
       allowMatureContent: ctx.allowMatureContent,
     })
   ),
