@@ -136,7 +136,7 @@ export async function createComfy(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
     },
   })) as TextToImageResponse;
