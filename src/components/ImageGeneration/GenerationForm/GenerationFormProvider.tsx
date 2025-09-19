@@ -77,13 +77,6 @@ function createFormSchema(domainColor: string) {
         ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
         : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
-      if (
-        data.model.id === fluxModelId &&
-        data.fluxMode !== fluxStandardAir &&
-        data.fluxMode !== fluxKreaAir
-      )
-        data.priority = 'low';
-
       return removeEmpty({
         ...data,
         height,
@@ -514,6 +507,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function getDefaultValues(overrides: PartialFormData): PartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
+    const isMember = currentUser?.isPaidMember ?? false;
     const sanitized = sanitizeTextToImageParams(
       {
         ...defaultValues,
@@ -522,6 +516,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         quantity: overrides.quantity ?? defaultValues.quantity,
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
+        // Set default priority to 'normal' (High) for members
+        priority: isMember ? 'normal' : defaultValues.priority,
       },
       status.limits
     );
