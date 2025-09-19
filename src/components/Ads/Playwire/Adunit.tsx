@@ -25,6 +25,12 @@ export const Adunit_FooterImageDetail = createAdunit({
   supportUsSize: '970x90',
 });
 
+export const Adunit_Modal = createAdunit({
+  type: 'standard_iab_modl1',
+  className: clsx(classes.center, classes.in_content),
+  supportUsSize: '300x250',
+});
+
 const AdunitBannerMobile = createAdunit({
   type: 'standard_iab_head2',
   className: clsx(classes.center, classes.banner_mobile),

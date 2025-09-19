@@ -34,7 +34,6 @@ import {
 } from '@tabler/icons-react';
 import { useRef } from 'react';
 import clsx from 'clsx';
-import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -79,7 +78,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { Adunit_FooterImageDetail, Adunit_InContent } from '~/components/Ads/Playwire/Adunit';
+import { Adunit_FooterImageDetail, Adunit_Modal } from '~/components/Ads/Playwire/Adunit';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -500,7 +499,7 @@ export function ImageDetail2() {
                           </Text>
                         </AlertWithIcon>
                       )}
-                      {!hideAds && <Adunit_InContent />}
+                      {!hideAds && <Adunit_Modal />}
                       <VotableTags
                         entityType="image"
                         entityId={image.id}
