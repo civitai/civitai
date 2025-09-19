@@ -20,7 +20,7 @@ export async function generateEmailVerificationToken(userId: number, newEmail: s
       createdAt: new Date().toISOString(),
     }),
     {
-      EX: EMAIL_VERIFICATION_EXPIRY, // 24 hours
+      EX: EMAIL_VERIFICATION_EXPIRY, // 15 minutes
     }
   );
 
