@@ -72,7 +72,7 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
 
   return (
     <>
-      <Meta title="Email Verification - Civitai" />
+      <Meta title="Email Verification - Civitai" deIndex />
       <Container size="sm" py="xl">
         <Center>
           <Card withBorder shadow="md" p="xl" w="100%" maw={500}>
