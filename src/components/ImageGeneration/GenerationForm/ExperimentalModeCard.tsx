@@ -19,7 +19,6 @@ export function ExperimentalModeCard({
   baseModel,
   workflow,
 }: ExperimentalModeCardProps) {
-
   // Check if experimental mode is available
   const baseModelGroup = baseModel ? getBaseModelGroup(baseModel) : undefined;
   const isSupported =
@@ -30,6 +29,9 @@ export function ExperimentalModeCard({
   if (!isSupported) {
     return null;
   }
+
+  const now = new Date().getTime();
+  const blueBuzzRewardedDate = new Date('10/02/2025').getTime();
 
   return (
     <Card withBorder padding="sm">
@@ -46,32 +48,34 @@ export function ExperimentalModeCard({
           />
 
           <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-            We're testing out a new generation engine that we're hoping will increase generation speed while retaining image quality.
+            {`We're testing out a new generation engine that we're hoping will increase generation speed while retaining image quality.`}
           </InfoPopover>
         </Group>
 
-        <Popover width={300} withArrow withinPortal shadow="sm">
-          <Popover.Target>
-            <Badge
-              leftSection={<IconSparkles size={14} />}
-              variant="light"
-              color="blue"
-              style={{ cursor: 'pointer' }}
-            >
-              Earn Blue Buzz!
-            </Badge>
-          </Popover.Target>
-          <Popover.Dropdown>
-            <Stack gap="xs">
-              <Text size="sm" fw={500}>
-                Blue Buzz Rewards
-              </Text>
-              <Text size="xs" lh={1.3}>
-                We'll give you 1 Blue Buzz for every image you generate in experimental mode on October 1st
-              </Text>
-            </Stack>
-          </Popover.Dropdown>
-        </Popover>
+        {now < blueBuzzRewardedDate && (
+          <Popover width={300} withArrow withinPortal shadow="sm">
+            <Popover.Target>
+              <Badge
+                leftSection={<IconSparkles size={14} />}
+                variant="light"
+                color="blue"
+                style={{ cursor: 'pointer' }}
+              >
+                Earn Blue Buzz!
+              </Badge>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack gap="xs">
+                <Text size="sm" fw={500}>
+                  Blue Buzz Rewards
+                </Text>
+                <Text size="xs" lh={1.3}>
+                  {`On October 1, we'll tally up all the images you generated in Experimental Mode, and you'll receive 1 Blue Buzz for each image.`}
+                </Text>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+        )}
       </Group>
     </Card>
   );
