@@ -57,6 +57,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { InputExperimentalMode } from '~/components/ImageGeneration/GenerationForm/ExperimentalModeCard';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
@@ -317,6 +318,7 @@ export function GenerationFormContent() {
             ...params,
             // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
             disablePoi: browsingSettingsAddons.settings.disablePoi,
+            experimental: data.experimental,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -829,6 +831,12 @@ export function GenerationFormContent() {
                       );
                     }}
                   </Watch>
+
+                  <InputExperimentalMode
+                    name="experimental"
+                    baseModel={baseModel}
+                    workflow={workflow}
+                  />
 
                   {enableImageInput && (
                     <InputSourceImageUpload
