@@ -167,7 +167,7 @@ export class SimpleProfanityFilter {
     dataset: DataSet<{ originalWord: string }>
   ): DataSet<{ originalWord: string }> {
     // Use the cached NSFW words to avoid repeated calls
-    const wordsToAdd = this.nsfwWords.allWords; // includes both original + generated variations
+    const wordsToAdd = this.nsfwWords.originalWords; // includes both original words only for now
     const filteredWords = wordsToAdd.filter((word) => word.length >= 3); // Filter out very short words
 
     // Early return if no words to add
