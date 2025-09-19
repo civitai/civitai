@@ -73,7 +73,6 @@ const formSchema = baseSchema
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
-
     return removeEmpty({
       ...data,
       height,
