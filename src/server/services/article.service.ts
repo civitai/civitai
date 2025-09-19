@@ -687,7 +687,10 @@ export const upsertArticle = async ({
       data.nsfw = true;
       data.userNsfwLevel = NsfwLevel.R;
       // Add userNsfwLevel to lockedProperties to prevent users from changing it
-      data.lockedProperties = [...(data.lockedProperties ?? []), 'nsfw', 'userNsfwLevel'];
+      data.lockedProperties =
+        data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
+          ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
+          : ['nsfw', 'userNsfwLevel'];
     }
     // TODO make coverImage required here and in db
     // create image entity to be attached to article

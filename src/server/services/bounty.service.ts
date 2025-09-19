@@ -385,7 +385,10 @@ export const upsertBounty = async ({
   if (hasProfanity && !data.nsfw) {
     data.nsfw = true;
     // Add nsfw to lockedProperties to prevent users from changing it
-    data.lockedProperties = [...(data.lockedProperties ?? []), 'nsfw'];
+    data.lockedProperties =
+      data.lockedProperties && !data.lockedProperties.includes('nsfw')
+        ? [...data.lockedProperties, 'nsfw']
+        : ['nsfw'];
   }
   if (id) {
     if (!isModerator) {

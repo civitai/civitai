@@ -1462,7 +1462,10 @@ export const upsertModel = async (
   if (hasProfanity && !input.nsfw) {
     input.nsfw = true;
     // Add nsfw to lockedProperties to prevent users from changing it
-    input.lockedProperties = [...(input.lockedProperties ?? []), 'nsfw'];
+    input.lockedProperties =
+      input.lockedProperties && !input.lockedProperties.includes('nsfw')
+        ? [...input.lockedProperties, 'nsfw']
+        : ['nsfw'];
   }
 
   const {
