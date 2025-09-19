@@ -344,3 +344,24 @@ export const toggleBanUserSchema = z.object({
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),
 });
+
+// Email verification schemas
+export type RequestEmailChangeInput = z.infer<typeof requestEmailChangeSchema>;
+export const requestEmailChangeSchema = z.object({
+  newEmail: z.string().email(),
+});
+
+export type VerifyEmailChangeInput = z.infer<typeof verifyEmailChangeSchema>;
+export const verifyEmailChangeSchema = z.object({
+  token: z.string().min(1),
+});
+
+export type ResendEmailVerificationInput = z.infer<typeof resendEmailVerificationSchema>;
+export const resendEmailVerificationSchema = z.object({
+  email: z.string().email(),
+});
+
+export type ValidateEmailTokenInput = z.infer<typeof validateEmailTokenSchema>;
+export const validateEmailTokenSchema = z.object({
+  token: z.string().min(1),
+});
