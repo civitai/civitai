@@ -418,7 +418,7 @@ async function processImageRating({
   const currentVoteCount = valueInQueue.value;
   const voteLimit = getVoteLimitForRank(valueInQueue.rank);
 
-  if (currentVoteCount >= voteLimit) {
+  if (currentVoteCount >= voteLimit && valueInQueue.rank !== NewOrderRankType.Acolyte) {
     // Vote limit already reached, remove from queue
     await valueInQueue.pool.reset({ id: imageId });
     await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
