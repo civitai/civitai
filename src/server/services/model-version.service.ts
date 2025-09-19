@@ -210,7 +210,9 @@ export const upsertModelVersion = async ({
   // Check if trying to publish a model version when model is marked as cannotPublish
   const modelMeta = model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
-    throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+    throw throwBadRequestError(
+      'This model version cannot be published due to moderation restrictions.'
+    );
   }
 
   if (
@@ -399,7 +401,9 @@ export const upsertModelVersion = async ({
     // Check if trying to publish a model version when model is marked as cannotPublish
     const existingModelMeta = existingVersion.model.meta as ModelMeta | null;
     if (existingModelMeta?.cannotPublish && data.status === ModelStatus.Published) {
-      throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+      throw throwBadRequestError(
+        'This model version cannot be published due to moderation restrictions.'
+      );
     }
 
     const version = await dbWrite.modelVersion.update({
@@ -548,10 +552,12 @@ export const updateModelVersionById = async ({
         },
       },
     });
-    
+
     const modelMeta = modelVersion.model.meta as ModelMeta | null;
     if (modelMeta?.cannotPublish) {
-      throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+      throw throwBadRequestError(
+        'This model version cannot be published due to moderation restrictions.'
+      );
     }
   }
 
@@ -726,7 +732,14 @@ export const publishModelVersionById = async ({
       baseModel: true,
       earlyAccessConfig: true,
       model: {
-        select: { userId: true, name: true, availability: true, publishedAt: true, nsfw: true, meta: true },
+        select: {
+          userId: true,
+          name: true,
+          availability: true,
+          publishedAt: true,
+          nsfw: true,
+          meta: true,
+        },
       },
     },
   });
@@ -749,7 +762,9 @@ export const publishModelVersionById = async ({
   // Check if model is marked as cannotPublish
   const modelMeta = currentVersion.model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish) {
-    throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+    throw throwBadRequestError(
+      'This model version cannot be published due to moderation restrictions.'
+    );
   }
 
   const version = await dbWrite.$transaction(
@@ -1611,6 +1626,7 @@ export type GenerationResourceDataModel = {
   covered: boolean | null;
   status: ModelStatus;
   hasAccess: boolean;
+  epochNumber?: number;
   model: {
     id: number;
     name: string;

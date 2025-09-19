@@ -51,15 +51,10 @@ export default WebhookEndpoint(async (req, res) => {
     where: { id: { in: posts.map((p) => p.id) } },
   });
 
-  const imagesToDelete = await dbWrite.image.findMany({
-    where: { postId: { in: posts.map((p) => p.id) } },
-  });
-
   await Promise.all([
     dbWrite.image.deleteMany({
       where: { postId: { in: posts.map((p) => p.id) } },
     }),
-    invalidateManyImageExistence(imagesToDelete.map((i) => i.id)),
   ]);
 
   res.status(200).json({ finished: true });

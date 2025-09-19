@@ -81,6 +81,10 @@ export async function createTextToImageStep(
     batchSize = params.quantity;
   }
 
+  const isPrivateGeneration = resources.some(
+    (r) => r.availability === Availability.Private || !!r.epochDetails
+  );
+
   return {
     $type: 'textToImage',
     priority,
@@ -98,11 +102,8 @@ export async function createTextToImageStep(
       resources: input.resources,
       params: removeEmpty(inputParams),
       remixOfId: input.remixOfId,
-      maxNsfwLevel: resources.some(
-        (r) => r.availability === Availability.Private || !!r.epochDetails
-      )
-        ? 'pG13'
-        : undefined,
+      maxNsfwLevel: isPrivateGeneration ? 'pG13' : undefined,
+      isPrivateGeneration,
     },
   } as TextToImageStepTemplate;
 }
@@ -136,8 +137,9 @@ export async function createTextToImage(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
-      allowMatureContent,
+      // Ensures private generation does not allow mature content
+      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent: allowMatureContent,
     },
   })) as TextToImageResponse;
 

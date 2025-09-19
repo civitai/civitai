@@ -50,7 +50,7 @@ export async function generate({
     try {
       const negativePrompt =
         'negativePrompt' in args.data ? (args.data.negativePrompt as string) : undefined;
-      const { blockedFor, success } = auditPrompt(args.data.prompt, negativePrompt);
+      const { blockedFor, success } = auditPrompt(args.data.prompt, negativePrompt, isGreen);
       if (!success) throw { blockedFor, type: 'regex' };
 
       const { flagged, categories } = await extModeration
@@ -96,7 +96,7 @@ export async function generate({
       },
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
-      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      // nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
       allowMatureContent,
     },
   });
