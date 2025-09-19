@@ -3157,24 +3157,24 @@ export const privateModelFromTraining = async ({
       },
     });
 
-    await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
-      data: {
-        // Ensures things don't break by leaving some versions public.
-        // @luis: TODO: Might be smart to add some DB triggers for this.
-        availability: Availability.Private,
-      },
-    });
-
     if (result.modelVersions.length > 0) {
       const now = new Date();
+
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { id: { in: result.modelVersions.map((x) => x.id) } },
+        where: { modelId: id },
         data: {
-          availability: Availability.Private,
+          // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
           status: ModelStatus.Published,
+        },
+      });
+
+      // Do this after the fact to avoid some triggers.
+      await dbWrite.modelVersion.updateMany({
+        where: { modelId: id },
+        data: {
+          availability: Availability.Private,
         },
       });
 
@@ -3418,11 +3418,12 @@ export const getTrainingModelsForModerators = async ({
         ...(dateTo && { lte: dateTo }),
       },
     }),
-    ...(dateTo && !dateFrom && {
-      createdAt: {
-        lte: dateTo,
-      },
-    }),
+    ...(dateTo &&
+      !dateFrom && {
+        createdAt: {
+          lte: dateTo,
+        },
+      }),
     ...(cannotPublish !== undefined && {
       meta: cannotPublish
         ? { path: ['cannotPublish'], equals: true }
