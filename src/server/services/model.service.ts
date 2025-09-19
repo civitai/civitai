@@ -3154,6 +3154,11 @@ export const privateModelFromTraining = async ({
       where: { id },
       data: {
         ...data,
+        meta: {
+          ...((meta as ModelMeta) ?? {}),
+          // Makes it so these models cannot go into auctions or be promoted
+          cannotPromote: true,
+        },
         availability: Availability.Private,
         status: ModelStatus.Published,
         sfwOnly: true, // Private models only allow sfw generation
@@ -3220,6 +3225,13 @@ export const publishPrivateModel = async ({
   modelId,
   publishVersions,
 }: PublishPrivateModelInput) => {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { id: true, userId: true, availability: true, status: true, meta: true },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found');
+
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
     select: { id: true },
@@ -3258,7 +3270,12 @@ export const publishPrivateModel = async ({
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
         publishedAt: publishVersions ? now : null,
+        meta: {
+          ...((model.meta ?? {}) as ModelMeta),
+          cannotPromote: false,
+        },
       },
+      select: { id: true },
     }),
   ]);
 

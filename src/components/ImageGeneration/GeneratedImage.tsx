@@ -227,7 +227,12 @@ export function GeneratedImage({
   }
 
   function handleError() {
-    if (image.url.includes('nsfwLevel')) {
+    if (
+      step.metadata &&
+      step.metadata.hasOwnProperty('isPrivateGeneration') &&
+      // @ts-ignore This value can exist and we confirmed above.
+      step.metadata.isPrivateGeneration
+    ) {
       setNsfwLevelError(true);
     }
   }
@@ -267,7 +272,7 @@ export function GeneratedImage({
           {nsfwLevelError || blockedReason === 'NSFWLevel' ? (
             <BlockedBlock
               title="Blocked for Mature Content"
-              message="Private generation is limited to PG, PG-13 only."
+              message="Private Generation is limited to PG content."
             />
           ) : blockedReason ? (
             <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />

@@ -807,7 +807,7 @@ export function GenerationFormContent() {
                                 <Text size="xs">
                                   {!!minorFlaggedResources.length
                                     ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
-                                    : `A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized `}
+                                    : `A resource you selected does not allow the generation of content rated above PG level. If you attempt to generate sexualized `}
                                   content with this resource the image will not be returned, but you{' '}
                                   <Text span italic inherit>
                                     will
