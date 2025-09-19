@@ -137,9 +137,9 @@ export async function createTextToImage(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
       // Ensures private generation does not allow mature content
-      allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
+      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent: allowMatureContent,
     },
   })) as TextToImageResponse;
 

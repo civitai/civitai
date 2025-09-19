@@ -264,7 +264,7 @@ export function GeneratedImage({
     >
       {(isLightbox || inView) && (
         <>
-          {nsfwLevelError ? (
+          {nsfwLevelError || blockedReason === 'NSFWLevel' ? (
             <BlockedBlock
               title="Blocked for Mature Content"
               message="Private generation is limited to PG, PG-13 only."
