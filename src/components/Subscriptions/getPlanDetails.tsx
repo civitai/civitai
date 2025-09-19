@@ -153,6 +153,20 @@ export const getPlanDetails: (
         iconVariant: 'light' as ThemeIconVariant,
         content: <Text>{metadata.queueLimit ?? 4} Queued jobs</Text>,
       },
+      {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: !!metadata.tier && metadata.tier !== 'free' ? 'blue' : 'gray',
+        iconVariant: 'light' as ThemeIconVariant,
+        content: (
+          <Text>
+            {!!metadata.tier && metadata.tier !== 'free' ? (
+              <>Free High priority generation</>
+            ) : (
+              <>Standard priority generation</>
+            )}
+          </Text>
+        ),
+      },
       features.vault
         ? {
             content: (
