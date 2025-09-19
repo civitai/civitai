@@ -10,7 +10,7 @@ import App from 'next/app';
 import Head from 'next/head';
 import type { ReactElement } from 'react';
 import React from 'react';
-import { AdsProvider } from '~/components/Ads/AdsProvider';
+import { AdsProvider } from '~/components/Ads/Playwire/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
@@ -74,6 +74,8 @@ import 'mantine-react-table/styles.css'; //import MRT styles
 import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 applyNodeOverrides();
 
@@ -89,7 +91,7 @@ type CustomAppProps = {
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
-  allowMatureContent: boolean;
+  domain: ColorDomain;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -105,7 +107,7 @@ function MyApp(props: CustomAppProps) {
       hasAuthCookie,
       settings,
       region,
-      allowMatureContent,
+      domain,
       ...pageProps
     },
   } = props;
@@ -138,7 +140,7 @@ function MyApp(props: CustomAppProps) {
       canIndex={canIndex}
       settings={settings}
       region={region}
-      allowMatureContent={allowMatureContent}
+      domain={domain}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -168,11 +170,11 @@ function MyApp(props: CustomAppProps) {
                               <ActivityReportingProvider>
                                 <ReferralsProvider {...cookies.referrals}>
                                   <FiltersProvider>
-                                    <AdsProvider>
-                                      <PaddleProvider>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
+                                    <PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <BrowserRouterProvider>
+                                            <AdsProvider>
                                               <IntersectionObserverProvider>
                                                 <ToursProvider>
                                                   <AuctionContextProvider>
@@ -188,11 +190,11 @@ function MyApp(props: CustomAppProps) {
                                                   </AuctionContextProvider>
                                                 </ToursProvider>
                                               </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </PaddleProvider>
-                                    </AdsProvider>
+                                            </AdsProvider>
+                                          </BrowserRouterProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaddleProvider>
                                   </FiltersProvider>
                                 </ReferralsProvider>
                               </ActivityReportingProvider>
@@ -286,10 +288,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   }).then((res) => res.json() as UserSettingsSchema);
   // Pass this via the request so we can use it in SSR
   if (session) {
-    (appContext.ctx.req as any)['session'] = session;
+    (request as any)['session'] = session;
   }
-  const allowMatureContent =
-    appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN;
+  const domain = getRequestDomainColor(request) ?? 'blue';
 
   return {
     pageProps: {
@@ -297,14 +298,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       colorScheme,
       cookies: parsedCookies,
       canIndex,
-      // cookieKeys: Object.keys(cookies),
       session,
       settings,
       flags,
       seed: Date.now(),
       hasAuthCookie,
       region,
-      allowMatureContent,
+      domain,
     },
     ...appProps,
   };

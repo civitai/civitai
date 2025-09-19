@@ -1,9 +1,6 @@
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { create } from 'zustand';
-import { AdUnitOutstreamWithCloseButton } from '~/components/Ads/AdUnitOutstream';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useIsClient } from '~/providers/IsClientProvider';
 // TODO - check for any selector type imports in client files
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 
@@ -25,17 +22,10 @@ export const useChatStore = create<ChatState>(() => ({
 
 export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   const open = useChatStore((state) => state.open);
-  const isMobile = useIsMobile();
-  const isClient = useIsClient();
 
   // if (!state.open) return null;
 
-  if (!open)
-    return isClient && !isMobile ? (
-      <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
-        <AdUnitOutstreamWithCloseButton />
-      </div>
-    ) : null;
+  if (!open) return null;
 
   return (
     <div

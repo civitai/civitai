@@ -1,0 +1,35 @@
+.center {
+  display: flex;
+  justify-content: center;
+
+  & > div {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+}
+
+.in_content {
+  min-height: 250px;
+  &_skyscraper {
+    min-height: 600px;
+  }
+}
+
+.footer {
+  min-height: 90px;
+}
+
+.banner {
+  &_mobile {
+    min-height: 100px;
+  }
+  &_desktop {
+    &_short {
+      min-height: 90px;
+    }
+    &_tall {
+      min-height: 250px;
+    }
+  }
+}
