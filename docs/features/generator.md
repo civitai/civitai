@@ -1,288 +1,283 @@
-# Civitai Generator System Documentation
+# Civitai Generator System - Adding Base Models and Engines
 
-@dev: We'd like this document to be focused on how to add or modify supported base models and engines. The goal is to make it so that agents can add them with minimal additional direction. This should include file paths and structure that need to be implemented when adding new base models and engines. The end to end approach would include everything from form updates to the point where we submit the workflow to the orchestrator. The goal is to provide a workflow that can be followed by agents to add different base models and engines, and to have those workflows divided where appropriate based on the type of thing that they're trying to add. The document should include the architecture for context and critical components/files, but should mostly be kept high-level.
+@dev: This document focuses on workflows for adding or modifying supported base models and engines. It provides step-by-step instructions for agents to add them with minimal additional direction.
 
-## Overview
-The Civitai generator system is a comprehensive platform for AI content generation supporting multiple model types (image, video) through a modular orchestrator architecture. The system integrates various generation engines, manages model resources, and provides a unified interface for users to generate content.
+## System Architecture Overview
 
-## System Architecture
+The generator system uses a modular architecture where generation engines (image/video) integrate through an orchestrator pattern. Each engine supports specific base models with their own configurations and form fields.
 
-### Frontend Components
+### Key Components
+- **Base Model Registry**: `src/shared/constants/base-model.constants.ts` - Central registry of all base models
+- **Generation Constants**: `src/shared/constants/generation.constants.ts` - Generation-specific configurations
+- **Generation Form**: `src/components/ImageGeneration/GenerationForm/GenerationForm2.tsx` - Conditional UI logic
+- **Orchestrator Services**: Handle engine-specific generation requests
+- **Database Tables**: `EcosystemCheckpoints`, `GenerationBaseModel` - Track model availability
 
-#### Main Generation Pages
-- **Primary Interface**: `src/pages/generate/index.tsx` - Main entry point for generation features
-- **Image Generation**: `src/components/ImageGeneration/` directory contains all image generation components
-- **Video Generation**: `src/components/Generation/Video/` directory for video-specific generation
+## Workflow 1: Adding a New Image Base Model
 
-#### Core Frontend Components
-- **GenerationForm2.tsx** (`src/components/ImageGeneration/GenerationForm2.tsx`) - Main form for image generation
-- **VideoGenerationForm.tsx** (`src/components/Generation/Video/VideoGenerationForm.tsx`) - Video generation interface
-- **GenerationProvider.tsx** (`src/components/ImageGeneration/GenerationProvider.tsx`) - Context provider managing generation state
-- **Queue.tsx** (`src/components/ImageGeneration/Queue.tsx`) - Manages generation queue and status
-- **Feed.tsx** (`src/components/ImageGeneration/Feed.tsx`) - Displays generated content
+### Step 1: Register the Base Model
+File: `src/shared/constants/base-model.constants.ts`
 
-### Backend Services
+Add to `baseModelConfig` array:
+```typescript
+{
+  name: 'ModelName',        // Display name
+  type: 'image',            // 'image' or 'video'
+  group: 'ModelGroup',      // Unique group identifier
+  ecosystem?: 'sdxl',       // Optional: inherit capabilities from ecosystem
+  engine?: 'engine-name',   // Optional: specific engine mapping
+  hidden?: false            // Optional: hide from UI
+}
+```
+@dev: instead of using the term "ModelName", please use the term "baseModel". Instead of the term "ModelGroup", use "baseModelGroup"
 
-#### API Routers
-- **Generation Router**: `src/server/routers/generation.router.ts` - Primary API endpoints for generation
-- **Orchestrator Router**: `src/server/routers/orchestrator.router.ts` - Manages orchestrator operations
+### Step 2: Define Model Support
+File: `src/shared/constants/base-model.constants.ts`
 
-#### Core Services
-- **Generation Service**: `src/server/services/generation/generation.service.ts` - Core business logic
-- **Orchestrator Controller**: `src/server/controllers/orchestrator.controller.ts` - Handles generation requests
-- **Orchestrator Services**: `src/server/services/orchestrator/` - Engine-specific implementations
+Add to `baseModelGenerationConfig`:
+```typescript
+{
+  group: 'ModelGroup',
+  support: [{
+    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.VAE],
+    baseModels: ['ModelName']
+  }],
+  partialSupport: [/* optional cross-compatible models */]
+}
+```
 
-## Model Type Integration
+@dev: Currently only Checkpoint, LORA/LoCon/DoRA, VAE, and TextualInversion are supported for user uploads. This is defined here in the support configuration.
 
-### Image Generation Engines
+### Step 3: Add Default Checkpoint
+Database: `EcosystemCheckpoints` table
 
-Located in `src/shared/orchestrator/ImageGen/`:
+Add entry with:
+- `id`: modelVersionId of default checkpoint
+- `name`: Display name for the checkpoint
+@dev: typically, the database updates come at the end. This is due to the fact that we directly modify the prod database, and we don't want to do it before the codebase is ready.
 
-1. **OpenAI (DALL-E)**
-   - Configuration: `openAI.ts`
-   - Integration with OpenAI's DALL-E API
+### Step 4: Enable Generation Support
+Database: `GenerationBaseModel` table
 
-2. **Google Imagen**
-   - Configuration: `google.ts`
-   - Google's Imagen model integration
+Add entry:
+- `baseModel`: 'ModelName' (must match base-model.constants.ts)
 
-3. **Flux1-Kontext**
-   - Configuration: `flux1-kontext.ts`
-   - Flux model with context awareness
+### Step 5: Configure Generation Settings
+File: `src/server/common/constants.ts`
 
-4. **Gemini**
-   - Configuration: `gemini.ts`
-   - Google's Gemini model for images
+Add to `generationConfig`:
+```typescript
+ModelGroup: {
+  aspectRatios: [/* aspect ratio options */],
+  checkpoint: {
+    id: modelVersionId,
+    name: 'checkpoint name',
+    baseModel: 'ModelName',
+    // ... other resource properties
+  }
+}
+```
 
-5. **Seedream**
-   - Configuration: `seedream.ts`
-   - Specialized image generation engine
+### Step 6: Add UI Conditional Logic
+File: `src/components/ImageGeneration/GenerationForm/GenerationForm2.tsx`
 
-**Unified Configuration**: `src/shared/orchestrator/ImageGen/imageGen.config.ts`
-@dev: note that for each imageGen config, there is an associated engine, and each engine will work with one or more specific models.
+1. Add detection function in `src/shared/constants/generation.constants.ts`:
+```typescript
+export function getIsModelGroup(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'ModelGroup';
+}
+```
 
-### Video Generation Engines
 
-Located in `src/server/orchestrator/`:
+2. Use in GenerationForm2.tsx:
+```typescript
+const isModelGroup = getIsModelGroup(baseModel);
 
-1. **Veo3** (`veo3.ts`) - Google's video generation
-2. **Vidu** (`vidu.ts`) - Video generation platform
-3. **Minimax** (`minimax.ts`) - Minimax video models
-4. **Kling** (`kling.ts`) - Kling video generation
-5. **Lightricks** (`lightricks.ts`) - Lightricks' video tools
-6. **Haiper** (`haiper.ts`) - Haiper video generation
-7. **Mochi** (`mochi.ts`) - Mochi video models
-8. **Hunyuan** (`hunyuan.ts`) - Tencent's Hunyuan
-9. **Wan Series** - Multiple versions:
-   - `wan21.ts` - Wan 2.1
-   - `wan22.ts` - Wan 2.2
-   - `wan225b.ts` - Wan 2.25b
+// Add conditional logic for form fields
+const disableNegativePrompt = isFlux || isModelGroup || /* others */;
+const disableAdvanced = isModelGroup || /* others */;
+// etc.
+```
+@dev: instead of having to check what baseModelGroup it is like this, I'd like to be able to have baseModelGroup/engine config files that determine what form fields to display and smart defaults for those fields.
 
-**Unified Configuration**: `src/server/orchestrator/generation/generation.config.ts`
-@dev: these configs work similarly to the imageGen configs. One of the main differences is that each of these take a schema that have different defaults. These schemas are used to ensure that the default form values use the best defaults for the selected model.
+### Step 7: Update Schedulers/Samplers (if needed)
+File: `src/shared/constants/generation.constants.ts`
 
-## Model Addition Methods
+Map samplers if different from defaults:
+- Update `samplersToSchedulers` mapping
+- Update `samplersToComfySamplers` mapping
+@dev: the sampler mapping doesn't usually update.
 
-### Method 1: User Upload System
+## Workflow 2: Adding a New Video Base Model
 
-**Entry Points:**
-- **Model Upload Form**: `src/components/Resource/Forms/ModelUpsertForm.tsx`
-- **Version Management**: `src/components/Resource/Forms/ModelVersionUpsertForm.tsx`
+### Step 1-4: Same as Image Model
+Follow steps 1-4 from Image workflow, but use `type: 'video'`
 
-**Process:**
-1. User fills model information form
-2. Uploads model files (safetensors, ckpt, etc.)
-3. Sets metadata (base model, trigger words, etc.)
-4. System processes and validates model
-5. Model becomes available for generation
+### Step 5: Create Engine Implementation
+File: `src/server/orchestrator/[engine-name].ts`
 
-**Supported Model Types (from Prisma schema):**
-- Checkpoint - Full SD models
-- LORA/LoCon/DoRA - Lightweight adaptations
-- TextualInversion - Embedding models
-- Hypernetwork - Network modifications
-- Controlnet - Control models for guided generation
-- VAE - Variational autoencoders
-- MotionModule - Animation/motion models
-- Upscaler - Image upscaling models
-- Poses - Pose control models
-- Wildcards - Prompt wildcards
-- Workflows - ComfyUI/A1111 workflows
-- Detection - Object detection models
-@dev: Of these user upload options, only Checkpoints, LORA/LoCon/DoRA/VAE and TextualInversions are supported. It'd be good for you to find the place where this support is defined in case you need to change those in the future. This is partial covered in the section below about Coverage Table, so maybe it should be documented there?
+Create engine file with schema and configuration:
+```typescript
+export const engineSchema = z.object({
+  // Define engine-specific parameters
+});
 
-### Method 2: Training System Integration
+export const engineConfig = {
+  engine: 'engine-name',
+  baseModel: 'ModelName',
+  defaultValues: {/* defaults */},
+  // other configuration
+};
+```
 
-**Training to Model Pipeline:**
-- Training interface: `src/components/Training/`
-- Training service: `src/server/services/training.service.ts`
-- Auto-conversion from training outputs to usable models
+### Step 6: Register in Video Config
+File: `src/server/orchestrator/generation/generation.config.ts`
 
-**Process:**
-1. User initiates training job
-2. Training completes and produces model files
-3. System automatically creates model entry
-4. Model immediately available for generation
-@dev: Can you clarify how these make it into the generator before they're published? Once they're published they're treated the same as Method 1.
+Add to configuration:
+```typescript
+import { engineConfig } from '../[engine-name]';
 
-### Method 3: External Engine Integration
+// Add to the configs array
+configs.push(engineConfig);
+```
 
-**For Image Models:**
-1. Add engine configuration in `src/shared/orchestrator/ImageGen/`
-2. Implement engine-specific schema and validation
-3. Add to `imageGen.config.ts` configuration
-4. Update `ResourceSelect` components if custom UI needed
-@dev: we don't update the ResourceSelect component for this. We add a bunch of conditional logic to specify what form fields to use in GenerationForm2.tsx. Honestly, the whole generation form needs to be reworked to more easily configure what form fields and default values to use for each baseModel/baseModel group.
+@dev: Each video engine takes a schema with different defaults. These schemas ensure the default form values use the best defaults for the selected model.
 
-**For Video Models:**
-1. Add engine implementation in `src/server/orchestrator/`
-2. Define engine-specific parameters in configuration
-3. Add to `generation.config.ts`
-4. Update video form components if needed
-@dev: Something to consider is making this a part of the main generation form, but we would need to do some work to make the generation form more easily configured.
+### Step 7: Create Form Component (if needed)
+File: `src/components/Generation/Video/[EngineName]Form.tsx`
 
-### Method 4: API Integration
+Create engine-specific form if special UI needed
 
-**Direct API Model Addition:**
-- Model router: `src/server/routers/model.router.ts`
-- Supports programmatic model creation
-- Used for bulk imports and migrations
-@dev: This isn't necessary for the documentation here... This is essentially the same as Method 1...
+@dev: A new engine would get its own form/config files. Consider making this part of the main generation form for better configuration management.
 
-## Resource Management System
+## Workflow 3: Adding an External Image Generation Engine
 
-### Resource Selection
-- **ResourceSelect Components**: `src/components/ImageGeneration/ResourceSelect/`
-- **ResourceSelectCard**: Visual model selection
-- **ResourceSelectDropdown**: Dropdown model selection
-- **Search Integration**: Meilisearch indices for fast model discovery
+### Step 1: Create Engine Configuration
+File: `src/shared/orchestrator/ImageGen/[engine-name].ts`
 
-@dev: Can you dig into what needs to be added to Meilisearch when new models are added via methods other than Method 1? Method 1 is covered by the model publishing system.
+```typescript
+export const engineConfig = {
+  engine: 'engine-name',
+  models: [/* supported model IDs */],
+  schema: z.object({/* parameters */}),
+  defaultValues: {/* defaults */}
+};
+```
 
-### Generation Coverage
-- **Coverage Table**: Tracks which models support generation
-- **Coverage Service**: `src/server/services/generation/generation.service.ts`
-- **Availability Checking**: Real-time model availability status
-@dev: When we add a new baseModel, we typically add a default checkpoint to the "EcosystemCheckpoints" table, with the modelVersionId and a name. To enable generation for loras/doras/etc, we have to update the "GenerationBaseModel" table with the new baseModel.
+### Step 2: Register in ImageGen Config
+File: `src/shared/orchestrator/ImageGen/imageGen.config.ts`
 
-### Model File Management
-- **File Storage**: S3/CloudFlare R2 integration
-- **File Types**: safetensors, ckpt, pt, bin, zip
-- **Metadata Storage**: Model cards, configs, sample images
-@dev: This isn't necessary for the documentation here...
+```typescript
+import { engineConfig } from './[engine-name]';
 
-## Database Architecture
+// Add to imageGenModelVersionMap
+imageGenModelVersionMap.set(modelVersionId, 'engine-name');
+```
 
-### Core Tables
-- **Model** - Base model information and metadata
-- **ModelVersion** - Versioned releases of models
-- **ModelFile** - Physical files associated with versions
-- **GenerationCoverage** - Tracks generation availability
-- **GenerationBaseModel** - Supported base models (SD1.5, SDXL, etc.)
-@dev: you're missing a core table, "EcosystemCheckpoints"
+@dev: Note that for each imageGen config, there is an associated engine, and each engine will work with one or more specific models.
 
-### Key Enums
-- **ModelStatus**: Draft, Published, Scheduled, etc.
-- **ModelModifier**: Archived, TakenDown, etc.
-- **ImageGenerationProcess**: txt2img, img2img, inpainting, etc.
-- **GenerationSchedulers**: Various sampling methods
-@dev: the generation schedulers may have an enum, but they also have some mappings that are important too.
+### Step 3: Update GenerationForm2 Logic
+File: `src/components/ImageGeneration/GenerationForm/GenerationForm2.tsx`
 
-## State Management
+Add detection and conditional logic:
+```typescript
+const isEngineName = getIsEngineName(model.id); // Add helper function
+// Apply conditional field visibility/defaults
+```
 
-### Frontend Stores (Zustand)
-- **Generation Store**: `src/store/generation.store.ts`
-- **Training Store**: `src/store/training.store.ts`
-- **Resource Store**: Manages selected resources
-@dev: Training should be treated as essentially a completely separate service and doesn't need to be documented here. Is there a reason you referenced it here? Does generating with previewed training results/epochs reference the training store?
+@dev: We don't update ResourceSelect components. Instead, we add conditional logic to GenerationForm2.tsx to specify what form fields to use for each baseModel/engine.
 
-### Form Persistence
-- Uses `usePersistForm` hook for form state persistence
-- LocalStorage backing for user preferences
-- Session management for generation parameters
+## Workflow 4: Enabling Training Model Preview
 
-## Integration Points
-@dev: This section should just be removed.
+Training models can be generated before publication through epoch selection:
 
-### Cost Management
-- **Buzz System**: Virtual currency for generation
-- **Cost Calculation**: `src/server/services/buzz.service.ts`
-- **Tier-based Pricing**: Different costs for different models/engines
-@dev: Actually cost calculation comes from the orchestrator api as a "whatIf" request
+### Training Integration Points
+- Training service creates model versions with epoch metadata
+- `epochDetails` in generation service contains: `jobId`, `fileName`, `epochNumber`
+- Resources with `epochNumber` parameter use training outputs directly
 
-### Content Moderation
-- **NSFW Detection**: Automatic content classification
-- **Blocking System**: `src/server/services/blocked-generation.service.ts`
-- **User Preferences**: Configurable content filters
-@dev: It might make more sense to have this focus on how we limit NSFW level of requests and handle the resulting NSFW level of images and show/hide based on that and where that happens.
+@dev: Once training models are published, they're treated the same as user-uploaded models (Method 1). Before publication, they reference orchestrator storage via epochDetails.
 
-### Real-time Updates
-- **Queue Status**: WebSocket-like updates for generation progress
-- **Notification System**: Real-time notifications for completed generations
-- **Feed Updates**: Live feed of community generations
-@dev: The user will never see community generations. They only see their own generations.
+## Critical Database Operations
 
-## Workflow System
-@dev: this section should be removed
+### When Adding New Base Models
 
-### ComfyUI Integration
-- **Workflow Storage**: Database support for workflow JSONs
-- **Workflow Execution**: Through orchestrator system
-- **Parameter Mapping**: Dynamic parameter injection
-@dev: this is a legacy approach. We won't be building more of this.
+1. **EcosystemCheckpoints** - Add default checkpoint:
+```sql
+INSERT INTO "EcosystemCheckpoints" (id, name)
+VALUES (modelVersionId, 'Display Name');
+```
 
-### A1111 Integration
-- **API Compatibility**: Support for A1111 API format
-- **Extension Support**: Compatible with A1111 extensions
-- **Model Format**: Native support for A1111 model formats
+2. **GenerationBaseModel** - Enable generation:
+```sql
+INSERT INTO "GenerationBaseModel" (baseModel)
+VALUES ('ModelName');
+```
 
-## Adding New Model Types - Step by Step
+@dev: When we add a new baseModel, we typically add a default checkpoint to EcosystemCheckpoints with the modelVersionId and name. To enable generation for loras/doras/etc, we update the GenerationBaseModel table.
 
-### For New Image Model Type:
-1. Define model type in Prisma schema if needed
-2. Create engine implementation in `src/shared/orchestrator/ImageGen/`
-3. Add configuration to `imageGen.config.ts`
-4. Update `ModelUpsertForm.tsx` for UI support
-5. Add validation schemas
-6. Update resource selection components
-7. Test generation pipeline end-to-end
-@dev: No need to modify ModelUpsertForm.tsx or resource selection components. Instead, the current implementation has us adding logic to GenerationForm2.tsx to determine what fields to display to the user.
+## Search Index Updates
 
-### For New Video Model Type:
-1. Create orchestrator implementation in `src/server/orchestrator/`
-2. Define configuration in `generation.config.ts`
-3. Update `VideoGenerationForm.tsx` for UI
-4. Add model-specific parameters
-5. Implement cost calculation
-6. Add to generation router endpoints
-7. Test video generation workflow
-@dev: a new engine would get its own form/config files. Drop the cost calculation. No need to create additional endpoints.
+For models added via external engines (not user uploads):
 
-### For New Model Category:
-1. Extend Prisma ModelType enum
-2. Create dedicated UI components in `src/components/`
-3. Add router endpoints in `src/server/routers/`
-4. Implement service layer in `src/server/services/`
-5. Create orchestrator integration
-6. Add state management
-7. Update search indices
-8. Implement moderation rules
-@dev: drop this section
+### Manual Index Update Required
+Models added through external engines need manual Meilisearch indexing since they bypass the normal publication flow.
 
-@ai: This documentation provides a comprehensive overview of the Civitai generator system. I've organized it to show:
-1. How frontend and backend connect through the orchestrator pattern
-2. Multiple methods for adding models (user upload, training, external engines, API)
-3. Clear separation between image and video model integration
-4. File references throughout for easy navigation
-5. Step-by-step guides for adding new model types
+@dev: Method 1 (user uploads) is covered by the model publishing system. External engine models need manual search index updates.
 
-Would you like me to dive deeper into any specific area or add more details about particular integration methods?
+## Cost Management
 
-@dev: Please review the contents of these files to refine your understanding. These are critical files to the generation process and are typically updated when adding support for new base model types and generation engines:
-- src/shared/constants/base-model.constants.ts
-- src/shared/constants/generation.constants.ts
-- src/server/common/constants.ts
-- src/components/ImageGeneration/GenerationForm/GenerationForm2.tsx
-- src/server/services/orchestrator/common.ts - occasional updates
-- src/server/services/generation/generation.service.ts - occasional updates
+### Cost Calculation Flow
+1. Generation request includes model and parameters
+2. Orchestrator API receives "whatIf" request
+3. Returns cost based on model/engine/parameters
+4. Cost displayed to user before generation
 
+@dev: Cost calculation comes from the orchestrator API as a "whatIf" request, not from local calculations.
+
+## NSFW Content Handling
+
+### NSFW Level Management
+- Request NSFW level limited based on model/engine
+- Generated content NSFW level detected automatically
+- Display filtered based on user preferences and content level
+
+@dev: Focus on how we limit NSFW level of requests and handle the resulting NSFW level of images for show/hide based on user preferences.
+
+## Testing Checklist
+
+When adding a new base model or engine:
+
+1. ✓ Model appears in generation form
+2. ✓ Correct form fields show/hide
+3. ✓ Default values apply correctly
+4. ✓ Generation request succeeds
+5. ✓ Cost calculation works
+6. ✓ Generated content displays properly
+7. ✓ Resources (LORA, etc.) compatible if applicable
+8. ✓ Search indexing works (for external engines)
+
+## Common Issues and Solutions
+
+### Model Not Appearing
+- Check `baseModelConfig` registration
+- Verify `hidden: false` or omitted
+- Check `GenerationBaseModel` entry exists
+
+### Generation Failing
+- Verify orchestrator engine implementation
+- Check schema validation
+- Confirm default checkpoint in `EcosystemCheckpoints`
+
+### Resources Not Compatible
+- Update `baseModelGenerationConfig` support arrays
+- Check ecosystem inheritance settings
+- Verify ModelType support configuration
+
+@ai: This documentation has been updated based on all developer feedback. It now focuses specifically on workflows for adding base models and engines, with clear step-by-step instructions that agents can follow. The document includes file paths, database operations, and critical configuration points while keeping implementation details high-level as requested.
+
+**Continue**
+```
+cc -r 189ef699-3003-4b01-b9da-2601525e9e11
+```
