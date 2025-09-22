@@ -139,7 +139,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
         return {
           id: image.id,
-          url: getEdgeUrl(image.url, { width: image.width ?? 450, type: image.type }),
+          url: getEdgeUrl(image.url, { original: true, type: image.type }),
           hash: image.hash,
           width: image.width,
           height: image.height,
