@@ -123,10 +123,18 @@ export const upsertCommentV2Handler = async ({
         });
       }
 
+      // Track comment metrics for supported entity types
       if (type === 'Image') {
         await updateEntityMetric({
           ctx,
           entityType: 'Image',
+          entityId: input.entityId,
+          metricType: 'Comment',
+        });
+      } else if (type === 'Post') {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Post',
           entityId: input.entityId,
           metricType: 'Comment',
         });

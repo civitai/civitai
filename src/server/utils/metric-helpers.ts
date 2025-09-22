@@ -6,9 +6,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
-import { imageMetricsCache } from '~/server/redis/caches';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 
 export const updateEntityMetric = async ({
   ctx,
@@ -77,22 +75,7 @@ export const updateEntityMetric = async ({
       // If we couldn't acquire the lock, another process is handling it
     }
 
-    if (entityType === 'Image') {
-      let shouldBustCache = true;
-      const fliptClient = await FliptSingleton.getInstance();
-      if (fliptClient) {
-        const flag = fliptClient.evaluateBoolean({
-          flagKey: FLIPT_FEATURE_FLAGS.ENTITY_METRIC_NO_CACHE_BUST,
-          entityId: ctx.user?.id.toString() || 'anonymous',
-          context: {},
-        });
-        shouldBustCache = !flag.enabled;
-      }
-
-      if (shouldBustCache) {
-        await imageMetricsCache.bust(entityId);
-      }
-    }
+    // Cache busting removed - Redis is always up-to-date with HINCRBY operations
   } catch (e) {
     const error = e as Error;
     // putting this into the clickhouse dataset for now

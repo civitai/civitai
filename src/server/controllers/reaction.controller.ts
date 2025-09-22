@@ -11,6 +11,7 @@ import { getContestsFromEntity } from '~/server/services/collection.service';
 import { createNotification } from '~/server/services/notification.service';
 import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { trackImageAndPostMetric } from '~/server/utils/metric-image-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,
@@ -236,16 +237,28 @@ export const toggleReactionHandler = async ({
         .catch(handleLogError);
     }
 
-    if (input.entityType === 'image') {
+    // Track metrics for both images and posts
+    if (input.entityType === 'image' || input.entityType === 'post') {
       const metricTypeFromInput = reactionMetricMap[input.reaction];
       if (metricTypeFromInput) {
-        await updateEntityMetric({
-          ctx,
-          entityType: 'Image',
-          entityId: input.entityId,
-          metricType: metricTypeFromInput,
-          amount: result === 'created' ? 1 : -1,
-        });
+        if (input.entityType === 'image') {
+          // Use helper to track both image and post metrics
+          await trackImageAndPostMetric({
+            ctx,
+            imageId: input.entityId,
+            metricType: metricTypeFromInput,
+            amount: result === 'created' ? 1 : -1,
+          });
+        } else if (input.entityType === 'post') {
+          // Direct post reaction
+          await updateEntityMetric({
+            ctx,
+            entityType: 'Post',
+            entityId: input.entityId,
+            metricType: metricTypeFromInput,
+            amount: result === 'created' ? 1 : -1,
+          });
+        }
       }
     }
 

@@ -40,13 +40,13 @@ import {
   getUserFollows,
   imageMetaCache,
   imageMetadataCache,
-  imageMetricsCache,
   imagesForModelVersionsCache,
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
+import { imageMetricsCache } from '~/server/services/caches';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -5741,11 +5741,11 @@ export async function createImageResources({
 }: {
   imageId: number;
   tx?: Prisma.TransactionClient;
-}) {
+}): Promise<{ modelVersionId: number; modelId: number }[]> {
   const dbClient = tx ?? dbWrite;
   // Read the resources based on complex metadata and hash matches
   const resources = await getImageResourcesFromImageId({ imageId, tx });
-  if (!resources.length) return null;
+  if (!resources.length) return [];
 
   const withModelVersionId = resources
     .map((x) => {
@@ -5770,9 +5770,19 @@ export async function createImageResources({
         detected = excluded.detected,
         strength = excluded.strength;
     `;
+
+    // @dev: You removed the ctx drilling that was happening to have tracking here and return the model and modelversion id, but you never track the event downstream...
+    // Return the model versions and their models so the caller can track metrics
+    const modelVersions = await dbClient.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+      SELECT DISTINCT mv.id as "modelVersionId", mv."modelId"
+      FROM "ModelVersion" mv
+      WHERE mv.id = ANY(${resourcesWithModelVersions.map(r => r.modelversionid)})
+    `;
+
+    return modelVersions;
   }
 
-  return resources;
+  return [];
 }
 
 export const getMyImages = async ({

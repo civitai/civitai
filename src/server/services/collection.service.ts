@@ -1368,8 +1368,18 @@ export const removeContributorFromCollection = async ({
       'You do not have permission to remove contributors from this collection.'
     );
   }
+
+  // Get the permissions before removing to know if follower or contributor
+  const contributorBefore = await dbWrite.collectionContributor.findFirst({
+    where: {
+      collectionId,
+      userId: targetUserId,
+    },
+    select: { permissions: true }
+  });
+
   try {
-    return await dbWrite.collectionContributor.delete({
+    const result = await dbWrite.collectionContributor.delete({
       where: {
         userId_collectionId: {
           userId: targetUserId,
@@ -1377,8 +1387,14 @@ export const removeContributorFromCollection = async ({
         },
       },
     });
+
+    // Return both the deletion result and the permissions the user had
+    return {
+      ...result,
+      permissionsBefore: contributorBefore?.permissions || []
+    };
   } catch {
-    // Ignore errors
+    // Ignore
   }
 };
 

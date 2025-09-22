@@ -16,12 +16,93 @@ import {
   throwBadRequestError,
   throwDbError,
 } from '~/server/utils/errorHandling';
+import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import type { EntityMetric_MetricType_Type } from '~/shared/utils/prisma/enums';
 import type {
   CreateResourceReviewInput,
   UpdateResourceReviewInput,
   UpsertResourceReviewInput,
 } from '../schema/resourceReview.schema';
 import { hasEntityAccess } from '../services/common.service';
+
+/**
+ * Helper to update review metrics for both model and model version
+ */
+async function updateReviewMetrics({
+  ctx,
+  modelId,
+  modelVersionId,
+  metricType,
+  amount,
+}: {
+  ctx: DeepNonNullable<Context>;
+  modelId?: number | null;
+  modelVersionId?: number | null;
+  metricType: EntityMetric_MetricType_Type;
+  amount: number;
+}) {
+  const updates = [];
+
+  if (modelId) {
+    updates.push(
+      updateEntityMetric({
+        ctx,
+        entityType: 'Model',
+        entityId: modelId,
+        metricType,
+        amount,
+      })
+    );
+  }
+
+  if (modelVersionId) {
+    updates.push(
+      updateEntityMetric({
+        ctx,
+        entityType: 'ModelVersion',
+        entityId: modelVersionId,
+        metricType,
+        amount,
+      })
+    );
+  }
+
+  await Promise.all(updates);
+}
+
+/**
+ * Helper to handle review rating changes (for updates)
+ */
+async function handleReviewRatingChange({
+  ctx,
+  oldReview,
+  newRecommended,
+}: {
+  ctx: DeepNonNullable<Context>;
+  oldReview: { recommended: boolean; modelId?: number | null; modelVersionId?: number | null };
+  newRecommended: boolean;
+}) {
+  const oldMetricType = oldReview.recommended ? 'ThumbsUp' : 'ThumbsDown';
+  const newMetricType = newRecommended ? 'ThumbsUp' : 'ThumbsDown';
+
+  // Remove old rating
+  await updateReviewMetrics({
+    ctx,
+    modelId: oldReview.modelId,
+    modelVersionId: oldReview.modelVersionId,
+    metricType: oldMetricType,
+    amount: -1,
+  });
+
+  // Add new rating
+  await updateReviewMetrics({
+    ctx,
+    modelId: oldReview.modelId,
+    modelVersionId: oldReview.modelVersionId,
+    metricType: newMetricType,
+    amount: 1,
+  });
+}
 
 export const upsertResourceReviewHandler = async ({
   input,
@@ -42,7 +123,44 @@ export const upsertResourceReviewHandler = async ({
       throw throwAuthorizationError('You do not have access to this model version.');
     }
 
-    return await upsertResourceReview({ ...input, userId: ctx.user.id });
+    // Check if this is an update or create
+    let oldReview = null;
+    if (input.id) {
+      oldReview = await dbRead.resourceReview.findUnique({
+        where: { id: input.id },
+        select: { recommended: true, modelId: true, modelVersionId: true }
+      });
+    }
+
+    const result = await upsertResourceReview({ ...input, userId: ctx.user.id });
+
+    // For updates, we need to get the full review data since update only returns { id }
+    // Cast result as it has full data when creating (not updating)
+    const review = oldReview
+      ? { ...oldReview, ...input }
+      : result as { id: number; modelId: number; modelVersionId: number; recommended: boolean };
+
+    // Track metrics based on whether it's create or update
+    if (!oldReview) {
+      // New review - add metrics
+      const metricType = review.recommended ? 'ThumbsUp' : 'ThumbsDown';
+      await updateReviewMetrics({
+        ctx,
+        modelId: review.modelId,
+        modelVersionId: review.modelVersionId,
+        metricType,
+        amount: 1,
+      });
+    } else if (input.recommended !== undefined && oldReview.recommended !== input.recommended) {
+      // Update with rating change
+      await handleReviewRatingChange({
+        ctx,
+        oldReview,
+        newRecommended: input.recommended,
+      });
+    }
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -75,6 +193,17 @@ export const createResourceReviewHandler = async ({
       rating: result.recommended ? 5 : 1,
       nsfw: false,
     });
+
+    // Track entity metrics for model ratings
+    const metricType = result.recommended ? 'ThumbsUp' : 'ThumbsDown';
+    await updateReviewMetrics({
+      ctx,
+      modelId: result.modelId,
+      modelVersionId: result.modelVersionId,
+      metricType,
+      amount: 1,
+    });
+
     await redis.del(
       `${REDIS_KEYS.USER.BASE}:${ctx.user.id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
     );
@@ -92,6 +221,12 @@ export const updateResourceReviewHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    // Get the old review to compare
+    const oldReview = await dbRead.resourceReview.findUnique({
+      where: { id: input.id },
+      select: { recommended: true, modelId: true, modelVersionId: true }
+    });
+
     const result = await updateResourceReview({ ...input });
     await ctx.track.resourceReview({
       type: 'Update',
@@ -100,6 +235,16 @@ export const updateResourceReviewHandler = async ({
       rating: result.rating,
       nsfw: result.nsfw,
     });
+
+    // Handle rating changes for entity metrics
+    if (oldReview && input.recommended !== undefined && oldReview.recommended !== input.recommended) {
+      await handleReviewRatingChange({
+        ctx,
+        oldReview: { ...oldReview, modelId: result.modelId, modelVersionId: result.modelVersionId },
+        newRecommended: input.recommended,
+      });
+    }
+
     await redis.del(
       `${REDIS_KEYS.USER.BASE}:${ctx.user.id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
     );
@@ -125,6 +270,17 @@ export const deleteResourceReviewHandler = async ({
       rating: result.rating,
       nsfw: result.nsfw,
     });
+
+    // Remove rating from entity metrics
+    const metricType = result.recommended ? 'ThumbsUp' : 'ThumbsDown';
+    await updateReviewMetrics({
+      ctx,
+      modelId: result.modelId,
+      modelVersionId: result.modelVersionId,
+      metricType,
+      amount: -1,
+    });
+
     return result;
   } catch (error) {
     throw throwDbError(error);

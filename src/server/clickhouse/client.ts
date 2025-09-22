@@ -396,7 +396,7 @@ export class Tracker {
     return this.track('redeemableCodes', { activity, ...details });
   }
 
-  public modelVersionEvent(values: {
+  public async modelVersionEvent(values: {
     type: ModelVersionActivty;
     modelId: number;
     modelVersionId: number;
@@ -404,7 +404,41 @@ export class Tracker {
     earlyAccess?: boolean;
     time?: Date;
   }) {
-    return this.track('modelVersionEvents', values);
+    // Track to ClickHouse
+    const result = await this.track('modelVersionEvents', values);
+
+    // @dev: I've changed my mind about how we track downloads. Rather than having yet another thing go to clickhouse here and having to back populate all of the metrics to make this fetch work, I think this should just hinc the values in redis and then we should modify the fetch function for model and model version caches to query clickhouse to get the download count when there is a cache miss. If when hinc'ing the metric the metric doesn't exist already, just do nothing, since we'll grab the full value when needed.
+    // Also update Redis metrics for real-time tracking when it's a download
+    if (values.type === 'Download') {
+      // Import at top of file if not already there
+      const { updateEntityMetric } = await import('~/server/utils/metric-helpers');
+
+      // Create a minimal context for metric updates
+      const ctx = {
+        user: { id: this.actor.userId },
+        track: this,
+      } as any;
+
+      // Update both model and model version metrics
+      await Promise.all([
+        updateEntityMetric({
+          ctx,
+          entityType: 'Model',
+          entityId: values.modelId,
+          metricType: 'Download',
+          amount: 1,
+        }),
+        updateEntityMetric({
+          ctx,
+          entityType: 'ModelVersion',
+          entityId: values.modelVersionId,
+          metricType: 'Download',
+          amount: 1,
+        })
+      ]);
+    }
+
+    return result;
   }
 
   public partnerEvent(values: {

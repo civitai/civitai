@@ -810,8 +810,16 @@ export const NewOrderRankType = {
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 
+// @dev: I don't want these to be accidentally referenced. This is a generated file. I think to ultimately fix this we need to remove these types from the prisma schema, or for safety, just change the names of the enums that we're using in the codebase to avoid accidentally importing these old enums...
+// NOTE: EntityMetric enums have been moved to src/server/utils/metric-constants.ts
+// These are kept here for backward compatibility but should not be used in new code
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
+  Post: 'Post',
+  Model: 'Model',
+  ModelVersion: 'ModelVersion',
+  Collection: 'Collection',
+  User: 'User',
 } as const;
 
 export type EntityMetric_EntityType_Type = (typeof EntityMetric_EntityType_Type)[keyof typeof EntityMetric_EntityType_Type];
@@ -824,6 +832,21 @@ export const EntityMetric_MetricType_Type = {
   Comment: 'Comment',
   Collection: 'Collection',
   Buzz: 'Buzz',
+  ThumbsUp: 'ThumbsUp',
+  ThumbsDown: 'ThumbsDown',
+  Tip: 'Tip',
+  View: 'View',
+  Follower: 'Follower',
+  Contributor: 'Contributor',
+  Item: 'Item',
+  Follow: 'Follow',
+  Hide: 'Hide',
+  Upload: 'Upload',
+  Download: 'Download',
+  Generation: 'Generation',
+  Favorite: 'Favorite',
+  Image: 'Image',
+  Earned: 'Earned',
 } as const;
 
 export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];

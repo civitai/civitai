@@ -67,8 +67,8 @@ import {
   CollectionReadConfiguration,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { dbRead } from '../db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { dbRead } from '~/server/db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -238,13 +238,121 @@ export const saveItemHandler = async ({
       }
     }
 
-    // nb: this will count in review / rejected additions
+    // @dev: Rather than implementing this here, we should do it in the user controller that actually handles favorites being toggled: src\server\controllers\user.controller.ts:817 `toggleFavoriteHandler`. You can remove all of these changes...
+    // Get collection modes to determine if any are bookmark (favorite) collections
+    const collectionIds = input.collections.map(c => c.collectionId);
+    const collections = await dbRead.collection.findMany({
+      where: { id: { in: collectionIds } },
+      select: { id: true, mode: true }
+    });
+    const bookmarkCollectionIds = new Set(
+      collections.filter(c => c.mode === 'Bookmark').map(c => c.id)
+    );
+
+    // Track collection metrics for all entity types
+    // For bookmark collections, track as Favorite metric
     if (input.type === 'Image' && !!input.imageId) {
+      // Track regular collections
+      const regularCollections = input.collections.filter(c => !bookmarkCollectionIds.has(c.collectionId));
+      if (regularCollections.length > 0) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Image',
+          entityId: input.imageId,
+          metricType: 'Collection',
+          amount: status === 'added' ? regularCollections.length : -regularCollections.length,
+        });
+      }
+
+      // Track bookmark/favorite collections
+      const favoriteCollections = input.collections.filter(c => bookmarkCollectionIds.has(c.collectionId));
+      if (favoriteCollections.length > 0) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Image',
+          entityId: input.imageId,
+          metricType: 'Favorite',
+          amount: status === 'added' ? favoriteCollections.length : -favoriteCollections.length,
+        });
+      }
+    } else if (input.type === 'Model' && !!input.modelId) {
+      // Track regular collections
+      const regularCollections = input.collections.filter(c => !bookmarkCollectionIds.has(c.collectionId));
+      if (regularCollections.length > 0) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Model',
+          entityId: input.modelId,
+          metricType: 'Collection',
+          amount: status === 'added' ? regularCollections.length : -regularCollections.length,
+        });
+      }
+
+      // Track bookmark/favorite collections
+      const favoriteCollections = input.collections.filter(c => bookmarkCollectionIds.has(c.collectionId));
+      if (favoriteCollections.length > 0) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Model',
+          entityId: input.modelId,
+          metricType: 'Favorite',
+          amount: status === 'added' ? favoriteCollections.length : -favoriteCollections.length,
+        });
+
+        // Also track favorites for model versions if applicable
+        // Get the primary/latest model version for this model
+        const modelVersion = await dbRead.modelVersion.findFirst({
+          where: {
+            modelId: input.modelId,
+            status: 'Published'
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true }
+        });
+
+        if (modelVersion) {
+          await updateEntityMetric({
+            ctx,
+            entityType: 'ModelVersion',
+            entityId: modelVersion.id,
+            metricType: 'Favorite',
+            amount: status === 'added' ? favoriteCollections.length : -favoriteCollections.length,
+          });
+        }
+      }
+    } else if (input.type === 'Post' && !!input.postId) {
+      // Track regular collections
+      const regularCollections = input.collections.filter(c => !bookmarkCollectionIds.has(c.collectionId));
+      if (regularCollections.length > 0) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Post',
+          entityId: input.postId,
+          metricType: 'Collection',
+          amount: status === 'added' ? regularCollections.length : -regularCollections.length,
+        });
+      }
+
+      // Track bookmark/favorite collections
+      const favoriteCollections = input.collections.filter(c => bookmarkCollectionIds.has(c.collectionId));
+      if (favoriteCollections.length > 0) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Post',
+          entityId: input.postId,
+          metricType: 'Favorite',
+          amount: status === 'added' ? favoriteCollections.length : -favoriteCollections.length,
+        });
+      }
+    }
+
+    // Track the collection's item count for each collection
+    for (const collection of input.collections) {
       await updateEntityMetric({
         ctx,
-        entityType: 'Image',
-        entityId: input.imageId,
-        metricType: 'Collection',
+        entityType: 'Collection',
+        entityId: collection.collectionId,
+        metricType: 'Item',
         amount: status === 'added' ? 1 : -1,
       });
     }
@@ -409,7 +517,7 @@ export const deleteUserCollectionHandler = async ({
   }
 };
 
-export const followHandler = ({
+export const followHandler = async ({
   ctx,
   input,
 }: {
@@ -420,17 +528,34 @@ export const followHandler = ({
   const { collectionId } = input;
 
   try {
-    return addContributorToCollection({
+    const result = await addContributorToCollection({
       targetUserId: input.userId || user?.id,
       userId: user?.id,
       collectionId,
     });
+
+    // Track contributor/follower metrics if result exists
+    if (result && result.permissions) {
+      // VIEW permission = follower, other permissions = contributor
+      const isFollower = result.permissions.includes(CollectionContributorPermission.VIEW) &&
+                         result.permissions.length === 1;
+
+      await updateEntityMetric({
+        ctx,
+        entityType: 'Collection',
+        entityId: collectionId,
+        metricType: isFollower ? 'Follower' : 'Contributor',
+        amount: 1,
+      });
+    }
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
 };
 
-export const unfollowHandler = ({
+export const unfollowHandler = async ({
   ctx,
   input,
 }: {
@@ -441,11 +566,27 @@ export const unfollowHandler = ({
   const { collectionId } = input;
 
   try {
-    return removeContributorFromCollection({
+    const result = await removeContributorFromCollection({
       targetUserId: input.userId || user?.id,
       userId: user?.id,
       collectionId,
     });
+
+    // Track unfollow/remove contributor metrics based on permissions before removal
+    if (result?.permissionsBefore && result.permissionsBefore.length > 0) {
+      const wasFollower = result.permissionsBefore.includes(CollectionContributorPermission.VIEW) &&
+                          result.permissionsBefore.length === 1;
+
+      await updateEntityMetric({
+        ctx,
+        entityType: 'Collection',
+        entityId: collectionId,
+        metricType: wasFollower ? 'Follower' : 'Contributor',
+        amount: -1,
+      });
+    }
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }

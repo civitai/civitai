@@ -856,7 +856,8 @@ export const getDownloadCommandHandler = async ({
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.
       // Safer for us.
-      ctx.track.modelVersionEvent({
+      // Track download event - this will also update Redis metrics
+      await ctx.track.modelVersionEvent({
         type: 'Download',
         modelId: modelVersion.model.id,
         modelVersionId: modelVersion.id,
