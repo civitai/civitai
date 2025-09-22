@@ -16,7 +16,6 @@ import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/pro
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import type {
@@ -707,15 +706,6 @@ export const toggleFollowUserHandler = async ({
           targetUserId: input.targetUserId,
         })
         .catch(handleLogError);
-
-      // Track follow metric for the user
-      await updateEntityMetric({
-        ctx,
-        entityType: 'User',
-        entityId: input.targetUserId,
-        metricType: 'Follow',
-        amount: 1,
-      });
     } else {
       ctx.track
         .userEngagement({
@@ -723,15 +713,6 @@ export const toggleFollowUserHandler = async ({
           targetUserId: input.targetUserId,
         })
         .catch(handleLogError);
-
-      // Track unfollow metric for the user
-      await updateEntityMetric({
-        ctx,
-        entityType: 'User',
-        entityId: input.targetUserId,
-        metricType: 'Follow',
-        amount: -1,
-      });
     }
   } catch (error) {
     throw throwDbError(error);

@@ -29,7 +29,6 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
@@ -148,15 +147,6 @@ export const upsertCommentHandler = async ({
         nsfw: comment.nsfw,
       });
       await ctx.track.commentEvent({ type: 'Create', commentId: comment.id });
-
-      // @dev: Don't we need to also handle comments being deleted?
-      // Track comment metric for the model
-      await updateEntityMetric({
-        ctx,
-        entityType: 'Model',
-        entityId: comment.modelId,
-        metricType: 'Comment',
-      });
 
       return comment;
     } else {
