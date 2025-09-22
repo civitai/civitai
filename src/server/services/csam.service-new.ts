@@ -40,6 +40,7 @@ import {
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { logToAxiom } from '~/server/logging/client';
+import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 const cybertipClient = new Client({
   environment: isDev ? Environment.Testing : Environment.Production,
@@ -629,15 +630,20 @@ async function reportGenerationData(report: CsamReportProps) {
             } = await cybertipClient.uploadFile({ id: reportId, file });
 
             const valuePair: Array<{ name: string; value: string }> = [];
-            if (prompt) valuePair.push({ name: 'prompt', value: prompt });
-            if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: negativePrompt });
+            if (prompt)
+              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
+            if (negativePrompt)
+              valuePair.push({
+                name: 'negativePrompt',
+                value: trimNonAlphanumeric(negativePrompt) ?? '',
+              });
             if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
 
             await cybertipClient.submitFileDetails({
               fileId,
               reportId,
               publiclyAvailable: false,
-              details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
+              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
             });
             arr.push({ url, fileId, hash });
           }
