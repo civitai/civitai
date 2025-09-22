@@ -18,6 +18,9 @@ import { reduceToBasicFileMetadata } from '~/server/services/model-file.service'
 import type { Session } from 'next-auth';
 import { stringifyAIR } from '~/shared/utils/air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { browsingLevels, sfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -36,8 +39,14 @@ export default MixedAuthEndpoint(async function handler(
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const status = user?.isModerator ? undefined : 'Published';
 
+  const region = getRegion(req);
+  const isRestricted = isRegionRestricted(region);
+  const domainColor = getRequestDomainColor(req);
+  const allowedBrowsingLevels =
+    isRestricted || domainColor === 'green' ? sfwBrowsingLevelsArray : [...browsingLevels];
+
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: { id, status },
+    where: { id, status, nsfwLevel: { in: allowedBrowsingLevels } },
     select: getModelVersionApiSelect,
   });
 
@@ -103,7 +112,7 @@ export async function prepareModelVersionResponse(
     images: includeImages
       ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
           url: getEdgeUrl(url, {
-            width: image.width ?? 450,
+            original: true,
             name: id.toString(),
             type: image.type,
           }),
@@ -126,7 +135,9 @@ export async function resModelVersionDetails(
 ) {
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
-  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
+  const baseUrl = new URL(
+    isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
+  );
   const body = await prepareModelVersionResponse(modelVersion, baseUrl);
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   res.status(200).json(body);

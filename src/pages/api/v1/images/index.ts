@@ -31,6 +31,7 @@ import {
   numericString,
 } from '~/utils/zod-helpers';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 export const config = {
   api: {
@@ -99,8 +100,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
+    const domainColor = getRequestDomainColor(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
-    if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
+    if (isRegionRestricted(region) || domainColor === 'green')
+      _browsingLevel = sfwBrowsingLevelsFlag;
 
     const fn = data.modelId || data.imageId ? getAllImages : getAllImagesIndex;
 

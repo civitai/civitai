@@ -18,6 +18,7 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -35,6 +36,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   const region = getRegion(req);
   const isRestricted = isRegionRestricted(region);
+  const domainColor = getRequestDomainColor(req);
+  const browsingLevel =
+    isRestricted || domainColor === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
     const { items } = await getModelsWithVersions({
@@ -46,7 +50,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         archived: true,
         period: 'AllTime',
         periodMode: 'published',
-        browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag,
+        browsingLevel,
       },
     });
     if (items.length === 0)
@@ -110,7 +114,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
             images: includeImages
               ? images.map(({ url, id, ...image }) => ({
                   url: getEdgeUrl(url, {
-                    width: image.width ?? 450,
+                    original: true,
                     name: id.toString(),
                     type: image.type,
                   }),
