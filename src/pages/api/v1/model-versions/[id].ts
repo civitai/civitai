@@ -18,7 +18,12 @@ import { reduceToBasicFileMetadata } from '~/server/services/model-file.service'
 import type { Session } from 'next-auth';
 import { stringifyAIR } from '~/shared/utils/air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import { browsingLevels, sfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  browsingLevels,
+  sfwBrowsingLevelsArray,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
@@ -43,10 +48,10 @@ export default MixedAuthEndpoint(async function handler(
   const isRestricted = isRegionRestricted(region);
   const domainColor = getRequestDomainColor(req);
   const allowedBrowsingLevels =
-    isRestricted || domainColor === 'green' ? sfwBrowsingLevelsArray : [...browsingLevels];
+    isRestricted || domainColor === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: { id, status, nsfwLevel: { in: allowedBrowsingLevels } },
+    where: { id, status, nsfwLevel: { lte: allowedBrowsingLevels } },
     select: getModelVersionApiSelect,
   });
 
