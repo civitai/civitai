@@ -210,7 +210,7 @@ export const getTrainingFields = {
       : model;
   },
   getPriority: (isPriority: boolean) => {
-    return isPriority ? OrchPriorityTypes.High : OrchPriorityTypes.Normal;
+    return isPriority ? OrchPriorityTypes.Normal : OrchPriorityTypes.Low;
   },
   getEngine: (engine: TrainingDetailsParams['engine']) => {
     return engine === 'rapid'
