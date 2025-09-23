@@ -1736,7 +1736,7 @@ export async function updateModelVersionTrainingStatus({
 }: {
   id: number;
   trainingStatus: TrainingStatus;
-  modelFileId?: number;
+  modelFileId: number;
 }) {
   const modelFile = await dbRead.modelFile.findUnique({
     where: { id: modelFileId },
