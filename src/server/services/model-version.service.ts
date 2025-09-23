@@ -58,7 +58,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import type {
+  ModelType,
+  ModelVersionEngagementType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
@@ -1724,3 +1728,45 @@ export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularit
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
   return await modelVersionResourceCache.fetch(ids);
 };
+
+export async function updateModelVersionTrainingStatus({
+  id,
+  trainingStatus,
+  modelFileId,
+}: {
+  id: number;
+  trainingStatus: TrainingStatus;
+  modelFileId?: number;
+}) {
+  const modelFile = await dbRead.modelFile.findUnique({
+    where: { id: modelFileId },
+    select: { id: true, modelVersionId: true, metadata: true },
+  });
+  if (!modelFile || modelFile.modelVersionId !== id)
+    throw throwBadRequestError('No model file associated with this model version');
+
+  const currentFileMetadata = (modelFile.metadata ?? {}) as FileMetadata;
+  const trainingResults = (currentFileMetadata.trainingResults ?? {}) as TrainingResultsV2;
+  const history = trainingResults.history ?? [];
+
+  const newFileMetadata: FileMetadata = {
+    ...currentFileMetadata,
+    trainingResults: {
+      ...trainingResults,
+      history: [...history, { time: new Date().toISOString(), status: trainingStatus }],
+    },
+  };
+
+  const [updatedVersion] = await dbWrite.$transaction([
+    dbWrite.modelVersion.update({
+      where: { id },
+      data: { trainingStatus },
+    }),
+    dbWrite.modelFile.update({
+      where: { id: modelFile.id },
+      data: { metadata: newFileMetadata },
+    }),
+  ]);
+
+  return updatedVersion;
+}
