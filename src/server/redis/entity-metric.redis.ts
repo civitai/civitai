@@ -53,7 +53,7 @@ export class EntityMetricRedisClient {
   }
 
   private getKey(entityType: string, entityId: number): RedisKeyTemplateCache {
-    return `${REDIS_KEYS.ENTITY_METRICS.BASE}:${entityType}:${entityId}` as RedisKeyTemplateCache;
+    return `${REDIS_KEYS.ENTITY_METRICS.BASE}:${entityType.toLowerCase()}:${entityId}` as RedisKeyTemplateCache;
   }
 
   async increment(

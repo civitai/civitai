@@ -32,7 +32,7 @@ The result is something like: `pg cd userEngagement` which means Postgres create
 - `followerCount: Int` pg cd userEngagement
 - `reactionCount: Int` pg cd imageReaction
 - `hiddenCount: Int` pg cd userEngagement
-- `uploadCount: Int` pg cud modelVersion
+- `uploadCount: Int` pg cud modelVersion (use outbox)
 - `reviewCount: Int` pg cud resourceReview
 - `answerCount: Int` deprecated
 - `answerAcceptCount: Int` deprecated
@@ -100,10 +100,10 @@ The result is something like: `pg cd userEngagement` which means Postgres create
 - `contributorCount: Int` pg cd collectionContributor
 
 ### TagMetric
-- `modelCount: Int` pg cd tagsOnModel
-- `imageCount: Int` pg cud tagsOnImageNew
-- `postCount: Int` pg cud tagsOnPost
-- `articleCount: Int` pg cd tagsOnArticle
+- `modelCount: Int` pg cd tagsOnModel (deprecated)
+- `imageCount: Int` pg cud tagsOnImageNew (deprecated)
+- `postCount: Int` pg cud tagsOnPost (deprecated)
+- `articleCount: Int` pg cd tagsOnArticle (deprecated)
 - `hiddenCount: Int` pg cd tagEngagement
 - `followerCount: Int` pg cd tagEngagement
 
@@ -171,14 +171,42 @@ The result is something like: `pg cd userEngagement` which means Postgres create
 - post tags changing: pg cd tagsOnPost
 - post cover image changing: pg cud image
 
+**Changes**:
+Since monitoring updates to specific fields requires REPLICA IDENTITY FULL, instead of monitoring updates on heavy tables like Image, we'll use triggers to populate an outbox like:
+```
+outbox_events
+  entityType
+  entityId
+  event
+```
+Examples:
+```
+entityType: 'Image'
+entityId: 123
+event: 'NEW_POST_COVER'
+
+entityType: 'ModelVersion'
+entityId: 456
+event: 'UNPUBLISHED' | 'PUBLISHED'
+```
+Then we can just monitor the outbox for these events and then delete them upon completing processing.
+
 ---
 
 ## Implementation Plan
 
 ### 1. Setup infrastructure
-- Kafka
-- PG Debezium
+- Kafka:
+  - docker compose
+- PG Debezium:
+  - docker compose
+  - script to create replication user in pg
+  - script to config kafka/debezium connector (with correct `table.include.list`)
+  - tiny console app to consume kafka events and just log messages to console
 - Clickhouse -> kafka engine mv
+  - Create script to add mvs for target tables
+
+These will run against existing infra: docs\reference\existing-systems.md
 
 ### 2. Develop event listening microservice
 - Listens to all appropriate kafka events
@@ -187,7 +215,7 @@ The result is something like: `pg cd userEngagement` which means Postgres create
 - Workers make calls to main process to:
   - Queue entityMetricEvent addition
   - Update Redis cache (only for `entityEventMetrics`)
-    - Signal metric change to listeners
+    - Signal metric change to listeners (later)
   - Queue index updates (only for `entityEventMetrics`)
 - By listening to inserts to `entityEventMetrics` we:
     - Updates corresponding redis cache (if exists)
