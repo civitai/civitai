@@ -565,9 +565,9 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
   ImageScanType.Hash,
-  ImageScanType.Clavata,
+  // ImageScanType.Clavata,
   // ImageScanType.Hive,
-  // ImageScanType.SpineRating,
+  ImageScanType.SpineRating,
 ];
 
 export const ingestImage = async ({
@@ -626,7 +626,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: type === 'image' ? imageScanTypes : [...imageScanTypes, ImageScanType.SpineRating],
+      scans: imageScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
