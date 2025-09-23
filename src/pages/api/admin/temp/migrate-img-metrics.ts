@@ -1,8 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type {
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
-} from '~/shared/utils/prisma/enums';
+import type { EntityMetric_MetricType_Type } from '~/shared/utils/prisma/enums';
 import { chunk, remove } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
@@ -12,6 +9,7 @@ import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
+import type { EntityMetric_EntityType_Type } from '~/shared/utils/prisma/models';
 
 const schema = z.object({
   concurrency: z.coerce.number().min(1).max(50).optional().default(10),

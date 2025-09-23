@@ -15,7 +15,6 @@ import dayjs from '~/shared/utils/dayjs';
 import type {
   ArticleEngagementType,
   BountyEngagementType,
-  EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   EntityType,
   NewOrderRankType,
@@ -25,6 +24,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import type { EntityMetric_EntityType_Type } from '~/shared/utils/prisma/models';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(

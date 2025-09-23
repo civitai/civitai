@@ -1,6 +1,4 @@
-import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import { populateEntityMetrics } from '~/server/redis/entity-metric-populate';
-import type { CachedObject } from '~/server/utils/cache-helpers';
+import { createEntityMetricsCache, getMetricValue, calculateRating } from './entity-metrics.cache-helper';
 
 export type ModelMetricLookup = {
   modelId: number;
@@ -38,133 +36,51 @@ export type ModelVersionMetricLookup = {
  * Model metrics cache using direct Redis entity metrics
  * Follows the same pattern as imageMetricsCache
  */
-export const modelMetricsCache: Pick<
-  CachedObject<ModelMetricLookup>,
-  'fetch' | 'bust' | 'refresh' | 'flush'
-> = {
-  fetch: async (ids: number | number[]): Promise<Record<string, ModelMetricLookup>> => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return {};
+export const modelMetricsCache = createEntityMetricsCache<ModelMetricLookup>({
+  entityType: 'Model',
+  transformMetrics: (entityId, metrics) => {
+    const { rating, ratingCount } = calculateRating(metrics);
 
-    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
-    await populateEntityMetrics('Model', ids);
-
-    // Fetch from Redis
-    const metricsMap = await entityMetricRedis.getBulkMetrics('Model', ids);
-
-    const results: Record<string, ModelMetricLookup> = {};
-    for (const id of ids) {
-      const metrics = metricsMap.get(id);
-
-      // Calculate rating from thumbs up/down
-      const thumbsUp = metrics?.ThumbsUp || 0;
-      const thumbsDown = metrics?.ThumbsDown || 0;
-      const ratingCount = thumbsUp + thumbsDown;
-      const rating = ratingCount > 0 ? (thumbsUp / ratingCount) * 5 : null;
-
-      results[id] = {
-        modelId: id,
-        thumbsUpCount: metrics?.ThumbsUp || null,
-        thumbsDownCount: metrics?.ThumbsDown || null,
-        commentCount: metrics?.Comment || null,
-        collectionCount: metrics?.Collection || null,
-        tipCount: metrics?.Tip || null,
-        buzzAmount: metrics?.Buzz || null,
-        downloadCount: metrics?.Download || null,
-        generationCount: metrics?.Generation || null,
-        favoriteCount: metrics?.Favorite || null,
-        imageCount: metrics?.Image || null,
-        earnedAmount: metrics?.Earned || null,
-        rating,
-        ratingCount: ratingCount || null,
-      };
-    }
-    return results;
+    return {
+      modelId: entityId,
+      thumbsUpCount: getMetricValue(metrics, 'ThumbsUp'),
+      thumbsDownCount: getMetricValue(metrics, 'ThumbsDown'),
+      commentCount: getMetricValue(metrics, 'Comment'),
+      collectionCount: getMetricValue(metrics, 'Collection'),
+      tipCount: getMetricValue(metrics, 'Tip'),
+      buzzAmount: getMetricValue(metrics, 'Buzz'),
+      downloadCount: getMetricValue(metrics, 'Download'),
+      generationCount: getMetricValue(metrics, 'Generation'),
+      favoriteCount: getMetricValue(metrics, 'Favorite'),
+      imageCount: getMetricValue(metrics, 'Image'),
+      earnedAmount: getMetricValue(metrics, 'Earned'),
+      rating,
+      ratingCount,
+    };
   },
-
-  bust: async (ids: number | number[]) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Delete from Redis to force re-fetch from ClickHouse
-    await Promise.all(ids.map((id) => entityMetricRedis.delete('Model', id)));
-  },
-
-  refresh: async (ids: number | number[], skipCache?: boolean) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
-    await populateEntityMetrics('Model', ids, true);
-  },
-
-  flush: async () => {
-    // Clear all model metrics from Redis - Not Supported
-  },
-};
+});
 
 /**
- * Model Version metrics cache using direct Redis entity metrics
- * Follows the same pattern as imageMetricsCache
+ * Model version metrics cache using direct Redis entity metrics
+ * Follows the same pattern as modelMetricsCache
  */
-export const modelVersionMetricsCache: Pick<
-  CachedObject<ModelVersionMetricLookup>,
-  'fetch' | 'bust' | 'refresh' | 'flush'
-> = {
-  fetch: async (ids: number | number[]): Promise<Record<string, ModelVersionMetricLookup>> => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return {};
+export const modelVersionMetricsCache = createEntityMetricsCache<ModelVersionMetricLookup>({
+  entityType: 'ModelVersion',
+  transformMetrics: (entityId, metrics) => {
+    const { rating, ratingCount } = calculateRating(metrics);
 
-    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
-    await populateEntityMetrics('ModelVersion', ids);
-
-    // Fetch from Redis
-    const metricsMap = await entityMetricRedis.getBulkMetrics('ModelVersion', ids);
-
-    const results: Record<string, ModelVersionMetricLookup> = {};
-    for (const id of ids) {
-      const metrics = metricsMap.get(id);
-
-      // Calculate rating from thumbs up/down
-      const thumbsUp = metrics?.ThumbsUp || 0;
-      const thumbsDown = metrics?.ThumbsDown || 0;
-      const ratingCount = thumbsUp + thumbsDown;
-      const rating = ratingCount > 0 ? (thumbsUp / ratingCount) * 5 : null;
-
-      results[id] = {
-        modelVersionId: id,
-        thumbsUpCount: metrics?.ThumbsUp || null,
-        thumbsDownCount: metrics?.ThumbsDown || null,
-        commentCount: metrics?.Comment || null,
-        downloadCount: metrics?.Download || null,
-        generationCount: metrics?.Generation || null,
-        favoriteCount: metrics?.Favorite || null,
-        imageCount: metrics?.Image || null,
-        earnedAmount: metrics?.Earned || null,
-        rating,
-        ratingCount: ratingCount || null,
-      };
-    }
-    return results;
+    return {
+      modelVersionId: entityId,
+      thumbsUpCount: getMetricValue(metrics, 'ThumbsUp'),
+      thumbsDownCount: getMetricValue(metrics, 'ThumbsDown'),
+      commentCount: getMetricValue(metrics, 'Comment'),
+      downloadCount: getMetricValue(metrics, 'Download'),
+      generationCount: getMetricValue(metrics, 'Generation'),
+      favoriteCount: getMetricValue(metrics, 'Favorite'),
+      imageCount: getMetricValue(metrics, 'Image'),
+      earnedAmount: getMetricValue(metrics, 'Earned'),
+      rating,
+      ratingCount,
+    };
   },
-
-  bust: async (ids: number | number[]) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Delete from Redis to force re-fetch from ClickHouse
-    await Promise.all(ids.map((id) => entityMetricRedis.delete('ModelVersion', id)));
-  },
-
-  refresh: async (ids: number | number[], skipCache?: boolean) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
-    await populateEntityMetrics('ModelVersion', ids, true);
-  },
-
-  flush: async () => {
-    // Clear all model version metrics from Redis - Not Supported
-  },
-};
+});
