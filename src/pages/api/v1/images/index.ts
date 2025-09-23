@@ -123,6 +123,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       user: session?.user,
       disableMinor: true,
       disablePoi: true,
+      includeBaseModel: true,
       useLogicalReplica: features.logicalReplica,
     });
 

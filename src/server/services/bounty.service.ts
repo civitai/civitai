@@ -373,28 +373,25 @@ export const upsertBounty = async ({
 }: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
   await throwOnBlockedLinkDomain(data.description);
   if (!isModerator) {
+    // don't allow updating of locked properties
     for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
-  }
 
-  // Check bounty name and description for profanity
-  const profanityFilter = createProfanityFilter();
-  const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-  const hasProfanity = profanityFilter.isProfane(textToCheck);
+    // Check bounty name and description for profanity
+    const profanityFilter = createProfanityFilter();
+    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
+    const hasProfanity = profanityFilter.isProfane(textToCheck);
 
-  // If profanity is detected, mark bounty as NSFW and add to locked properties
-  if (hasProfanity && !data.nsfw) {
-    data.nsfw = true;
-    // Add nsfw to lockedProperties to prevent users from changing it
-    data.lockedProperties =
-      data.lockedProperties && !data.lockedProperties.includes('nsfw')
-        ? [...data.lockedProperties, 'nsfw']
-        : ['nsfw'];
-  }
-  if (id) {
-    if (!isModerator) {
-      for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+    // If profanity is detected, mark bounty as NSFW and add to locked properties
+    if (hasProfanity && !data.nsfw) {
+      data.nsfw = true;
+      data.lockedProperties =
+        data.lockedProperties && !data.lockedProperties.includes('nsfw')
+          ? [...data.lockedProperties, 'nsfw']
+          : ['nsfw'];
     }
+  }
 
+  if (id) {
     const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
     return updateBountyById({
       ...updateInput,

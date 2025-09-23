@@ -1449,24 +1449,6 @@ export const upsertModel = async (
   }
 ) => {
   if (input.description) await throwOnBlockedLinkDomain(input.description);
-  if (!input.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
-  // Check model name and description for profanity
-  const profanityFilter = createProfanityFilter();
-  const textToCheck = [input.name, input.description].filter(Boolean).join(' ');
-  const hasProfanity = profanityFilter.isProfane(textToCheck);
-
-  // If profanity is detected, mark model as NSFW and add to locked properties
-  if (hasProfanity && !input.nsfw) {
-    input.nsfw = true;
-    // Add nsfw to lockedProperties to prevent users from changing it
-    input.lockedProperties =
-      input.lockedProperties && !input.lockedProperties.includes('nsfw')
-        ? [...input.lockedProperties, 'nsfw']
-        : ['nsfw'];
-  }
 
   const {
     id,
@@ -1487,6 +1469,20 @@ export const upsertModel = async (
     for (const prop of lockedProperties) {
       const key = prop as keyof typeof data;
       if (data[key] !== undefined) delete data[key];
+    }
+
+    // Check model name and description for profanity
+    const profanityFilter = createProfanityFilter();
+    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
+    const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+    // If profanity is detected, mark model as NSFW and add to locked properties
+    if (hasProfanity && !data.nsfw) {
+      data.nsfw = true;
+      data.lockedProperties =
+        data.lockedProperties && !data.lockedProperties.includes('nsfw')
+          ? [...data.lockedProperties, 'nsfw']
+          : ['nsfw'];
     }
   }
 
