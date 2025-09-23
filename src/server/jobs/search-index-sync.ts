@@ -11,6 +11,7 @@ const searchIndexSets = {
   bounties: searchIndex.bountiesSearchIndex,
   imageMetrics: searchIndex.imagesMetricsSearchIndex,
   imageMetricsUpdateMetrics: searchIndex.imagesMetricsSearchIndexUpdateMetrics,
+  modelMetrics: searchIndex.modelsMetricsSearchIndex,
   tools: searchIndex.toolsSearchIndex,
 };
 
@@ -25,6 +26,7 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   bounties: '*/5 * * * *',
   imageMetrics: '*/1 * * * *',
   imageMetricsUpdateMetrics: '*/1 * * * *',
+  modelMetrics: '*/1 * * * *',
   tools: UNRUNNABLE_JOB_CRON,
 };
 

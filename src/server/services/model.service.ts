@@ -13,6 +13,7 @@ import {
   constants,
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
+  METRICS_MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -22,7 +23,7 @@ import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpe
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
-import { searchClient } from '~/server/meilisearch/client';
+import { searchClient, metricsSearchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -129,6 +130,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -801,6 +803,586 @@ export const getModelsRaw = async ({
     isPrivate,
   };
 };
+
+// Model Metrics Search Types and Helpers
+// Based on the image metrics search pattern
+type ModelMetricsSearchIndexRecord = {
+  id: number;
+  userId: number;
+  type: string;
+  status: string;
+  checkpointType?: string;
+  baseModel: string;
+  tagIds: number[];
+  nsfwLevel: number;
+  poi: boolean;
+  minor: boolean;
+  earlyAccess: boolean;
+  supportsGeneration: boolean;
+  fromPlatform: boolean;
+  availability: string;
+  publishedAtUnix: number;
+  lastVersionAtUnix: number;
+  collectionId?: number;
+  clubId?: number;
+  fileFormats: string[];
+  isFeatured: boolean;
+  downloadCount: number;
+  favoriteCount: number;
+  commentCount: number;
+  ratingCount: number;
+  rating: number;
+};
+
+// Filterable and sortable attributes based on the documentation
+const modelFilterableAttributes = [
+  'id',
+  'userId',
+  'type',
+  'status',
+  'checkpointType',
+  'baseModel',
+  'tagIds',
+  'nsfwLevel',
+  'poi',
+  'minor',
+  'earlyAccess',
+  'supportsGeneration',
+  'fromPlatform',
+  'availability',
+  'publishedAtUnix',
+  'lastVersionAtUnix',
+  'collectionId',
+  'clubId',
+  'fileFormats',
+  'isFeatured',
+] as const;
+
+const modelSortableAttributes = [
+  'id',
+  'publishedAt',
+  'lastVersionAt',
+  'downloadCount',
+  'favoriteCount',
+  'commentCount',
+  'ratingCount',
+  'rating',
+] as const;
+
+type MetricsModelFilterableAttribute = (typeof modelFilterableAttributes)[number];
+type MetricsModelSortableAttribute = (typeof modelSortableAttributes)[number];
+
+type MeiliModelFilter = `${MetricsModelFilterableAttribute} ${string}`;
+type MeiliModelSort = `${MetricsModelSortableAttribute}:${'asc' | 'desc'}`;
+
+const makeMeiliModelSearchFilter = (
+  field: MetricsModelFilterableAttribute,
+  criteria: string
+): MeiliModelFilter => {
+  return `${field} ${criteria}`;
+};
+
+const makeMeiliModelSearchSort = (
+  field: MetricsModelSortableAttribute,
+  criteria: 'asc' | 'desc'
+): MeiliModelSort => {
+  return `${field}:${criteria}`;
+};
+
+function snapToInterval(unixTimestamp: number, intervalMillisec = 60000): number {
+  return Math.floor(unixTimestamp / intervalMillisec) * intervalMillisec;
+}
+
+type ModelSearchInput = Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+  take?: number;
+  skip?: number;
+  currentUserId?: number;
+  isModerator?: boolean;
+  offset?: number;
+  entry?: number;
+};
+
+export async function getModelsFromSearch(input: ModelSearchInput) {
+  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+
+  const {
+    sort,
+    types,
+    baseModels,
+    period,
+    isModerator,
+    currentUserId,
+    excludedUserIds,
+    checkpointType,
+    status,
+    earlyAccess,
+    supportsGeneration,
+    fromPlatform,
+    availability,
+    isFeatured,
+    fileFormats,
+    clubId,
+    collectionId,
+    tagname,
+    tag,
+    username,
+    user,
+    followed,
+    hidden,
+    needsReview,
+    allowCommercialUse,
+    allowDerivatives,
+    allowDifferentLicense,
+    allowNoCredit,
+    ids,
+    modelVersionIds,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    poiOnly,
+    minorOnly,
+    browsingLevel = 31, // PG by default
+    limit = 100,
+    offset = 0,
+    entry,
+  } = input;
+
+  const sorts: MeiliModelSort[] = [];
+  const filters: string[] = [];
+
+  // POI/Minor filtering
+  if (disablePoi) {
+    filters.push(`(NOT poi = true)`);
+  }
+  if (disableMinor) {
+    filters.push(`(NOT minor = true)`);
+  }
+
+  if (isModerator) {
+    if (poiOnly) {
+      filters.push(`poi = true`);
+    }
+    if (minorOnly) {
+      filters.push(`minor = true`);
+    }
+  }
+
+  // NSFW Level filtering
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  if (isModerator && browsingLevels.includes(0)) browsingLevels.push(0);
+
+  const nsfwFilters = [makeMeiliModelSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`)];
+
+  // Allow users to see their own unscanned content
+  if (currentUserId && input.userId === currentUserId) {
+    nsfwFilters.push(makeMeiliModelSearchFilter('nsfwLevel', `= 0`));
+  }
+
+  filters.push(`(${nsfwFilters.join(' OR ')})`);
+
+  // Status filtering
+  if (!isModerator || !status?.length) {
+    filters.push(makeMeiliModelSearchFilter('status', `= 'Published'`));
+  } else if (status?.length) {
+    const statusValues = status.includes('Unpublished')
+      ? [...status, 'UnpublishedViolation']
+      : status;
+    filters.push(
+      makeMeiliModelSearchFilter('status', `IN [${statusValues.map((s) => `'${s}'`).join(',')}]`)
+    );
+  }
+
+  // User filtering
+  if (username || user) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: (username || user) ?? '' },
+      select: { id: true },
+    });
+    if (!targetUser) throw new Error('User not found');
+    filters.push(makeMeiliModelSearchFilter('userId', `= ${targetUser.id}`));
+  } else if (input.userId) {
+    filters.push(makeMeiliModelSearchFilter('userId', `= ${input.userId}`));
+  } else if (excludedUserIds?.length) {
+    filters.push(makeMeiliModelSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
+  }
+
+  // Follow filtering
+  if (followed && currentUserId) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      filters.push(makeMeiliModelSearchFilter('userId', `IN [${userIds.join(',')}]`));
+    } else {
+      return { data: [], nextCursor: undefined };
+    }
+  }
+
+  // Hidden models
+  if (hidden && currentUserId) {
+    const hiddenModels = await dbRead.modelEngagement.findMany({
+      where: { userId: currentUserId, type: 'Hide' },
+      select: { modelId: true },
+    });
+    const modelIds = hiddenModels.map((x) => x.modelId);
+    if (modelIds.length) {
+      filters.push(makeMeiliModelSearchFilter('id', `IN [${modelIds.join(',')}]`));
+    } else {
+      return { data: [], nextCursor: undefined };
+    }
+  }
+
+  // Model type filtering
+  if (types?.length) {
+    filters.push(
+      makeMeiliModelSearchFilter('type', `IN [${types.map((t) => `'${t}'`).join(',')}]`)
+    );
+  }
+
+  // Checkpoint type filtering
+  if (checkpointType) {
+    filters.push(makeMeiliModelSearchFilter('checkpointType', `= '${checkpointType}'`));
+  }
+
+  // Base model filtering
+  if (baseModels?.length) {
+    filters.push(
+      makeMeiliModelSearchFilter('baseModel', `IN [${baseModels.map((bm) => `'${bm}'`).join(',')}]`)
+    );
+  }
+
+  // Tag filtering
+  if (tagname || tag) {
+    const tagRecord = await dbRead.tag.findUnique({
+      where: { name: tagname || tag },
+      select: { id: true },
+    });
+    if (tagRecord) {
+      filters.push(makeMeiliModelSearchFilter('tagIds', `IN [${tagRecord.id}]`));
+    }
+  }
+
+  // Excluded tags
+  if (excludedTagIds?.length) {
+    filters.push(makeMeiliModelSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
+  }
+
+  // Early access
+  if (earlyAccess !== undefined) {
+    filters.push(makeMeiliModelSearchFilter('earlyAccess', `= ${earlyAccess}`));
+  }
+
+  // Features
+  if (supportsGeneration !== undefined) {
+    filters.push(makeMeiliModelSearchFilter('supportsGeneration', `= ${supportsGeneration}`));
+  }
+  if (fromPlatform !== undefined) {
+    filters.push(makeMeiliModelSearchFilter('fromPlatform', `= ${fromPlatform}`));
+  }
+  if (isFeatured !== undefined) {
+    filters.push(makeMeiliModelSearchFilter('isFeatured', `= ${isFeatured}`));
+  }
+
+  // Availability
+  if (availability) {
+    filters.push(makeMeiliModelSearchFilter('availability', `= '${availability}'`));
+  } else if (!isModerator) {
+    filters.push(makeMeiliModelSearchFilter('availability', `!= 'Private'`));
+  }
+
+  // Collection/Club filtering
+  if (collectionId) {
+    filters.push(makeMeiliModelSearchFilter('collectionId', `= ${collectionId}`));
+  }
+  if (clubId) {
+    filters.push(makeMeiliModelSearchFilter('clubId', `= ${clubId}`));
+  }
+
+  // File formats
+  if (fileFormats?.length) {
+    filters.push(
+      makeMeiliModelSearchFilter(
+        'fileFormats',
+        `IN [${fileFormats.map((f) => `'${f}'`).join(',')}]`
+      )
+    );
+  }
+
+  // IDs filtering
+  if (ids?.length) {
+    filters.push(makeMeiliModelSearchFilter('id', `IN [${ids.join(',')}]`));
+  }
+
+  // Model version IDs
+  if (modelVersionIds?.length) {
+    // This would need to be handled differently as it requires a join
+    // For now, we'll skip this complex filter in the Meilisearch query
+  }
+
+  // Period filtering for metrics
+  let afterDate: Date | undefined;
+  if (period && period !== 'AllTime') {
+    const now = dayjs();
+    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
+  }
+  if (afterDate) {
+    filters.push(
+      makeMeiliModelSearchFilter('publishedAtUnix', `> ${snapToInterval(afterDate.getTime())}`)
+    );
+  }
+
+  // Publish date filtering
+  const snappedNow = snapToInterval(Date.now());
+  if (!isModerator) {
+    filters.push(makeMeiliModelSearchFilter('publishedAtUnix', `<= ${snappedNow}`));
+  }
+
+  // Sorting
+  let searchSort: MeiliModelSort;
+  if (sort === ModelSort.HighestRated) {
+    searchSort = makeMeiliModelSearchSort('rating', 'desc');
+  } else if (sort === ModelSort.MostLiked) {
+    searchSort = makeMeiliModelSearchSort('favoriteCount', 'desc');
+  } else if (sort === ModelSort.MostDownloaded) {
+    searchSort = makeMeiliModelSearchSort('downloadCount', 'desc');
+  } else if (sort === ModelSort.MostDiscussed) {
+    searchSort = makeMeiliModelSearchSort('commentCount', 'desc');
+  } else if (sort === ModelSort.MostCollected) {
+    searchSort = makeMeiliModelSearchSort('favoriteCount', 'desc'); // Using favoriteCount as proxy
+  } else if (sort === ModelSort.Oldest) {
+    searchSort = makeMeiliModelSearchSort('publishedAt', 'asc');
+  } else {
+    // Default: Newest
+    searchSort = makeMeiliModelSearchSort('lastVersionAt', 'desc');
+    if (entry) {
+      filters.push(
+        makeMeiliModelSearchFilter('lastVersionAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
+      );
+    }
+  }
+  sorts.push(searchSort);
+  sorts.push(makeMeiliModelSearchSort('id', 'desc')); // Secondary sort for consistency
+
+  // Overfetch for post-filtering
+  const OVERFETCH_MULTIPLIER = 1.5;
+  const request: SearchParams = {
+    filter: filters.join(' AND '),
+    sort: sorts,
+    limit: limit * OVERFETCH_MULTIPLIER,
+    offset,
+  };
+
+  try {
+    const results: SearchResponse<ModelMetricsSearchIndexRecord> = await metricsSearchClient
+      .index(METRICS_MODELS_SEARCH_INDEX)
+      .search(null, request);
+
+    let nextCursor: number | undefined;
+    if (results.hits.length > limit) {
+      results.hits.pop();
+      nextCursor = !entry ? results.hits[0]?.lastVersionAtUnix : entry;
+    }
+
+    // Apply post-query filtering for user-specific content
+    const filteredHits = results.hits.filter((hit) => {
+      const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
+
+      // User can see their own private content
+      if (hit.availability === 'Private' && !isOwnContent) return false;
+
+      // User can see their own unpublished content
+      if (hit.status !== 'Published' && !isOwnContent) return false;
+
+      return true;
+    });
+
+    // Trim results back to requested limit after filtering
+    const limitedHits = filteredHits.slice(0, limit + 1);
+
+    // Check for existence in DB (similar to image pattern)
+    const modelIds = limitedHits.map((hit) => hit.id);
+    const dbModels = await dbRead.model.findMany({
+      where: { id: { in: modelIds } },
+      select: { id: true },
+    });
+
+    const existingIds = new Set(dbModels.map((m) => m.id));
+    const existingHits = limitedHits.filter((h) => existingIds.has(h.id));
+
+    return {
+      data: existingHits.slice(0, limit),
+      nextCursor: existingHits.length > limit ? nextCursor : undefined,
+    };
+  } catch (error) {
+    console.error('Error in getModelsFromSearch:', error);
+    return { data: [], nextCursor: undefined };
+  }
+}
+
+export async function getModelsRawMeili({
+  input,
+  include,
+  user: sessionUser,
+}: {
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+    take?: number;
+    skip?: number;
+  };
+  include?: Array<'details' | 'cosmetics'>;
+  user?: { id: number; isModerator?: boolean; username?: string };
+}) {
+  const { take, cursor, ...restInput } = input;
+
+  // Handle cursor-based pagination
+  const offset = 0; // TODO: implement proper cursor handling
+  const entry = cursor ? Number(cursor) : undefined;
+
+  const { data: searchResults, nextCursor: searchNextCursor } = await getModelsFromSearch({
+    ...restInput,
+    take,
+    currentUserId: sessionUser?.id,
+    isModerator: sessionUser?.isModerator,
+    offset,
+    entry,
+  });
+
+  if (!searchResults.length) {
+    return {
+      items: [],
+      nextCursor: undefined,
+      isPrivate: false,
+    };
+  }
+
+  // Transform Meilisearch results and augment with cache data
+  const includeDetails = !!include?.includes('details');
+  const includeCosmetics = !!include?.includes('cosmetics');
+
+  // Get model versions, hashes, and tags from cache for rich data
+  const modelIds = searchResults.map((sr) => sr.id);
+  const modelData = await dataForModelsCache.fetch(modelIds);
+
+  // Get user cosmetics and profile pictures
+  const userIds = searchResults.map((sr) => sr.userId);
+  const profilePictures = await getProfilePicturesForUsers(userIds);
+  const userCosmetics = await getCosmeticsForUsers(userIds);
+
+  // Get model cosmetics if needed
+  const cosmetics = includeCosmetics
+    ? await getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+    : {};
+
+  const result = {
+    items: searchResults
+      .map((searchResult) => {
+        const period = input.period || 'AllTime';
+
+        // Apply tag exclusion filter
+        if (!!input.excludedTagIds && input.excludedTagIds.length) {
+          const hasExcludedTag = searchResult.tagIds.some((tagId) =>
+            (input.excludedTagIds ?? []).includes(tagId)
+          );
+          if (hasExcludedTag) return null;
+        }
+
+        // Get cached data for this model
+        const data = modelData[searchResult.id.toString()];
+        if (!data) return null; // Skip if no cache data
+
+        let modelVersions = data.versions;
+
+        // Apply version filters (same as original)
+        if (!sessionUser?.isModerator || !input.status?.length) {
+          modelVersions = modelVersions.filter((mv) => mv.status === 'Published');
+        }
+
+        if (input.baseModels) {
+          modelVersions = modelVersions.filter((mv) => input.baseModels!.includes(mv.baseModel));
+        }
+
+        if (input.modelVersionIds?.length) {
+          modelVersions = modelVersions.filter((mv) => input.modelVersionIds!.includes(mv.id));
+        }
+
+        // Filter out NSFW versions for license-restricted base models
+        if (nsfwRestrictedBaseModels.length > 0) {
+          modelVersions = modelVersions.filter(
+            (mv) =>
+              !(
+                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                nsfwRestrictedBaseModels.includes(mv.baseModel)
+              )
+          );
+        }
+
+        // eject if no versions
+        if (modelVersions.length === 0) return null;
+
+        // If not getting full details, only return the latest version
+        if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
+
+        // Build model from search result data with full fidelity
+        const model = {
+          id: searchResult.id,
+          name: searchResult.name,
+          description: searchResult.description,
+          type: searchResult.type,
+          minor: searchResult.minor,
+          poi: searchResult.poi,
+          sfwOnly: searchResult.sfwOnly,
+          nsfw: searchResult.nsfw,
+          nsfwLevel: searchResult.nsfwLevel,
+          locked: searchResult.locked,
+          status: searchResult.status,
+          createdAt: searchResult.createdAt,
+          lastVersionAt: new Date(searchResult.lastVersionAtUnix),
+          publishedAt: searchResult.publishedAtUnix ? new Date(searchResult.publishedAtUnix) : null,
+          availability: searchResult.availability,
+          earlyAccessDeadline: searchResult.earlyAccess ? new Date() : null,
+          mode: searchResult.mode || 'Archived',
+          // Include detailed license fields from search index
+          ...(includeDetails && {
+            allowNoCredit: searchResult.allowNoCredit,
+            allowCommercialUse: searchResult.allowCommercialUse,
+            allowDerivatives: searchResult.allowDerivatives,
+            allowDifferentLicense: searchResult.allowDifferentLicense,
+          }),
+          rank: {
+            [`downloadCount${period}`]: searchResult.downloadCount,
+            [`thumbsUpCount${period}`]: searchResult.thumbsUpCount,
+            [`thumbsDownCount${period}`]: searchResult.thumbsDownCount,
+            [`commentCount${period}`]: searchResult.commentCount,
+            [`ratingCount${period}`]: searchResult.ratingCount,
+            [`rating${period}`]: searchResult.rating,
+            [`collectedCount${period}`]: searchResult.collectedCount,
+            [`tippedAmountCount${period}`]: searchResult.tippedAmountCount,
+          },
+          // Use rich model version data from cache
+          modelVersions,
+          hashes: data.hashes,
+          tagsOnModels: data.tags,
+          user: {
+            id: searchResult.userId,
+            username: searchResult.username,
+            deletedAt: searchResult.userDeletedAt,
+            image: searchResult.userImage,
+            profilePicture: profilePictures?.[searchResult.userId] ?? null,
+            cosmetics: userCosmetics[searchResult.userId] ?? [],
+          },
+          cosmetic: cosmetics[searchResult.id] ?? null,
+        };
+
+        return model;
+      })
+      .filter(isDefined),
+    nextCursor: searchNextCursor,
+    isPrivate: false,
+  };
+
+  return result;
+}
 
 /** @deprecated use getModelsRaw */
 export const getModels = async <TSelect extends Prisma.ModelSelect>({
@@ -3418,11 +4000,12 @@ export const getTrainingModelsForModerators = async ({
         ...(dateTo && { lte: dateTo }),
       },
     }),
-    ...(dateTo && !dateFrom && {
-      createdAt: {
-        lte: dateTo,
-      },
-    }),
+    ...(dateTo &&
+      !dateFrom && {
+        createdAt: {
+          lte: dateTo,
+        },
+      }),
     ...(cannotPublish !== undefined && {
       meta: cannotPublish
         ? { path: ['cannotPublish'], equals: true }

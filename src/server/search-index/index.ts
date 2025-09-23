@@ -7,3 +7,4 @@ export { bountiesSearchIndex } from './bounties.search-index';
 export { toolsSearchIndex } from './tools.search-index';
 export { imagesMetricsDetailsSearchIndex as imagesMetricsSearchIndex } from './metrics-images.search-index';
 export { imagesMetricsDetailsSearchIndexUpdateMetrics as imagesMetricsSearchIndexUpdateMetrics } from './metrics-images--update-metrics.search-index';
+export { modelsMetricsSearchIndex } from './metrics-models.search-index';

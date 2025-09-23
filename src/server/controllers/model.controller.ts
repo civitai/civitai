@@ -49,7 +49,7 @@ import type {
   GetModelByIdSchema,
 } from '~/server/schema/model.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { modelsSearchIndex, modelsMetricsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
   getAllModelsWithVersionsSelect,
@@ -950,6 +950,9 @@ export const restoreModelHandler = async ({
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
+    await modelsMetricsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
     await dataForModelsCache.bust(input.id);
 
@@ -1100,6 +1103,9 @@ export const reorderModelVersionsHandler = async ({
     });
 
     await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    await modelsMetricsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
@@ -1663,6 +1669,9 @@ export async function toggleCheckpointCoverageHandler({
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
+    await modelsMetricsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
     await dataForModelsCache.bust(input.id);
 
     return affectedVersionIds;
@@ -1844,6 +1853,9 @@ export const publishPrivateModelHandler = async ({
     await dataForModelsCache.bust(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
+      { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    await modelsMetricsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 

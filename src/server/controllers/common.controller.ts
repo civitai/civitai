@@ -22,6 +22,7 @@ import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
   imagesSearchIndex,
+  modelsMetricsSearchIndex,
   modelsSearchIndex,
 } from '../search-index';
 
@@ -101,9 +102,27 @@ export const updateEntityAvailabilityHandler = async ({
                 : SearchIndexUpdateQueueAction.Update,
           },
         ]);
+        await modelsMetricsSearchIndex.queueUpdate([
+          {
+            id: modelVersion.modelId,
+            action:
+              availability === Availability.Unsearchable
+                ? SearchIndexUpdateQueueAction.Delete
+                : SearchIndexUpdateQueueAction.Update,
+          },
+        ]);
         break;
       case 'Model':
         await modelsSearchIndex.queueUpdate([
+          {
+            id: entityId,
+            action:
+              availability === Availability.Unsearchable
+                ? SearchIndexUpdateQueueAction.Delete
+                : SearchIndexUpdateQueueAction.Update,
+          },
+        ]);
+        await modelsMetricsSearchIndex.queueUpdate([
           {
             id: entityId,
             action:
