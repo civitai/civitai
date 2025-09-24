@@ -43,6 +43,7 @@ import {
   getBaseModelSetType,
   getClosestAspectRatio,
   getResourceGenerationType,
+  ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
@@ -580,7 +581,7 @@ export type GenerationResource = GenerationResourceBase & {
   substitute?: GenerationResourceBase;
 };
 
-const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
 export async function getResourceData(

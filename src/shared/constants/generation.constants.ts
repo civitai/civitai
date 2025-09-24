@@ -364,10 +364,11 @@ export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
 export const fluxDraftAir = 'urn:air:flux1:checkpoint:civitai:618692@699279';
 export const fluxKreaAir = 'urn:air:flux1:checkpoint:civitai:618692@2068000';
 export const fluxUltraAirId = 1088507;
+export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Experimental mode supported models - only for Text-to-Image workflow
 export const EXPERIMENTAL_MODE_SUPPORTED_MODELS = ['SD1', 'SDXL', 'Pony'] as const;
-export type ExperimentalModeSupportedModel = typeof EXPERIMENTAL_MODE_SUPPORTED_MODELS[number];
+export type ExperimentalModeSupportedModel = (typeof EXPERIMENTAL_MODE_SUPPORTED_MODELS)[number];
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },
@@ -399,6 +400,10 @@ export function getIsFluxUltra({ modelId, fluxMode }: { modelId?: number; fluxMo
 
 export function getIsFluxKrea({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
   return modelId === fluxModelId && fluxMode === fluxKreaAir;
+}
+
+export function getIsPonyV7(id: number) {
+  return id === 2152373;
 }
 
 export function getSizeFromFluxUltraAspectRatio(value: number) {
