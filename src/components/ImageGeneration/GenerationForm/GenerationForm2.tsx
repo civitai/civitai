@@ -531,8 +531,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               isNanoBanana ||
-              isSeedream ||
-              isPonyV7;
+              isSeedream;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
