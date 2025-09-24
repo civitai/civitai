@@ -52,24 +52,24 @@ export const useCreateResourceReview = () => {
         if (!old) return;
 
         if (recommended) {
-          old.rank.thumbsUpCountAllTime += 1;
-          old.rank.collectedCountAllTime += 1;
+          old.rank.thumbsUpCount += 1;
+          old.rank.collectedCount += 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
               if (version.id === modelVersionId) {
-                version.rank.thumbsUpCountAllTime += 1;
+                version.rank.thumbsUpCount += 1;
               }
               return version;
             });
           }
         } else {
-          old.rank.thumbsDownCountAllTime += 1;
+          old.rank.thumbsDownCount += 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
               if (version.id === modelVersionId) {
-                version.rank.thumbsDownCountAllTime += 1;
+                version.rank.thumbsDownCount += 1;
               }
               return version;
             });
@@ -161,29 +161,28 @@ export const useUpdateResourceReview = () => {
         if (!old) return;
 
         if (request.recommended === true) {
-          old.rank.thumbsUpCountAllTime += 1;
-          if (alreadyNotified === -1) old.rank.collectedCountAllTime += 1;
-          if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
+          old.rank.thumbsUpCount += 1;
+          if (alreadyNotified === -1) old.rank.collectedCount += 1;
+          if (old.rank.thumbsDownCount > 0) old.rank.thumbsDownCount -= 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
               if (version.id === modelVersionId) {
-                version.rank.thumbsUpCountAllTime += 1;
-                if (version.rank.thumbsDownCountAllTime > 0)
-                  version.rank.thumbsDownCountAllTime -= 1;
+                version.rank.thumbsUpCount += 1;
+                if (version.rank.thumbsDownCount > 0) version.rank.thumbsDownCount -= 1;
               }
               return version;
             });
           }
         } else if (request.recommended === false) {
-          old.rank.thumbsDownCountAllTime += 1;
-          if (old.rank.thumbsUpCountAllTime > 0) old.rank.thumbsUpCountAllTime -= 1;
+          old.rank.thumbsDownCount += 1;
+          if (old.rank.thumbsUpCount > 0) old.rank.thumbsUpCount -= 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
               if (version.id === modelVersionId) {
-                version.rank.thumbsDownCountAllTime += 1;
-                if (version.rank.thumbsUpCountAllTime > 0) version.rank.thumbsUpCountAllTime -= 1;
+                version.rank.thumbsDownCount += 1;
+                if (version.rank.thumbsUpCount > 0) version.rank.thumbsUpCount -= 1;
               }
               return version;
             });
@@ -233,24 +232,24 @@ export const useDeleteResourceReview = () => {
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
 
-        if (recommended && old.rank.thumbsUpCountAllTime > 0) {
-          old.rank.thumbsUpCountAllTime -= 1;
+        if (recommended && old.rank.thumbsUpCount > 0) {
+          old.rank.thumbsUpCount -= 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
-              if (version.id === modelVersionId && version.rank.thumbsUpCountAllTime > 0) {
-                version.rank.thumbsUpCountAllTime -= 1;
+              if (version.id === modelVersionId && version.rank.thumbsUpCount > 0) {
+                version.rank.thumbsUpCount -= 1;
               }
               return version;
             });
           }
         } else {
-          if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
+          if (old.rank.thumbsDownCount > 0) old.rank.thumbsDownCount -= 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
-              if (version.id === modelVersionId && version.rank.thumbsDownCountAllTime > 0) {
-                version.rank.thumbsDownCountAllTime -= 1;
+              if (version.id === modelVersionId && version.rank.thumbsDownCount > 0) {
+                version.rank.thumbsDownCount -= 1;
               }
               return version;
             });
@@ -343,24 +342,24 @@ export function useToggleFavoriteMutation() {
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
         if (setTo && alreadyReviewed === -1) {
-          old.rank.thumbsUpCountAllTime += 1;
-          if (alreadyNotified === -1) old.rank.collectedCountAllTime += 1;
+          old.rank.thumbsUpCount += 1;
+          if (alreadyNotified === -1) old.rank.collectedCount += 1;
         } else if (!setTo && alreadyReviewed !== -1) {
-          old.rank.thumbsUpCountAllTime -= 1;
+          old.rank.thumbsUpCount -= 1;
           // We don't want to remove from collected on favorite toggle
-          // old.rank.collectedCountAllTime -= 1;
+          // old.rank.collectedCount -= 1;
         }
 
-        if (old.rank.thumbsUpCountAllTime < 0) old.rank.thumbsUpCountAllTime = 0;
-        if (old.rank.collectedCountAllTime < 0) old.rank.collectedCountAllTime = 0;
+        if (old.rank.thumbsUpCount < 0) old.rank.thumbsUpCount = 0;
+        if (old.rank.collectedCount < 0) old.rank.collectedCount = 0;
 
         // Update model version details
         old.modelVersions = old.modelVersions.map((version) => {
           if (version.id === modelVersionId) {
-            if (setTo) version.rank.thumbsUpCountAllTime += 1;
-            else version.rank.thumbsUpCountAllTime -= 1;
+            if (setTo) version.rank.thumbsUpCount += 1;
+            else version.rank.thumbsUpCount -= 1;
 
-            if (version.rank.thumbsUpCountAllTime < 0) version.rank.thumbsUpCountAllTime = 0;
+            if (version.rank.thumbsUpCount < 0) version.rank.thumbsUpCount = 0;
           }
           return version;
         });

@@ -361,7 +361,7 @@ export function ModelVersionDetails({
           {!downloadsDisabled && (
             <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
               <Text fz={11} fw="bold" inline>
-                {(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}
+                {(version.rank?.downloadCount ?? 0).toLocaleString()}
               </Text>
             </IconBadge>
           )}
@@ -385,26 +385,21 @@ export function ModelVersionDetails({
             >
               <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
                 <Text fz={11} fw="bold" inline>
-                  {abbreviateNumber(version.rank?.generationCountAllTime ?? 0)}
+                  {abbreviateNumber(version.rank?.generationCount ?? 0)}
                 </Text>
               </IconBadge>
             </GenerateButton>
           ) : (
             <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
               <Text fz={11} fw="bold" inline>
-                {(version.rank?.generationCountAllTime ?? 0).toLocaleString()}
+                {(version.rank?.generationCount ?? 0).toLocaleString()}
               </Text>
             </IconBadge>
           )}
-          {version.rank?.earnedAmountAllTime && (
+          {version.rank?.earnedAmount && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text
-                fz={11}
-                fw="bold"
-                title={(version.rank?.earnedAmountAllTime).toLocaleString()}
-                inline
-              >
-                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+              <Text fz={11} fw="bold" title={(version.rank?.earnedAmount).toLocaleString()} inline>
+                {abbreviateNumber(version.rank?.earnedAmount)}
               </Text>
             </IconBadge>
           )}
@@ -429,8 +424,8 @@ export function ModelVersionDetails({
         <ModelVersionReview
           modelId={model.id}
           versionId={version.id}
-          thumbsUpCount={version.rank?.thumbsUpCountAllTime ?? 0}
-          thumbsDownCount={version.rank?.thumbsDownCountAllTime ?? 0}
+          thumbsUpCount={version.rank?.thumbsUpCount ?? 0}
+          thumbsDownCount={version.rank?.thumbsDownCount ?? 0}
         />
       ),
     },

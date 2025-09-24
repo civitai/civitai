@@ -237,8 +237,8 @@ type ModelRaw = {
   lastVersionAt: Date;
   publishedAt: Date | null;
   locked: boolean;
-  earlyAccessDeadline: Date;
-  mode: string;
+  earlyAccessDeadline: Date | null;
+  mode: string | null | undefined;
   rank: {
     downloadCount: number;
     thumbsUpCount: number;
@@ -274,7 +274,7 @@ type ModelRaw = {
     id: number;
     username: string | null;
     deletedAt: Date | null;
-    image: string;
+    image: string | null;
   };
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
   availability?: Availability;
@@ -1360,7 +1360,7 @@ export async function getModelsRawMeili({
           // License fields (always include based on sample)
           allowNoCredit: searchResult.allowNoCredit,
           allowCommercialUse: searchResult.allowCommercialUse
-            ? searchResult.allowCommercialUse.split(',').filter(Boolean)
+            ? (searchResult.allowCommercialUse.split(',').filter(Boolean) as CommercialUse[])
             : [],
           allowDerivatives: searchResult.allowDerivatives,
           allowDifferentLicense: searchResult.allowDifferentLicense,
@@ -1785,14 +1785,14 @@ export const getModelsWithImagesAndModelVersions = async ({
             (typeof hash === 'string' ? hash : hash.hash).toLowerCase()
           ),
           rank: {
-            downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
-            thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
-            thumbsDownCount: rank?.[`thumbsDownCount${input.period}`] ?? 0,
-            commentCount: rank?.[`commentCount${input.period}`] ?? 0,
-            ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
-            collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
-            tippedAmountCount: rank?.[`tippedAmountCount${input.period}`] ?? 0,
-            rating: rank?.[`rating${input.period}`] ?? 0,
+            downloadCount: rank?.[`downloadCount`] ?? 0,
+            thumbsUpCount: rank?.[`thumbsUpCount`] ?? 0,
+            thumbsDownCount: rank?.[`thumbsDownCount`] ?? 0,
+            commentCount: rank?.[`commentCount`] ?? 0,
+            ratingCount: rank?.[`ratingCount`] ?? 0,
+            collectedCount: rank?.[`collectedCount`] ?? 0,
+            tippedAmountCount: rank?.[`tippedAmountCount`] ?? 0,
+            rating: rank?.[`rating`] ?? 0,
           },
           version,
           // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`

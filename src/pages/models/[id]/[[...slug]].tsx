@@ -112,7 +112,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { ModelModifier } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe, ModelModifier } from '~/shared/utils/prisma/enums';
 import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -215,7 +215,7 @@ export const getServerSideProps = createServerSideProps({
       //   await ssg.image.getInfinite.prefetchInfinite({
       //     modelVersionId: version.id,
       //     prioritizedUserIds: [version.model.userId],
-      //     period: 'AllTime',
+      //     period: '',
       //     sort: ImageSort.MostReactions,
       //     limit: CAROUSEL_LIMIT,
       //     pending: true,
@@ -309,11 +309,9 @@ export default function ModelDetailsV2({
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
   const buzzEarned =
     tippedAmount +
-    (model?.rank?.tippedAmountCountAllTime ?? 0) +
-    (model?.modelVersions?.reduce(
-      (acc, version) => acc + (version.rank?.earnedAmountAllTime ?? 0),
-      0
-    ) ?? 0);
+    (model?.rank?.tippedAmountCount ?? 0) +
+    (model?.modelVersions?.reduce((acc, version) => acc + (version.rank?.earnedAmount ?? 0), 0) ??
+      0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
     useModelVersionPermission({ modelVersionId: selectedVersion?.id });
@@ -325,7 +323,7 @@ export default function ModelDetailsV2({
     {
       modelVersionId: latestVersion?.id,
       prioritizedUserIds: model ? [model.user.id] : undefined,
-      period: 'AllTime',
+      period: MetricTimeframe.AllTime,
       sort: ImageSort.MostReactions,
       limit: CAROUSEL_LIMIT,
       pending: true,
@@ -567,8 +565,7 @@ export default function ModelDetailsV2({
 
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
-  const totalRatingCount =
-    (model.rank?.thumbsUpCountAllTime ?? 0) + (model.rank?.thumbsDownCountAllTime ?? 0);
+  const totalRatingCount = (model.rank?.thumbsUpCount ?? 0) + (model.rank?.thumbsDownCount ?? 0);
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
@@ -590,10 +587,7 @@ export default function ModelDetailsV2({
     datePublished: model.publishedAt,
     aggregateRating: {
       '@type': 'AggregateRating',
-      ratingValue: Math.min(
-        Math.ceil((model.rank?.thumbsUpCountAllTime ?? 0 / totalRatingCount) * 5),
-        5
-      ),
+      ratingValue: Math.min(Math.ceil((model.rank?.thumbsUpCount ?? 0 / totalRatingCount) * 5), 5),
       reviewCount: totalRatingCount,
       bestRating: 5,
       worstRating: 0,
@@ -667,7 +661,7 @@ export default function ModelDetailsV2({
                     </Title>
                     <Tooltip
                       label={`${(
-                        model.rank?.thumbsUpCountAllTime ?? 0
+                        model.rank?.thumbsUpCount ?? 0
                       ).toLocaleString()} unique positive reviews`}
                       withinPortal
                     >
@@ -688,7 +682,7 @@ export default function ModelDetailsV2({
                             onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
                           >
                             <Text className={classes.modelBadgeText}>
-                              {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
+                              {abbreviateNumber(model.rank?.thumbsUpCount ?? 0)}
                             </Text>
                           </IconBadge>
                         </LoginRedirect>
@@ -696,7 +690,7 @@ export default function ModelDetailsV2({
                     </Tooltip>
                     <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                       <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
+                        {abbreviateNumber(model.rank?.downloadCount ?? 0)}
                       </Text>
                     </IconBadge>
                     {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
@@ -711,7 +705,7 @@ export default function ModelDetailsV2({
                       >
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
-                            {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
+                            {abbreviateNumber(model.rank?.generationCount ?? 0)}
                           </Text>
                         </IconBadge>
                       </GenerateButton>
@@ -726,7 +720,7 @@ export default function ModelDetailsV2({
                           onClick={handleCollect}
                         >
                           <Text className={classes.modelBadgeText}>
-                            {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
+                            {abbreviateNumber(model.rank?.collectedCount ?? 0)}
                           </Text>
                         </IconBadge>
                       </LoginRedirect>
