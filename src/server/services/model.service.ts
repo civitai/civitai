@@ -39,6 +39,10 @@ export type GetModelsRawInput = {
 
 // Final augmented model item type based on existing ModelRaw with cache enhancements
 export type ModelRawItem = Omit<ModelRaw, 'hashes'> & {
+  // Unix timestamp versions for Meilisearch filtering
+  lastVersionAtUnix?: number;
+  publishedAtUnix?: number;
+
   // Rank with standard metric names (no period suffix)
   rank: {
     downloadCount: number;
@@ -235,9 +239,9 @@ type ModelRaw = {
   status: string;
   createdAt: Date;
   lastVersionAt: Date;
-  publishedAt: Date | null;
+  publishedAt: Date | null | undefined;
   locked: boolean;
-  earlyAccessDeadline: Date | null;
+  earlyAccessDeadline: Date | null | undefined;
   mode: string | null | undefined;
   rank: {
     downloadCount: number;
@@ -837,6 +841,8 @@ export const getModelsRaw = async ({
 
         return {
           ...model,
+          lastVersionAtUnix: model.lastVersionAt ? model.lastVersionAt.getTime() : undefined,
+          publishedAtUnix: model.publishedAt ? model.publishedAt.getTime() : undefined,
           rank: {
             downloadCount: rank.downloadCount,
             thumbsUpCount: rank.thumbsUpCount,
@@ -1294,7 +1300,7 @@ export async function getModelsRawMeili({
   const modelData = await dataForModelsCache.fetch(modelIds);
 
   // Get user cosmetics and profile pictures
-  const userIds = searchResults.map((sr) => sr.userId);
+  const userIds = searchResults.map((sr) => sr.user?.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const userCosmetics = await getCosmeticsForUsers(userIds);
 
@@ -1310,9 +1316,9 @@ export async function getModelsRawMeili({
 
         // Apply tag exclusion filter
         if (!!input.excludedTagIds && input.excludedTagIds.length) {
-          const hasExcludedTag = searchResult.tagIds.some((tagId) =>
-            (input.excludedTagIds ?? []).includes(tagId)
-          );
+          const hasExcludedTag = searchResult.tagsOnModels
+            .map((t) => t.tagId)
+            .some((tagId) => (input.excludedTagIds ?? []).includes(tagId));
           if (hasExcludedTag) return null;
         }
 
@@ -1359,9 +1365,7 @@ export async function getModelsRawMeili({
           description: searchResult.description,
           // License fields (always include based on sample)
           allowNoCredit: searchResult.allowNoCredit,
-          allowCommercialUse: searchResult.allowCommercialUse
-            ? (searchResult.allowCommercialUse.split(',').filter(Boolean) as CommercialUse[])
-            : [],
+          allowCommercialUse: searchResult.allowCommercialUse,
           allowDerivatives: searchResult.allowDerivatives,
           allowDifferentLicense: searchResult.allowDifferentLicense,
           type: searchResult.type,
@@ -1372,10 +1376,12 @@ export async function getModelsRawMeili({
           nsfwLevel: searchResult.nsfwLevel,
           status: searchResult.status,
           createdAt: searchResult.createdAt,
-          lastVersionAt: new Date(searchResult.lastVersionAtUnix),
-          publishedAt: searchResult.publishedAtUnix ? new Date(searchResult.publishedAtUnix) : null,
+          lastVersionAt: searchResult.lastVersionAt,
+          lastVersionAtUnix: searchResult.lastVersionAtUnix,
+          publishedAt: searchResult.publishedAt,
+          publishedAtUnix: searchResult.publishedAtUnix,
           locked: searchResult.locked,
-          earlyAccessDeadline: searchResult.earlyAccess ? new Date() : null,
+          earlyAccessDeadline: searchResult.earlyAccessDeadline,
           mode: searchResult.mode,
           availability: searchResult.availability,
           user: {
@@ -1387,14 +1393,14 @@ export async function getModelsRawMeili({
             cosmetics: userCosmetics[searchResult.user.id] ?? [],
           },
           rank: {
-            downloadCount: searchResult.downloadCount,
-            thumbsUpCount: searchResult.thumbsUpCount,
-            thumbsDownCount: searchResult.thumbsDownCount,
-            commentCount: searchResult.commentCount,
-            ratingCount: searchResult.ratingCount,
-            rating: searchResult.rating,
-            collectedCount: searchResult.collectedCount,
-            tippedAmountCount: searchResult.tippedAmountCount,
+            downloadCount: searchResult.rank.downloadCount,
+            thumbsUpCount: searchResult.rank.thumbsUpCount,
+            thumbsDownCount: searchResult.rank.thumbsDownCount,
+            commentCount: searchResult.rank.commentCount,
+            ratingCount: searchResult.rank.ratingCount,
+            rating: searchResult.rank.rating,
+            collectedCount: searchResult.rank.collectedCount,
+            tippedAmountCount: searchResult.rank.tippedAmountCount,
           },
           // Use rich model version data from cache
           modelVersions,

@@ -4,16 +4,19 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { modelTagCache } from '~/server/redis/caches';
+import { modelTagCache, dataForModelsCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import type {
   Availability,
   ModelStatus,
   ModelType,
   CheckpointType,
+  CommercialUse,
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+// Import ModelRawItem type from model service
+import type { ModelRawItem } from '~/server/services/model.service';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -23,8 +26,8 @@ const searchableAttributes = [] as const;
 
 const sortableAttributes = [
   'id',
-  'publishedAt',
-  'lastVersionAt',
+  'publishedAtUnix',
+  'lastVersionAtU',
   'downloadCount',
   'favoriteCount',
   'commentCount',
@@ -171,6 +174,8 @@ type ModelVersionInfo = {
   supportsGeneration: boolean;
 };
 
+// Remove these types - we'll use cache data instead
+
 type ModelCollections = {
   modelId: number;
   collectionIds: number[];
@@ -198,6 +203,8 @@ type UserInfo = {
 
 type ModelTags = Awaited<ReturnType<typeof modelTagCache.fetch>>;
 
+// Remove this type - we'll use cache data instead
+
 const transformData = async ({
   models,
   modelTags,
@@ -216,7 +223,10 @@ const transformData = async ({
   modelClubs: ModelClubs[];
   featuredModels: FeaturedModels[];
   userInfo: UserInfo[];
-}) => {
+}): Promise<ModelRawItem[]> => {
+  // Get model data from cache like getModelsRaw does
+  const modelIds = models.map((m) => m.id);
+  const modelData = await dataForModelsCache.fetch(modelIds);
   const records = models
     .map((modelRecord) => {
       const modelMetrics = metrics.find((m) => m.id === modelRecord.id) ?? {
@@ -245,35 +255,70 @@ const transformData = async ({
       const featured = featuredModels.find((fm) => fm.modelId === modelRecord.id);
       const userInfoRecord = userInfo.find((ui) => ui.modelId === modelRecord.id);
 
-      return {
-        ...modelRecord,
-        ...modelMetrics,
-        baseModel: versionInfo.baseModel,
-        lastVersionAtUnix: versionInfo.lastVersionAt.getTime(),
-        publishedAtUnix: modelRecord.publishedAt?.getTime(),
-        earlyAccess: modelRecord.earlyAccessDeadline
-          ? new Date() < modelRecord.earlyAccessDeadline
-          : false,
-        supportsGeneration: versionInfo.supportsGeneration,
-        fileFormats: versionInfo.fileFormats,
-        collectionId: collections?.collectionIds?.[0], // Primary collection
-        clubId: clubs?.clubIds?.[0], // Primary club
-        isFeatured: featured?.isFeatured ?? false,
-        tagIds: modelTags[modelRecord.id]?.tagIds ?? [],
-        user: userInfoRecord?.user ?? {
-          id: modelRecord.userId,
-          username: null,
-          deletedAt: null,
-          image: null,
+      // Get cached data for this model like getModelsRaw does
+      const data = modelData[modelRecord.id.toString()];
+      if (!data) return null; // Skip if no cache data
+
+      // Create ModelRawItem structure using cache data
+      const modelRawItem: ModelRawItem = {
+        id: modelRecord.id,
+        name: modelRecord.name,
+        description: modelRecord.description,
+        type: modelRecord.type,
+        poi: modelRecord.poi,
+        minor: modelRecord.minor,
+        sfwOnly: modelRecord.sfwOnly,
+        nsfw: modelRecord.nsfw,
+        nsfwLevel: modelRecord.nsfwLevel,
+        allowNoCredit: modelRecord.allowNoCredit,
+        allowCommercialUse: modelRecord.allowCommercialUse
+          ? (modelRecord.allowCommercialUse.split(',') as CommercialUse[])
+          : [],
+        allowDerivatives: modelRecord.allowDerivatives,
+        allowDifferentLicense: modelRecord.allowDifferentLicense,
+        status: modelRecord.status,
+        createdAt: modelRecord.createdAt,
+        lastVersionAt: modelRecord.lastVersionAt || modelRecord.createdAt,
+        lastVersionAtUnix: (modelRecord.lastVersionAt || modelRecord.createdAt).getTime(),
+        publishedAt: modelRecord.publishedAt,
+        publishedAtUnix: modelRecord.publishedAt ? modelRecord.publishedAt.getTime() : undefined,
+        locked: modelRecord.locked,
+        earlyAccessDeadline: modelRecord.earlyAccessDeadline,
+        mode: modelRecord.mode,
+        availability: modelRecord.availability,
+        rank: {
+          downloadCount: modelMetrics.downloadCount,
+          thumbsUpCount: modelMetrics.thumbsUpCount,
+          thumbsDownCount: modelMetrics.thumbsDownCount,
+          commentCount: modelMetrics.commentCount,
+          ratingCount: modelMetrics.ratingCount,
+          rating: modelMetrics.rating,
+          collectedCount: modelMetrics.collectedCount,
+          tippedAmountCount: modelMetrics.tippedAmountCount,
         },
+        user: {
+          id: modelRecord.userId,
+          username: userInfoRecord?.user.username || null,
+          deletedAt: userInfoRecord?.user.deletedAt || null,
+          image: userInfoRecord?.user.image || null,
+          profilePicture: null, // Will be populated by cache in getModelsRawMeili
+          cosmetics: [], // Will be populated by cache in getModelsRawMeili
+        },
+        // Use cached data like getModelsRaw does
+        modelVersions: data.versions,
+        hashes: data.hashes,
+        tagsOnModels: data.tags,
+        cosmetic: null, // Will be populated by cache in getModelsRawMeili if included
       };
+
+      return modelRawItem;
     })
     .filter(isDefined);
 
   return records;
 };
 
-export type ModelMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
+export type ModelMetricsSearchIndexRecord = ModelRawItem;
 
 export const modelsMetricsSearchIndex = createSearchIndexUpdateProcessor({
   workerCount: 10,
