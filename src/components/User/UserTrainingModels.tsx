@@ -1,7 +1,6 @@
 import type { MantineColor } from '@mantine/core';
 import {
   Accordion,
-  ActionIcon,
   Anchor,
   Badge,
   Button,
@@ -17,6 +16,7 @@ import {
   Stack,
   Table,
   Text,
+  Tooltip,
 } from '@mantine/core';
 import { useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -28,6 +28,7 @@ import {
   IconExclamationCircle,
   IconExternalLink,
   IconFileDescription,
+  IconRefresh,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -60,6 +61,7 @@ import { isDefined } from '~/utils/type-guards';
 import styles from './UserModelsTable.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { showErrorNotification } from '~/utils/notifications';
 
 type TrainingFileData = {
   type: string;
@@ -153,6 +155,17 @@ export default function UserTrainingModels() {
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
   });
+  const recheckTrainingStatusMutation = trpc.modelVersion.recheckTrainingStatus.useMutation({
+    onSuccess: async () => {
+      await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to recheck training status',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const goToModel = (e: React.MouseEvent<HTMLTableRowElement>, href: string) => {
     if (opened) return false;
@@ -206,6 +219,17 @@ export default function UserTrainingModels() {
         deleteModelMutation.mutate({ id: modelVersion.model.id });
       },
     });
+  };
+
+  const handleRecheckTrainingStatus = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    modelVersion: MyTrainingModelGetAll['items'][number]
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.button !== 0) return;
+
+    recheckTrainingStatusMutation.mutate({ id: modelVersion.id });
   };
 
   const hasTraining = items.length > 0;
@@ -277,10 +301,10 @@ export default function UserTrainingModels() {
                 const trainingParams = thisTrainingDetails?.params;
                 const hasTrainingParams = !!trainingParams;
 
-                const numEpochs = trainingParams?.maxTrainEpochs;
+                const numEpochs = trainingParams?.maxTrainEpochs ?? 0;
                 const epochsDone =
                   (thisFileMetadata?.trainingResults?.version === 2
-                    ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber
+                    ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
                     : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
 
@@ -447,25 +471,45 @@ export default function UserTrainingModels() {
                             </Button>
                           </Link>
                         )}
-                        <LegacyActionIcon
-                          variant="filled"
-                          radius="xl"
-                          size="md"
-                          onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (e.button !== 0) return;
-                            setModalData({
-                              id: mv.id,
-                              file: thisFile as TrainingFileData,
-                              baseModel: thisTrainingDetails?.baseModel,
-                              params: thisTrainingDetails?.params,
-                            });
-                            open();
-                          }}
-                        >
-                          <IconFileDescription size={16} />
-                        </LegacyActionIcon>
+                        {mv.trainingStatus === TrainingStatus.Failed && (
+                          <Tooltip label="Recheck Training Status" withArrow>
+                            <LegacyActionIcon
+                              variant="light"
+                              size="md"
+                              radius="xl"
+                              loading={
+                                recheckTrainingStatusMutation.isLoading &&
+                                recheckTrainingStatusMutation.variables?.id === mv.id
+                              }
+                              onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) =>
+                                handleRecheckTrainingStatus(e, mv)
+                              }
+                            >
+                              <IconRefresh size={16} />
+                            </LegacyActionIcon>
+                          </Tooltip>
+                        )}
+                        <Tooltip label="View Details" withArrow>
+                          <LegacyActionIcon
+                            variant="filled"
+                            radius="xl"
+                            size="md"
+                            onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (e.button !== 0) return;
+                              setModalData({
+                                id: mv.id,
+                                file: thisFile as TrainingFileData,
+                                baseModel: thisTrainingDetails?.baseModel,
+                                params: thisTrainingDetails?.params,
+                              });
+                              open();
+                            }}
+                          >
+                            <IconFileDescription size={16} />
+                          </LegacyActionIcon>
+                        </Tooltip>
                         <LegacyActionIcon
                           color="red"
                           variant="light"
@@ -555,7 +599,7 @@ export default function UserTrainingModels() {
                           <Text inline>
                             {formatDate(h.time as unknown as Date, 'MM/DD/YYYY hh:mm:ss A')}
                           </Text>
-                          <Text inline>
+                          <Text component="div" inline>
                             <Badge color={trainingStatusFields[h.status]?.color ?? 'gray'}>
                               {splitUppercase(
                                 h.status === TrainingStatus.InReview ? 'Ready' : h.status
