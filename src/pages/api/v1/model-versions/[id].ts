@@ -24,6 +24,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { logToAxiom } from '~/server/logging/client';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -48,99 +49,112 @@ export default MixedAuthEndpoint(async function handler(
   const allowedBrowsingLevels =
     isRestricted || domainColor === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
-  const modelVersion = await dbRead.$queryRaw<ModelVersionApiReturn[]>`
-    SELECT
-      mv.id,
-      mv."modelId",
-      mv.name,
-      mv."nsfwLevel",
-      mv."createdAt",
-      mv."updatedAt",
-      mv.status,
-      mv."publishedAt",
-      mv."trainedWords",
-      mv."trainingStatus",
-      mv."trainingDetails",
-      mv."baseModel",
-      mv."baseModelType",
-      mv."earlyAccessEndsAt",
-      mv."earlyAccessConfig",
-      mv.description,
-      mv."vaeId",
-      mv."uploadType",
-      mv."usageControl",
-      COALESCE(
-        (
-          SELECT json_agg(
-            json_build_object(
-              'downloadCount', m."downloadCount",
-              'ratingCount', m."ratingCount",
-              'rating', m.rating,
-              'thumbsUpCount', m."thumbsUpCount",
-              'thumbsDownCount', m."thumbsDownCount"
-            )
-          )
-          FROM "ModelVersionMetric" m
-          WHERE m."modelVersionId" = mv.id AND m.timeframe = 'AllTime'
-        ),
-        '[]'::json
-      ) as metrics,
-      COALESCE(
-        (
-          SELECT json_agg(
-            json_build_object(
-              'id', mf.id,
-              'url', mf.url,
-              'sizeKB', mf."sizeKB",
-              'name', mf.name,
-              'type', mf.type,
-              'visibility', mf.visibility,
-              'metadata', mf.metadata,
-              'pickleScanResult', mf."pickleScanResult",
-              'pickleScanMessage', mf."pickleScanMessage",
-              'virusScanResult', mf."virusScanResult",
-              'virusScanMessage', mf."virusScanMessage",
-              'scannedAt', mf."scannedAt",
-              'modelVersionId', mf."modelVersionId",
-              'hashes', COALESCE(
-                (
-                  SELECT json_agg(
-                    json_build_object(
-                      'type', h.type,
-                      'hash', h.hash
-                    )
-                  )
-                  FROM "ModelFileHash" h
-                  WHERE h."fileId" = mf.id
-                ),
-                '[]'::json
+  try {
+    const modelVersion = await dbRead.$queryRaw<ModelVersionApiReturn[]>`
+      SELECT
+        mv.id,
+        mv."modelId",
+        mv.name,
+        mv."nsfwLevel",
+        mv."createdAt",
+        mv."updatedAt",
+        mv.status,
+        mv."publishedAt",
+        mv."trainedWords",
+        mv."trainingStatus",
+        mv."trainingDetails",
+        mv."baseModel",
+        mv."baseModelType",
+        mv."earlyAccessEndsAt",
+        mv."earlyAccessConfig",
+        mv.description,
+        mv."vaeId",
+        mv."uploadType",
+        mv."usageControl",
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'downloadCount', m."downloadCount",
+                'ratingCount', m."ratingCount",
+                'rating', m.rating,
+                'thumbsUpCount', m."thumbsUpCount",
+                'thumbsDownCount', m."thumbsDownCount"
               )
             )
+            FROM "ModelVersionMetric" m
+            WHERE m."modelVersionId" = mv.id AND m.timeframe = 'AllTime'
+          ),
+          '[]'::json
+        ) as metrics,
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'id', mf.id,
+                'url', mf.url,
+                'sizeKB', mf."sizeKB",
+                'name', mf.name,
+                'type', mf.type,
+                'visibility', mf.visibility,
+                'metadata', mf.metadata,
+                'pickleScanResult', mf."pickleScanResult",
+                'pickleScanMessage', mf."pickleScanMessage",
+                'virusScanResult', mf."virusScanResult",
+                'virusScanMessage', mf."virusScanMessage",
+                'scannedAt', mf."scannedAt",
+                'modelVersionId', mf."modelVersionId",
+                'hashes', COALESCE(
+                  (
+                    SELECT json_agg(
+                      json_build_object(
+                        'type', h.type,
+                        'hash', h.hash
+                      )
+                    )
+                    FROM "ModelFileHash" h
+                    WHERE h."fileId" = mf.id
+                  ),
+                  '[]'::json
+                )
+              )
+            )
+            FROM "ModelFile" mf
+            WHERE mf."modelVersionId" = mv.id
+          ),
+          '[]'::json
+        ) as files,
+        (
+          SELECT json_build_object(
+            'name', m.name,
+            'type', m.type,
+            'nsfw', m.nsfw,
+            'poi', m.poi,
+            'mode', m.mode
           )
-          FROM "ModelFile" mf
-          WHERE mf."modelVersionId" = mv.id
-        ),
-        '[]'::json
-      ) as files,
-      (
-        SELECT json_build_object(
-          'name', m.name,
-          'type', m.type,
-          'nsfw', m.nsfw,
-          'poi', m.poi,
-          'mode', m.mode
-        )
-        FROM "Model" m
-        WHERE m.id = mv."modelId"
-      ) as model
-    FROM "ModelVersion" mv
-    WHERE mv.id = ${id}
-      ${status ? Prisma.sql`AND mv.status = ${status}` : Prisma.empty}
-      AND (mv."nsfwLevel" & ${allowedBrowsingLevels}) != 0
-    LIMIT 1
-  `.then((results) => results[0] || null);
+          FROM "Model" m
+          WHERE m.id = mv."modelId"
+        ) as model
+      FROM "ModelVersion" mv
+      WHERE mv.id = ${id}
+        ${status ? Prisma.sql`AND mv.status = ${status}` : Prisma.empty}
+        AND (mv."nsfwLevel" & ${allowedBrowsingLevels}) != 0
+      LIMIT 1
+    `.then((results) => results[0] || null);
 
-  await resModelVersionDetails(req, res, modelVersion);
+    await resModelVersionDetails(req, res, modelVersion);
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({
+      type: 'error',
+      name: 'api-model-version-details',
+      message: error.message,
+      cause: error.cause,
+      stack: error.stack,
+    });
+
+    return res.status(500).json({ error: 'Failed to fetch model version details' });
+  }
 });
 
 export async function prepareModelVersionResponse(
