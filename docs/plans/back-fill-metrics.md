@@ -7,316 +7,609 @@ You'll see there how we turn records in the DB into events to insert into ClickH
 
 For now, outline the query needed for each of the entityTypes and their corresponding metricTypes. Ensure you don't miss any by checking against the list in debezium.md (you can ignore deprecated or metrics driven by the outbox). Then outline how you will process the migration following the example of the migrate-img-metrics.ts, with a single example, or even better, a higher order function that systematizes the process.
 
+@dev: We've spent a bunch of time working on this metric engine as we originally outlined in the debuseum.md. And now we've got a new set of metrics. I'd like to have your help in revising this plan to align with those new metrics. Here are the new metrics: docs\reference\new-metrics.md
+
+@ai: I've reviewed the new metrics from docs\reference\new-metrics.md and updated this plan to align with the 75 unique metrics across 21 handlers. The main changes are:
+1. Removed deprecated metrics (rating, favoriteCount on models, etc.)
+2. Added new User metrics (articleCount, bountyCount, tipsGivenAmount/Count)
+3. Updated reaction metrics to use proper metric names (Like, Heart, etc. instead of likeCount)
+4. Added missing entities like BountyEntry reactions
+5. Aligned table names with actual schema (ImageResourceNew instead of ImageResource)
+
 ## Entity Metric Events Backfill Plan
 
-Based on the debezium.md mapping and the existing image migration example, here are all the metrics that need to be backfilled to ClickHouse:
+Based on the new metrics from docs\reference\new-metrics.md (75 unique metrics across 21 handlers) and the existing image migration example, here are all the metrics that need to be backfilled to ClickHouse:
 
 ### 1. UserMetric
 
-#### followingCount / followerCount
+#### followingCount / followerCount / hiddenCount (from UserEngagement)
 ```sql
--- Following (from perspective of user doing the following)
-SELECT 'User' as "entityType", "userId" as "entityId", "userId", 'Following' as "metricType", 1 as "metricValue", "createdAt"
+-- followingCount (from perspective of user doing the following)
+SELECT 'User' as "entityType", "userId" as "entityId", "userId", 'followingCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "UserEngagement"
 WHERE type = 'Follow' AND "createdAt" < ${cutoff}
 
--- Follower (from perspective of user receiving the follow)
-SELECT 'User' as "entityType", "targetUserId" as "entityId", "userId", 'Follower' as "metricType", 1 as "metricValue", "createdAt"
+-- followerCount (from perspective of user receiving the follow)
+SELECT 'User' as "entityType", "targetUserId" as "entityId", "userId", 'followerCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "UserEngagement"
 WHERE type = 'Follow' AND "createdAt" < ${cutoff}
-```
 
-#### hiddenCount
-```sql
-SELECT 'User' as "entityType", "targetUserId" as "entityId", "userId", 'Hidden' as "metricType", 1 as "metricValue", "createdAt"
+-- hiddenCount
+SELECT 'User' as "entityType", "targetUserId" as "entityId", "userId", 'hiddenCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "UserEngagement"
 WHERE type = 'Hide' AND "createdAt" < ${cutoff}
 ```
 
-#### reactionCount
+#### reactionCount (from ImageReaction, ArticleReaction, BountyEntryReaction)
 ```sql
-SELECT 'User' as "entityType", i."userId" as "entityId", ir."userId", 'UserImageReaction' as "metricType", 1 as "metricValue", ir."createdAt"
+-- From image reactions (content owner gets credit)
+SELECT 'User' as "entityType", i."userId" as "entityId", ir."userId", 'reactionCount' as "metricType", 1 as "metricValue", ir."createdAt"
 FROM "ImageReaction" ir
 JOIN "Image" i ON i.id = ir."imageId"
 WHERE ir."createdAt" < ${cutoff}
+
+-- From article reactions
+SELECT 'User' as "entityType", a."userId" as "entityId", ar."userId", 'reactionCount' as "metricType", 1 as "metricValue", ar."createdAt"
+FROM "ArticleReaction" ar
+JOIN "Article" a ON a.id = ar."articleId"
+WHERE ar."createdAt" < ${cutoff}
+
+-- From bounty entry reactions
+SELECT 'User' as "entityType", be."userId" as "entityId", ber."userId", 'reactionCount' as "metricType", 1 as "metricValue", ber."createdAt"
+FROM "BountyEntryReaction" ber
+JOIN "BountyEntry" be ON be.id = ber."bountyEntryId"
+WHERE ber."createdAt" < ${cutoff}
 ```
 
-#### reviewCount
+#### tippedAmount / tippedCount / tipsGivenAmount / tipsGivenCount (from BuzzTip)
+@dev: If there is a way to backfill multiple metrics with a single query, like with tip count and tip amount, let's do it in a single query and then do prep at the app layer with a query post processor that splits them into separate entityMetricEvents, since effectively all of the queries below could be accomplished with a single query
+
+@ai: Absolutely! Here's the optimized single query approach with post-processing:
+
 ```sql
-SELECT 'User' as "entityType", "userId" as "entityId", "userId", 'Review' as "metricType", 1 as "metricValue", "createdAt"
-FROM "ResourceReview"
+-- Single query to fetch all BuzzTip data
+SELECT "entityType", "entityId", "toUserId", "fromUserId", "amount", "createdAt"
+FROM "BuzzTip"
+WHERE "createdAt" < ${cutoff}
+```
+
+```typescript
+// Post-processor to generate multiple metric events from each row
+function processBuzzTips(tips: BuzzTipRow[]): EntityMetricEvent[] {
+  const events: EntityMetricEvent[] = [];
+
+  tips.forEach(tip => {
+    // Tips received by the entity
+    if (tip.entityType === 'User') {
+      events.push(
+        { entityType: 'User', entityId: tip.toUserId, userId: tip.fromUserId,
+          metricType: 'tippedCount', metricValue: 1, createdAt: tip.createdAt },
+        { entityType: 'User', entityId: tip.toUserId, userId: tip.fromUserId,
+          metricType: 'tippedAmount', metricValue: tip.amount, createdAt: tip.createdAt }
+      );
+    } else {
+      // For Model, Post, Article, Image entities
+      events.push(
+        { entityType: tip.entityType, entityId: tip.entityId, userId: tip.fromUserId,
+          metricType: 'tippedCount', metricValue: 1, createdAt: tip.createdAt },
+        { entityType: tip.entityType, entityId: tip.entityId, userId: tip.fromUserId,
+          metricType: 'tippedAmount', metricValue: tip.amount, createdAt: tip.createdAt }
+      );
+    }
+
+    // Tips given by user
+    events.push(
+      { entityType: 'User', entityId: tip.fromUserId, userId: tip.fromUserId,
+        metricType: 'tipsGivenCount', metricValue: 1, createdAt: tip.createdAt },
+      { entityType: 'User', entityId: tip.fromUserId, userId: tip.fromUserId,
+        metricType: 'tipsGivenAmount', metricValue: tip.amount, createdAt: tip.createdAt }
+    );
+  });
+
+  return events;
+}
+```
+
+#### articleCount (from Article)
+```sql
+SELECT 'User' as "entityType", "userId" as "entityId", "userId", 'articleCount' as "metricType", 1 as "metricValue", "publishedAt"
+FROM "Article"
+WHERE "publishedAt" IS NOT NULL AND "publishedAt" < ${cutoff}
+```
+
+#### bountyCount (from Bounty)
+```sql
+SELECT 'User' as "entityType", "userId" as "entityId", "userId", 'bountyCount' as "metricType", 1 as "metricValue", "createdAt"
+FROM "Bounty"
 WHERE "createdAt" < ${cutoff}
 ```
 
 ### 2. ModelMetric
 
-#### rating / ratingCount
+#### ratingCount / thumbsUpCount / thumbsDownCount (from ResourceReview)
+*See Optimized Query Strategy - handled with ModelVersion in single ResourceReview query*
+
+#### collectedCount (from CollectionItem)
+*See Optimized Query Strategy - handled in single CollectionItem query*
+
+#### commentCount (from Comment - old table, not CommentV2)
 ```sql
-SELECT 'Model' as "entityType", "modelId" as "entityId", "userId", 'Rating' as "metricType", rating as "metricValue", "createdAt"
-FROM "ResourceReview"
-WHERE "modelId" IS NOT NULL AND "createdAt" < ${cutoff}
-
-SELECT 'Model' as "entityType", "modelId" as "entityId", "userId", 'RatingCount' as "metricType", 1 as "metricValue", "createdAt"
-FROM "ResourceReview"
-WHERE "modelId" IS NOT NULL AND "createdAt" < ${cutoff}
-```
-
-#### downloadCount
-```sql
--- This comes from ClickHouse modelVersionEvents, need to aggregate to model level
--- Will be handled separately in ClickHouse-to-ClickHouse migration
-```
-
-#### favoriteCount / collectedCount
-```sql
-SELECT 'Model' as "entityType", "modelId" as "entityId", "addedById" as "userId", 'Favorite' as "metricType", 1 as "metricValue", "createdAt"
-FROM "CollectionItem"
-WHERE "modelId" IS NOT NULL AND "createdAt" < ${cutoff}
-
-SELECT 'Model' as "entityType", "modelId" as "entityId", "addedById" as "userId", 'Collection' as "metricType", 1 as "metricValue", "createdAt"
-FROM "CollectionItem"
+SELECT 'Model' as "entityType", "modelId" as "entityId", "userId", 'commentCount' as "metricType", 1 as "metricValue", "createdAt"
+FROM "Comment"
 WHERE "modelId" IS NOT NULL AND "createdAt" < ${cutoff}
 ```
 
-#### commentCount
+#### imageCount (from ImageResourceNew)
 ```sql
-SELECT 'Model' as "entityType", t."modelId" as "entityId", c."userId", 'Comment' as "metricType", 1 as "metricValue", c."createdAt"
-FROM "Thread" t
-JOIN "CommentV2" c ON c."threadId" = t.id
-WHERE t."modelId" IS NOT NULL AND c."createdAt" < ${cutoff}
-```
-
-#### imageCount
-```sql
-SELECT 'Model' as "entityType", "modelId" as "entityId", i."userId", 'Image' as "metricType", 1 as "metricValue", ir."createdAt"
-FROM "ImageResource" ir
+SELECT 'Model' as "entityType", mv."modelId" as "entityId", i."userId", 'imageCount' as "metricType", 1 as "metricValue", i."createdAt"
+FROM "ImageResourceNew" ir
 JOIN "Image" i ON i.id = ir."imageId"
-WHERE ir."modelId" IS NOT NULL AND ir."createdAt" < ${cutoff}
+JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+WHERE i."createdAt" < ${cutoff}
 ```
 
-#### tippedCount / tippedAmountCount
-```sql
-SELECT 'Model' as "entityType", "entityId", "fromUserId" as "userId", 'TipCount' as "metricType", 1 as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'Model' AND "createdAt" < ${cutoff}
+#### tippedCount / tippedAmount (from BuzzTip)
+*See Optimized Query Strategy - handled in single BuzzTip query*
 
-SELECT 'Model' as "entityType", "entityId", "fromUserId" as "userId", 'TipAmount' as "metricType", amount as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'Model' AND "createdAt" < ${cutoff}
-```
+#### downloadCount / generationCount / earnedAmount (from ClickHouse)
+@dev: Please outline the clickhouse queries for this. The backfill tool should also handle clickhouse queries.
 
-#### thumbsUpCount / thumbsDownCount
+@ai: Here are the ClickHouse queries for Model/ModelVersion metrics:
+
 ```sql
-SELECT 'Model' as "entityType", "modelId" as "entityId", "userId",
-       CASE WHEN recommended = true THEN 'ThumbsUp' ELSE 'ThumbsDown' END as "metricType",
-       1 as "metricValue", "createdAt"
-FROM "ResourceReview"
-WHERE "modelId" IS NOT NULL AND recommended IS NOT NULL AND "createdAt" < ${cutoff}
+-- downloadCount from modelVersionEvents
+SELECT
+  'Model' as entityType,
+  modelId as entityId,
+  userId,
+  'downloadCount' as metricType,
+  1 as metricValue,
+  time as createdAt
+FROM modelVersionEvents
+WHERE type = 'Download' AND time < '${cutoff}'
+
+SELECT
+  'ModelVersion' as entityType,
+  modelVersionId as entityId,
+  userId,
+  'downloadCount' as metricType,
+  1 as metricValue,
+  time as createdAt
+FROM modelVersionEvents
+WHERE type = 'Download' AND time < '${cutoff}'
+
+-- generationCount from orchestration.jobs
+SELECT
+  'Model' as entityType,
+  JSONExtractInt(params, 'modelId') as entityId,
+  userId,
+  'generationCount' as metricType,
+  1 as metricValue,
+  createdAt
+FROM orchestration.jobs
+WHERE type = 'GenerateImage'
+  AND status = 'Completed'
+  AND createdAt < '${cutoff}'
+
+SELECT
+  'ModelVersion' as entityType,
+  JSONExtractInt(params, 'modelVersionId') as entityId,
+  userId,
+  'generationCount' as metricType,
+  1 as metricValue,
+  createdAt
+FROM orchestration.jobs
+WHERE type = 'GenerateImage'
+  AND status = 'Completed'
+  AND createdAt < '${cutoff}'
+
+-- earnedAmount from buzz_resource_compensation
+SELECT
+  'Model' as entityType,
+  modelId as entityId,
+  toUserId as userId,
+  'earnedAmount' as metricType,
+  amount as metricValue,
+  createdAt
+FROM buzz_resource_compensation
+WHERE modelId IS NOT NULL AND createdAt < '${cutoff}'
+
+SELECT
+  'ModelVersion' as entityType,
+  modelVersionId as entityId,
+  toUserId as userId,
+  'earnedAmount' as metricType,
+  amount as metricValue,
+  createdAt
+FROM buzz_resource_compensation
+WHERE modelVersionId IS NOT NULL AND createdAt < '${cutoff}'
 ```
 
 ### 3. ModelVersionMetric
 
-Similar to ModelMetric but with modelVersionId:
+#### ratingCount / thumbsUpCount / thumbsDownCount (from ResourceReview)
+@dev: If these can be handled at the same time as the model metrics for these, let's try and merge those.
+
+@ai: Yes! Let's combine Model and ModelVersion metrics from ResourceReview in a single query:
 
 ```sql
--- Rating metrics
-SELECT 'ModelVersion' as "entityType", "modelVersionId" as "entityId", "userId", 'Rating' as "metricType", rating as "metricValue", "createdAt"
+-- Single query for all ResourceReview metrics (Model & ModelVersion)
+SELECT "modelId", "modelVersionId", "userId", "recommended", "createdAt"
 FROM "ResourceReview"
-WHERE "modelVersionId" IS NOT NULL AND "createdAt" < ${cutoff}
+WHERE "createdAt" < ${cutoff}
+```
 
--- Collection metrics
-SELECT 'ModelVersion' as "entityType", "modelVersionId" as "entityId", "addedById" as "userId", 'Collection' as "metricType", 1 as "metricValue", "createdAt"
-FROM "CollectionItem"
-WHERE "modelVersionId" IS NOT NULL AND "createdAt" < ${cutoff}
+```typescript
+// Post-processor for ResourceReview metrics
+function processResourceReviews(reviews: ResourceReviewRow[]): EntityMetricEvent[] {
+  const events: EntityMetricEvent[] = [];
 
--- Image metrics
-SELECT 'ModelVersion' as "entityType", "modelVersionId" as "entityId", i."userId", 'Image' as "metricType", 1 as "metricValue", ir."createdAt"
-FROM "ImageResource" ir
+  reviews.forEach(review => {
+    // Model metrics
+    if (review.modelId) {
+      events.push(
+        { entityType: 'Model', entityId: review.modelId, userId: review.userId,
+          metricType: 'ratingCount', metricValue: 1, createdAt: review.createdAt }
+      );
+
+      if (review.recommended !== null) {
+        events.push(
+          { entityType: 'Model', entityId: review.modelId, userId: review.userId,
+            metricType: review.recommended ? 'thumbsUpCount' : 'thumbsDownCount',
+            metricValue: 1, createdAt: review.createdAt }
+        );
+      }
+    }
+
+    // ModelVersion metrics
+    if (review.modelVersionId) {
+      events.push(
+        { entityType: 'ModelVersion', entityId: review.modelVersionId, userId: review.userId,
+          metricType: 'ratingCount', metricValue: 1, createdAt: review.createdAt }
+      );
+
+      if (review.recommended !== null) {
+        events.push(
+          { entityType: 'ModelVersion', entityId: review.modelVersionId, userId: review.userId,
+            metricType: review.recommended ? 'thumbsUpCount' : 'thumbsDownCount',
+            metricValue: 1, createdAt: review.createdAt }
+        );
+      }
+    }
+  });
+
+  return events;
+}
+```
+
+#### imageCount (from ImageResourceNew)
+```sql
+SELECT 'ModelVersion' as "entityType", "modelVersionId" as "entityId", i."userId", 'imageCount' as "metricType", 1 as "metricValue", i."createdAt"
+FROM "ImageResourceNew" ir
 JOIN "Image" i ON i.id = ir."imageId"
-WHERE ir."modelVersionId" IS NOT NULL AND ir."createdAt" < ${cutoff}
+WHERE ir."modelVersionId" IS NOT NULL AND i."createdAt" < ${cutoff}
+```
 
--- Tip metrics
-SELECT 'ModelVersion' as "entityType", "entityId", "fromUserId" as "userId", 'TipCount' as "metricType", 1 as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'ModelVersion' AND "createdAt" < ${cutoff}
+#### downloadCount / generationCount / earnedAmount (from ClickHouse)
+```sql
+-- These come from ClickHouse tables and will be handled in ClickHouse-to-ClickHouse migration:
+-- downloadCount: from modelVersionEvents table
+-- generationCount: from orchestration.jobs table
+-- earnedAmount: from buzz_resource_compensation table
 ```
 
 ### 4. PostMetric
 
-#### reaction metrics (like, dislike, laugh, cry, heart)
+#### Like / Dislike / Laugh / Cry / Heart / reactionCount (from ImageReaction)
 ```sql
-SELECT 'Post' as "entityType", p."id" as "entityId", ir."userId",
-       concat('Reaction', ir.reaction) as "metricType", 1 as "metricValue", ir."createdAt"
-FROM "Post" p
-JOIN "Image" i ON i."postId" = p.id
-JOIN "ImageReaction" ir ON ir."imageId" = i.id
-WHERE ir."createdAt" < ${cutoff} AND ir.reaction IN ('Like', 'Dislike', 'Laugh', 'Cry', 'Heart')
+-- Individual reaction types
+SELECT 'Post' as "entityType", i."postId" as "entityId", ir."userId",
+       ir.reaction as "metricType", 1 as "metricValue", ir."createdAt"
+FROM "ImageReaction" ir
+JOIN "Image" i ON i.id = ir."imageId"
+WHERE i."postId" IS NOT NULL AND ir."createdAt" < ${cutoff}
+
+-- reactionCount (total of all reactions)
+SELECT 'Post' as "entityType", i."postId" as "entityId", ir."userId",
+       'reactionCount' as "metricType", 1 as "metricValue", ir."createdAt"
+FROM "ImageReaction" ir
+JOIN "Image" i ON i.id = ir."imageId"
+WHERE i."postId" IS NOT NULL AND ir."createdAt" < ${cutoff}
 ```
 
-#### commentCount
-```sql
-SELECT 'Post' as "entityType", t."postId" as "entityId", c."userId", 'Comment' as "metricType", 1 as "metricValue", c."createdAt"
-FROM "Thread" t
-JOIN "CommentV2" c ON c."threadId" = t.id
-WHERE t."postId" IS NOT NULL AND c."createdAt" < ${cutoff}
-```
+#### commentCount (from CommentV2)
+*See Optimized Query Strategy - handled in single CommentV2 query*
 
-#### collectedCount
+#### collectedCount (from CollectionItem)
+@dev: Rather than doing a separate query for each type of CollectionItem, let's do a single query to go through collectionItems and then add a metric event depending on the collectedItem type
+
+@ai: Great idea! Let's fetch all CollectionItems once and process them for all entity types:
+
 ```sql
-SELECT 'Post' as "entityType", "postId" as "entityId", "addedById" as "userId", 'Collection' as "metricType", 1 as "metricValue", "createdAt"
+-- Single query for all CollectionItem metrics
+SELECT "collectionId", "articleId", "postId", "imageId", "modelId",
+       "addedById", "createdAt"
 FROM "CollectionItem"
-WHERE "postId" IS NOT NULL AND "createdAt" < ${cutoff}
+WHERE "createdAt" < ${cutoff}
 ```
 
-### 5. ImageMetric (Already implemented in migrate-img-metrics.ts)
+```typescript
+// Post-processor for CollectionItem metrics
+function processCollectionItems(items: CollectionItemRow[]): EntityMetricEvent[] {
+  const events: EntityMetricEvent[] = [];
+
+  items.forEach(item => {
+    // Collection itemCount metric
+    events.push({
+      entityType: 'Collection',
+      entityId: item.collectionId,
+      userId: item.addedById,
+      metricType: 'itemCount',
+      metricValue: 1,
+      createdAt: item.createdAt
+    });
+
+    // Entity-specific collectedCount metrics
+    if (item.modelId) {
+      events.push({
+        entityType: 'Model',
+        entityId: item.modelId,
+        userId: item.addedById,
+        metricType: 'collectedCount',
+        metricValue: 1,
+        createdAt: item.createdAt
+      });
+    }
+
+    if (item.postId) {
+      events.push({
+        entityType: 'Post',
+        entityId: item.postId,
+        userId: item.addedById,
+        metricType: 'collectedCount',
+        metricValue: 1,
+        createdAt: item.createdAt
+      });
+    }
+
+    if (item.articleId) {
+      events.push({
+        entityType: 'Article',
+        entityId: item.articleId,
+        userId: item.addedById,
+        metricType: 'collectedCount',
+        metricValue: 1,
+        createdAt: item.createdAt
+      });
+    }
+
+    if (item.imageId) {
+      events.push({
+        entityType: 'Image',
+        entityId: item.imageId,
+        userId: item.addedById,
+        metricType: 'Collection',  // Note: Image uses 'Collection' not 'collectedCount'
+        metricValue: 1,
+        createdAt: item.createdAt
+      });
+    }
+  });
+
+  return events;
+}
+```
+
+#### tippedCount / tippedAmount (from BuzzTip)
+*See Optimized Query Strategy - handled in single BuzzTip query*
+
+### 5. ImageMetric
+
+#### Like / Dislike / Laugh / Cry / Heart (from ImageReaction)
+```sql
+SELECT 'Image' as "entityType", "imageId" as "entityId", "userId",
+       reaction as "metricType", 1 as "metricValue", "createdAt"
+FROM "ImageReaction"
+WHERE "createdAt" < ${cutoff}
+```
+
+#### Collection (from CollectionItem)
+*See Optimized Query Strategy - handled in single CollectionItem query*
+
+#### commentCount (from CommentV2)
+*See Optimized Query Strategy - handled in single CommentV2 query*
+
+#### tippedCount / tippedAmount (from BuzzTip)
+*See Optimized Query Strategy - handled in single BuzzTip query*
 
 ### 6. CollectionMetric
 
-#### followerCount / contributorCount
+#### followerCount / contributorCount (from CollectionContributor)
 ```sql
-SELECT 'Collection' as "entityType", "collectionId" as "entityId", "userId", 'Follower' as "metricType", 1 as "metricValue", "createdAt"
+-- Both metrics come from the same table
+SELECT 'Collection' as "entityType", "collectionId" as "entityId", "userId", 'followerCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "CollectionContributor"
 WHERE "createdAt" < ${cutoff}
 
-SELECT 'Collection' as "entityType", "collectionId" as "entityId", "userId", 'Contributor' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Collection' as "entityType", "collectionId" as "entityId", "userId", 'contributorCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "CollectionContributor"
 WHERE "createdAt" < ${cutoff}
 ```
 
-#### itemCount
-```sql
-SELECT 'Collection' as "entityType", "collectionId" as "entityId", "addedById" as "userId", 'Item' as "metricType", 1 as "metricValue", "createdAt"
-FROM "CollectionItem"
-WHERE "createdAt" < ${cutoff}
-```
+#### itemCount (from CollectionItem)
+*See Optimized Query Strategy - handled in single CollectionItem query*
 
 ### 7. TagMetric
 
-#### hiddenCount / followerCount
+#### hiddenCount / followerCount (from TagEngagement)
 ```sql
-SELECT 'Tag' as "entityType", "tagId" as "entityId", "userId", 'Hidden' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Tag' as "entityType", "tagId" as "entityId", "userId", 'hiddenCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "TagEngagement"
 WHERE type = 'Hide' AND "createdAt" < ${cutoff}
 
-SELECT 'Tag' as "entityType", "tagId" as "entityId", "userId", 'Follower' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Tag' as "entityType", "tagId" as "entityId", "userId", 'followerCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "TagEngagement"
 WHERE type = 'Follow' AND "createdAt" < ${cutoff}
 ```
 
 ### 8. ArticleMetric
 
-#### reaction metrics
+#### Like / Dislike / Laugh / Cry / Heart (from ArticleReaction)
 ```sql
 SELECT 'Article' as "entityType", "articleId" as "entityId", "userId",
-       concat('Reaction', reaction) as "metricType", 1 as "metricValue", "createdAt"
+       reaction as "metricType", 1 as "metricValue", "createdAt"
 FROM "ArticleReaction"
-WHERE "createdAt" < ${cutoff} AND reaction IN ('Like', 'Dislike', 'Laugh', 'Cry', 'Heart')
+WHERE "createdAt" < ${cutoff}
 ```
 
-#### commentCount
+#### commentCount (from CommentV2)
+@dev: let's see if we can get all comment metrics for every entity type in a single go with post processing
+
+@ai: Yes! Let's combine all CommentV2 metrics across entity types:
+
 ```sql
-SELECT 'Article' as "entityType", t."articleId" as "entityId", c."userId", 'Comment' as "metricType", 1 as "metricValue", c."createdAt"
-FROM "Thread" t
-JOIN "CommentV2" c ON c."threadId" = t.id
-WHERE t."articleId" IS NOT NULL AND c."createdAt" < ${cutoff}
+-- Single query for all CommentV2 metrics
+SELECT t."postId", t."imageId", t."articleId", t."bountyId",
+       c."userId", c."createdAt"
+FROM "CommentV2" c
+JOIN "Thread" t ON c."threadId" = t.id
+WHERE c."createdAt" < ${cutoff}
 ```
 
-#### favoriteCount / collectedCount
-```sql
-SELECT 'Article' as "entityType", "articleId" as "entityId", "addedById" as "userId", 'Favorite' as "metricType", 1 as "metricValue", "createdAt"
-FROM "CollectionItem"
-WHERE "articleId" IS NOT NULL AND "createdAt" < ${cutoff}
+```typescript
+// Post-processor for CommentV2 metrics
+function processComments(comments: CommentRow[]): EntityMetricEvent[] {
+  const events: EntityMetricEvent[] = [];
 
-SELECT 'Article' as "entityType", "articleId" as "entityId", "addedById" as "userId", 'Collection' as "metricType", 1 as "metricValue", "createdAt"
-FROM "CollectionItem"
-WHERE "articleId" IS NOT NULL AND "createdAt" < ${cutoff}
+  comments.forEach(comment => {
+    if (comment.postId) {
+      events.push({
+        entityType: 'Post',
+        entityId: comment.postId,
+        userId: comment.userId,
+        metricType: 'commentCount',
+        metricValue: 1,
+        createdAt: comment.createdAt
+      });
+    }
+
+    if (comment.imageId) {
+      events.push({
+        entityType: 'Image',
+        entityId: comment.imageId,
+        userId: comment.userId,
+        metricType: 'commentCount',
+        metricValue: 1,
+        createdAt: comment.createdAt
+      });
+    }
+
+    if (comment.articleId) {
+      events.push({
+        entityType: 'Article',
+        entityId: comment.articleId,
+        userId: comment.userId,
+        metricType: 'commentCount',
+        metricValue: 1,
+        createdAt: comment.createdAt
+      });
+    }
+
+    if (comment.bountyId) {
+      events.push({
+        entityType: 'Bounty',
+        entityId: comment.bountyId,
+        userId: comment.userId,
+        metricType: 'commentCount',
+        metricValue: 1,
+        createdAt: comment.createdAt
+      });
+    }
+  });
+
+  return events;
+}
 ```
 
-#### hideCount
-```sql
-SELECT 'Article' as "entityType", "articleId" as "entityId", "userId", 'Hide' as "metricType", 1 as "metricValue", "createdAt"
-FROM "ArticleEngagement"
-WHERE type = 'Hide' AND "createdAt" < ${cutoff}
-```
+#### collectedCount (from CollectionItem)
+*See Optimized Query Strategy - handled in single CollectionItem query*
 
-#### tippedCount / tippedAmountCount
-```sql
-SELECT 'Article' as "entityType", "entityId", "fromUserId" as "userId", 'TipCount' as "metricType", 1 as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'Article' AND "createdAt" < ${cutoff}
-
-SELECT 'Article' as "entityType", "entityId", "fromUserId" as "userId", 'TipAmount' as "metricType", amount as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'Article' AND "createdAt" < ${cutoff}
-```
+#### tippedCount / tippedAmount (from BuzzTip)
+*See Optimized Query Strategy - handled in single BuzzTip query*
 
 ### 9. BountyMetric
 
-#### favoriteCount / trackCount
+#### favoriteCount / trackCount (from BountyEngagement)
 ```sql
-SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'Favorite' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'favoriteCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "BountyEngagement"
 WHERE type = 'Favorite' AND "createdAt" < ${cutoff}
 
-SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'Track' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'trackCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "BountyEngagement"
 WHERE type = 'Track' AND "createdAt" < ${cutoff}
 ```
 
-#### entryCount
+#### entryCount (from BountyEntry)
 ```sql
-SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'Entry' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'entryCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "BountyEntry"
 WHERE "createdAt" < ${cutoff}
 ```
 
-#### benefactorCount / unitAmountCount
+#### benefactorCount / unitAmount (from BountyBenefactor)
 ```sql
-SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'Benefactor' as "metricType", 1 as "metricValue", "createdAt"
+SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'benefactorCount' as "metricType", 1 as "metricValue", "createdAt"
 FROM "BountyBenefactor"
 WHERE "createdAt" < ${cutoff}
 
-SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'UnitAmount' as "metricType", "unitAmount" as "metricValue", "createdAt"
+SELECT 'Bounty' as "entityType", "bountyId" as "entityId", "userId", 'unitAmount' as "metricType", "unitAmount" as "metricValue", "createdAt"
 FROM "BountyBenefactor"
 WHERE "createdAt" < ${cutoff}
 ```
 
-#### commentCount
-```sql
-SELECT 'Bounty' as "entityType", t."bountyId" as "entityId", c."userId", 'Comment' as "metricType", 1 as "metricValue", c."createdAt"
-FROM "Thread" t
-JOIN "CommentV2" c ON c."threadId" = t.id
-WHERE t."bountyId" IS NOT NULL AND c."createdAt" < ${cutoff}
-```
+#### commentCount (from CommentV2)
+*See Optimized Query Strategy - handled in single CommentV2 query*
 
 ### 10. BountyEntryMetric
 
-#### reaction metrics
+#### Like / Dislike / Laugh / Cry / Heart (from BountyEntryReaction)
 ```sql
 SELECT 'BountyEntry' as "entityType", "bountyEntryId" as "entityId", "userId",
-       concat('Reaction', reaction) as "metricType", 1 as "metricValue", "createdAt"
+       reaction as "metricType", 1 as "metricValue", "createdAt"
 FROM "BountyEntryReaction"
-WHERE "createdAt" < ${cutoff} AND reaction IN ('Like', 'Dislike', 'Laugh', 'Cry', 'Heart')
+WHERE "createdAt" < ${cutoff}
 ```
 
-#### unitAmountCount
+#### unitAmount (from BountyBenefactor when awarded)
 ```sql
-SELECT 'BountyEntry' as "entityType", be."id" as "entityId", bb."userId", 'UnitAmount' as "metricType", bb."unitAmount" as "metricValue", bb."updatedAt"
+SELECT 'BountyEntry' as "entityType", be."id" as "entityId", bb."userId", 'unitAmount' as "metricType", bb."unitAmount" as "metricValue", bb."awardedAt"
 FROM "BountyEntry" be
 JOIN "BountyBenefactor" bb ON bb."awardedToId" = be."userId" AND bb."bountyId" = be."bountyId"
-WHERE bb."updatedAt" < ${cutoff}
+WHERE bb."awardedAt" IS NOT NULL AND bb."awardedAt" < ${cutoff}
 ```
 
-#### tippedCount / tippedAmountCount
-```sql
-SELECT 'BountyEntry' as "entityType", "entityId", "fromUserId" as "userId", 'TipCount' as "metricType", 1 as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'BountyEntry' AND "createdAt" < ${cutoff}
+## Optimized Query Strategy
 
-SELECT 'BountyEntry' as "entityType", "entityId", "fromUserId" as "userId", 'TipAmount' as "metricType", amount as "metricValue", "createdAt"
-FROM "BuzzTip"
-WHERE "entityType" = 'BountyEntry' AND "createdAt" < ${cutoff}
-```
+### Shared Tables Processing
+
+Instead of running separate queries for each entity type, we'll use single queries for shared tables and post-process the results:
+
+1. **BuzzTip** - Single query generates metrics for:
+   - User: tippedCount, tippedAmount, tipsGivenCount, tipsGivenAmount
+   - Model/Post/Article/Image: tippedCount, tippedAmount
+
+2. **CollectionItem** - Single query generates metrics for:
+   - Collection: itemCount
+   - Model/Post/Article: collectedCount
+   - Image: Collection
+
+3. **CommentV2 + Thread** - Single query generates metrics for:
+   - Post/Image/Article/Bounty: commentCount
+
+4. **ResourceReview** - Single query generates metrics for:
+   - Model/ModelVersion: ratingCount, thumbsUpCount, thumbsDownCount
+
+5. **Comment** (old table) - Separate query for Model commentCount
 
 ## Migration Processing Approach
 
@@ -324,49 +617,64 @@ WHERE "entityType" = 'BountyEntry' AND "createdAt" < ${cutoff}
 
 ```typescript
 type MetricQuery = {
-  entityType: EntityMetric_EntityType_Type;
-  metricType: EntityMetric_MetricType_Type;
+  entityType: string;
+  metricType: string;
   sql: Prisma.Sql;
 };
 
+type MigrationConfig = {
+  entityType: string;
+  tableName: string;
+  idColumn: string;
+  queries: MetricQuery[];
+};
+
 async function migrateEntityMetrics(
-  entityType: EntityMetric_EntityType_Type,
-  idColumn: string,
-  queries: MetricQuery[],
+  config: MigrationConfig,
   params: MigrationParams
 ) {
-  const cutoff = '2024-08-07 15:44:39.044'; // Or pass as parameter
+  const cutoff = '2024-08-07 15:44:39.044';
+  const { entityType, tableName, idColumn, queries } = config;
 
   await dataProcessor({
     params,
     runContext: res,
     rangeFetcher: async (context) => {
-      // Get max ID for the entity type
+      // Get max ID for the main table of this entity type
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
-        Prisma.sql`SELECT MAX("${Prisma.raw(idColumn)}") "max" FROM "${Prisma.raw(entityType)}";`
+        Prisma.sql`SELECT MAX("${Prisma.raw(idColumn)}") "max" FROM "${Prisma.raw(tableName)}";`
       );
       return { start: context.start, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
       let data: QueryRes[] = [];
 
-      // Execute all queries for this entity type
-      for (const query of queries) {
+      // Execute all queries for this entity type in parallel
+      const queryPromises = queries.map(async (query) => {
         const queryResult = await pgDbRead.cancellableQuery<QueryRes>(
-          // Inject the range parameters into the query
-          Prisma.sql`${query.sql} AND "${Prisma.raw(idColumn)}" BETWEEN ${start} AND ${end}`
+          query.sql // Queries should handle their own range filtering
         );
         cancelFns.push(queryResult.cancel);
-        data = data.concat(await queryResult.result());
-      }
+        return queryResult.result();
+      });
+
+      const results = await Promise.all(queryPromises);
+      data = results.flat();
+
+      // Transform data to ClickHouse format
+      const events = data.map(row => ({
+        entityType: row.entityType,
+        entityId: row.entityId,
+        userId: row.userId,
+        metricType: row.metricType,
+        metricValue: row.metricValue,
+        createdAt: row.createdAt,
+      }));
 
       // Insert into ClickHouse
-      await insertClickhouse(data, start, end);
+      await insertClickhouse(events);
 
-      console.log(`Fetched ${entityType} metrics:`, start, '-', end);
-
-      // Clean up cancel functions
-      queries.forEach(q => remove(cancelFns, q.cancel));
+      console.log(`Processed ${entityType} metrics:`, data.length, 'events');
     },
   });
 }
@@ -377,31 +685,34 @@ async function migrateEntityMetrics(
 ```typescript
 // Migrate User metrics
 await migrateEntityMetrics(
-  'User',
-  'id',
-  [
-    {
-      entityType: 'User',
-      metricType: 'Follower',
-      sql: Prisma.sql`
-        SELECT 'User' as "entityType", "targetUserId" as "entityId",
-               "userId", 'Follower' as "metricType", 1 as "metricValue", "createdAt"
-        FROM "UserEngagement"
-        WHERE type = 'Follow' AND "createdAt" < ${cutoff}
-      `
-    },
-    {
-      entityType: 'User',
-      metricType: 'Hidden',
-      sql: Prisma.sql`
-        SELECT 'User' as "entityType", "targetUserId" as "entityId",
-               "userId", 'Hidden' as "metricType", 1 as "metricValue", "createdAt"
-        FROM "UserEngagement"
-        WHERE type = 'Hide' AND "createdAt" < ${cutoff}
-      `
-    },
-    // ... more queries
-  ],
+  {
+    entityType: 'User',
+    tableName: 'User',
+    idColumn: 'id',
+    queries: [
+      {
+        entityType: 'User',
+        metricType: 'followerCount',
+        sql: Prisma.sql`
+          SELECT 'User' as "entityType", "targetUserId" as "entityId",
+                 "userId", 'followerCount' as "metricType", 1 as "metricValue", "createdAt"
+          FROM "UserEngagement"
+          WHERE type = 'Follow' AND "createdAt" < ${cutoff}
+        `
+      },
+      {
+        entityType: 'User',
+        metricType: 'hiddenCount',
+        sql: Prisma.sql`
+          SELECT 'User' as "entityType", "targetUserId" as "entityId",
+                 "userId", 'hiddenCount' as "metricType", 1 as "metricValue", "createdAt"
+          FROM "UserEngagement"
+          WHERE type = 'Hide' AND "createdAt" < ${cutoff}
+        `
+      },
+      // ... more queries
+    ]
+  },
   { concurrency: 10, batchSize: 500, start: 0 }
 );
 ```
@@ -410,26 +721,54 @@ await migrateEntityMetrics(
 
 Some metrics come from ClickHouse tables and need special handling:
 
-1. **Model/ModelVersion downloadCount**: From `modelVersionEvents` where type = 'Download'
-2. **Model/ModelVersion generationCount**: From `orchestration.jobs`
-3. **Model/ModelVersion earnedAmount**: From `buzz_resource_compensation`
+1. **Model/ModelVersion downloadCount**: From `modelVersionEvents` table (handled by modelVersionEventsHandler)
+2. **Model/ModelVersion generationCount**: From `orchestration.jobs` table (handled by jobsHandler)
+3. **Model/ModelVersion earnedAmount**: From `buzz_resource_compensation` table (handled by buzzResourceCompensationHandler)
 
 These will need a separate migration approach that reads from ClickHouse and writes back to the `entityMetricEvents` table.
 
-### Migration Order
+### Migration Order (Optimized)
 
-1. **User metrics** - Independent
-2. **Collection metrics** - Independent
-3. **Tag metrics** - Independent
-4. **Model/ModelVersion metrics** - Do together, share some queries
-5. **Post metrics** - Depends on Image
-6. **Article metrics** - Independent
-7. **Bounty/BountyEntry metrics** - Do together, share some queries
-8. **ClickHouse metrics** - Last, after all Postgres data is migrated
+**Phase 1: Shared Table Processing**
+1. **BuzzTip** - Process once for all entity types
+2. **CollectionItem** - Process once for all entity types
+3. **CommentV2** - Process once for all entity types
+4. **ResourceReview** - Process once for Model/ModelVersion
 
-@ai: I've outlined all the queries needed for each entityType/metricType combination based on the debezium.md mappings. The migration approach follows the pattern from migrate-img-metrics.ts but with a higher-order function that can handle any entity type systematically. The key improvements are:
+**Phase 2: Entity-Specific Tables**
+5. **UserEngagement** - User metrics only
+6. **ImageReaction** - Process for Image/Post/User
+7. **ArticleReaction** - Article/User metrics
+8. **BountyEntryReaction** - BountyEntry/User metrics
+9. **ImageResourceNew** - Model/ModelVersion metrics
+10. **Other entity-specific tables** - Process remaining metrics
 
-1. Grouped related queries by entity type for efficiency
-2. Created a reusable function that handles the range-based processing
-3. Identified which metrics come from ClickHouse vs Postgres
-4. Suggested an optimal migration order based on dependencies
+**Phase 3: ClickHouse Migration**
+11. **modelVersionEvents** - downloadCount
+12. **orchestration.jobs** - generationCount
+13. **buzz_resource_compensation** - earnedAmount
+
+### Summary of Metric Alignment
+
+The updated plan now aligns with the new metrics system (docs/reference/new-metrics.md):
+
+**Key Changes from Original Plan:**
+1. Removed deprecated metrics (rating values, favoriteCount, etc.)
+2. Added new User metrics (articleCount, bountyCount, tipsGivenAmount/Count)
+3. Updated reaction metric names to match handler output (Like, Heart, etc. instead of likeCount)
+4. Corrected table references (ImageResourceNew instead of ImageResource, Comment vs CommentV2)
+5. Added missing entities like BountyEntry reactions
+6. Aligned all 75 unique metrics across 21 handlers
+
+**Total Metrics to Backfill:**
+- User: 10 metrics
+- Model: 10 metrics
+- ModelVersion: 7 metrics
+- Post: 12 metrics
+- Image: 9 metrics
+- Collection: 3 metrics
+- Tag: 2 metrics
+- Article: 9 metrics
+- Bounty: 6 metrics
+- BountyEntry: 6 metrics
+- **Total: 74 metrics** (Image.Collection counted separately)
