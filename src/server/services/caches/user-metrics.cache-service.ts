@@ -1,80 +1,53 @@
-import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import { populateEntityMetrics } from '~/server/redis/entity-metric-populate';
+import { createEntityMetricsCache, getMetricValue } from './entity-metrics.cache-helper';
 import { dbRead } from '~/server/db/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import type { CachedObject } from '~/server/utils/cache-helpers';
-import { Prisma } from '@prisma/client';
 
 export type UserMetricLookup = {
   userId: number;
-  followingCount: number | null;
   followerCount: number | null;
-  reactionCount: number | null;
-  hiddenCount: number | null;
   uploadCount: number | null;
-  reviewCount: number | null;
+  downloadCount: number | null;
+  engagementScore: number | null;
 };
+
+/**
+ * Get additional user metrics from PostgreSQL
+ */
+async function getUserAdditionalMetrics(userIds: number[]): Promise<Map<number, Partial<UserMetricLookup>>> {
+  // Get all additional metrics in parallel
+  const [uploadCounts, downloadCounts, engagementScores] = await Promise.all([
+    getUserUploadCounts(userIds),
+    getUserDownloadCounts(userIds),
+    getUserEngagementScores(userIds),
+  ]);
+
+  const results = new Map<number, Partial<UserMetricLookup>>();
+  for (const userId of userIds) {
+    results.set(userId, {
+      uploadCount: uploadCounts.get(userId) || null,
+      downloadCount: downloadCounts.get(userId) || null,
+      engagementScore: engagementScores.get(userId) || null,
+    });
+  }
+
+  return results;
+}
 
 /**
  * User metrics cache using direct Redis entity metrics plus derived metrics
  * Follows the same pattern as imageMetricsCache
  * Metrics are populated from existing PostgreSQL UserMetric table and ClickHouse events
  */
-export const userMetricsCache: Pick<
-  CachedObject<UserMetricLookup>,
-  'fetch' | 'bust' | 'refresh' | 'flush'
-> = {
-  fetch: async (ids: number | number[]): Promise<Record<string, UserMetricLookup>> => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return {};
-
-    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
-    await populateEntityMetrics('User', ids);
-
-    // Fetch from Redis
-    const metricsMap = await entityMetricRedis.getBulkMetrics('User', ids);
-
-    // Get derived metrics in parallel
-    const [uploadCounts, downloadCounts, engagementScores] = await Promise.all([
-      getUserUploadCounts(ids),
-      getUserDownloadCounts(ids),
-      getUserEngagementScores(ids),
-    ]);
-
-    const results: Record<string, UserMetricLookup> = {};
-    for (const id of ids) {
-      const metrics = metricsMap.get(id);
-      results[id] = {
-        userId: id,
-        followerCount: metrics?.Follow || null,
-        uploadCount: uploadCounts.get(id) || null,
-        downloadCount: downloadCounts.get(id) || null,
-        engagementScore: engagementScores.get(id) || null,
-      };
-    }
-    return results;
-  },
-
-  bust: async (ids: number | number[]) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Delete from Redis to force re-fetch from ClickHouse
-    await Promise.all(ids.map((id) => entityMetricRedis.delete('User', id)));
-  },
-
-  refresh: async (ids: number | number[], skipCache?: boolean) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
-    await populateEntityMetrics('User', ids, true);
-  },
-
-  flush: async () => {
-    // Clear all user metrics from Redis - Not Supported
-  },
-};
+export const userMetricsCache = createEntityMetricsCache<UserMetricLookup>({
+  entityType: 'User',
+  transformMetrics: (entityId, metrics) => ({
+    userId: entityId,
+    followerCount: getMetricValue(metrics, 'Follow'),
+    uploadCount: null, // Will be filled by additionalDataFetcher
+    downloadCount: null, // Will be filled by additionalDataFetcher
+    engagementScore: null, // Will be filled by additionalDataFetcher
+  }),
+  additionalDataFetcher: getUserAdditionalMetrics,
+});
 
 /**
  * Get upload counts for users from UserMetric table (maintained by user.metrics.ts)

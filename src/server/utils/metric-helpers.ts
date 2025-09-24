@@ -1,12 +1,10 @@
-import type {
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
-} from '~/shared/utils/prisma/enums';
+import type { EntityMetric_MetricType_Type } from '~/shared/utils/prisma/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
+import type { EntityMetric_EntityType_Type } from '~/shared/utils/prisma/models';
 
 export const updateEntityMetric = async ({
   ctx,

@@ -31,8 +31,6 @@ import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { trackImageAndPostMetric } from '~/server/utils/metric-image-helpers';
-import { toMetricEntityType } from '~/server/utils/metric-constants';
 import { ClubAdminPermission, EntityType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { userContributingClubs } from '../services/club.service';
@@ -239,46 +237,6 @@ export async function createBuzzTipTransactionHandler({
     const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
 
     if (entityType && entityId) {
-      // Track tip metrics for all supported entity types
-      // Convert string entityType to metric entity type (validates it's supported)
-      const metricEntityType = toMetricEntityType(entityType);
-
-      if (metricEntityType) {
-        // Special handling for images - also track for parent post
-        if (metricEntityType === 'Image') {
-          await trackImageAndPostMetric({
-            ctx,
-            imageId: entityId,
-            metricType: 'Tip',
-            amount: 1, // Count of tips
-          });
-
-          await trackImageAndPostMetric({
-            ctx,
-            imageId: entityId,
-            metricType: 'Buzz',
-            amount: finalAmount,
-          });
-        } else {
-          // For other entity types, track directly
-          await updateEntityMetric({
-            ctx,
-            entityType: metricEntityType,
-            entityId,
-            metricType: 'Tip',
-            amount: 1, // Count of tips
-          });
-
-          await updateEntityMetric({
-            ctx,
-            entityType: metricEntityType,
-            entityId,
-            metricType: 'Buzz',
-            amount: finalAmount,
-          });
-        }
-      }
-    } else {
       // Send notification for tips without entity association
       const toAccountId = transactions[0].toAccountId;
       const description = transactions[0].description;
@@ -301,6 +259,16 @@ export async function createBuzzTipTransactionHandler({
           },
         });
       }
+    }
+
+    if (entityType === 'Image' && !!entityId) {
+      await updateEntityMetric({
+        ctx,
+        entityType: 'Image',
+        entityId,
+        metricType: 'Buzz',
+        amount: finalAmount,
+      });
     }
 
     return data;
