@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
-import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
@@ -41,7 +41,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
-  const status = user?.isModerator ? undefined : 'Published';
+  const status = user?.isModerator ? undefined : ModelStatus.Published;
 
   const region = getRegion(req);
   const isRestricted = isRegionRestricted(region);
@@ -137,7 +137,7 @@ export default MixedAuthEndpoint(async function handler(
         ) as model
       FROM "ModelVersion" mv
       WHERE mv.id = ${id}
-        ${status ? Prisma.sql`AND mv.status = ${status}` : Prisma.empty}
+        ${status ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"` : Prisma.empty}
         AND (mv."nsfwLevel" & ${allowedBrowsingLevels}) != 0
       LIMIT 1
     `.then((results) => results[0] || null);
