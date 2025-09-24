@@ -101,7 +101,7 @@ const schema = z.object({
       movie_rating: z.string().optional(),
       movie_rating_model_id: z.string().optional(),
       // hasMinor: z.boolean().optional(),
-      blockedReason: z.string().optional(),
+      blockedReason: z.string().nullish(),
     })
     .nullish(),
   result: z
