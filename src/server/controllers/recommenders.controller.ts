@@ -106,8 +106,8 @@ export const getRecommendedResourcesCardDataHandler = async ({
         return {
           ...model,
           resourceType: 'recommended' as const,
-          tags: tagsOnModels.map(({ tagId }) => tagId),
-          hashes: hashes.map((h) => h.toLowerCase()),
+          tags: tagsOnModels.map(({ tagId }: { tagId: number }) => tagId),
+          hashes: hashes.map((h: string | { hash: string }) => (typeof h === 'string' ? h : h.hash).toLowerCase()),
           rank: {
             downloadCount: rank?.downloadCountAllTime ?? 0,
             thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,

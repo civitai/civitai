@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
-import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ModelSort } from '~/server/common/enums';
@@ -73,7 +73,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         : undefined,
       tags: tagsOnModels.map(({ name }) => name),
       modelVersions: modelVersions
-        .filter((x) => x.status === 'Published')
+        .filter((x) => x.status === ModelStatus.Published)
         .map(({ images, files, ...version }) => {
           const castedFiles = files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }

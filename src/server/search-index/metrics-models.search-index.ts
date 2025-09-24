@@ -147,7 +147,6 @@ export type SearchBaseModel = {
   publishedAt?: Date | null;
   lastVersionAt?: Date | null;
   createdAt: Date;
-  fromPlatform: boolean;
   mode?: string | null;
 };
 
@@ -189,9 +188,12 @@ type FeaturedModels = {
 
 type UserInfo = {
   modelId: number;
-  username: string | null;
-  deletedAt: Date | null;
-  image: string | null;
+  user: {
+    id: number;
+    username: string | null;
+    deletedAt: Date | null;
+    image: string | null;
+  };
 };
 
 type ModelTags = Awaited<ReturnType<typeof modelTagCache.fetch>>;
@@ -241,7 +243,7 @@ const transformData = async ({
       const collections = modelCollections.find((mc) => mc.modelId === modelRecord.id);
       const clubs = modelClubs.find((mc) => mc.modelId === modelRecord.id);
       const featured = featuredModels.find((fm) => fm.modelId === modelRecord.id);
-      const user = userInfo.find((ui) => ui.modelId === modelRecord.id);
+      const userInfoRecord = userInfo.find((ui) => ui.modelId === modelRecord.id);
 
       return {
         ...modelRecord,
@@ -258,9 +260,12 @@ const transformData = async ({
         clubId: clubs?.clubIds?.[0], // Primary club
         isFeatured: featured?.isFeatured ?? false,
         tagIds: modelTags[modelRecord.id]?.tagIds ?? [],
-        username: user?.username ?? null,
-        userImage: user?.image ?? null,
-        userDeletedAt: user?.deletedAt ?? null,
+        user: userInfoRecord?.user ?? {
+          id: modelRecord.userId,
+          username: null,
+          deletedAt: null,
+          image: null,
+        },
       };
     })
     .filter(isDefined);
@@ -344,7 +349,7 @@ export const modelsMetricsSearchIndex = createSearchIndexUpdateProcessor({
           m.nsfw,
           m.locked,
           m."allowNoCredit",
-          m."allowCommercialUse"::text,
+          array_to_string(m."allowCommercialUse", ',') as "allowCommercialUse",
           m."allowDerivatives",
           m."allowDifferentLicense",
           m."earlyAccessDeadline",
@@ -352,18 +357,7 @@ export const modelsMetricsSearchIndex = createSearchIndexUpdateProcessor({
           m."publishedAt",
           m."lastVersionAt",
           m."createdAt",
-          m."mode"::text,
-          (
-            CASE
-              WHEN EXISTS (
-                SELECT 1 FROM "ModelVersion" mv
-                WHERE mv."modelId" = m."id"
-                AND mv."trainingStatus" IS NOT NULL
-              )
-              THEN TRUE
-              ELSE FALSE
-            END
-          ) AS "fromPlatform"
+          m."mode"::text
         FROM "Model" m
         WHERE ${Prisma.join(where, ' AND ')}
       `;
@@ -510,9 +504,12 @@ export const modelsMetricsSearchIndex = createSearchIndexUpdateProcessor({
         const userInfo = await db.$queryRaw<UserInfo[]>`
           SELECT
             m."id" as "modelId",
-            u."username",
-            u."deletedAt",
-            u."image"
+            jsonb_build_object(
+              'id', u."id",
+              'username', u."username",
+              'deletedAt', u."deletedAt",
+              'image', u."image"
+            ) as "user"
           FROM "Model" m
           JOIN "User" u ON m."userId" = u."id"
           WHERE m."id" IN (${Prisma.join(batch)})

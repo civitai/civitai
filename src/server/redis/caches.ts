@@ -381,7 +381,7 @@ export const tagCache = createCachedObject<TagLookup>({
   ttl: CacheTTL.day,
 });
 
-type ModelVersionDetails = {
+export type ModelVersionDetails = {
   id: number;
   name: string;
   earlyAccessTimeFrame: number;

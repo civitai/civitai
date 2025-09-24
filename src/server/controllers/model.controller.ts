@@ -210,17 +210,17 @@ export const getModelHandler = async ({
       ...model,
       metrics: undefined,
       rank: {
-        downloadCountAllTime: metrics?.downloadCount ?? 0,
-        favoriteCountAllTime: metrics?.favoriteCount ?? 0,
-        thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
-        thumbsDownCountAllTime: metrics?.thumbsDownCount ?? 0,
-        commentCountAllTime: metrics?.commentCount ?? 0,
-        ratingCountAllTime: metrics?.ratingCount ?? 0,
-        ratingAllTime: Number(metrics?.rating?.toFixed(2) ?? 0),
-        tippedAmountCountAllTime: metrics?.tippedAmountCount ?? 0,
-        imageCountAllTime: metrics?.imageCount ?? 0,
-        collectedCountAllTime: metrics?.collectedCount ?? 0,
-        generationCountAllTime: metrics?.generationCount ?? 0,
+        downloadCount: metrics?.downloadCount ?? 0,
+        favoriteCount: metrics?.favoriteCount ?? 0,
+        thumbsUpCount: metrics?.thumbsUpCount ?? 0,
+        thumbsDownCount: metrics?.thumbsDownCount ?? 0,
+        commentCount: metrics?.commentCount ?? 0,
+        ratingCount: metrics?.ratingCount ?? 0,
+        rating: Number(metrics?.rating?.toFixed(2) ?? 0),
+        tippedAmountCount: metrics?.tippedAmountCount ?? 0,
+        imageCount: metrics?.imageCount ?? 0,
+        collectedCount: metrics?.collectedCount ?? 0,
+        generationCount: metrics?.generationCount ?? 0,
       },
       canGenerate: filteredVersions.some(
         (version) =>
@@ -349,7 +349,7 @@ export const getModelsInfiniteHandler = async ({
   try {
     let loopCount = 0;
     let isPrivate = false;
-    let nextCursor: string | bigint | undefined;
+    let nextCursor: string | bigint | undefined | number | Date;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
@@ -1386,8 +1386,10 @@ export const getAssociatedResourcesCardDataHandler = async ({
 
         return {
           ...model,
-          tags: tagsOnModels.map(({ tagId }) => tagId),
-          hashes: hashes.map((h) => h.toLowerCase()),
+          tags: tagsOnModels.map(({ tagId }: { tagId: number }) => tagId),
+          hashes: hashes.map((h: string | { hash: string }) =>
+            (typeof h === 'string' ? h : h.hash).toLowerCase()
+          ),
           rank: {
             downloadCount: rank?.downloadCountAllTime ?? 0,
             thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,

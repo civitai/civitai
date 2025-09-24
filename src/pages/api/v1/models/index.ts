@@ -30,7 +30,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 type Metadata = {
   currentPage?: number;
   pageSize?: number;
-  nextCursor?: string | bigint | Date;
+  nextCursor?: string | bigint | Date | number;
   nextPage?: string;
 };
 

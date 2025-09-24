@@ -153,7 +153,7 @@ export function getNextPage({
   nextCursor,
 }: {
   req: NextApiRequest;
-  nextCursor?: string | bigint | Date;
+  nextCursor?: string | bigint | Date | number;
   currentPage?: number;
 }) {
   const baseUrl = new URL(

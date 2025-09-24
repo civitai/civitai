@@ -25,7 +25,68 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient, metricsSearchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
+import type { ModelMetricsSearchIndexRecord } from '~/server/search-index/metrics-models.search-index';
+
+// Common types for getModelsRaw and getModelsRawMeili
+export type GetModelsRawInput = {
+  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+    take?: number;
+    skip?: number;
+  };
+  include?: Array<'details' | 'cosmetics'>;
+  user?: { id: number; isModerator?: boolean; username?: string };
+};
+
+// Final augmented model item type based on existing ModelRaw with cache enhancements
+export type ModelRawItem = Omit<ModelRaw, 'hashes'> & {
+  // Rank with standard metric names (no period suffix)
+  rank: {
+    downloadCount: number;
+    thumbsUpCount: number;
+    thumbsDownCount: number;
+    commentCount: number;
+    ratingCount: number;
+    rating: number;
+    collectedCount: number;
+    tippedAmountCount: number;
+  };
+
+  // Augmented user with profile picture and cosmetics from cache
+  user: {
+    id: number;
+    username: string | null;
+    deletedAt: Date | null;
+    image: string | null;
+    profilePicture: ProfileImage | null; // added from profilePictures cache
+    cosmetics: Array<{
+      cosmeticId: number;
+      data: Prisma.JsonValue;
+      cosmetic: {
+        id: number;
+        name: string;
+        type: CosmeticType;
+        source: CosmeticSource;
+        data: Prisma.JsonValue;
+      };
+    }>; // added from userCosmetics cache
+  };
+
+  // Hashes converted from objects to strings
+  hashes: string[]; // was { hash: string }[]
+
+  // Cosmetics (only if 'cosmetics' in include array)
+  cosmetic: WithClaimKey<ContentDecorationCosmetic> | null;
+};
+
+// Shared return type for both getModelsRaw functions
+export type GetModelsRawResult = {
+  items: ModelRawItem[];
+  nextCursor: string | bigint | number | Date | undefined;
+  isPrivate: boolean;
+};
+
 import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
+import type { ModelVersionDetails } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -59,6 +120,7 @@ import {
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type { ProfileImage } from '~/server/selectors/image.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -107,7 +169,12 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type { CommercialUse, ModelType } from '~/shared/utils/prisma/enums';
+import type {
+  CommercialUse,
+  CosmeticSource,
+  CosmeticType,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import {
   AuctionType,
   Availability,
@@ -130,7 +197,6 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -218,14 +284,7 @@ export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
-}: {
-  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
-    take?: number;
-    skip?: number;
-  };
-  include?: Array<'details' | 'cosmetics'>;
-  user?: { id: number; isModerator?: boolean; username?: string };
-}) => {
+}: GetModelsRawInput): Promise<GetModelsRawResult> => {
   const {
     user,
     take,
@@ -289,6 +348,7 @@ export const getModelsRaw = async ({
     if (!searchModelIds.length) {
       return {
         items: [],
+        nextCursor: undefined,
         isPrivate: false,
       };
     }
@@ -544,7 +604,7 @@ export const getModelsRaw = async ({
     });
 
     if (!permissions.read) {
-      return { items: [], isPrivate: true };
+      return { items: [], nextCursor: undefined, isPrivate: true };
     }
 
     const { rawAND: collectionItemModelsAND }: { rawAND: Prisma.Sql[] } =
@@ -778,14 +838,14 @@ export const getModelsRaw = async ({
         return {
           ...model,
           rank: {
-            [`downloadCount${input.period}`]: rank.downloadCount,
-            [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
-            [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
-            [`commentCount${input.period}`]: rank.commentCount,
-            [`ratingCount${input.period}`]: rank.ratingCount,
-            [`rating${input.period}`]: rank.rating,
-            [`collectedCount${input.period}`]: rank.collectedCount,
-            [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
+            downloadCount: rank.downloadCount,
+            thumbsUpCount: rank.thumbsUpCount,
+            thumbsDownCount: rank.thumbsDownCount,
+            commentCount: rank.commentCount,
+            ratingCount: rank.ratingCount,
+            rating: rank.rating,
+            collectedCount: rank.collectedCount,
+            tippedAmountCount: rank.tippedAmountCount,
           },
           modelVersions,
           hashes: data.hashes,
@@ -796,42 +856,12 @@ export const getModelsRaw = async ({
             cosmetics: userCosmetics[model.user.id] ?? [],
           },
           cosmetic: cosmetics[model.id] ?? null,
-        };
+        } as ModelRawItem;
       })
       .filter(isDefined),
     nextCursor,
     isPrivate,
   };
-};
-
-// Model Metrics Search Types and Helpers
-// Based on the image metrics search pattern
-type ModelMetricsSearchIndexRecord = {
-  id: number;
-  userId: number;
-  type: string;
-  status: string;
-  checkpointType?: string;
-  baseModel: string;
-  tagIds: number[];
-  nsfwLevel: number;
-  poi: boolean;
-  minor: boolean;
-  earlyAccess: boolean;
-  supportsGeneration: boolean;
-  fromPlatform: boolean;
-  availability: string;
-  publishedAtUnix: number;
-  lastVersionAtUnix: number;
-  collectionId?: number;
-  clubId?: number;
-  fileFormats: string[];
-  isFeatured: boolean;
-  downloadCount: number;
-  favoriteCount: number;
-  commentCount: number;
-  ratingCount: number;
-  rating: number;
 };
 
 // Filterable and sortable attributes based on the documentation
@@ -942,7 +972,7 @@ export async function getModelsFromSearch(input: ModelSearchInput) {
     poiOnly,
     minorOnly,
     browsingLevel = 31, // PG by default
-    limit = 100,
+    take: limit = 100,
     offset = 0,
     entry,
   } = input;
@@ -974,7 +1004,7 @@ export async function getModelsFromSearch(input: ModelSearchInput) {
   const nsfwFilters = [makeMeiliModelSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`)];
 
   // Allow users to see their own unscanned content
-  if (currentUserId && input.userId === currentUserId) {
+  if (currentUserId) {
     nsfwFilters.push(makeMeiliModelSearchFilter('nsfwLevel', `= 0`));
   }
 
@@ -1000,8 +1030,14 @@ export async function getModelsFromSearch(input: ModelSearchInput) {
     });
     if (!targetUser) throw new Error('User not found');
     filters.push(makeMeiliModelSearchFilter('userId', `= ${targetUser.id}`));
-  } else if (input.userId) {
-    filters.push(makeMeiliModelSearchFilter('userId', `= ${input.userId}`));
+  } else if (user) {
+    const targetUser = await dbRead.user.findUnique({
+      where: { username: user },
+      select: { id: true },
+    });
+    if (targetUser) {
+      filters.push(makeMeiliModelSearchFilter('userId', `= ${targetUser.id}`));
+    }
   } else if (excludedUserIds?.length) {
     filters.push(makeMeiliModelSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
   }
@@ -1187,7 +1223,7 @@ export async function getModelsFromSearch(input: ModelSearchInput) {
 
     // Apply post-query filtering for user-specific content
     const filteredHits = results.hits.filter((hit) => {
-      const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
+      const isOwnContent = (currentUserId && hit.user.id === currentUserId) || isModerator;
 
       // User can see their own private content
       if (hit.availability === 'Private' && !isOwnContent) return false;
@@ -1225,14 +1261,7 @@ export async function getModelsRawMeili({
   input,
   include,
   user: sessionUser,
-}: {
-  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
-    take?: number;
-    skip?: number;
-  };
-  include?: Array<'details' | 'cosmetics'>;
-  user?: { id: number; isModerator?: boolean; username?: string };
-}) {
+}: GetModelsRawInput): Promise<GetModelsRawResult> {
   const { take, cursor, ...restInput } = input;
 
   // Handle cursor-based pagination
@@ -1328,49 +1357,50 @@ export async function getModelsRawMeili({
           id: searchResult.id,
           name: searchResult.name,
           description: searchResult.description,
+          // License fields (always include based on sample)
+          allowNoCredit: searchResult.allowNoCredit,
+          allowCommercialUse: searchResult.allowCommercialUse
+            ? searchResult.allowCommercialUse.split(',').filter(Boolean)
+            : [],
+          allowDerivatives: searchResult.allowDerivatives,
+          allowDifferentLicense: searchResult.allowDifferentLicense,
           type: searchResult.type,
           minor: searchResult.minor,
-          poi: searchResult.poi,
           sfwOnly: searchResult.sfwOnly,
+          poi: searchResult.poi,
           nsfw: searchResult.nsfw,
           nsfwLevel: searchResult.nsfwLevel,
-          locked: searchResult.locked,
           status: searchResult.status,
           createdAt: searchResult.createdAt,
           lastVersionAt: new Date(searchResult.lastVersionAtUnix),
           publishedAt: searchResult.publishedAtUnix ? new Date(searchResult.publishedAtUnix) : null,
-          availability: searchResult.availability,
+          locked: searchResult.locked,
           earlyAccessDeadline: searchResult.earlyAccess ? new Date() : null,
-          mode: searchResult.mode || 'Archived',
-          // Include detailed license fields from search index
-          ...(includeDetails && {
-            allowNoCredit: searchResult.allowNoCredit,
-            allowCommercialUse: searchResult.allowCommercialUse,
-            allowDerivatives: searchResult.allowDerivatives,
-            allowDifferentLicense: searchResult.allowDifferentLicense,
-          }),
+          mode: searchResult.mode,
+          availability: searchResult.availability,
+          user: {
+            id: searchResult.user.id,
+            image: searchResult.user.image,
+            username: searchResult.user.username,
+            deletedAt: searchResult.user.deletedAt,
+            profilePicture: profilePictures?.[searchResult.user.id] ?? null,
+            cosmetics: userCosmetics[searchResult.user.id] ?? [],
+          },
           rank: {
-            [`downloadCount${period}`]: searchResult.downloadCount,
-            [`thumbsUpCount${period}`]: searchResult.thumbsUpCount,
-            [`thumbsDownCount${period}`]: searchResult.thumbsDownCount,
-            [`commentCount${period}`]: searchResult.commentCount,
-            [`ratingCount${period}`]: searchResult.ratingCount,
-            [`rating${period}`]: searchResult.rating,
-            [`collectedCount${period}`]: searchResult.collectedCount,
-            [`tippedAmountCount${period}`]: searchResult.tippedAmountCount,
+            downloadCount: searchResult.downloadCount,
+            thumbsUpCount: searchResult.thumbsUpCount,
+            thumbsDownCount: searchResult.thumbsDownCount,
+            commentCount: searchResult.commentCount,
+            ratingCount: searchResult.ratingCount,
+            rating: searchResult.rating,
+            collectedCount: searchResult.collectedCount,
+            tippedAmountCount: searchResult.tippedAmountCount,
           },
           // Use rich model version data from cache
           modelVersions,
-          hashes: data.hashes,
+          // Transform hashes to match sample format (array of strings)
+          hashes: (data.hashes || []).map((h: any) => (typeof h === 'string' ? h : h.hash)),
           tagsOnModels: data.tags,
-          user: {
-            id: searchResult.userId,
-            username: searchResult.username,
-            deletedAt: searchResult.userDeletedAt,
-            image: searchResult.userImage,
-            profilePicture: profilePictures?.[searchResult.userId] ?? null,
-            cosmetics: userCosmetics[searchResult.userId] ?? [],
-          },
           cosmetic: cosmetics[searchResult.id] ?? null,
         };
 
@@ -1545,7 +1575,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     });
 
     if (!permissions.read) {
-      return { items: [], isPrivate: true };
+      return { items: [], nextCursor: undefined, isPrivate: true };
     }
 
     const {
@@ -1751,7 +1781,9 @@ export const getModelsWithImagesAndModelVersions = async ({
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
-          hashes: hashes.map((hash) => hash.toLowerCase()),
+          hashes: hashes.map((hash: string | { hash: string }) =>
+            (typeof hash === 'string' ? hash : hash.hash).toLowerCase()
+          ),
           rank: {
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
@@ -3131,7 +3163,9 @@ export async function getModelsWithVersions({
     include: ['details'],
   });
 
-  const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
+  const modelVersionIds = items.flatMap(({ modelVersions }) =>
+    modelVersions.map(({ id }: { id: number }) => id)
+  );
   // Let's swap to the new cache based method for now...
   const images = await getImagesForModelVersionCache(modelVersionIds);
   // const images = await getImagesForModelVersion({
