@@ -168,7 +168,7 @@
     "lottie-react": "^2.4.1",
     "mantine-react-table": "^2.0.0-beta.9",
     "masonic": "^3.7.0",
-    "meilisearch": "0.35.0",
+    "meilisearch": "^0.35.1",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
     "next": "^14.2.28",
