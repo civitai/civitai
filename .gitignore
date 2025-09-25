@@ -82,3 +82,4 @@ trace/types.json
 /tests/auth/*.json
 src/pages/api/dev-local/*
 /.playwright-mcp/
+*.local.json

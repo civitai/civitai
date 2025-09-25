@@ -155,6 +155,7 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
+import { ImageFeedService } from '@civitai/event-engine-common';
 
 const {
   cacheHitRequestsTotal,
@@ -1746,7 +1747,7 @@ type ImageSearchInput = GetAllImagesInput & {
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   const fliptClient = await FliptSingleton.getInstance();
-  if (fliptClient) {
+  if (fliptClient && false) {
     const flag = fliptClient.evaluateBoolean({
       flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
       entityId: input.currentUserId?.toString() || 'anonymous',
@@ -1759,6 +1760,16 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
+  const imageFeedServiceClient = new ImageFeedService(metricsSearchClient!);
+  const data = await imageFeedServiceClient.getImagesFeed(input);
+  console.log(data);
+
+  return data;
+
+  if (true) {
+    return { data: [], nextCursor: undefined };
+  }
+
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
@@ -5776,7 +5787,7 @@ export async function createImageResources({
     const modelVersions = await dbClient.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
       SELECT DISTINCT mv.id as "modelVersionId", mv."modelId"
       FROM "ModelVersion" mv
-      WHERE mv.id = ANY(${resourcesWithModelVersions.map(r => r.modelversionid)})
+      WHERE mv.id = ANY(${resourcesWithModelVersions.map((r) => r.modelversionid)})
     `;
 
     return modelVersions;

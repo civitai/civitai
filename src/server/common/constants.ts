@@ -1086,7 +1086,7 @@ export const TOOLS_SEARCH_INDEX = 'tools_v2';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';
-export const METRICS_MODELS_SEARCH_INDEX = 'metrics_models_v1';
+export const METRICS_MODELS_SEARCH_INDEX = 'feeds_models_v1';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',
