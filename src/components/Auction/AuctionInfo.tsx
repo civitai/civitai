@@ -62,7 +62,6 @@ import { SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
-import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { getBaseModelGenerationConfig } from '~/shared/constants/base-model.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
