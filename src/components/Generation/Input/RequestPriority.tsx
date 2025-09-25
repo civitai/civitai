@@ -1,5 +1,6 @@
 import { Priority } from '@civitai/client';
 import { Input } from '@mantine/core';
+import { useEffect } from 'react';
 import { IconBolt, IconDiamond } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -35,7 +36,15 @@ export function RequestPriority({
     onChange?.(value);
   };
   const currentUser = useCurrentUser();
+  const isMember = currentUser?.isPaidMember ?? false;
   const selected = value ? priorityOptionsMap[value] : undefined;
+
+  // Auto-select High priority for members if Standard is selected or no value
+  useEffect(() => {
+    if (isMember && (!value || value === 'low')) {
+      onChange?.('normal' as Priority);
+    }
+  }, [value, isMember]);
 
   return (
     <Input.Wrapper label={label}>
@@ -50,7 +59,15 @@ export function RequestPriority({
           >
             <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
               {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
-              {!selected ? placeholder : <PriorityLabel {...selected} modifier={modifier} />}
+              {!selected ? (
+                placeholder
+              ) : (
+                <PriorityLabel
+                  {...selected}
+                  modifier={modifier}
+                  isFreeForMember={isMember && value === 'normal'}
+                />
+              )}
             </span>
             <IconSelector
               aria-hidden="true"
@@ -73,6 +90,11 @@ export function RequestPriority({
           >
             {Object.values(Priority)
               .reverse()
+              .filter((priority) => {
+                // Hide Standard option for members
+                if (isMember && priority === 'low') return false;
+                return true;
+              })
               .map((priority) => {
                 const options = priorityOptionsMap[priority];
                 const disabled = options.memberOnly && !currentUser?.isPaidMember;
@@ -106,7 +128,11 @@ export function RequestPriority({
                     <div className="flex items-center">
                       {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
                       <span className="block truncate group-data-[selected]:font-semibold">
-                        <PriorityLabel {...options} modifier={modifier} />
+                        <PriorityLabel
+                          {...options}
+                          modifier={modifier}
+                          isFreeForMember={isMember && priority === 'normal'}
+                        />
                       </span>
                     </div>
 
@@ -133,16 +159,18 @@ function PriorityLabel({
   label,
   offset,
   modifier,
+  isFreeForMember = false,
 }: {
   label: string;
   offset: number;
   modifier: 'fixed' | 'multiplier';
+  isFreeForMember?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3">
       <span>{label}</span>
       {offset > 0 && (
-        <span className="flex items-center">
+        <span className={clsx('flex items-center', isFreeForMember && 'line-through opacity-50')}>
           <span>+</span>
           <span className="flex items-center">
             <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
@@ -151,6 +179,11 @@ function PriorityLabel({
               {modifier === 'multiplier' ? '%' : ''}
             </span>
           </span>
+        </span>
+      )}
+      {isFreeForMember && (
+        <span className="text-xs text-green-6 dark:text-green-5">
+          Members get High Priority Free
         </span>
       )}
     </div>

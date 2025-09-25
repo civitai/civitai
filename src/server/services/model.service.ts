@@ -1449,21 +1449,6 @@ export const upsertModel = async (
   }
 ) => {
   if (input.description) await throwOnBlockedLinkDomain(input.description);
-  if (!input.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
-  // Check model name and description for profanity
-  const profanityFilter = createProfanityFilter();
-  const textToCheck = [input.name, input.description].filter(Boolean).join(' ');
-  const hasProfanity = profanityFilter.isProfane(textToCheck);
-
-  // If profanity is detected, mark model as NSFW and add to locked properties
-  if (hasProfanity && !input.nsfw) {
-    input.nsfw = true;
-    // Add nsfw to lockedProperties to prevent users from changing it
-    input.lockedProperties = [...(input.lockedProperties ?? []), 'nsfw'];
-  }
 
   const {
     id,
@@ -1484,6 +1469,20 @@ export const upsertModel = async (
     for (const prop of lockedProperties) {
       const key = prop as keyof typeof data;
       if (data[key] !== undefined) delete data[key];
+    }
+
+    // Check model name and description for profanity
+    const profanityFilter = createProfanityFilter();
+    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
+    const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+    // If profanity is detected, mark model as NSFW and add to locked properties
+    if (hasProfanity && !data.nsfw) {
+      data.nsfw = true;
+      data.lockedProperties =
+        data.lockedProperties && !data.lockedProperties.includes('nsfw')
+          ? [...data.lockedProperties, 'nsfw']
+          : ['nsfw'];
     }
   }
 
@@ -3151,30 +3150,35 @@ export const privateModelFromTraining = async ({
       where: { id },
       data: {
         ...data,
+        meta: {
+          ...((meta as ModelMeta) ?? {}),
+          // Makes it so these models cannot go into auctions or be promoted
+          cannotPromote: true,
+        },
         availability: Availability.Private,
         status: ModelStatus.Published,
         sfwOnly: true, // Private models only allow sfw generation
       },
     });
 
-    await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
-      data: {
-        // Ensures things don't break by leaving some versions public.
-        // @luis: TODO: Might be smart to add some DB triggers for this.
-        availability: Availability.Private,
-      },
-    });
-
     if (result.modelVersions.length > 0) {
       const now = new Date();
+
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { id: { in: result.modelVersions.map((x) => x.id) } },
+        where: { modelId: id },
         data: {
-          availability: Availability.Private,
+          // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
           status: ModelStatus.Published,
+        },
+      });
+
+      // Do this after the fact to avoid some triggers.
+      await dbWrite.modelVersion.updateMany({
+        where: { modelId: id },
+        data: {
+          availability: Availability.Private,
         },
       });
 
@@ -3217,6 +3221,13 @@ export const publishPrivateModel = async ({
   modelId,
   publishVersions,
 }: PublishPrivateModelInput) => {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { id: true, userId: true, availability: true, status: true, meta: true },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found');
+
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
     select: { id: true },
@@ -3255,7 +3266,12 @@ export const publishPrivateModel = async ({
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
         publishedAt: publishVersions ? now : null,
+        meta: {
+          ...((model.meta ?? {}) as ModelMeta),
+          cannotPromote: false,
+        },
       },
+      select: { id: true },
     }),
   ]);
 
@@ -3418,11 +3434,12 @@ export const getTrainingModelsForModerators = async ({
         ...(dateTo && { lte: dateTo }),
       },
     }),
-    ...(dateTo && !dateFrom && {
-      createdAt: {
-        lte: dateTo,
-      },
-    }),
+    ...(dateTo &&
+      !dateFrom && {
+        createdAt: {
+          lte: dateTo,
+        },
+      }),
     ...(cannotPublish !== undefined && {
       meta: cannotPublish
         ? { path: ['cannotPublish'], equals: true }

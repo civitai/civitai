@@ -142,10 +142,16 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 };
 
 type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
-export const createReport = async ({ userId, id, isModerator, ...data }: CreateReportProps) => {
+export const createReport = async ({
+  userId,
+  id,
+  isModerator,
+  type,
+  ...data
+}: CreateReportProps) => {
   // Add report type to details for notifications
   if (!data.details) data.details = {};
-  (data.details as MixedObject).reportType = reportTypeNameMap[data.type];
+  (data.details as MixedObject).reportType = reportTypeNameMap[type];
 
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
@@ -154,7 +160,7 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
     data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
           userId,
-          reportType: data.type,
+          reportType: type,
           entityReportId: id,
           reason: data.reason,
         })
@@ -168,9 +174,9 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
         ...data,
         userId,
         status: statusOverrides[data.reason] ?? ReportStatus.Pending,
-        [data.type]: {
+        [type]: {
           create: {
-            [reportTypeConnectionMap[data.type]]: id,
+            [reportTypeConnectionMap[type]]: id,
           },
         },
       },
@@ -179,7 +185,7 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
     // handle NSFW
 
     if (data.reason === ReportReason.NSFW) {
-      switch (data.type) {
+      switch (type) {
         case ReportEntity.Model:
         case ReportEntity.Image:
           //.creates an ImageRatingRequest if the tags included in the report have a higher nsfwLevel than the current image nsfwLevel
@@ -219,7 +225,7 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
             createImageRatingRequest(),
             addTagVotes({
               userId,
-              type: data.type,
+              type: type,
               id,
               tags: data.details.tags ?? [],
               isModerator,
@@ -248,7 +254,7 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
 
     // handle TOS violations
     if (data.reason === ReportReason.TOSViolation)
-      switch (data.type) {
+      switch (type) {
         case ReportEntity.Image:
           await dbWrite.imageEngagement.create({
             data: {
@@ -260,7 +266,7 @@ export const createReport = async ({ userId, id, isModerator, ...data }: CreateR
           break;
       }
 
-    if (data.reason === ReportReason.CSAM && data.type === ReportEntity.Image) {
+    if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
       await dbWrite.report.updateMany({
         where: {
           reason: { not: ReportReason.CSAM },

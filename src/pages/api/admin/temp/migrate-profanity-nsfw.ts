@@ -95,7 +95,10 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           const hasProfanity = profanityFilter.isProfane(textToCheck);
 
           if (hasProfanity && !record.nsfw) {
-            const newLockedProperties = [...(record.lockedProperties || []), 'nsfw'];
+            const newLockedProperties =
+              record.lockedProperties && !record.lockedProperties.includes('nsfw')
+                ? [...record.lockedProperties, 'nsfw']
+                : ['nsfw'];
             updatesToMake.push({
               id: record.id,
               nsfw: true,
@@ -326,7 +329,10 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           const hasProfanity = profanityFilter.isProfane(textToCheck);
 
           if (hasProfanity && !record.nsfw) {
-            const newLockedProperties = [...(record.lockedProperties || []), 'nsfw'];
+            const newLockedProperties =
+              record.lockedProperties && !record.lockedProperties.includes('nsfw')
+                ? [...record.lockedProperties, 'nsfw']
+                : ['nsfw'];
             updatesToMake.push({
               id: record.id,
               nsfw: true,

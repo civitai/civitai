@@ -88,7 +88,10 @@ type BodyProps = z.infer<typeof schema>;
 const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
-  tags: tagSchema.array().nullish(),
+  tags: tagSchema
+    .array()
+    .nullish()
+    .transform((tags) => (tags ? tags.map((x) => ({ ...x, tag: x.tag.toLowerCase() })) : null)),
   hash: z.string().nullish(),
   vectors: z.array(z.number().array()).nullish(),
   status: z.enum(Status),
@@ -97,7 +100,8 @@ const schema = z.object({
     .object({
       movie_rating: z.string().optional(),
       movie_rating_model_id: z.string().optional(),
-      hasMinor: z.boolean().optional(),
+      // hasMinor: z.boolean().optional(),
+      blockedReason: z.string().nullish(),
     })
     .nullish(),
   result: z

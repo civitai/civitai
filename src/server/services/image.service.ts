@@ -565,9 +565,9 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
   ImageScanType.Hash,
-  ImageScanType.Clavata,
+  // ImageScanType.Clavata,
   // ImageScanType.Hive,
-  // ImageScanType.SpineRating,
+  ImageScanType.SpineRating,
 ];
 
 export const ingestImage = async ({
@@ -626,7 +626,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: type === 'image' ? imageScanTypes : [...imageScanTypes, ImageScanType.SpineRating],
+      scans: imageScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -2211,11 +2211,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const checkImageExistence = async (imageIds: number[]) => {
       // Preserve original order and remove duplicates
       const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}`);
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:` as const;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as const);
 
       // Check cached results first (1 minute TTL)
-      const cachedResults = await sysRedis.packed.mGet(cacheKeys as any);
+      const cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
 
       // Separate cached and uncached IDs
       const uncachedIds: number[] = [];
@@ -2671,63 +2671,117 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   sorts.push(searchSort);
   sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
-  // Overfetch to ensure we have enough results after post-query filtering
-  const OVERFETCH_MULTIPLIER = 1.5;
-  const request: SearchParams = {
-    filter: filters.join(' AND '),
-    sort: sorts,
-    limit: limit * OVERFETCH_MULTIPLIER,
-    offset,
-  };
-
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
   requestTotal.inc({ route }); // count every request up front
 
-  try {
-    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
-    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
-      .index(METRICS_SEARCH_INDEX)
-      .search(null, request);
+  // Iterative fetching with adaptive batch sizing to handle post-filtering
+  const MAX_ITERATIONS = 10;
+  const MAX_TOTAL_PROCESSED = limit * 100; // Safety limit to prevent excessive processing
+  const MIN_BATCH_SIZE = limit * 2;
+  const MAX_BATCH_SIZE = limit * 10;
 
-    let nextCursor: number | undefined;
-    if (results.hits.length > limit) {
-      results.hits.pop();
-      // - if we have no entrypoint, it's the first request, and set one for the future
-      //   else keep it the same
-      nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
+  const accumulatedHits: ImageMetricsSearchIndexRecord[] = [];
+  let currentOffset = offset || 0;
+  let batchSize = MIN_BATCH_SIZE;
+  let iteration = 0;
+  let totalProcessed = 0;
+  let nextCursor: number | undefined;
+  const request: SearchParams = {
+    filter: filters.join(' AND '),
+    sort: sorts,
+  };
+
+  try {
+    while (accumulatedHits.length < limit + 1 && iteration < MAX_ITERATIONS) {
+      // Safety check for total processed results
+      if (totalProcessed >= MAX_TOTAL_PROCESSED) {
+        break;
+      }
+
+      const requestLimit = Math.min(batchSize, MAX_TOTAL_PROCESSED - totalProcessed);
+      request.limit = requestLimit;
+      request.offset = currentOffset;
+
+      // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
+      const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
+        .index(METRICS_SEARCH_INDEX)
+        .search(null, request);
+
+      // If no more results, break the loop
+      if (results.hits.length === 0) {
+        break;
+      }
+
+      // Set cursor from first batch if not set yet
+      if (iteration === 0 && results.hits.length > 0) {
+        nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
+      }
+
+      // Apply post-query user-specific filtering
+      const batchFilteredHits = results.hits.filter((hit) => {
+        if (!hit.url)
+          // check for good data
+          return false;
+
+        const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
+
+        // User can see their own private content
+        if (hit.availability === Availability.Private && !isOwnContent) return false;
+
+        // User can see their own blocked content
+        if (hit.blockedFor && !isOwnContent) return false;
+
+        // User can see their own scheduled or unpublished content
+        if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
+          return false;
+
+        // User can see their own unscanned content
+        if (hit.nsfwLevel === 0 && !isOwnContent) return false;
+
+        // filter out items flagged with minor unless it's the owner or moderator
+        if (hit.acceptableMinor) return isOwnContent;
+        // filter out non-scanned unless it's the owner or moderator
+        if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+
+        return isOwnContent || (isModerator && includesNsfwContent);
+      });
+
+      // Add filtered results to accumulated results
+      accumulatedHits.push(...batchFilteredHits);
+
+      // Calculate filter ratio and adjust batch size for next iteration
+      const filterRatio =
+        results.hits.length > 0 ? 1 - batchFilteredHits.length / results.hits.length : 0;
+
+      // If more than 80% of results are filtered out, increase batch size
+      if (filterRatio > 0.8 && batchSize < MAX_BATCH_SIZE) {
+        batchSize = Math.min(Math.ceil(batchSize * 1.5), MAX_BATCH_SIZE);
+      }
+
+      // Update tracking variables
+      currentOffset += results.hits.length;
+      totalProcessed += results.hits.length;
+      iteration++;
+
+      // If we got fewer results than what we actually requested, we've likely hit the end
+      if (results.hits.length < requestLimit) {
+        break;
+      }
     }
 
-    // Apply post-query user-specific filtering
-    const filteredHits = results.hits.filter((hit) => {
-      if (!hit.url)
-        // check for good data
-        return false;
-
-      const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
-
-      // User can see their own private content
-      if (hit.availability === Availability.Private && !isOwnContent) return false;
-
-      // User can see their own blocked content
-      if (hit.blockedFor && !isOwnContent) return false;
-
-      // User can see their own scheduled or unpublished content
-      if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent) return false;
-
-      // User can see their own unscanned content
-      if (hit.nsfwLevel === 0 && !isOwnContent) return false;
-
-      // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.acceptableMinor) return isOwnContent;
-      // filter out non-scanned unless it's the owner or moderator
-      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
-
-      return isOwnContent || (isModerator && includesNsfwContent);
-    });
+    // Update nextCursor based on whether we have more results than requested
+    if (accumulatedHits.length > limit) {
+      // We have more results, so there's a next page
+      const lastResult = accumulatedHits[limit];
+      nextCursor = lastResult?.sortAtUnix || nextCursor;
+    } else {
+      // We don't have more results than requested, so no next page
+      nextCursor = undefined;
+    }
 
     // Trim results back to requested limit after filtering
-    const limitedHits = filteredHits.slice(0, limit + 1);
+    const limitedHits = accumulatedHits.slice(0, limit + 1);
 
     // Get all image IDs from limited results
     const searchImageIds = limitedHits.map((hit) => hit.id);
@@ -2808,11 +2862,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const checkImageExistence = async (imageIds: number[]) => {
       // Preserve original order and remove duplicates
       const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}`);
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:` as const;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as const);
 
       // Check cached results first (1 minute TTL)
-      const cachedResults = await sysRedis.packed.mGet(cacheKeys as any);
+      const cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
 
       // Separate cached and uncached IDs
       const uncachedIds: number[] = [];

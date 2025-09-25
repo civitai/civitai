@@ -26,6 +26,7 @@ import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient } from '~/server/meilisearch/client';
 import { isDefined } from '~/utils/type-guards';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 type Metadata = {
   currentPage?: number;
@@ -69,10 +70,11 @@ export default MixedAuthEndpoint(async function handler(
   const parsedParams = modelsEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
 
-  // Check if request is from restricted region and override browsing level
+  // Check if request is from restricted region or green domain and override browsing level
   const region = getRegion(req);
+  const domainColor = getRequestDomainColor(req);
   let browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
-  if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  if (isRegionRestricted(region) || domainColor === 'green') browsingLevel = sfwBrowsingLevelsFlag;
 
   // Handle pagination
   const { limit, page, cursor, query, ids: queryIds, ...data } = parsedParams.data;
@@ -220,7 +222,7 @@ export default MixedAuthEndpoint(async function handler(
                     .map(({ url, id, ...image }) => ({
                       id,
                       url: getEdgeUrl(url, {
-                        width: image.width ?? 450,
+                        original: true,
                         name: id.toString(),
                         type: image.type,
                       }),

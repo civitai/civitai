@@ -53,6 +53,7 @@ import {
   getIsChroma,
   getIsFlux,
   getIsFluxStandard,
+  getIsPonyV7,
   getIsQwen,
   getIsSD3,
   sanitizeParamsByWorkflowDefinition,
@@ -276,6 +277,12 @@ export async function parseGenerateImageInput({
     await getGenerationResourceData(originalResources, limits.resources, user);
 
   if (!model) throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  const isPonyV7 = getIsPonyV7(model.id);
+  if (isPonyV7) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
+  }
   const isFluxStandard = getIsFluxStandard(model.model.id);
   if (!isFluxStandard) {
     delete originalParams.fluxMode;

@@ -12,6 +12,7 @@ import {
   modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
   publishPrivateModelVersionHandler,
+  recheckModelVersionTrainingStatusHandler,
   requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
   unpublishModelVersionHandler,
@@ -154,4 +155,8 @@ export const modelVersionRouter = router({
       },
     ])
   ),
+  recheckTrainingStatus: guardedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(recheckModelVersionTrainingStatusHandler),
 });

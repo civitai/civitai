@@ -10,6 +10,7 @@ import poiWords from './lists/words-poi.json';
 import youngWords from './lists/words-young.json';
 import { harmfulCombinations } from './lists/harmful-combinations';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
@@ -38,7 +39,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
   return { blockedFor, success: !blockedFor.length };
 };
 
-export const auditPrompt = (prompt: string, negativePrompt?: string) => {
+export const auditPrompt = (prompt: string, negativePrompt?: string, checkProfanity?: boolean) => {
   if (!prompt.trim().length) return { blockedFor: [], success: true };
   prompt = normalizeText(prompt); // Parse HTML Entities
   negativePrompt = normalizeText(negativePrompt);
@@ -59,6 +60,14 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
 
   for (const { word, regex } of blockedNSFWRegexLazy()) {
     if (regex.test(prompt)) return { blockedFor: [word], success: false };
+  }
+
+  if (checkProfanity) {
+    const profanityFilter = createProfanityFilter();
+    const profanityResults = profanityFilter.analyze(prompt);
+    if (profanityResults.isProfane) {
+      return { blockedFor: profanityResults.matches, success: false };
+    }
   }
 
   return { blockedFor: [], success: true };

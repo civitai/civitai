@@ -70,6 +70,8 @@ import {
   getFlaggedReasonsSchema,
   getFlaggedConsumerStrikesSchema,
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
+import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -178,11 +180,16 @@ export const orchestratorRouter = router({
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
+        const group = getBaseModelGroup(input.params.baseModel);
+        const experimental = EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group as any)
+          ? input.params.experimental
+          : ctx.experimental;
+
         const args = {
           ...input,
           user: ctx.user,
           token: ctx.token,
-          experimental: ctx.experimental,
+          experimental,
           batchAll: ctx.batchAll,
           // isGreen: ctx.features.isGreen,
           allowMatureContent: ctx.allowMatureContent,
@@ -301,7 +308,7 @@ export const orchestratorRouter = router({
       userId: ctx.user.id,
       token: ctx.token,
       experimental: ctx.experimental,
-      // isGreen: ctx.features.isGreen,
+      isGreen: ctx.features.isGreen,
       allowMatureContent: ctx.allowMatureContent,
     })
   ),

@@ -43,6 +43,7 @@ import {
   getBaseModelSetType,
   getClosestAspectRatio,
   getResourceGenerationType,
+  ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
@@ -580,7 +581,7 @@ export type GenerationResource = GenerationResourceBase & {
   substitute?: GenerationResourceBase;
 };
 
-const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
 export async function getResourceData(
@@ -677,10 +678,9 @@ export async function getResourceData(
 
   function getEpochDetails(
     resource: ReturnType<typeof transformGenerationData>,
-    modelFiles: ModelFileCached[],
-    hasSelectedEpoch: boolean
+    modelFiles: ModelFileCached[]
   ) {
-    if (resource.status !== 'Published' && !hasSelectedEpoch) {
+    if (resource.status !== 'Published') {
       const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
       if (trainingFile) {
         const epoch = args.find((x) => x.id === resource.id)?.epoch;
@@ -691,6 +691,7 @@ export async function getResourceData(
       }
     }
     delete resource.epochNumber;
+
     return null;
   }
 
@@ -710,8 +711,7 @@ export async function getResourceData(
       additionalResourceCost = false;
     }
 
-    const hasSelectedEpoch = !!primaryFile?.metadata.selectedEpochUrl;
-    const epochDetails = getEpochDetails(resource, modelFiles, hasSelectedEpoch);
+    const epochDetails = getEpochDetails(resource, modelFiles);
 
     return {
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,

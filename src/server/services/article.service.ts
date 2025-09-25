@@ -674,21 +674,25 @@ export const upsertArticle = async ({
   try {
     await throwOnBlockedLinkDomain(data.content);
     if (!isModerator) {
+      // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+
+      // Check article title and content for profanity
+      const profanityFilter = createProfanityFilter();
+      const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
+      const hasProfanity = profanityFilter.isProfane(textToCheck);
+
+      // If profanity is detected, mark article as NSFW and add to locked properties
+      if (hasProfanity && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+        data.nsfw = true;
+        data.userNsfwLevel = NsfwLevel.R;
+        data.lockedProperties =
+          data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
+            ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
+            : ['nsfw', 'userNsfwLevel'];
+      }
     }
 
-    // Check article title and content for profanity
-    const profanityFilter = createProfanityFilter();
-    const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
-    const hasProfanity = profanityFilter.isProfane(textToCheck);
-
-    // If profanity is detected, mark article as NSFW and add to locked properties
-    if (hasProfanity && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
-      data.nsfw = true;
-      data.userNsfwLevel = NsfwLevel.R;
-      // Add userNsfwLevel to lockedProperties to prevent users from changing it
-      data.lockedProperties = [...(data.lockedProperties ?? []), 'nsfw', 'userNsfwLevel'];
-    }
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;

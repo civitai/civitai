@@ -60,16 +60,18 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
           value={publishVersions ? 'yes' : 'no'}
           onChange={(value) => setPublishVersions(value === 'yes')}
         >
-          <Radio
-            value="yes"
-            label="Publish immediately"
-            description="This model, and any associated model versions, will be made public for everyone to use."
-          />
-          <Radio
-            value="no"
-            label="Set to Draft"
-            description="This model, and any associated model versions, will be sent to your Drafts, allowing further configuration. Use this method if you wish to apply features such as Early Access, or Usage Controls, prior to publishing."
-          />
+          <Stack gap="sm">
+            <Radio
+              value="yes"
+              label="Publish immediately"
+              description="This model, and any associated model versions, will be made public for everyone to use."
+            />
+            <Radio
+              value="no"
+              label="Set to Draft"
+              description="This model, and any associated model versions, will be sent to your Drafts, allowing further configuration. Use this method if you wish to apply features such as Early Access, or Usage Controls, prior to publishing."
+            />
+          </Stack>
         </Radio.Group>
         <Group ml="auto">
           <Button

@@ -406,6 +406,7 @@ export const createBid = async ({
             status: true,
             nsfwLevel: true,
             nsfw: true,
+            availability: true,
           },
         },
       },

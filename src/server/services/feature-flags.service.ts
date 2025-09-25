@@ -120,7 +120,7 @@ const featureFlags = createFeatureFlags({
   toolSearch: ['public'],
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
-  privateModels: ['mod', 'granted'],
+  privateModels: ['public'],
   auctions: ['blue', 'red', 'public'],
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],

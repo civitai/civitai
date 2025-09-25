@@ -57,6 +57,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { InputExperimentalMode } from '~/components/ImageGeneration/GenerationForm/ExperimentalModeCard';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
@@ -98,6 +99,7 @@ import {
   getIsFlux,
   getIsFluxStandard,
   getIsFluxUltra,
+  getIsPonyV7,
   getIsSD3,
   getIsSdxl,
   getIsHiDream,
@@ -318,6 +320,7 @@ export function GenerationFormContent() {
             ...params,
             // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
             disablePoi: browsingSettingsAddons.settings.disablePoi,
+            experimental: data.experimental,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -450,6 +453,7 @@ export function GenerationFormContent() {
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isChroma = getIsChroma(baseModel);
+  const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
   const isHiDream = getIsHiDream(baseModel);
@@ -486,7 +490,13 @@ export function GenerationFormContent() {
               ? fluxMode === fluxDraftAir
               : isSD3
               ? model.id === 983611
-              : features.draft && !!draft && !isImageGen && !isFlux && !isQwen && !isChroma;
+              : features.draft &&
+                !!draft &&
+                !isImageGen &&
+                !isFlux &&
+                !isQwen &&
+                !isChroma &&
+                !isPonyV7;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
               ? 10
@@ -498,13 +508,13 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen || isChroma) {
+            if (isFlux || isSD3 || isQwen || isChroma || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -532,7 +542,8 @@ export function GenerationFormContent() {
               isQwen ||
               isNanoBanana ||
               isChroma ||
-              isSeedream;
+              isSeedream ||
+              isPonyV7;
             const disableDraft =
               !features.draft ||
               isOpenAI ||
@@ -544,17 +555,19 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isChroma ||
-              isSeedream;
+              isSeedream ||
+              isPonyV7;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma) ||
+              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma && !isPonyV7) ||
               isOpenAI ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
-            const disableSampler = isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
+            const disableSampler =
+              isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7;
             const disableSteps = isFluxUltra || isFluxKontext;
             const disableClipSkip =
-              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma;
-            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext;
+              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7;
+            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
@@ -680,108 +693,114 @@ export function GenerationFormContent() {
                                 : undefined
                             }
                           />
-                          {!disableAdditionalResources && (
-                            <Card.Section
-                              className={clsx({
-                                [classes.formError]: form.formState.errors.resources,
-                              })}
-                              m={0}
-                              withBorder
-                            >
-                              <PersistentAccordion
-                                storeKey="generation-form-resources"
-                                classNames={{
-                                  item: classes.accordionItem,
-                                  control: classes.accordionControl,
-                                  content: classes.accordionContent,
-                                  label: classes.accordionLabel,
-                                }}
-                                transitionDuration={0}
+                          {!disableAdditionalResources &&
+                            resourceSelectHandlerOptions.resources.length > 0 && (
+                              <Card.Section
+                                className={clsx({
+                                  [classes.formError]: form.formState.errors.resources,
+                                })}
+                                m={0}
+                                withBorder
                               >
-                                <Accordion.Item value="resources" className="border-b-0">
-                                  <Accordion.Control
-                                    className={clsx({
-                                      [classes.formError]: form.formState.errors.resources,
-                                    })}
-                                  >
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-1">
-                                        <Text size="sm" fw={590}>
-                                          Additional Resources
-                                        </Text>
-                                        {resources.length > 0 && (
-                                          <Badge className="font-semibold">
-                                            {resources.length}/{status.limits.resources}
-                                          </Badge>
-                                        )}
-
-                                        <Button
-                                          component="span"
-                                          size="compact-sm"
-                                          variant="light"
-                                          onClick={(e: React.MouseEvent) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            const formResources = form.getValues('resources') ?? [];
-                                            resourceSelectHandler
-                                              .select({
-                                                title: additionResourceTitle,
-                                                excludedIds: formResources.map((x) => x.id),
-                                              })
-                                              .then((resource) => {
-                                                if (!resource) return;
-                                                const resources = [
-                                                  ...formResources,
-                                                  resource,
-                                                ] as GenerationResource[];
-                                                const newValue =
-                                                  resourceSelectHandler.getValues(resources) ?? [];
-                                                form.setValue('resources', newValue);
-                                              });
-                                          }}
-                                          radius="xl"
-                                          ml="auto"
-                                          disabled={atLimit}
-                                          classNames={{ inner: 'flex gap-1' }}
-                                        >
-                                          <IconPlus size={16} />
-                                          <Text size="sm" fw={500}>
-                                            Add
+                                <PersistentAccordion
+                                  storeKey="generation-form-resources"
+                                  classNames={{
+                                    item: classes.accordionItem,
+                                    control: classes.accordionControl,
+                                    content: classes.accordionContent,
+                                    label: classes.accordionLabel,
+                                  }}
+                                  transitionDuration={0}
+                                >
+                                  <Accordion.Item value="resources" className="border-b-0">
+                                    <Accordion.Control
+                                      className={clsx({
+                                        [classes.formError]: form.formState.errors.resources,
+                                      })}
+                                    >
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-1">
+                                          <Text size="sm" fw={590}>
+                                            Additional Resources
                                           </Text>
-                                        </Button>
+                                          {resources.length > 0 && (
+                                            <Badge className="font-semibold">
+                                              {resources.length}/{status.limits.resources}
+                                            </Badge>
+                                          )}
+
+                                          <Button
+                                            component="span"
+                                            size="compact-sm"
+                                            variant="light"
+                                            onClick={(e: React.MouseEvent) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              const formResources =
+                                                form.getValues('resources') ?? [];
+                                              resourceSelectHandler
+                                                .select({
+                                                  title: additionResourceTitle,
+                                                  excludedIds: formResources.map((x) => x.id),
+                                                })
+                                                .then((resource) => {
+                                                  if (!resource) return;
+                                                  const resources = [
+                                                    ...formResources,
+                                                    resource,
+                                                  ] as GenerationResource[];
+                                                  const newValue =
+                                                    resourceSelectHandler.getValues(resources) ??
+                                                    [];
+                                                  form.setValue('resources', newValue);
+                                                });
+                                            }}
+                                            radius="xl"
+                                            ml="auto"
+                                            disabled={atLimit}
+                                            classNames={{ inner: 'flex gap-1' }}
+                                          >
+                                            <IconPlus size={16} />
+                                            <Text size="sm" fw={500}>
+                                              Add
+                                            </Text>
+                                          </Button>
+                                        </div>
+
+                                        {atLimit &&
+                                          (!currentUser || currentUser.tier === 'free') && (
+                                            <Text size="xs">
+                                              <Link legacyBehavior href="/pricing" passHref>
+                                                <Anchor
+                                                  color="yellow"
+                                                  rel="nofollow"
+                                                  onClick={(e: React.MouseEvent) =>
+                                                    e.stopPropagation()
+                                                  }
+                                                >
+                                                  Become a member
+                                                </Anchor>
+                                              </Link>{' '}
+                                              <Text inherit span>
+                                                to use more resources at once
+                                              </Text>
+                                            </Text>
+                                          )}
                                       </div>
-
-                                      {atLimit && (!currentUser || currentUser.tier === 'free') && (
-                                        <Text size="xs">
-                                          <Link legacyBehavior href="/pricing" passHref>
-                                            <Anchor
-                                              color="yellow"
-                                              rel="nofollow"
-                                              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                                            >
-                                              Become a member
-                                            </Anchor>
-                                          </Link>{' '}
-                                          <Text inherit span>
-                                            to use more resources at once
-                                          </Text>
-                                        </Text>
-                                      )}
-                                    </div>
-                                  </Accordion.Control>
-                                  <Accordion.Panel classNames={{ content: 'p-0' }}>
-                                    <InputResourceSelectMultiple
-                                      name="resources"
-                                      limit={status.limits.resources}
-                                      buttonLabel={additionResourceTitle}
-                                      options={resourceSelectHandlerOptions}
-                                      hideButton
-                                    />
-                                  </Accordion.Panel>
-                                </Accordion.Item>
-                              </PersistentAccordion>
-                            </Card.Section>
-                          )}
+                                    </Accordion.Control>
+                                    <Accordion.Panel classNames={{ content: 'p-0' }}>
+                                      <InputResourceSelectMultiple
+                                        name="resources"
+                                        limit={status.limits.resources}
+                                        buttonLabel={additionResourceTitle}
+                                        options={resourceSelectHandlerOptions}
+                                        hideButton
+                                      />
+                                    </Accordion.Panel>
+                                  </Accordion.Item>
+                                </PersistentAccordion>
+                              </Card.Section>
+                            )}
 
                           {unstableResources.length > 0 && (
                             <Card.Section m={0}>
@@ -808,8 +827,8 @@ export function GenerationFormContent() {
                                 <Text size="xs">
                                   {!!minorFlaggedResources.length
                                     ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
-                                    : `A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized `}
-                                  content with this resource the image will not be returned, but you
+                                    : `A resource you selected does not allow the generation of content rated above PG level. If you attempt to generate sexualized `}
+                                  content with this resource the image will not be returned, but you{' '}
                                   <Text span italic inherit>
                                     will
                                   </Text>
@@ -825,11 +844,19 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isQwen && !isSD3 && !isChroma && <ReadySection />}
+                          {!isFlux && !isQwen && !isSD3 && !isChroma && !isPonyV7 && (
+                            <ReadySection />
+                          )}
                         </Card>
                       );
                     }}
                   </Watch>
+
+                  <InputExperimentalMode
+                    name="experimental"
+                    baseModel={baseModel}
+                    workflow={workflow}
+                  />
 
                   {enableImageInput && (
                     <InputSourceImageUpload
@@ -1309,7 +1336,12 @@ export function GenerationFormContent() {
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
                                     presets={
-                                      isFlux || isQwen || isFluxKontext || isSD3 || isChroma
+                                      isFlux ||
+                                      isQwen ||
+                                      isFluxKontext ||
+                                      isSD3 ||
+                                      isChroma ||
+                                      isPonyV7
                                         ? undefined
                                         : [
                                             { label: 'Creative', value: '4' },
@@ -1368,7 +1400,7 @@ export function GenerationFormContent() {
                                           sliderProps={sharedSliderProps}
                                           numberProps={sharedNumberProps}
                                           presets={
-                                            isFlux || isQwen || isSD3 || isChroma
+                                            isFlux || isQwen || isSD3 || isChroma || isPonyV7
                                               ? undefined
                                               : [
                                                   {
@@ -1658,9 +1690,10 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isOpenAI = baseModel === 'OpenAI';
   const checkpoint = model;
   const isSeedream = getIsSeedream(checkpoint.id);
+  const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream && !isPonyV7) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
