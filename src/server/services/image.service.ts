@@ -2066,9 +2066,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // - to avoid dupes (for any ascending query), we need to filter on that attribute
     if (entry) {
       // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
-      filters.push(
-        makeMeiliImageSearchFilter('sortAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
-      );
+      filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
     }
   }
   sorts.push(searchSort);
@@ -2080,7 +2078,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filter: filters.join(' AND '),
     sort: sorts,
     limit: limit * OVERFETCH_MULTIPLIER,
-    offset,
+    offset: !entry ? offset || 0 : 0,
   };
 
   const route = 'getImagesFromSearch';
@@ -2092,14 +2090,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
-
-    let nextCursor: number | undefined;
-    if (results.hits.length > limit) {
-      results.hits.pop();
-      // - if we have no entrypoint, it's the first request, and set one for the future
-      //   else keep it the same
-      nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
-    }
 
     // Apply post-query user-specific filtering
     const filteredHits = results.hits.filter((hit) => {
@@ -2160,6 +2150,12 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
       const idSet = new Set(dbIdResp.map((r) => r.id));
       const filtered = limitedHits.filter((h) => idSet.has(h.id));
+
+      let nextCursor: number | undefined;
+      if (filtered.length > limit) {
+        const lastItem = filtered.pop();
+        nextCursor = lastItem?.sortAtUnix;
+      }
 
       const droppedCount = limitedHits.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
@@ -2291,6 +2287,12 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
     // Apply the (flagged) existence check
     const filtered = await checkImageExistence(filteredHitIds);
+    let nextCursor: number | undefined;
+
+    if (filtered.length > limit) {
+      const lastItem = filtered.pop();
+      nextCursor = lastItem?.sortAtUnix;
+    }
 
     const imageMetrics = await getImageMetricsObject(filtered);
 
@@ -2303,11 +2305,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
           laughCountAllTime: match?.reactionLaugh ?? 0,
           heartCountAllTime: match?.reactionHeart ?? 0,
           cryCountAllTime: match?.reactionCry ?? 0,
-
           commentCountAllTime: match?.comment ?? 0,
           collectedCountAllTime: match?.collection ?? 0,
           tippedAmountCountAllTime: match?.buzz ?? 0,
-
           dislikeCountAllTime: 0,
           viewCountAllTime: 0,
         },
@@ -2663,9 +2663,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // - to avoid dupes (for any ascending query), we need to filter on that attribute
     if (entry) {
       // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
-      filters.push(
-        makeMeiliImageSearchFilter('sortAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
-      );
+      filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
     }
   }
   sorts.push(searchSort);
@@ -2682,7 +2680,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const MAX_BATCH_SIZE = limit * 10;
 
   const accumulatedHits: ImageMetricsSearchIndexRecord[] = [];
-  let currentOffset = offset || 0;
+  let currentOffset = !entry ? offset || 0 : 0;
   let batchSize = MIN_BATCH_SIZE;
   let iteration = 0;
   let totalProcessed = 0;
@@ -2711,11 +2709,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       // If no more results, break the loop
       if (results.hits.length === 0) {
         break;
-      }
-
-      // Set cursor from first batch if not set yet
-      if (iteration === 0 && results.hits.length > 0) {
-        nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
       }
 
       // Apply post-query user-specific filtering
@@ -2811,6 +2804,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
       const idSet = new Set(dbIdResp.map((r) => r.id));
       const filtered = limitedHits.filter((h) => idSet.has(h.id));
+
+      if (filtered.length > limit) {
+        const lastItem = filtered.pop();
+        nextCursor = lastItem?.sortAtUnix;
+      }
 
       const droppedCount = limitedHits.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
@@ -2942,6 +2940,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
     // Apply the (flagged) existence check
     const filtered = await checkImageExistence(filteredHitIds);
+    if (filtered.length > limit) {
+      const lastItem = filtered.pop();
+      nextCursor = lastItem?.sortAtUnix;
+    }
 
     const imageMetrics = await getImageMetricsObject(filtered);
 
