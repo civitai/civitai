@@ -685,7 +685,8 @@ export const upsertArticle = async ({
       // If profanity is detected, mark article as NSFW and add to locked properties
       if (hasProfanity && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
         data.nsfw = true;
-        data.userNsfwLevel = NsfwLevel.R;
+        data.userNsfwLevel =
+          data.userNsfwLevel <= NsfwLevel.PG13 ? NsfwLevel.R : data.userNsfwLevel;
         data.lockedProperties =
           data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
             ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
