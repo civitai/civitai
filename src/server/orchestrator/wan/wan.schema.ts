@@ -28,6 +28,7 @@ import { defaultCatch } from '~/utils/zod-helpers';
 
 export const wanVersions = ['v2.1', 'v2.2', 'v2.2-5b', 'v2.5'] as const;
 export const wanDuration = [3, 5] as const;
+export const wan25Duration = [5, 10] as const;
 const wan21CivitaiAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 const wan21FalAspectRatios = ['16:9', '1:1', '9:16'] as const;
 const wan21Resolutions = ['480p', '720p'] as const;
@@ -172,6 +173,7 @@ const wan25Schema = z.object({
   resolution: z.enum(wan25Resolutions).catch(wan25Resolutions[0]),
   aspectRatio: z.enum(wan22AspectRatios).optional().catch('1:1'),
   frameRate: z.literal(24).optional().catch(24),
+  duration: z.literal(wan25Duration).optional().catch(5),
 });
 
 const schema = z.discriminatedUnion('version', [

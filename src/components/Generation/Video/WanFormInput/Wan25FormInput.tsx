@@ -8,8 +8,8 @@ import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } 
 import {
   maxFalAdditionalResources,
   wan22AspectRatios,
+  wan25Duration,
   wan25Resolutions,
-  wanDuration,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
@@ -92,7 +92,7 @@ export function Wan25FormInput() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+          data={wan25Duration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
 
