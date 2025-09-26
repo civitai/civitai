@@ -92,6 +92,8 @@ const baseModelConfig = [
   { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B', engine: 'wan' },
   { name: 'Wan Video 2.2 I2V-A14B', type: 'video', group: 'WanVideo-22-I2V-A14B', engine: 'wan' },
   { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B', engine: 'wan' },
+  { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
+  { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
@@ -115,6 +117,8 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
       'WanVideo-22-I2V-A14B',
       'WanVideo-22-T2V-A14B',
       'WanVideo-22-TI2V-5B',
+      'WanVideo-25-T2V',
+      'WanVideo-25-I2V',
     ],
   },
 ];
@@ -493,6 +497,24 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.LORA],
         baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+      },
+    ],
+  },
+  {
+    group: 'WanVideo-25-T2V',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint],
+        baseModels: ['Wan Video 2.5 T2V'],
+      },
+    ],
+  },
+  {
+    group: 'WanVideo-25-I2V',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint],
+        baseModels: ['Wan Video 2.5 I2V'],
       },
     ],
   },
