@@ -155,7 +155,9 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
+import type { IRedisClient } from '@civitai/event-engine-common';
 import { ImageFeedService, MetricService } from '@civitai/event-engine-common';
+import { getDatabaseProvider, getMetricsService } from '~/utils/event-engine-helpers';
 
 const {
   cacheHitRequestsTotal,
@@ -1747,7 +1749,7 @@ type ImageSearchInput = GetAllImagesInput & {
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   const fliptClient = await FliptSingleton.getInstance();
-  if (fliptClient && false) {
+  if (fliptClient) {
     const flag = fliptClient.evaluateBoolean({
       flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
       entityId: input.currentUserId?.toString() || 'anonymous',
@@ -1760,25 +1762,19 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 const getImagesWithFeedService = async (input: ImageSearchInput) => {
-  if (!clickhouse) {
-    throw new Error('ClickHouse client not initialized');
-  }
-  const metricService = new MetricService(clickhouse, redis!);
-  const imageFeedServiceClient = new ImageFeedService(metricsSearchClient!, metricService);
+  const imageFeedServiceClient = new ImageFeedService(
+    metricsSearchClient!,
+    getMetricsService(),
+    getDatabaseProvider()
+  );
   // console.log(await clickhouse.$query('SELECT 1'));
-  console.log(await metricService.fetch('Image', [1001]));
-  console.log("Complete, I didn't even call the feed service");
 
-  // const data = await imageFeedServiceClient.getImagesFeed(input);
-  // console.log(data);
+  const data = await imageFeedServiceClient.getImagesFeed(input);
 
-  // return data;
+  return data;
 };
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
-  if (true) {
-    return getImagesWithFeedService(input);
-  }
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 

@@ -170,10 +170,16 @@ export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incide
 
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
-export type EntityMetric_EntityType_Type = "Image";
-
-export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
-
+export type EntityMetric_EntityType_Type =
+  | 'Image'
+  | 'Post'
+  | 'Model'
+  | 'ModelVersion'
+  | 'Collection'
+  | 'User';
+ 
+export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz"  | "ThumbsUp" | "ThumbsDown" | "Tip" | "View" | "Follower" | "Contributor" | "Item" | "Follow" | "Hide" | "Upload" | "Download" | "Generation" | "Favorite" | "Image" | "Earned";
+ 
 export interface Account {
   id: number;
   userId: number;
