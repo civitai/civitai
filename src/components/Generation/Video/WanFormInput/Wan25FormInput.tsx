@@ -8,7 +8,7 @@ import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } 
 import {
   maxFalAdditionalResources,
   wan22AspectRatios,
-  wan22Resolutions,
+  wan25Resolutions,
   wanDuration,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
@@ -19,7 +19,7 @@ import {
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
-export function Wan22FormInput() {
+export function Wan25FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
   // const baseModel = form.watch('baseModel');
@@ -85,7 +85,7 @@ export function Wan22FormInput() {
 
       <div className="flex flex-col gap-0.5">
         <Input.Label>Resolution</Input.Label>
-        <InputSegmentedControl name="resolution" data={[...wan22Resolutions]} />
+        <InputSegmentedControl name="resolution" data={[...wan25Resolutions]} />
       </div>
 
       <div className="flex flex-col gap-0.5">

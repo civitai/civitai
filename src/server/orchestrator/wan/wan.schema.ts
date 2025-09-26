@@ -171,6 +171,7 @@ const wan25Schema = z.object({
   negativePrompt: negativePromptSchema,
   resolution: z.enum(wan25Resolutions).catch(wan25Resolutions[0]),
   aspectRatio: z.enum(wan22AspectRatios).optional().catch('1:1'),
+  frameRate: z.literal(24).optional().catch(24),
 });
 
 const schema = z.discriminatedUnion('version', [

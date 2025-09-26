@@ -6,6 +6,7 @@ import { Wan21FormInput } from '~/components/Generation/Video/WanFormInput/Wan21
 import { Wan22FormInput } from '~/components/Generation/Video/WanFormInput/Wan22FormInput';
 import { Wan225bFormInput } from '~/components/Generation/Video/WanFormInput/Wan225bFormInput';
 import { useLayoutEffect } from 'react';
+import { Wan25FormInput } from '~/components/Generation/Video/WanFormInput/Wan25FormInput';
 
 export function WanFormInput() {
   const form = useFormContext();
@@ -34,6 +35,7 @@ export function WanFormInput() {
       {version === 'v2.1' && <Wan21FormInput />}
       {version === 'v2.2' && <Wan22FormInput />}
       {version === 'v2.2-5b' && <Wan225bFormInput />}
+      {version === 'v2.5' && <Wan25FormInput />}
     </>
   );
 }
