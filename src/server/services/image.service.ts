@@ -2064,10 +2064,10 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   } else {
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
     // - to avoid dupes (for any ascending query), we need to filter on that attribute
-    if (entry) {
-      // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
-      filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
-    }
+    // if (entry) {
+    //   // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
+    //   filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
+    // }
   }
   sorts.push(searchSort);
   sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
@@ -2078,7 +2078,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filter: filters.join(' AND '),
     sort: sorts,
     limit: limit * OVERFETCH_MULTIPLIER,
-    offset: !entry ? offset || 0 : 0,
+    offset: offset || 0,
   };
 
   const route = 'getImagesFromSearch';
@@ -2661,10 +2661,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   } else {
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
     // - to avoid dupes (for any ascending query), we need to filter on that attribute
-    if (entry) {
-      // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
-      filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
-    }
+    // if (entry) {
+    //   // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
+    //   filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
+    // }
   }
   sorts.push(searchSort);
   sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
@@ -2680,7 +2680,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const MAX_BATCH_SIZE = limit * 10;
 
   const accumulatedHits: ImageMetricsSearchIndexRecord[] = [];
-  let currentOffset = !entry ? offset || 0 : 0;
+  let currentOffset = offset || 0;
   let batchSize = MIN_BATCH_SIZE;
   let iteration = 0;
   let totalProcessed = 0;
