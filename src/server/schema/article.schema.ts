@@ -86,3 +86,20 @@ export const upsertArticleInput = z.object({
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),
 });
+
+export type ArticleMetadata = {
+  theme?: string;
+  prizes?: Array<{ buzz: number; points: number }>;
+  status?: string;
+  userId?: number;
+  modelId?: number;
+  winners?: number[];
+  entryPrize?: { buzz: number; points: number };
+  invitation?: string;
+  reviewedAt?: number; // timestamp
+  collectionId?: number;
+  challegeDate?: Date;
+  challengeType?: string;
+  entryPrizeRequirements?: number;
+  profanityMatches?: string[];
+};

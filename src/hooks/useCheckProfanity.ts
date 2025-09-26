@@ -9,8 +9,12 @@ export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions
 export interface ProfanityAnalysis {
   /** Whether the text contains profane words */
   hasProfanity: boolean;
-  /** Array of matched profane words/phrases */
+  /** Array of matched profane words/phrases from dataset */
   matches: string[];
+  /** Array of full words from input that contain profanity */
+  matchedWords: string[];
+  /** Number of profane matches found */
+  matchCount: number;
   /** Text with profane words replaced */
   cleanedText: string;
   /** Original text */
@@ -55,6 +59,8 @@ export function useCheckProfanity(
       return {
         hasProfanity: false,
         matches: [],
+        matchedWords: [],
+        matchCount: 0,
         cleanedText: text,
         originalText: text,
       };
@@ -65,12 +71,11 @@ export function useCheckProfanity(
       const detailedAnalysis = profanityFilter.analyze(text);
       const cleanedText = profanityFilter.clean(text);
 
-      // Extract matched words from analysis
-      const matches = detailedAnalysis.matches;
-
       return {
         hasProfanity: detailedAnalysis.isProfane,
-        matches,
+        matches: detailedAnalysis.matches,
+        matchedWords: detailedAnalysis.matchedWords,
+        matchCount: detailedAnalysis.matchCount,
         cleanedText,
         originalText: text,
       };
@@ -80,6 +85,8 @@ export function useCheckProfanity(
       return {
         hasProfanity: false,
         matches: [],
+        matchedWords: [],
+        matchCount: 0,
         cleanedText: text,
         originalText: text,
       };

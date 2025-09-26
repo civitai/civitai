@@ -379,10 +379,11 @@ export const upsertBounty = async ({
     // Check bounty name and description for profanity
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const hasProfanity = profanityFilter.isProfane(textToCheck);
+    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
 
     // If profanity is detected, mark bounty as NSFW and add to locked properties
-    if (hasProfanity && !data.nsfw) {
+    if (isProfane && !data.nsfw) {
+      data.details = { ...data.details, profanityMatches: matchedWords };
       data.nsfw = true;
       data.lockedProperties =
         data.lockedProperties && !data.lockedProperties.includes('nsfw')

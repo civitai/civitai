@@ -1,12 +1,10 @@
 import {
   Badge,
   Box,
-  Button,
   Card,
   Container,
   Divider,
   Group,
-  List,
   Stack,
   Text,
   Textarea,
@@ -20,6 +18,7 @@ import {
   cleanPrompt,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
+import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 
 type AuditResult = {
   highlighted: string;
@@ -38,6 +37,10 @@ export default function MetadataTester() {
     passed: [],
     failed: [],
   });
+  const [profanityText, setProfanityText] = useState('');
+
+  // Use the hook to automatically check profanity as user types
+  const profanityAnalysis = useCheckProfanity(profanityText);
 
   const updateJson = (json: string) => {
     try {
@@ -79,64 +82,135 @@ export default function MetadataTester() {
   return (
     <Container size="md">
       <Stack>
-        <Group align="flex-end">
-          <Title>Prompt Tester</Title>
-          <Group gap={4} ml="auto">
-            <Badge color="red" variant="light">
-              Blocked Word
-            </Badge>
-            <Badge color="orange" variant="light">
-              NSFW Word
-            </Badge>
-            <Badge color="blue" variant="light">
-              Minor Word
-            </Badge>
-            <Badge color="teal" variant="light">
-              POI Word
-            </Badge>
+        <Title>Moderator Auditor</Title>
+
+        {/* Prompt Testing Section */}
+        <Stack>
+          <Group align="flex-end">
+            <Title order={2}>Prompt Tester</Title>
+            <Group gap={4} ml="auto">
+              <Badge color="red" variant="light">
+                Blocked Word
+              </Badge>
+              <Badge color="orange" variant="light">
+                NSFW Word
+              </Badge>
+              <Badge color="blue" variant="light">
+                Minor Word
+              </Badge>
+              <Badge color="teal" variant="light">
+                POI Word
+              </Badge>
+            </Group>
           </Group>
-        </Group>
-        <Textarea
-          onChange={(e) => updateJson(e.target.value)}
-          autosize
-          minRows={5}
-          placeholder={`Prompts JSON: { prompt: string; negativePrompt?: string }[]`}
-        />
-        <Group grow align="flex-start">
-          {Object.entries(results).map(([key, values]) => (
-            <Box key={key} w="50%" px="xs">
-              <Text size="lg" fw={500} tt="uppercase" mb="sm">
-                {key}
-              </Text>
-              <Stack gap="xs">
-                {values.map(({ highlighted, tags, replaced }) => (
-                  <Card withBorder key={highlighted}>
-                    <div dangerouslySetInnerHTML={{ __html: highlighted }} />
-                    {replaced && (
-                      <>
-                        <Divider label="Cleaned" mt="xs" />
-                        <Text>{replaced.prompt}</Text>
-                        {replaced.negativePrompt && (
-                          <Text c="dimmed">{replaced.negativePrompt}</Text>
-                        )}
-                      </>
+          <Textarea
+            onChange={(e) => updateJson(e.target.value)}
+            autosize
+            minRows={5}
+            placeholder={`Prompts JSON: { prompt: string; negativePrompt?: string }[]`}
+          />
+          <Group grow align="flex-start">
+            {Object.entries(results).map(([key, values]) => (
+              <Box key={key} w="50%" px="xs">
+                <Text size="lg" fw={500} tt="uppercase" mb="sm">
+                  {key}
+                </Text>
+                <Stack gap="xs">
+                  {values.map(({ highlighted, tags, replaced }) => (
+                    <Card withBorder key={highlighted}>
+                      <div dangerouslySetInnerHTML={{ __html: highlighted }} />
+                      {replaced && (
+                        <>
+                          <Divider label="Cleaned" mt="xs" />
+                          <Text>{replaced.prompt}</Text>
+                          {replaced.negativePrompt && (
+                            <Text c="dimmed">{replaced.negativePrompt}</Text>
+                          )}
+                        </>
+                      )}
+                      <div></div>
+                      {tags.length > 0 && (
+                        <Group gap={4} mt="sm">
+                          {tags.map((tag) => (
+                            <Badge size="xs" key={tag}>
+                              {tag}
+                            </Badge>
+                          ))}
+                        </Group>
+                      )}
+                    </Card>
+                  ))}
+                </Stack>
+              </Box>
+            ))}
+          </Group>
+        </Stack>
+
+        <Divider />
+
+        {/* Profanity Testing Section */}
+        <Stack>
+          <Title order={2}>Profanity Filter Tester</Title>
+          <Textarea
+            placeholder="Enter text to check for profanity..."
+            value={profanityText}
+            onChange={(e) => setProfanityText(e.target.value)}
+            autosize
+            minRows={2}
+          />
+
+          {profanityText.trim() && (
+            <Card withBorder>
+              <Stack gap="sm">
+                <Group>
+                  <Badge color={profanityAnalysis.hasProfanity ? 'red' : 'green'} variant="filled">
+                    {profanityAnalysis.hasProfanity ? 'Profane' : 'Clean'}
+                  </Badge>
+                  {profanityAnalysis.hasProfanity && (
+                    <Text size="sm" c="dimmed">
+                      {profanityAnalysis.matchCount} match
+                      {profanityAnalysis.matchCount !== 1 ? 'es' : ''}
+                    </Text>
+                  )}
+                </Group>
+
+                {profanityAnalysis.hasProfanity && (
+                  <>
+                    {profanityAnalysis.matchedWords.length > 0 && (
+                      <div>
+                        <Text fw={500} size="sm" mb={4}>
+                          Matched Words from Input:
+                        </Text>
+                        <Group gap={4}>
+                          {profanityAnalysis.matchedWords.map((word, index) => (
+                            <Badge key={index} color="blue" variant="light">
+                              {word}
+                            </Badge>
+                          ))}
+                        </Group>
+                      </div>
                     )}
-                    <div></div>
-                    {tags.length > 0 && (
-                      <Group gap={4} mt="sm">
-                        {tags.map((tag) => (
-                          <Badge size="xs" key={tag}>
-                            {tag}
-                          </Badge>
-                        ))}
-                      </Group>
+
+                    {profanityAnalysis.matches.length > 0 && (
+                      <div>
+                        <Text fw={500} size="sm" mb={4}>
+                          Dataset Words Matched:
+                        </Text>
+                        <Group gap={4}>
+                          {profanityAnalysis.matches.map((word, index) => (
+                            <Badge key={index} color="orange" variant="light">
+                              {word}
+                            </Badge>
+                          ))}
+                        </Group>
+                      </div>
                     )}
-                  </Card>
-                ))}
+                  </>
+                )}
               </Stack>
-            </Box>
-          ))}
-        </Group>
+            </Card>
+          )}
+        </Stack>
       </Stack>
     </Container>
   );

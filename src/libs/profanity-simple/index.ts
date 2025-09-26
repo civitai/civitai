@@ -114,16 +114,29 @@ export class SimpleProfanityFilter {
         isProfane: false,
         matchCount: 0,
         matches: [],
+        matchedWords: [],
       };
     }
 
-    // Efficiently extract unique original words in single pass
+    // Efficiently extract unique original words and full words in single pass
     const uniqueWords = new Set<string>();
+    const matchedWordsSet = new Set<string>();
+
     matches.forEach((match) => {
-      const payload = this.dataset.getPayloadWithPhraseMetadata(match);
-      const originalWord = payload.phraseMetadata?.originalWord;
+      const { phraseMetadata, startIndex, endIndex } =
+        this.dataset.getPayloadWithPhraseMetadata(match);
+      const originalWord = phraseMetadata?.originalWord;
       if (originalWord) {
         uniqueWords.add(originalWord);
+      }
+
+      // Extract the full word that contains the profane text
+      // Fix: getPayloadWithPhraseMetadata returns endIndex that's 1 less than it should be
+      const fullWord = this.extractFullWord(text, startIndex, endIndex + 1);
+
+      // Add the full word context
+      if (fullWord.trim()) {
+        matchedWordsSet.add(fullWord);
       }
     });
 
@@ -131,7 +144,30 @@ export class SimpleProfanityFilter {
       isProfane: true,
       matchCount: matches.length,
       matches: Array.from(uniqueWords),
+      matchedWords: Array.from(matchedWordsSet),
     };
+  }
+
+  /**
+   * Extract the full word that contains the profane substring
+   */
+  private extractFullWord(text: string, matchStart: number, matchEnd: number): string {
+    // Find word boundaries - look for whitespace, punctuation, or string boundaries
+    const wordBoundaryRegex = /[\s\W]/;
+
+    // Find start of word (go backwards from match start)
+    let wordStart = matchStart;
+    while (wordStart > 0 && !wordBoundaryRegex.test(text[wordStart - 1])) {
+      wordStart--;
+    }
+
+    // Find end of word (go forwards from match end)
+    let wordEnd = matchEnd;
+    while (wordEnd < text.length && !wordBoundaryRegex.test(text[wordEnd])) {
+      wordEnd++;
+    }
+
+    return text.substring(wordStart, wordEnd);
   }
 
   private initializeMatcher(): void {

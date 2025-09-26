@@ -1456,12 +1456,12 @@ export const upsertModel = async (
     userId,
     templateId,
     bountyId,
-    meta,
     isModerator,
     status,
     gallerySettings,
     ...data
   } = input;
+  let { meta } = input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1474,10 +1474,11 @@ export const upsertModel = async (
     // Check model name and description for profanity
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const hasProfanity = profanityFilter.isProfane(textToCheck);
+    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
 
     // If profanity is detected, mark model as NSFW and add to locked properties
-    if (hasProfanity && !data.nsfw) {
+    if (isProfane && !data.nsfw) {
+      meta = { ...(meta ?? {}), profanityMatches: matchedWords };
       data.nsfw = true;
       data.lockedProperties =
         data.lockedProperties && !data.lockedProperties.includes('nsfw')
@@ -1572,6 +1573,7 @@ export const upsertModel = async (
     if (!isOwner) return null;
 
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
+    const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
     const result = await dbWrite.model.update({
       select: {
@@ -1591,7 +1593,7 @@ export const upsertModel = async (
       where: { id },
       data: {
         ...data,
-        meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+        meta: { ...prevMeta, ...meta },
         gallerySettings: {
           ...prevGallerySettings,
           level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
