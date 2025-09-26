@@ -127,7 +127,7 @@ export const activeBaseModels = baseModelConfig
 
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);
-  if (!config) throw new Error(`unsupported base model: ${baseModel}`);
+  if (!config) return baseModelConfig.find((x) => x.group === 'Other')!;
   return config;
 }
 
