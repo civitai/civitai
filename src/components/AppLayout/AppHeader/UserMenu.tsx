@@ -459,14 +459,15 @@ function BuzzMenuItem() {
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
+          accountTypes={['blue', 'green']}
         />
-        {/* <UserBuzz
+        <UserBuzz
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountTypes={['generation', 'green']}
-        /> */}
+          accountTypes={['yellow']}
+        />
       </div>
       <Button
         component="div"

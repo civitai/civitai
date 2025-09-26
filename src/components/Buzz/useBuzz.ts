@@ -9,6 +9,7 @@ import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import { getBuzzTypeDistribution } from '~/utils/buzz';
 
 export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow']) {
   const currentUser = useCurrentUser();
@@ -113,4 +114,27 @@ export const useTransactionsReport = (
     isLoading: opts.enabled ? isLoading : false,
     ...rest,
   };
+};
+
+export const useMainBuzzAccountType = (
+  accountTypes: BuzzSpendType[],
+  cost: number
+): BuzzSpendType | undefined => {
+  const {
+    data: { accounts },
+  } = useQueryBuzz(accountTypes);
+
+  const buzzTypeDistribution = getBuzzTypeDistribution({
+    accounts,
+    buzzAmount: cost,
+  });
+  const baseType = accounts[0]?.type;
+
+  const mainBuzzAccountType = Object.entries(buzzTypeDistribution.amt).reduce(
+    (max, [key, amount]) =>
+      amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,
+    Object.keys(buzzTypeDistribution.amt)[0] || baseType
+  ) as BuzzSpendType;
+
+  return mainBuzzAccountType;
 };

@@ -33,8 +33,9 @@ export function QueueSnackbar() {
   const includeQueueLink = !router.pathname.includes('/generate');
 
   const {
-    data: { total: balance },
-  } = useQueryBuzz();
+    data: { accounts },
+  } = useQueryBuzz(['blue']);
+  const blueAccount = accounts.find((a) => a.type === 'blue');
 
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {
@@ -95,13 +96,13 @@ export function QueueSnackbar() {
               processing={processing}
               quantity={quantity}
             />
-          ) : balance ? (
+          ) : blueAccount?.balance ? (
             <Popover withinPortal withArrow>
               <Popover.Target>
                 <CurrencyBadge
                   currency="BUZZ"
                   size="sm"
-                  unitAmount={balance}
+                  unitAmount={blueAccount?.balance ?? 0}
                   displayCurrency={false}
                   formatter={abbreviateNumber}
                   textColor={theme.colors.blue[4]}

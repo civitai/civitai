@@ -13,6 +13,10 @@ import { useTipStore } from '~/store/tip.store';
 import classes from './GenerationCostPopover.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { useMainBuzzAccountType, useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { getBuzzTypeDistribution } from '~/utils/buzz';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -33,6 +37,7 @@ export function GenerationCostPopover({
 }: Omit<PopoverProps, 'children'> & Props) {
   const totalCost = workflowCost.total ?? 0;
   const disabled = totalCost > 0 ? popoverProps.disabled : true;
+  const mainBuzzAccountType = useMainBuzzAccountType(buzzSpendTypes, totalCost);
 
   return (
     <Popover shadow="md" {...popoverProps} withinPortal>
@@ -53,6 +58,7 @@ export function GenerationCostPopover({
             currency={Currency.BUZZ}
             size="xs"
             className="cursor-pointer"
+            type={mainBuzzAccountType}
           />
         )}
       </Popover.Target>
@@ -63,6 +69,7 @@ export function GenerationCostPopover({
           disabled={disabled}
           hideCreatorTip={hideCreatorTip}
           hideCivitaiTip={hideCivitaiTip}
+          buzzAccountType={mainBuzzAccountType}
         />
       </Popover.Dropdown>
     </Popover>
@@ -75,6 +82,7 @@ function GenerationCostPopoverDetail({
   disabled,
   hideCreatorTip,
   hideCivitaiTip,
+  buzzAccountType,
 }: Props) {
   const { civitaiTip, creatorTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
@@ -138,7 +146,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" className="font-bold" wrap="nowrap">
           {baseCost ?? '0'}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       className: clsx(classes.tableCell, classes.baseCostCell),
@@ -148,7 +156,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
           {workflowCost.fixed?.additionalNetworks}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       visible: !!workflowCost.fixed?.additionalNetworks,
@@ -159,7 +167,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
           {workflowCost.fixed?.priority}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       visible: !!workflowCost.fixed?.priority,
@@ -186,7 +194,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${Math.ceil((baseCost * creatorTip) / 100)}`}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       visible: !readOnly && !hideCreatorTip,
@@ -197,7 +205,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${workflowCost.tips?.creators}`}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       visible: !!readOnly && !!workflowCost.tips?.creators,
@@ -225,7 +233,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
           {`${Math.ceil((baseCost * civitaiTip) / 100)}`}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       visible: !readOnly && !hideCivitaiTip,
@@ -236,7 +244,7 @@ function GenerationCostPopoverDetail({
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
           {baseCost ?? '0'}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),
       visible: !!readOnly && !!workflowCost.tips?.civitai,
@@ -307,4 +315,5 @@ type Props = {
   hideCreatorTip?: boolean;
   hideCivitaiTip?: boolean;
   variant?: 'info-circle' | 'badge';
+  buzzAccountType?: BuzzSpendType;
 };
