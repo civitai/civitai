@@ -32,7 +32,7 @@ export const creatorProgramRouter = router({
   getWithdrawalHistory: protectedProcedure.query(({ ctx }) => getWithdrawalHistory(ctx.user.id)),
 
   bankBuzz: protectedProcedure.input(bankBuzzSchema).mutation(({ ctx, input }) => {
-    return bankBuzz(ctx.user.id, input.amount);
+    return bankBuzz(ctx.user.id, input.amount, input.accountType);
   }),
   extractBuzz: protectedProcedure.mutation(({ ctx }) => {
     return extractBuzz(ctx.user.id);

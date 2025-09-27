@@ -31,8 +31,7 @@
 .tipAmount {
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  color: var(--mantine-color-yellow-7);
-  /* Replace with Mantine's yellow[7] */
+  color: var(--buzz-color, var(--mantine-color-yellow-7));
   font-size: 16px;
   padding: 0;
   line-height: 1;

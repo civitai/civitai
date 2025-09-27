@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Divider,
-  Group,
-  Modal,
-  Paper,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Alert, Button, Divider, Group, Modal, Paper, Stack, Text } from '@mantine/core';
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
 import type * as z from 'zod';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
@@ -19,23 +9,20 @@ import {
 } from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputNumber, useForm } from '~/libs/form';
-import { constants } from '~/server/common/constants';
 import { createBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 import { formatCurrencyForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 const schema = createBuzzWithdrawalRequestSchema;
 
 export const CreateWithdrawalRequest = () => {
   const dialog = useDialogContext();
-  const utils = trpc.useUtils();
-  const currentUser = useCurrentUser();
   const handleClose = dialog.onClose;
   const { createBuzzWithdrawalRequest, creatingBuzzWithdrawalRequest } =
     useMutateBuzzWithdrawalRequest();
@@ -44,13 +31,13 @@ export const CreateWithdrawalRequest = () => {
   const form = useForm({
     schema,
     defaultValues: {
-      amount: constants.buzz.minBuzzWithdrawal,
+      amount: buzzConstants.minBuzzWithdrawal,
     },
   });
 
   const amount = form.watch('amount');
   const { dollarAmount, platformFee, payoutAmount } = getBuzzWithdrawalDetails(
-    amount ?? constants.buzz.minBuzzWithdrawal
+    amount ?? buzzConstants.minBuzzWithdrawal
   );
 
   const handleSuccess = () => {
@@ -89,7 +76,7 @@ export const CreateWithdrawalRequest = () => {
             your hard earned Buzz.
           </Text>
           <Text size="sm" c="dimmed">
-            (You&rsquo;ll get $1.00 for {constants.buzz.buzzDollarRatio} Buzz)
+            (You&rsquo;ll get $1.00 for {buzzConstants.buzzDollarRatio} Buzz)
           </Text>
         </Stack>
         <Form form={form} onSubmit={handleSubmit}>
@@ -113,13 +100,13 @@ export const CreateWithdrawalRequest = () => {
                     leftSection={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     format={undefined}
                     currency={Currency.BUZZ}
-                    min={constants.buzz.minBuzzWithdrawal}
+                    min={buzzConstants.minBuzzWithdrawal}
                     max={
                       status?.maxAmount
-                        ? status?.maxAmount * constants.buzz.buzzDollarRatio
-                        : constants.buzz.maxBuzzWithdrawal
+                        ? status?.maxAmount * buzzConstants.buzzDollarRatio
+                        : buzzConstants.maxBuzzWithdrawal
                     }
-                    step={constants.buzz.buzzDollarRatio}
+                    step={buzzConstants.buzzDollarRatio}
                   />
 
                   {amount && (
@@ -133,7 +120,7 @@ export const CreateWithdrawalRequest = () => {
                       <Divider variant="dashed" />
                       <Group justify="space-between">
                         <Text c="dimmed">
-                          Platform fee ({constants.buzz.platformFeeRate / 100}%)
+                          Platform fee ({buzzConstants.platformFeeRate / 100}%)
                         </Text>
                         <Text>${formatCurrencyForDisplay(platformFee, Currency.USD)}</Text>
                       </Group>
@@ -156,7 +143,7 @@ export const CreateWithdrawalRequest = () => {
               <Text size="xs" c="yellow.6">
                 You can request up to{' '}
                 <Text size="xs" component="span" fw="bold">
-                  {numberWithCommas(status.maxAmount * constants.buzz.buzzDollarRatio)}{' '}
+                  {numberWithCommas(status.maxAmount * buzzConstants.buzzDollarRatio)}{' '}
                 </Text>{' '}
                 Buzz
               </Text>

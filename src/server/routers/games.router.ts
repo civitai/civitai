@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.utils';
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   addImageRatingSchema,
   cleanseSmiteSchema,

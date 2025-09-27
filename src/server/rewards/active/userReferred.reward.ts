@@ -3,7 +3,7 @@ import { createBuzzEvent } from '../base.reward';
 const type = 'userReferred' as const;
 export const userReferredReward = createBuzzEvent({
   type,
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   description: 'You have referred another user',
   awardAmount: 500,
   onDemand: true,

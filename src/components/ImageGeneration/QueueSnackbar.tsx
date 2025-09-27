@@ -18,7 +18,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
 import type { WorkflowStatus } from '@civitai/client';
 import React from 'react';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './QueueSnackbar.module.scss';
@@ -32,7 +32,9 @@ export function QueueSnackbar() {
   const slots = Array(requestLimit).fill(0);
   const includeQueueLink = !router.pathname.includes('/generate');
 
-  const { balance } = useBuzz(undefined, 'generation');
+  const {
+    data: { total: balance },
+  } = useQueryBuzz();
 
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {

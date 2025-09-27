@@ -73,6 +73,8 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
@@ -119,6 +121,7 @@ const formSchema = createBountyInputSchema
 
 export function BountyCreateForm() {
   const router = useRouter();
+  const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -609,7 +612,7 @@ export function BountyCreateForm() {
               disabled={hasPoiInNsfw}
               label="Save"
               buzzAmount={unitAmount}
-              color="yellow.7"
+              accountTypes={buzzSpendTypes}
             />
           ) : (
             <Button loading={creatingBounty} type="submit" disabled={hasPoiInNsfw}>

@@ -1,5 +1,4 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { constants } from '~/server/common/constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
@@ -19,6 +18,7 @@ import {
   updateBuzzWithdrawalRequest,
 } from '../services/buzz-withdrawal-request.service';
 import { throwAuthorizationError, throwDbError } from '../utils/errorHandling';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export async function createBuzzWithdrawalRequestHandler({
   input,
@@ -37,7 +37,7 @@ export async function createBuzzWithdrawalRequestHandler({
       )
     );
 
-    if (status.maxAmount && input.amount > status.maxAmount * constants.buzz.buzzDollarRatio) {
+    if (status.maxAmount && input.amount > status.maxAmount * buzzConstants.buzzDollarRatio) {
       throw new Error('You requested an amount higher than the current allowed maximum.');
     }
 
