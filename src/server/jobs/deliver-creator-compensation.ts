@@ -72,7 +72,7 @@ export const updateCreatorResourceCompensation = createJob(
               jobType = 'comfyVideoGen' as isVideo
             FROM orchestration.jobs
             WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
-              AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays}) AND toStartOfDay(addDays(now(),${addDays}))
+              AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays})) AND toStartOfDay(addDays(now(),${addDays}))
               AND modelVersionId NOT IN (250708, 250712, 106916)
           ) rj
           JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
