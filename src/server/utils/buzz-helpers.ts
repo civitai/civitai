@@ -38,9 +38,12 @@ export const getBuzzBulkMultiplier = ({
 
 export function getAllowedAccountTypes(
   features: FeatureAccess,
-  baseTypes: BuzzSpendType[] = ['blue']
+  baseTypes: BuzzSpendType[] = []
 ): BuzzSpendType[] {
-  const domainTypes: BuzzSpendType[] = [];
+  const domainTypes: BuzzSpendType[] = baseTypes.filter(
+    // Remove default yellow/green if provided.
+    (type) => !['yellow', 'green'].includes(type)
+  );
 
   if (features.isGreen) {
     domainTypes.push('green');
@@ -48,5 +51,5 @@ export function getAllowedAccountTypes(
     domainTypes.push('yellow');
   }
 
-  return [...domainTypes, ...baseTypes];
+  return domainTypes;
 }

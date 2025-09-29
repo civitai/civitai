@@ -34,7 +34,6 @@ import {
   MediaType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
-import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
@@ -435,11 +434,15 @@ export const getShopSectionsWithItems = async ({
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
-  allowedAccountTypes,
+  buzzTypes = ['yellow'],
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
-  allowedAccountTypes?: BuzzSpendType[];
+  buzzTypes?: BuzzSpendType[];
 }) => {
+  if (buzzTypes && buzzTypes.includes('blue')) {
+    throw new Error('You cannot use Blue Buzz to purchase cosmetics.');
+  }
+
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
     select: {
@@ -524,10 +527,7 @@ export const purchaseCosmeticShopItem = async ({
   const data = await createMultiAccountBuzzTransaction({
     fromAccountId: userId,
     // Can use a combination of all these accounts:
-    fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
-      isNsfw: false,
-      baseTypes: allowedAccountTypes,
-    }),
+    fromAccountTypes: buzzTypes,
     toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,

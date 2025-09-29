@@ -10,7 +10,7 @@ import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -44,7 +44,6 @@ import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 
 export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {
@@ -165,6 +164,8 @@ export const createBounty = async ({
   currency,
   startsAt: incomingStartsAt,
   expiresAt: incomingExpiresAt,
+  buzzType,
+
   ...data
 }: CreateBountyInput & { userId: number }) => {
   const { userId } = data;
@@ -241,13 +242,14 @@ export const createBounty = async ({
 
       switch (currency) {
         case Currency.BUZZ: {
+          if (!buzzType) {
+            throw throwBadRequestError('buzzType is required for Buzz bounties');
+          }
+
           const prefix = getBountyTransactionPrefix(bounty.id, userId);
           await createMultiAccountBuzzTransaction({
             fromAccountId: userId,
-            fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
-              isNsfw: bounty.nsfw,
-              nsfwLevel: bounty.nsfwLevel,
-            }),
+            fromAccountTypes: [buzzType],
             externalTransactionIdPrefix: prefix,
             toAccountId: 0,
             amount: unitAmount,
@@ -396,8 +398,9 @@ export const upsertBounty = async ({
   id,
   userId,
   isModerator,
+  buzzType,
   ...data
-}: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
+}: UpsertBountyInput & { userId: number; isModerator: boolean; buzzType?: BuzzSpendType }) => {
   await throwOnBlockedLinkDomain(data.description);
   if (!isModerator) {
     // don't allow updating of locked properties
@@ -551,7 +554,8 @@ export const addBenefactorUnitAmount = async ({
   bountyId,
   unitAmount,
   userId,
-}: AddBenefactorUnitAmountInputSchema & { userId: number }) => {
+  buzzType,
+}: AddBenefactorUnitAmountInputSchema & { userId: number; buzzType: BuzzSpendType }) => {
   const bounty = await dbRead.bounty.findUnique({
     where: { id: bountyId },
     select: { complete: true, id: true, nsfw: true, nsfwLevel: true },
@@ -593,13 +597,14 @@ export const addBenefactorUnitAmount = async ({
 
   switch (currency) {
     case Currency.BUZZ:
+      if (buzzType === 'blue') {
+        throw throwBadRequestError('You cannot use Blue Buzz for bounties.');
+      }
+
       const prefix = getBountyTransactionPrefix(bounty.id, userId);
       await createMultiAccountBuzzTransaction({
         fromAccountId: userId,
-        fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
-          isNsfw: bounty.nsfw,
-          nsfwLevel: bounty.nsfwLevel,
-        }),
+        fromAccountTypes: [buzzType],
         externalTransactionIdPrefix: prefix,
         toAccountId: 0,
         amount: unitAmount,

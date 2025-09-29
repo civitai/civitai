@@ -76,6 +76,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 // const tooltipProps: Partial<TooltipProps> = {
 //   maw: 300,
@@ -120,7 +121,7 @@ const formSchema = createBountyInputSchema
 
 export function BountyCreateForm() {
   const router = useRouter();
-  const availableBuzzTypes = useAvailableBuzz(['blue']);
+  const availableBuzzTypes = useAvailableBuzz();
   const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();

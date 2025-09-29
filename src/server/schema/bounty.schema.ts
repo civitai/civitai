@@ -77,6 +77,7 @@ export const createBountyInputSchema = z.object({
   images: z
     .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }))
     .min(1, 'At least one example image must be uploaded'),
+  buzzType: z.enum(['green', 'yellow']).default('yellow'),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;

@@ -5,7 +5,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type {
   GetPaginatedPurchasableRewardsModeratorSchema,
@@ -22,7 +22,6 @@ import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
-import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const getPaginatedPurchasableRewards = async (
   input: GetPaginatedPurchasableRewardsSchema & { userId?: number }
@@ -230,7 +229,13 @@ export const purchasableRewardUpsert = async ({
 export const purchasableRewardPurchase = async ({
   userId,
   purchasableRewardId,
-}: PurchasableRewardPurchase & { userId: number }) => {
+  buzzType,
+}: PurchasableRewardPurchase & { userId: number; buzzType: BuzzSpendType }) => {
+  if (buzzType === 'blue') {
+    throw throwBadRequestError('You cannot use Blue Buzz to purchase rewards.');
+  }
+
+  // Check if user has already purchased this reward:
   const hasPurchasedReward = await dbRead.userPurchasedRewards.findFirst({
     where: {
       userId,
@@ -280,7 +285,7 @@ export const purchasableRewardPurchase = async ({
   const prefix = `purchasable-reward-purchase-${userId}-${purchasableRewardId}`;
   const data = await createMultiAccountBuzzTransaction({
     fromAccountId: userId, // bank
-    fromAccountTypes: getBuzzTransactionSupportedAccountTypes({}),
+    fromAccountTypes: [buzzType],
     toAccountId: 0,
     amount: reward.unitPrice,
     type: TransactionType.Purchase,

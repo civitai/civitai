@@ -10,7 +10,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
@@ -47,7 +47,6 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
-import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { withRetries } from '~/utils/errorHandling';
 import { getModeratedTags } from '~/server/services/system-cache';
 
@@ -473,7 +472,8 @@ export async function createEntityAppeal({
   entityType,
   message,
   userId,
-}: CreateEntityAppealInput & { userId: number }) {
+  buzzType,
+}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType }) {
   let buzzTransactionId: string | null = null;
 
   // check if user has more than 3 pending or rejected appeal in the last 30 days
@@ -491,9 +491,7 @@ export async function createEntityAppeal({
         fromAccountId: userId,
         toAccountId: 0,
         type: TransactionType.Appeal,
-        fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
-          isNsfw: false, // May use any buzz
-        }),
+        fromAccountTypes: [buzzType],
         description: `Appeal fee for ${entityType} ${entityId}`,
         externalTransactionIdPrefix: prefix,
       })

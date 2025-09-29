@@ -20,6 +20,7 @@ import {
 } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
@@ -1233,11 +1234,17 @@ export const earlyAccessPurchase = async ({
   userId,
   modelVersionId,
   type = 'download',
+  buzzType,
 }: {
   userId: number;
   modelVersionId: number;
   type: 'generation' | 'download';
+  buzzType: BuzzSpendType;
 }) => {
+  if (buzzType === 'blue') {
+    throw throwBadRequestError('You cannot use Blue Buzz for early access purchases.');
+  }
+
   const permission =
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
@@ -1333,9 +1340,7 @@ export const earlyAccessPurchase = async ({
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
-      fromAccountTypes: getBuzzTransactionSupportedAccountTypes({
-        isNsfw: modelVersion.model.nsfw,
-      }),
+      fromAccountTypes: [buzzType],
     });
 
     if (data?.transactionCount === 0)

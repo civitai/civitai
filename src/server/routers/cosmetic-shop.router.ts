@@ -99,7 +99,7 @@ export const cosmeticShopRouter = router({
       return purchaseCosmeticShopItem({
         ...input,
         userId: ctx.user.id,
-        allowedAccountTypes,
+        buzzTypes: allowedAccountTypes,
       });
     }),
   getPreviewImages: protectedProcedure.input(getPreviewImagesInput).query(({ input, ctx }) => {

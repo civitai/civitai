@@ -1,7 +1,7 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import {
   createMultiAccountBuzzTransaction,
@@ -9,7 +9,6 @@ import {
 } from '~/server/services/buzz.service';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
-import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 
 export const donationGoalById = async ({
   id,
@@ -60,10 +59,16 @@ export const donateToGoal = async ({
   donationGoalId,
   amount,
   userId,
+  buzzType,
 }: DonateToGoalInput & {
   userId: number;
+  buzzType: BuzzSpendType;
 }) => {
   const goal = await donationGoalById({ id: donationGoalId, userId });
+
+  if (buzzType === 'blue') {
+    throw new Error('You cannot use Blue Buzz to make donations.');
+  }
 
   if (!goal) {
     throw new Error('Goal not found');
@@ -81,14 +86,10 @@ export const donateToGoal = async ({
   const externalTransactionIdPrefix = `donation-${donationGoalId}-${Date.now()}`;
 
   try {
-    const accountTypes = getBuzzTransactionSupportedAccountTypes({
-      isNsfw: goal.modelVersion?.model?.nsfw ?? false,
-    });
-
     const transaction = await createMultiAccountBuzzTransaction({
       amount,
       fromAccountId: userId,
-      fromAccountTypes: accountTypes,
+      fromAccountTypes: [buzzType],
       toAccountId: goal.userId,
       externalTransactionIdPrefix,
       description: `Donation to ${goal.title}`,

@@ -31,6 +31,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export async function createReportHandler({
   input,
@@ -295,7 +296,11 @@ export async function createEntityAppealHandler({
         throw throwDbCustomError('Entity type not supported for appeals');
     }
 
-    const appeal = await createEntityAppeal({ ...input, userId });
+    const appeal = await createEntityAppeal({
+      ...input,
+      userId,
+      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
+    });
 
     return appeal;
   } catch (error) {
