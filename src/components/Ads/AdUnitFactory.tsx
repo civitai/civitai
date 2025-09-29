@@ -130,7 +130,7 @@ function AdWrapper({
 
   const content = (
     <>
-      {adsBlocked ? (
+      {adsBlocked && !nsfw ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
       ) : nsfw ? (
         <CivitaiAdUnit adUnit={adUnit} id={id} />
@@ -431,7 +431,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
 
   const traceRef = useRef<string>();
   const handleServe = useCallback(() => {
-    if (fetchingRef.current) return;
+    if (fetchingRef.current || document.visibilityState !== 'visible') return;
     fetchingRef.current = true;
     const type = adunitToCivitaiMap[props.adUnit];
     const searchParams = new URLSearchParams(
