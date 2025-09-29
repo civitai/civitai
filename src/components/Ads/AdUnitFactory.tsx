@@ -484,7 +484,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   useEffect(() => {
     function handleImpression() {
       if (impressionRef.current) return;
-      if (imgLoaded && inView && data) {
+      if (imgLoaded && inView && data && document.visibilityState === 'visible') {
         impressionRef.current = true;
         fetch(`${civitaiAdvertisingUrl}/api/v1/view?trace=${data.trace}`, {
           method: 'POST',
