@@ -9,8 +9,10 @@ export function useAdUnitImpressionTracked(adunit: string) {
     }) as EventListener;
 
     window.addEventListener('civitai-ad-impression', listener);
+    window.addEventListener('civitai-custom-ad-impression', listener);
     return () => {
       window.removeEventListener('civitai-ad-impression', listener);
+      window.removeEventListener('civitai-custom-ad-impression', listener);
     };
   }, [adunit]);
 
