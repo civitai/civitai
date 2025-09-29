@@ -17,6 +17,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useMainBuzzAccountType, useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { getBuzzTypeDistribution } from '~/utils/buzz';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -37,7 +38,8 @@ export function GenerationCostPopover({
 }: Omit<PopoverProps, 'children'> & Props) {
   const totalCost = workflowCost.total ?? 0;
   const disabled = totalCost > 0 ? popoverProps.disabled : true;
-  const mainBuzzAccountType = useMainBuzzAccountType(buzzSpendTypes, totalCost);
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
+  const mainBuzzAccountType = useMainBuzzAccountType(availableBuzzTypes, totalCost);
 
   return (
     <Popover shadow="md" {...popoverProps} withinPortal>

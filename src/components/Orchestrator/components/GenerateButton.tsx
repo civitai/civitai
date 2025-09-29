@@ -1,6 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Text } from '@mantine/core';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -20,6 +21,7 @@ export function GenerateButton({
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   const { size = 'lg' } = buttonProps;
 
@@ -45,7 +47,7 @@ export function GenerateButton({
       buzzAmount={cost}
       onPerformTransaction={onClick}
       error={error}
-      accountTypes={buzzSpendTypes}
+      accountTypes={availableBuzzTypes}
       showPurchaseModal
       showTypePct
     />

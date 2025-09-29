@@ -31,9 +31,10 @@ import { UserBuzz } from '../User/UserBuzz';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import classes from './SendTipModal.module.scss';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { buzzConstants, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const schema = z
   .object({
@@ -46,7 +47,6 @@ const schema = z
       .max(buzzConstants.maxTipAmount)
       .optional(),
     description: z.string().trim().max(100, 'Cannot be longer than 100 characters').optional(),
-    currencyType: z.enum(['green', 'yellow', 'red']),
   })
   .refine((data) => data.amount !== '-1' || data.customAmount, {
     error: 'Please enter a valid amount',
@@ -60,10 +60,6 @@ const presets = [
   { label: 'lg', amount: '1000' },
 ];
 
-// Define supported currency types for tipping
-const supportedCurrencyTypes = ['green', 'yellow'] as const; // 'red'
-type SupportedCurrencyType = (typeof supportedCurrencyTypes)[number];
-
 export function SendTipModal({
   toUserId,
   entityType,
@@ -73,53 +69,24 @@ export function SendTipModal({
   entityType?: string;
   entityId?: number;
 }) {
+  // Use domain-aware buzz types, including blue for tipping
+  const selectedCurrencyType = useAvailableBuzz(['blue'])[0] as BuzzSpendType;
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
   const colorScheme = useComputedColorScheme('light');
-  const { data: balance } = useQueryBuzz();
-
-  const defaultCurrencyType = useMemo(() => {
-    if (!balance?.accounts) return 'yellow';
-
-    const greenAccount = balance.accounts.find((acc) => acc.type === 'green');
-    const yellowAccount = balance.accounts.find((acc) => acc.type === 'yellow');
-    const redAccount = balance.accounts.find((acc) => acc.type === 'red');
-
-    const balances = {
-      green: greenAccount?.balance || 0,
-      yellow: yellowAccount?.balance || 0,
-      red: redAccount?.balance || 0,
-    };
-
-    // Return the currency type with the highest balance
-    return Object.entries(balances).reduce((a, b) =>
-      balances[a[0] as keyof typeof balances] > balances[b[0] as keyof typeof balances] ? a : b
-    )[0] as 'green' | 'yellow' | 'red';
-  }, [balance?.accounts]);
+  const { data: balance } = useQueryBuzz([selectedCurrencyType]);
 
   const form = useForm({
     schema,
     defaultValues: {
       amount: presets[0].amount,
-      currencyType: defaultCurrencyType, // Start with green, will be updated by useEffect
     },
   });
 
   const { trackAction } = useTrackEvent();
-  const [currencyType] = form.watch(['currencyType']);
-  const buzzConfig = useBuzzCurrencyConfig(currencyType);
-
-  // Pre-compute currency configs to avoid hook rules violations
-  const greenConfig = useBuzzCurrencyConfig('green');
-  const yellowConfig = useBuzzCurrencyConfig('yellow');
-  const redConfig = useBuzzCurrencyConfig('red');
-  const currencyConfigs: Record<SupportedCurrencyType, ReturnType<typeof useBuzzCurrencyConfig>> = {
-    green: greenConfig,
-    yellow: yellowConfig,
-    // red: redConfig,
-  };
+  const buzzConfig = useBuzzCurrencyConfig(selectedCurrencyType);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance: number) =>
@@ -136,7 +103,7 @@ export function SendTipModal({
       </Stack>
     ),
     performTransactionOnPurchase: true,
-    accountTypes: [currencyType],
+    accountTypes: [selectedCurrencyType],
   });
 
   const tipUserMutation = trpc.buzz.tipUser.useMutation({
@@ -155,7 +122,7 @@ export function SendTipModal({
 
   const handleClose = () => dialog.onClose();
   const handleSubmit = (data: z.infer<typeof schema>) => {
-    const { customAmount, description, currencyType } = data;
+    const { customAmount, description } = data;
     const amount = Number(data.amount);
     const amountToSend = Number(amount) === -1 ? customAmount ?? 0 : Number(amount);
     const performTransaction = () => {
@@ -171,8 +138,8 @@ export function SendTipModal({
         entityId,
         entityType,
         // Ensures we don't transfer between different account types
-        fromAccountType: currencyType,
-        toAccountType: currencyType,
+        fromAccountType: selectedCurrencyType,
+        toAccountType: selectedCurrencyType,
       });
     };
 
@@ -182,13 +149,6 @@ export function SendTipModal({
   const sending = loading || tipUserMutation.isLoading;
   const [amount, description, customAmount] = form.watch(['amount', 'description', 'customAmount']);
   const amountToSend = Number(amount) === -1 ? customAmount : Number(amount);
-
-  useEffect(() => {
-    // Only set default currency once when balance is first loaded
-    if (balance?.accounts) {
-      form.setValue('currencyType', defaultCurrencyType);
-    }
-  }, [defaultCurrencyType]);
 
   return (
     <Modal
@@ -235,61 +195,6 @@ export function SendTipModal({
 
           <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
             <Stack gap="lg">
-              {/* Currency Type Selection */}
-              <Card
-                padding="md"
-                radius="md"
-                withBorder
-                style={{
-                  borderColor: buzzConfig.color || 'rgba(0,0,0,0.3)',
-                  backgroundColor: colorScheme === 'dark' ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.02)',
-                }}
-              >
-                <Stack gap="sm">
-                  <Text size="sm" fw={600} c={buzzConfig.color}>
-                    Choose Currency Type
-                  </Text>
-                  <InputChipGroup name="currencyType">
-                    <Group gap="sm">
-                      {supportedCurrencyTypes.map((type) => {
-                        const config = currencyConfigs[type];
-                        let typeBalance = 0;
-
-                        if (balance?.accounts) {
-                          typeBalance =
-                            balance.accounts.find((acc) => acc.type === type)?.balance || 0;
-                        }
-
-                        return (
-                          <Chip
-                            key={type}
-                            value={type}
-                            variant="filled"
-                            size="md"
-                            classNames={{
-                              root: classes.chip,
-                              label: classes.label,
-                            }}
-                            style={{
-                              '--chip-color': config.colorRgb,
-                            }}
-                          >
-                            <Group gap="xs" wrap="nowrap">
-                              <CurrencyIcon currency={Currency.BUZZ} size={16} type={type} />
-                              <div>
-                                <Text size="xs" opacity={0.8}>
-                                  {numberWithCommas(typeBalance)}
-                                </Text>
-                              </div>
-                            </Group>
-                          </Chip>
-                        );
-                      })}
-                    </Group>
-                  </InputChipGroup>
-                </Stack>
-              </Card>
-
               {/* Amount Selection */}
               <Card padding="md" radius="md" withBorder>
                 <Stack gap="md">
@@ -313,7 +218,11 @@ export function SendTipModal({
                           }}
                         >
                           <Group gap={4}>
-                            <CurrencyIcon currency={Currency.BUZZ} size={14} type={currencyType} />
+                            <CurrencyIcon
+                              currency={Currency.BUZZ}
+                              size={14}
+                              type={selectedCurrencyType}
+                            />
                             <Text size="sm" fw={600}>
                               {numberWithCommas(Number(preset.amount))}
                             </Text>
@@ -351,7 +260,11 @@ export function SendTipModal({
                       max={buzzConstants.maxTipAmount}
                       disabled={sending}
                       leftSection={
-                        <CurrencyIcon currency={Currency.BUZZ} size={16} type={currencyType} />
+                        <CurrencyIcon
+                          currency={Currency.BUZZ}
+                          size={16}
+                          type={selectedCurrencyType}
+                        />
                       }
                       allowDecimal={false}
                       allowNegative={false}
@@ -392,13 +305,12 @@ export function SendTipModal({
                   Cancel
                 </Button>
                 <BuzzTransactionButton
-                  key={currencyType}
                   label="Send Tip"
                   className={classes.submitButton}
                   buzzAmount={amountToSend ?? 0}
                   disabled={(amountToSend ?? 0) === 0}
                   loading={sending}
-                  accountTypes={currencyType ? [currencyType] : ['green']}
+                  accountTypes={[selectedCurrencyType]}
                   type="submit"
                   size="sm"
                   style={{

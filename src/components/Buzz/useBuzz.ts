@@ -10,8 +10,10 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { getBuzzTypeDistribution } from '~/utils/buzz';
+import { useAvailableBuzz } from './useAvailableBuzz';
 
-export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow']) {
+export function useQueryBuzz(buzzTypes?: BuzzSpendType[]) {
+  const defaultTypes = useAvailableBuzz(buzzTypes);
   const currentUser = useCurrentUser();
   const { data: initialData, isLoading } = trpc.buzz.getBuzzAccount.useQuery(undefined, {
     enabled: !!currentUser,
@@ -20,7 +22,8 @@ export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow']) {
     if (!initialData) return { accounts: [], total: 0, nsfwTotal: 0 };
     let total = 0;
     let nsfwTotal = 0;
-    const accounts = buzzTypes
+    const accountTypes = buzzTypes ?? defaultTypes;
+    const accounts = accountTypes
       .map((type) => {
         const config = BuzzTypes.getConfig(type);
         if (!config || config.type !== 'spend') return null;
@@ -32,7 +35,7 @@ export function useQueryBuzz(buzzTypes: BuzzSpendType[] = ['green', 'yellow']) {
       .filter(isDefined);
 
     return { accounts, total, nsfwTotal };
-  }, [initialData, buzzTypes]);
+  }, [initialData, buzzTypes, defaultTypes]);
 
   return { data, isLoading };
 }

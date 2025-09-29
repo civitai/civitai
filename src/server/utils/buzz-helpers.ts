@@ -1,4 +1,6 @@
 import { buzzBulkBonusMultipliers } from '~/server/common/constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 export const getBuzzBulkMultiplier = ({
   buzzAmount: _buzzAmount,
@@ -33,3 +35,18 @@ export const getBuzzBulkMultiplier = ({
     totalBuzz: mainBuzzAdded + blueBuzzAdded + buzzAmount,
   };
 };
+
+export function getAllowedAccountTypes(
+  features: FeatureAccess,
+  baseTypes: BuzzSpendType[] = ['blue']
+): BuzzSpendType[] {
+  const domainTypes: BuzzSpendType[] = [];
+
+  if (features.isGreen) {
+    domainTypes.push('green');
+  } else {
+    domainTypes.push('yellow');
+  }
+
+  return [...domainTypes, ...baseTypes];
+}

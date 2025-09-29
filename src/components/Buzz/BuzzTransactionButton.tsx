@@ -11,6 +11,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { getBuzzTypeDistribution } from '~/utils/buzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 type Props = ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>> & {
@@ -44,18 +45,20 @@ export function BuzzTransactionButton({
   priceReplacement,
   ...buttonProps
 }: Props) {
+  const allowedAccountTypes = useAvailableBuzz(accountTypes);
+  // Use provided account types filtered by domain, or domain defaults
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const {
     data: { accounts },
-  } = useQueryBuzz(accountTypes);
+  } = useQueryBuzz(allowedAccountTypes);
   const baseType = accounts[0]?.type;
   const { conditionalPerformTransaction, hasRequiredAmount, isLoadingBalance } = useBuzzTransaction(
     {
       message,
       purchaseSuccessMessage,
       performTransactionOnPurchase,
-      accountTypes,
+      accountTypes: allowedAccountTypes,
     }
   );
 
@@ -63,6 +66,7 @@ export function BuzzTransactionButton({
     accounts,
     buzzAmount,
   });
+
   const mainBuzzColor = Object.entries(buzzTypeDistribution.amt).reduce(
     (max, [key, amount]) =>
       amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,

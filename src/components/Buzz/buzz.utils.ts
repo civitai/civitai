@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import type React from 'react';
 import { useState } from 'react';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { env } from '~/env/client';
@@ -108,11 +109,12 @@ export const useBuzzTransaction = (opts?: {
   performTransactionOnPurchase?: boolean;
   accountTypes?: BuzzSpendType[];
 }) => {
+  const defaultAccountTypes = useAvailableBuzz();
   const {
     message,
     purchaseSuccessMessage,
     performTransactionOnPurchase,
-    accountTypes = ['green', 'yellow'], // 'red'
+    accountTypes = defaultAccountTypes,
   } = opts ?? {};
 
   const features = useFeatureFlags();

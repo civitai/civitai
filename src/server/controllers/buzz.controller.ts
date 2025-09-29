@@ -112,7 +112,7 @@ export async function createBuzzTipTransactionHandler({
   try {
     const { id: fromAccountId } = ctx.user;
     if (input.fromAccountType !== input.toAccountType) {
-      throw throwBadRequestError('You cannot send Buzz between different account types');
+      throw throwBadRequestError('You cannot tip Buzz between different account types');
     }
 
     if (fromAccountId === input.toAccountId)

@@ -14,6 +14,7 @@ import clsx from 'clsx';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 type Props = TextProps & {
   iconSize?: number;
@@ -31,9 +32,11 @@ export function UserBuzz({
   withTooltip,
   withAbbreviation = true,
   accountId,
-  accountTypes = buzzSpendTypes,
+  accountTypes,
   ...textProps
 }: Props) {
+  const availableTypes = useAvailableBuzz(['blue']);
+  accountTypes ??= availableTypes;
   const {
     data: { accounts, total },
     isLoading,

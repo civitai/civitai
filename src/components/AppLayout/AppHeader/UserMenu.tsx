@@ -36,6 +36,7 @@ import {
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { Burger } from '~/components/Burger/Burger';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   type CivitaiAccount,
   useAccountContext,
@@ -444,6 +445,7 @@ function BuzzMenuItem() {
   const isMobile = useIsMobile({ breakpoint: 'md' });
   const onBuyBuzz = useBuyBuzz();
   const { handleClose } = useUserMenuContext();
+  const [mainBuzzColor] = useAvailableBuzz();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
@@ -459,14 +461,14 @@ function BuzzMenuItem() {
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountTypes={['blue', 'green']}
+          accountTypes={['blue']}
         />
         <UserBuzz
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountTypes={['yellow']}
+          accountTypes={[mainBuzzColor]}
         />
       </div>
       <Button

@@ -37,6 +37,7 @@ import { getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -60,9 +61,10 @@ export default function UserBuzzDashboard() {
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
   const features = useFeatureFlags();
+  const [mainBuzztype] = useAvailableBuzz();
 
   // Account type selection state
-  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzSpendType>('yellow');
+  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzSpendType>(mainBuzztype);
 
   const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
 

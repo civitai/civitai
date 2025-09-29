@@ -75,26 +75,49 @@ export const parseBuzzTransactionDetails = (
 
 /**
  * Gets the supported Buzz account types for a transaction based on NSFW level and content rating.
- * Returns 'user' and either 'green' for safe content or 'fakered' for NSFW content.
+ * Takes a base array of account types that are assumed available and filters based on content.
  *
  * @param data - Configuration object
  * @param data.nsfwLevel - The NSFW level enum value (optional)
  * @param data.isNsfw - Boolean flag indicating if content is NSFW (optional)
- * @returns Array of supported BuzzAccountType values for the transaction
+ * @param data.baseTypes - Base array of account types to filter from (defaults to all spend types)
+ * @returns Array of supported BuzzSpendType values for the transaction
  */
 export const getBuzzTransactionSupportedAccountTypes = ({
   nsfwLevel,
   isNsfw,
+  baseTypes,
 }: {
   nsfwLevel?: NsfwLevel;
   isNsfw?: boolean;
+  baseTypes?: BuzzSpendType[];
 }): BuzzSpendType[] => {
+  const availableTypes = baseTypes ?? ['yellow', 'green', 'red', 'blue'];
   const accountTypes: BuzzSpendType[] = [];
+
+  // For safe content, allow green if available in base types
   if ((typeof isNsfw !== 'undefined' && !isNsfw) || (nsfwLevel ?? 0) <= NsfwLevel.R) {
-    accountTypes.push('green');
+    if (availableTypes.includes('green')) {
+      accountTypes.push('green');
+    }
   }
 
-  accountTypes.push('yellow', 'red');
+  // Always include yellow if available (universal primary currency)
+  if (availableTypes.includes('yellow')) {
+    accountTypes.push('yellow');
+  }
+
+  // For NSFW content, include red if available
+  if ((typeof isNsfw !== 'undefined' && isNsfw) || (nsfwLevel ?? 0) > NsfwLevel.R) {
+    if (availableTypes.includes('red')) {
+      accountTypes.push('red');
+    }
+  }
+
+  // Always include blue if available (universal currency)
+  if (availableTypes.includes('blue')) {
+    accountTypes.push('blue');
+  }
 
   return accountTypes;
 };

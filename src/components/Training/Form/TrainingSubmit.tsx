@@ -75,20 +75,20 @@ import {
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
 
 const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan', 'chroma'];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
-  const features = useFeatureFlags();
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
   const thisFile = thisModelVersion.files[0];
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
   const thisNumImages = thisMetadata?.numImages;
   const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs } = useTrainingImageStore(
@@ -129,7 +129,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
-    accountTypes: buzzSpendTypes,
+    accountTypes: availableBuzzTypes,
   });
 
   const thisStep = 3;
@@ -565,7 +565,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Stack
         className={clsx(
-          'dark:bg-dark-7 sticky top-0 z-10 mb-[-5px] bg-white pb-[5px]',
+          'sticky top-0 z-10 mb-[-5px] bg-white pb-[5px] dark:bg-dark-7',
           !multiMode && 'hidden'
         )}
       >
@@ -772,7 +772,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             w="fit-content"
             px="md"
             py="xs"
-            className="bg-gray-0 dark:bg-dark-6 self-end"
+            className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
               <Badge>
@@ -851,7 +851,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={totalBuzzCost}
-          accountTypes={buzzSpendTypes}
+          accountTypes={availableBuzzTypes}
           onPerformTransaction={handleSubmit}
           error={hasIssue ? 'Error computing cost' : undefined}
           showTypePct
