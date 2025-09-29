@@ -33,7 +33,7 @@ export async function populateEntityMetrics(
   // Only check existence if not force refreshing
   if (!forceRefresh) {
     const existsChecks = await Promise.all(
-      entityIds.map(id => entityMetricRedis.exists(entityType, id))
+      entityIds.map((id) => entityMetricRedis.exists(entityType, id))
     );
 
     idsToProcess = entityIds.filter((_, index) => !existsChecks[index]);
@@ -46,21 +46,19 @@ export async function populateEntityMetrics(
   // Try to acquire per-ID locks for entities to process
   const lockPrefix = `${REDIS_KEYS.ENTITY_METRICS.BASE}:lock:${entityType}`;
   const lockResults = await Promise.all(
-    idsToProcess.map(id =>
-      redis.setNX(`${lockPrefix}:${id}` as RedisKeyTemplateCache, '1')
-    )
+    idsToProcess.map((id) => redis.setNX(`${lockPrefix}:${id}` as RedisKeyTemplateCache, '1'))
   );
 
   // Only load entities where we got the lock
   const idsToLoad = idsToProcess.filter((_, index) => lockResults[index]);
-  const lockedKeys: RedisKeyTemplateCache[] = idsToLoad.map(id =>
-    `${lockPrefix}:${id}` as RedisKeyTemplateCache
+  const lockedKeys: RedisKeyTemplateCache[] = idsToLoad.map(
+    (id) => `${lockPrefix}:${id}` as RedisKeyTemplateCache
   );
 
   // Set TTL on acquired locks
   if (lockedKeys.length > 0) {
     await Promise.all(
-      lockedKeys.map(key => redis.expire(key, 10)) // 10 seconds per ID
+      lockedKeys.map((key) => redis.expire(key, 10)) // 10 seconds per ID
     );
   }
 
@@ -71,8 +69,11 @@ export async function populateEntityMetrics(
   }
 
   try {
-
-    log(`${forceRefresh ? 'Refreshing' : 'Loading'} ${idsToLoad.length} entities from ClickHouse (${idsToProcess.length - idsToLoad.length} handled by other processes)`);
+    log(
+      `${forceRefresh ? 'Refreshing' : 'Loading'} ${idsToLoad.length} entities from ClickHouse (${
+        idsToProcess.length - idsToLoad.length
+      } handled by other processes)`
+    );
 
     // Process in batches to avoid overwhelming ClickHouse
     const batches = chunk(idsToLoad, 1000);
@@ -111,7 +112,6 @@ export async function populateEntityMetrics(
     }
 
     log(`Completed bulk load for ${idsToLoad.length} entities`);
-
   } catch (error) {
     log('Error during bulk population:', error);
     // Don't throw - other processes might succeed
@@ -129,7 +129,7 @@ export async function populateEntityMetrics(
  */
 export async function preWarmEntityMetrics(
   entityType: EntityMetric_EntityType_Type = 'Image',
-  limit: number = 10000
+  limit = 10000
 ): Promise<void> {
   if (!clickhouse) return;
 
@@ -146,7 +146,7 @@ export async function preWarmEntityMetrics(
       LIMIT ${limit}
     `);
 
-    const entityIds = recentEntities.map(e => e.entityId);
+    const entityIds = recentEntities.map((e) => e.entityId);
 
     if (entityIds.length > 0) {
       await populateEntityMetrics(entityType, entityIds);
