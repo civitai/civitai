@@ -491,6 +491,9 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
           method: 'POST',
           credentials: 'include',
           body: JSON.stringify({ pathname: window.location.pathname }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
         }).then(() => {
           window.dispatchEvent(
             new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
