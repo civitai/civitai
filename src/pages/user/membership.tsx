@@ -3,6 +3,7 @@ import {
   Anchor,
   Box,
   Button,
+  Card,
   Center,
   Container,
   Grid,
@@ -11,6 +12,7 @@ import {
   Paper,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   Tooltip,
 } from '@mantine/core';
@@ -24,6 +26,7 @@ import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BuzzEnvironmentAlert } from '~/components/Buzz/BuzzEnvironmentAlert';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -38,6 +41,7 @@ import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -49,7 +53,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
-import styles from './membership.module.css';
+import styles from './membership.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -79,9 +83,19 @@ const querySchema = z.object({
 });
 
 export default function UserMembership() {
+  const [activeBuzzType] = useAvailableBuzz();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
+    buzzType: activeBuzzType,
   });
+
+  // Check for subscriptions in other buzz types
+  const otherBuzzType = activeBuzzType === 'green' ? 'yellow' : 'green';
+  const { subscription: otherSubscription, subscriptionLoading: otherSubscriptionLoading } =
+    useActiveSubscription({
+      checkWhenInBadState: true,
+      buzzType: otherBuzzType,
+    });
 
   const isPaddle = subscriptionPaymentProvider === PaymentProvider.Paddle;
   const isStripe = subscriptionPaymentProvider === PaymentProvider.Stripe;
@@ -95,7 +109,8 @@ export default function UserMembership() {
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
-  const { classNames: greenClassNames, colorRgb: greenColorRgb } = useBuzzCurrencyConfig('green');
+  const { classNames: buzzClassNames, colorRgb: buzzColorRgb } =
+    useBuzzCurrencyConfig(activeBuzzType);
   // const isCheckingPaddleSubscription = usePaddleSubscriptionRefresh();
   const isCheckingPaddleSubscription = false; // No refreshing for now since Paddle is dead
   const query = querySchema.safeParse(router.query);
@@ -110,6 +125,20 @@ export default function UserMembership() {
   const handleRedirectToGreen = () => {
     window.open(
       `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
+      '_blank',
+      'noreferrer'
+    );
+  };
+
+  const handleRedirectToOtherEnvironment = () => {
+    const targetDomain =
+      otherBuzzType === 'green'
+        ? env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN
+        : env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE;
+    const syncParam = otherBuzzType === 'green' ? 'yellow' : 'green';
+
+    window.open(
+      `//${targetDomain}/user/membership?sync-account=${syncParam}`,
       '_blank',
       'noreferrer'
     );
@@ -138,7 +167,7 @@ export default function UserMembership() {
     }
   };
 
-  if (subscriptionLoading || isCheckingPaddleSubscription) {
+  if (subscriptionLoading || isCheckingPaddleSubscription || otherSubscriptionLoading) {
     return (
       <Container size="lg">
         <Center>
@@ -150,33 +179,68 @@ export default function UserMembership() {
 
   if (!subscription) {
     return (
-      <Container size="md">
-        <Alert color="red" title="No active subscription">
-          <Stack>
-            <Text>
-              We could not find an active subscription for your account. If you believe this is a
-              mistake, you may try refreshing your session on your settings.
-            </Text>
+      <>
+        <Meta title="My Membership" deIndex />
+        <Container size="md">
+          <Stack gap="xl">
+            <Title>My Membership Plan</Title>
 
-            {currentUser?.paddleCustomerId && (
-              <>
-                <Text>
-                  If you have signed up for a subscription with our new Paddle payment processor,
-                  click the button below to sync your account.
+            {/* Show alert if user has subscription in other environment */}
+            {otherSubscription && (
+              <BuzzEnvironmentAlert
+                buzzType={otherBuzzType}
+                onViewMembership={handleRedirectToOtherEnvironment}
+                message={`You have an active ${
+                  otherBuzzType === 'green' ? 'Green' : 'Yellow'
+                } membership`}
+              />
+            )}
+
+            <Card padding="lg" radius="md" className={styles.noSubscriptionCard}>
+              <Stack gap="md">
+                <Group gap="md" wrap="nowrap">
+                  <ThemeIcon size="lg" color="red" variant="light" radius="md">
+                    <IconInfoTriangleFilled size={24} />
+                  </ThemeIcon>
+                  <div style={{ flex: 1 }}>
+                    <Text size="lg" fw={700} c="red">
+                      No active subscription
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      We couldn&rsquo;t find an active{' '}
+                      {activeBuzzType === 'green' ? 'Green' : 'Yellow'} membership
+                    </Text>
+                  </div>
+                </Group>
+
+                <Text size="sm">
+                  If you believe this is a mistake, you may try refreshing your session in your
+                  settings.
                 </Text>
 
-                <Button
-                  color="yellow"
-                  loading={refreshingSubscription}
-                  onClick={handleRefreshSubscription}
-                >
-                  Refresh now
-                </Button>
-              </>
-            )}
+                {currentUser?.paddleCustomerId && (
+                  <>
+                    <Text size="sm">
+                      If you have signed up for a subscription with our new Paddle payment
+                      processor, click below to sync your account.
+                    </Text>
+
+                    <Button
+                      radius="md"
+                      loading={refreshingSubscription}
+                      onClick={handleRefreshSubscription}
+                      className={buzzClassNames?.btn}
+                      leftSection={<IconRotateClockwise size={18} />}
+                    >
+                      Refresh now
+                    </Button>
+                  </>
+                )}
+              </Stack>
+            </Card>
           </Stack>
-        </Alert>
-      </Container>
+        </Container>
+      </>
     );
   }
 
@@ -193,8 +257,18 @@ export default function UserMembership() {
       <Container size="md">
         <Grid>
           <Grid.Col span={12}>
-            <Stack>
+            <Stack gap="xl">
               <Title>My Membership Plan</Title>
+              {otherSubscription && subscription && (
+                <BuzzEnvironmentAlert
+                  buzzType={otherBuzzType}
+                  onViewMembership={handleRedirectToOtherEnvironment}
+                  message={`You also have an active ${
+                    otherBuzzType === 'green' ? 'Green' : 'Yellow'
+                  } membership`}
+                  buttonText={`View ${otherBuzzType === 'green' ? 'Green' : 'Yellow'} Membership`}
+                />
+              )}
               {showRedirectMessage && (
                 <Alert color="blue" variant="light">
                   <Stack gap="md">
@@ -214,7 +288,7 @@ export default function UserMembership() {
                         radius="xl"
                         rightSection={<IconExternalLink size={16} />}
                         onClick={handleRedirectToGreen}
-                        className={greenClassNames?.btn}
+                        className={buzzClassNames?.btn}
                         style={{ minWidth: '160px' }}
                       >
                         Manage on Green
@@ -414,13 +488,13 @@ export default function UserMembership() {
                 <div
                   style={{
                     // @ts-ignore
-                    '--buzz-color': greenColorRgb,
+                    '--buzz-color': buzzColorRgb,
                   }}
                 >
                   <Title order={3}>
                     Your{' '}
                     <Text component="span" className="text-xl font-bold text-buzz">
-                      Green
+                      {activeBuzzType === 'green' ? 'Green' : 'Yellow'}
                     </Text>{' '}
                     membership benefits
                   </Title>
