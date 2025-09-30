@@ -18,6 +18,7 @@ import { useInView as useInViewStandalone } from 'react-intersection-observer';
 import { env } from '~/env/client';
 import { v4 as uuidv4 } from 'uuid';
 import { useInterval } from '@mantine/hooks';
+import { isDev } from '~/env/other';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -408,7 +409,7 @@ const AdunitSizesStyles = forwardRef<
 
 AdunitSizesStyles.displayName = 'AdunitSizesStyles';
 
-const civitaiAdvertisingUrl = 'http://localhost:5173';
+const civitaiAdvertisingUrl = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
 function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   const [id] = useState(props.id ?? uuidv4());
   const [imgLoaded, setImgLoaded] = useState(false);
