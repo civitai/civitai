@@ -12,7 +12,7 @@ import {
 
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
-export const klingModels = [KlingModel.V1_6, KlingModel.V2] as const;
+export const klingModels = [KlingModel.V1_6, KlingModel.V2, KlingModel.V2_5_TURBO] as const;
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('kling').default('kling').catch('kling'),

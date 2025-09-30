@@ -521,7 +521,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models3',
+    FEATURED_MODELS: 'packed:featured-models',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',

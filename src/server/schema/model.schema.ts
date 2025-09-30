@@ -261,6 +261,7 @@ export type ModelMeta = Partial<{
   cannotPromote: boolean;
   cannotPublish: boolean;
   commentsLocked: boolean;
+  profanityMatches: string[];
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

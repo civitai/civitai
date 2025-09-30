@@ -570,6 +570,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.2 I2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 T2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 TI2V-5B': baseLicenses['apache 2.0'],
+  'Wan Video 2.5 T2V': baseLicenses['apache 2.0'],
+  'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
 };

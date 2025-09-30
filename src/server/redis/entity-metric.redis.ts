@@ -16,20 +16,24 @@ const log = createLogger('entity-metrics-redis', 'blue');
 export class EntityMetricsHelper {
   // Calculate total engagement (all metrics except Buzz)
   static getTotalEngagement(metrics: Record<string, number>): number {
-    return (metrics.ReactionLike || 0) +
-           (metrics.ReactionHeart || 0) +
-           (metrics.ReactionLaugh || 0) +
-           (metrics.ReactionCry || 0) +
-           (metrics.Comment || 0) +
-           (metrics.Collection || 0);
+    return (
+      (metrics.ReactionLike || 0) +
+      (metrics.ReactionHeart || 0) +
+      (metrics.ReactionLaugh || 0) +
+      (metrics.ReactionCry || 0) +
+      (metrics.Comment || 0) +
+      (metrics.Collection || 0)
+    );
   }
 
   // Calculate total reactions only
   static getTotalReactions(metrics: Record<string, number>): number {
-    return (metrics.ReactionLike || 0) +
-           (metrics.ReactionHeart || 0) +
-           (metrics.ReactionLaugh || 0) +
-           (metrics.ReactionCry || 0);
+    return (
+      (metrics.ReactionLike || 0) +
+      (metrics.ReactionHeart || 0) +
+      (metrics.ReactionLaugh || 0) +
+      (metrics.ReactionCry || 0)
+    );
   }
 
   // Calculate total including buzz
@@ -60,7 +64,7 @@ export class EntityMetricRedisClient {
     entityType: EntityMetric_EntityType_Type,
     entityId: number,
     metricType: EntityMetric_MetricType_Type,
-    amount: number = 1
+    amount = 1
   ): Promise<number> {
     const key = this.getKey(entityType, entityId);
     return await this.redis.hIncrBy(key, metricType, amount);
@@ -106,10 +110,10 @@ export class EntityMetricRedisClient {
 
     for (const batch of batches) {
       // Use mGet for better performance with multiple keys
-      const keys = batch.map(id => this.getKey(entityType, id));
+      const keys = batch.map((id) => this.getKey(entityType, id));
 
       // Fetch all hashes in parallel
-      const promises = keys.map(key => this.redis.hGetAll<string>(key));
+      const promises = keys.map((key) => this.redis.hGetAll<string>(key));
       const results = await Promise.all(promises);
 
       for (let i = 0; i < batch.length; i++) {
@@ -158,20 +162,13 @@ export class EntityMetricRedisClient {
     await this.redis.sendCommand(args);
   }
 
-
-  async exists(
-    entityType: EntityMetric_EntityType_Type,
-    entityId: number
-  ): Promise<boolean> {
+  async exists(entityType: EntityMetric_EntityType_Type, entityId: number): Promise<boolean> {
     const key = this.getKey(entityType, entityId);
     const exists = await this.redis.exists(key);
     return exists > 0;
   }
 
-  async delete(
-    entityType: EntityMetric_EntityType_Type,
-    entityId: number
-  ): Promise<boolean> {
+  async delete(entityType: EntityMetric_EntityType_Type, entityId: number): Promise<boolean> {
     const key = this.getKey(entityType, entityId);
     const deleted = await this.redis.del(key);
     return deleted > 0;

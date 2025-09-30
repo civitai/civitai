@@ -8,8 +8,8 @@ import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } 
 import {
   maxFalAdditionalResources,
   wan22AspectRatios,
-  wan22Resolutions,
-  wanDuration,
+  wan25Duration,
+  wan25Resolutions,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
@@ -19,14 +19,14 @@ import {
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
-export function Wan22FormInput() {
+export function Wan25FormInput() {
   const form = useFormContext();
   const process = form.watch('process');
   // const baseModel = form.watch('baseModel');
   const isTxt2Img = process === 'txt2vid';
 
   const baseModelGroup: BaseModelGroup =
-    process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
+    process === 'txt2vid' ? 'WanVideo-25-T2V' : 'WanVideo-25-I2V';
   const resources = getGenerationBaseModelResourceOptions(baseModelGroup);
 
   return (
@@ -82,31 +82,17 @@ export function Wan22FormInput() {
           options={wan22AspectRatios}
         />
       )}
-      <InputSwitch
-        name="turbo"
-        className="my-2"
-        labelPosition="left"
-        label={
-          <div className="relative flex items-center gap-1">
-            <Input.Label>Draft Mode</Input.Label>
-            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-              Draft Mode will generate videos faster, and with slightly less quality. Use this for
-              exploring concepts quickly.
-            </InfoPopover>
-          </div>
-        }
-      />
 
       <div className="flex flex-col gap-0.5">
         <Input.Label>Resolution</Input.Label>
-        <InputSegmentedControl name="resolution" data={[...wan22Resolutions]} />
+        <InputSegmentedControl name="resolution" data={[...wan25Resolutions]} />
       </div>
 
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+          data={wan25Duration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
 
@@ -123,19 +109,6 @@ export function Wan22FormInput() {
         min={1}
         max={10}
         step={0.1}
-        precision={1}
-      />
-
-      <InputNumberSlider
-        name="shift"
-        label={
-          <div className="flex items-center gap-1">
-            <Input.Label>Shift</Input.Label>
-          </div>
-        }
-        min={1}
-        max={10}
-        step={1}
         precision={1}
       />
 

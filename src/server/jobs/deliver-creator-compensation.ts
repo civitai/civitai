@@ -15,19 +15,30 @@ const VIDEO_CREATOR_COMP = 0.1;
 const BASE_MODEL_COMP = 0.25;
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
-  '0 * * * *',
+  '15 * * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
   async () => {
     if (!clickhouse) return;
 
+    // If it's a new day, we need to run the compensation payout job
+    const [lastPayout, setLastPayout] = await getJobDate(
+      'run-daily-compensation-payout',
+      new Date()
+    );
+    const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
+    // If we're preping for payout, we need to grab the last numbers for yesterday.
+    const subtractDays = shouldPayout ? 1 : 0;
+    const addDays = 1;
+
     await clickhouse.$query`
-      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count)
+      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count, final)
       SELECT
         toStartOfDay(createdAt) as date,
         modelVersionId,
         FLOOR(SUM(comp)) as comp,
         FLOOR(SUM(tip)) AS tip,
         comp + tip as total,
-        count(*) as count
+        count(*) as count,
+        date < toStartOfDay(now()) as final
       FROM (
         SELECT
         modelVersionId,
@@ -61,7 +72,7 @@ export const updateCreatorResourceCompensation = createJob(
               jobType = 'comfyVideoGen' as isVideo
             FROM orchestration.jobs
             WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
-              AND createdAt BETWEEN toStartOfDay(subtractDays(now(), 1)) AND toStartOfDay(now())
+              AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays})) AND toStartOfDay(addDays(now(),${addDays}))
               AND modelVersionId NOT IN (250708, 250712, 106916)
           ) rj
           JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
@@ -74,14 +85,6 @@ export const updateCreatorResourceCompensation = createJob(
       ORDER BY total DESC;
     `;
 
-    await clickhouse.$query('OPTIMIZE TABLE buzz_resource_compensation;');
-
-    // If it's a new day, we need to run the compensation payout job
-    const [lastPayout, setLastPayout] = await getJobDate(
-      'run-daily-compensation-payout',
-      new Date()
-    );
-    const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
     if (shouldPayout) {
       await runPayout(lastPayout);
       await setLastPayout();
@@ -104,8 +107,8 @@ export async function runPayout(lastUpdate: Date) {
       modelVersionId,
       MAX(comp) as comp,
       MAX(tip) as tip
-    FROM buzz_resource_compensation
-    WHERE date = ${date}
+    FROM buzz_resource_compensation FINAL
+    WHERE date = ${date} AND final
     GROUP BY modelVersionId;
   `;
   if (!compensations.length) return;

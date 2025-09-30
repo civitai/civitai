@@ -280,7 +280,7 @@ export async function parseGenerateImageInput({
 
   const isPonyV7 = getIsPonyV7(model.id);
   if (isPonyV7) {
-    originalParams.sampler = 'undefined';
+    originalParams.sampler = 'Euler';
     originalParams.draft = false;
   }
   const isFluxStandard = getIsFluxStandard(model.model.id);
