@@ -39,4 +39,5 @@ export const updateCashWithdrawalSchema = z.object({
 export type CompensationPoolInput = z.infer<typeof compensationPoolInputSchema>;
 export const compensationPoolInputSchema = z.object({
   month: z.date().optional(),
+  buzzType: z.preprocess(preprocessAccountType, z.enum(buzzBankTypes).optional()),
 });

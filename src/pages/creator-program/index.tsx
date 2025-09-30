@@ -46,6 +46,7 @@ import {
   useCreatorProgramRequirements,
   usePrevMonthStats,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   CreatorProgramCapsInfo,
   openCreatorScoreModal,
@@ -240,7 +241,8 @@ const HowItWorksSection = () => {
 };
 
 const FunStatsSection = () => {
-  const { prevMonthStats, isLoading } = usePrevMonthStats();
+  const [activeBuzzType] = useAvailableBuzz();
+  const { prevMonthStats, isLoading } = usePrevMonthStats(activeBuzzType);
 
   if (isLoading || !prevMonthStats) {
     return <Skeleton className={classes.section} width="100%" height="200px" />;

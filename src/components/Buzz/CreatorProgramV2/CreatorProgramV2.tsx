@@ -73,6 +73,7 @@ import {
   getExtractionFee,
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
@@ -106,9 +107,11 @@ const DATE_FORMAT = 'MMM D, YYYY @ hA z';
 // TODO creators program Can probably separate this file into multiple smaller ones. It's getting a bit long.
 export const CreatorProgramV2 = () => {
   const currentUser = useCurrentUser();
-  const { phase, isLoading } = useCreatorProgramPhase();
+  // Get the domain-specific buzz type (yellow or green)
+  const [activeBuzzType] = useAvailableBuzz();
+  const { phase, isLoading } = useCreatorProgramPhase(activeBuzzType);
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
-  useCreatorPoolListener();
+  useCreatorPoolListener(activeBuzzType);
 
   if (!currentUser || isLoading || !availability.isAvailable) {
     return null;
@@ -130,7 +133,7 @@ export const CreatorProgramV2 = () => {
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <h2 className="text-2xl font-bold">Get Paid</h2>
-          <CreatorProgramPhase />
+          <CreatorProgramPhase buzzType={activeBuzzType} />
         </div>
         <div className="flex gap-2">
           <p>Generating a lot of Buzz? Bank it to earn cash!</p>
@@ -140,15 +143,15 @@ export const CreatorProgramV2 = () => {
 
       {!hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
-          <JoinCreatorProgramCard />
-          <CompensationPoolCard />
+          <JoinCreatorProgramCard buzzType={activeBuzzType} />
+          <CompensationPoolCard buzzType={activeBuzzType} />
         </div>
       )}
       {hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
-          {phase === 'bank' && <BankBuzzCard />}
-          {phase === 'extraction' && <ExtractBuzzCard />}
-          <EstimatedEarningsCard />
+          {phase === 'bank' && <BankBuzzCard buzzType={activeBuzzType} />}
+          {phase === 'extraction' && <ExtractBuzzCard buzzType={activeBuzzType} />}
+          <EstimatedEarningsCard buzzType={activeBuzzType} />
           {<WithdrawCashCard />}
         </div>
       )}
@@ -156,19 +159,18 @@ export const CreatorProgramV2 = () => {
   );
 };
 
-const JoinCreatorProgramCard = () => {
+const JoinCreatorProgramCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
   const {
     data: { total: buzzAccountTotal },
     isLoading: buzzAccountsLoading,
-  } = useQueryBuzz(['yellow', 'green']);
+  } = useQueryBuzz([buzzType]);
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   // const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast({
   //   buzz: buzzAccountTotal ?? 0,
   // });
-  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool(buzzType);
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
-  const isLoading =
-    buzzAccountsLoading || isLoadingRequirements || isLoadingCompensationPool;
+  const isLoading = buzzAccountsLoading || isLoadingRequirements || isLoadingCompensationPool;
   const forecasted = compensationPool
     ? getForecastedValue(buzzAccountTotal ?? 0, compensationPool)
     : undefined;
@@ -330,8 +332,8 @@ export const CreatorProgramRequirement = ({
   );
 };
 
-export const CompensationPoolCard = () => {
-  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
+export const CompensationPoolCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool(buzzType);
   const isLoading = isLoadingCompensationPool;
   const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM YYYY', true);
 
@@ -381,30 +383,24 @@ export const CompensationPoolCard = () => {
   );
 };
 
-const BankBuzzCard = () => {
-  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
-  const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
+const BankBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool(buzzType);
+  const { banked, isLoading: isLoadingBanked } = useBankedBuzz(buzzType);
   const {
     data: { accounts },
     isLoading: buzzAccountsLoading,
-  } = useQueryBuzz(buzzBankTypes);
+  } = useQueryBuzz([buzzType]);
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
-  const buzzAccountTypeSelectorCB = useCombobox({
-    onDropdownClose: () => {
-      buzzAccountTypeSelectorCB.resetSelectedOption();
-      buzzAccountTypeSelectorCB.focusTarget();
-    },
-  });
 
-  const [activeBuzzAccountType, setActiveBuzzAccountType] = useState<BuzzSpendType>('yellow');
-  const buzzAccount = accounts.find((b) => b.type === activeBuzzAccountType) ?? {
+  const buzzAccount = accounts.find((b) => b.type === buzzType) ?? {
     balance: 0,
   };
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
-  const isLoading = isLoadingCompensationPool || buzzAccountsLoading || isLoadingBanked || isLoadingRequirements;
+  const isLoading =
+    isLoadingCompensationPool || buzzAccountsLoading || isLoadingBanked || isLoadingRequirements;
   const [, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
@@ -413,7 +409,7 @@ const BankBuzzCard = () => {
 
   const handleBankBuzz = async () => {
     try {
-      await bankBuzz({ amount: toBank, accountType: activeBuzzAccountType });
+      await bankBuzz({ amount: toBank, accountType: buzzType });
       showSuccessNotification({
         title: 'Success!',
         message: 'You have successfully banked your Buzz.',
@@ -447,46 +443,7 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            leftSection={
-              <Combobox
-                store={buzzAccountTypeSelectorCB}
-                width={250}
-                position="bottom-start"
-                withArrow
-                onOptionSubmit={(val) => {
-                  setActiveBuzzAccountType(val as BuzzSpendType);
-                }}
-              >
-                <Combobox.Target withAriaAttributes={false}>
-                  <LegacyActionIcon onClick={() => buzzAccountTypeSelectorCB.toggleDropdown()}>
-                    <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzAccountType} size={18} />
-                  </LegacyActionIcon>
-                </Combobox.Target>
-
-                <Combobox.Dropdown>
-                  <Combobox.Options>
-                    {buzzBankTypes.map((buzzType) => (
-                      <Combobox.Option
-                        key={buzzType}
-                        value={buzzType}
-                        selected={buzzType === activeBuzzAccountType}
-                        onClick={() => {
-                          setActiveBuzzAccountType(buzzType);
-                          buzzAccountTypeSelectorCB.closeDropdown();
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={18} />
-                          <span className="text-sm">
-                            {capitalize(getAccountTypeLabel(buzzType))} Buzz
-                          </span>
-                        </div>
-                      </Combobox.Option>
-                    ))}
-                  </Combobox.Options>
-                </Combobox.Dropdown>
-              </Combobox>
-            }
+            leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={18} />}
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
@@ -528,7 +485,7 @@ const BankBuzzCard = () => {
                           <CurrencyBadge
                             unitAmount={toBank}
                             currency={Currency.BUZZ}
-                            type={activeBuzzAccountType}
+                            type={buzzType}
                           />{' '}
                           to the bank.{' '}
                         </p>
@@ -600,10 +557,10 @@ const BankBuzzCard = () => {
   );
 };
 
-const EstimatedEarningsCard = () => {
-  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
-  const { phase } = useCreatorProgramPhase();
-  const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
+const EstimatedEarningsCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool(buzzType);
+  const { phase } = useCreatorProgramPhase(buzzType);
+  const { banked, isLoading: isLoadingBanked } = useBankedBuzz(buzzType);
   const isLoading = isLoadingCompensationPool || isLoadingBanked;
   const cap = banked?.cap?.cap;
   const currentBanked = banked?.total ?? 0;
@@ -643,50 +600,42 @@ const EstimatedEarningsCard = () => {
               </Table.Td>
               <Table.Td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={'yellow'} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
                 </div>
               </Table.Td>
             </Table.Tr>
-            {buzzBankTypes.map((buzzType) => {
-              const buzzBalance = banked.balances.find((b) => b.accountType === buzzType);
-              if (!buzzBalance) return null;
 
-              const amt = buzzBalance.total ?? 0;
-
-              return (
-                <Table.Tr key={buzzType}>
-                  <Table.Td>
-                    <div className="flex items-center gap-1">
-                      <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
-                      <span>Your banked {getAccountTypeLabel(buzzType)} Buzz</span>
-                    </div>
-                  </Table.Td>
-                  <Table.Td className="text-right">
-                    {cap && (
-                      <Text
-                        c="blue.4"
-                        className="cursor-pointer pr-2 text-sm"
-                        td="underline"
-                        onClick={() => {
-                          dialogStore.trigger({
-                            component: CreatorProgramCapsInfoModal,
-                          });
-                        }}
-                      >
-                        {abbreviateNumber(cap)} Cap
-                      </Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td className="border-l py-1 pl-2">
-                    <div className="flex items-center gap-2">
-                      <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
-                      {formatCurrencyForDisplay(amt, Currency.BUZZ)}
-                    </div>
-                  </Table.Td>
-                </Table.Tr>
-              );
-            })}
+            <Table.Tr key={buzzType}>
+              <Table.Td>
+                <div className="flex items-center gap-1">
+                  <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
+                  <span>Your banked {getAccountTypeLabel(buzzType)} Buzz</span>
+                </div>
+              </Table.Td>
+              <Table.Td className="text-right">
+                {cap && (
+                  <Text
+                    c="blue.4"
+                    className="cursor-pointer pr-2 text-sm"
+                    td="underline"
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: CreatorProgramCapsInfoModal,
+                      });
+                    }}
+                  >
+                    {abbreviateNumber(cap)} Cap
+                  </Text>
+                )}
+              </Table.Td>
+              <Table.Td className="border-l py-1 pl-2">
+                <div className="flex items-center gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />
+                  {formatCurrencyForDisplay(currentBanked, Currency.BUZZ)}
+                </div>
+              </Table.Td>
+            </Table.Tr>
           </Table.Tbody>
         </Table>
 
@@ -751,8 +700,8 @@ const EstimatedEarningsCard = () => {
   );
 };
 
-export const CreatorProgramPhase = () => {
-  const { phase, isLoading } = useCreatorProgramPhase();
+export const CreatorProgramPhase = ({ buzzType }: { buzzType?: BuzzSpendType }) => {
+  const { phase, isLoading } = useCreatorProgramPhase(buzzType);
 
   if (isLoading || !phase) {
     return null;
@@ -1092,9 +1041,9 @@ const WithdrawalHistoryModal = () => {
   );
 };
 
-const ExtractBuzzCard = () => {
-  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
-  const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
+const ExtractBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool(buzzType);
+  const { banked, isLoading: isLoadingBanked } = useBankedBuzz(buzzType);
   const { extractBuzz, extractingBuzz } = useCreatorProgramMutate();
 
   const isLoading = isLoadingBanked || isLoadingCompensationPool;
@@ -1106,7 +1055,7 @@ const ExtractBuzzCard = () => {
 
   const handleExtractBuzz = async () => {
     try {
-      await extractBuzz();
+      await extractBuzz(buzzType);
       showSuccessNotification({
         title: 'Success!',
         message: 'You have successfully extracted your Buzz.',

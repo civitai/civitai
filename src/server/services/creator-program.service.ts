@@ -72,77 +72,91 @@ type UserCapCacheItem = {
   cap: number;
 };
 
-const bankableBuzzTypesString = buzzBankTypes
-  .map((type) => `'${toKebabCase(BuzzTypes.toApiType(type))}'`)
-  .join(',');
+const getBankableBuzzTypeString = (buzzType: BuzzSpendType) => {
+  return `'${toKebabCase(BuzzTypes.toApiType(buzzType))}'`;
+};
 
-export const userCapCache = createCachedObject<UserCapCacheItem>({
-  key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
-  idKey: 'id',
-  dontCacheFn: (data) => !data.cap,
-  cacheNotFound: false,
-  staleWhileRevalidate: false,
-  debounceTime: 1, // 10s debounce is too long for this cache.
-  lookupFn: async (ids) => {
-    if (ids.length === 0 || !clickhouse) return {};
+const createUserCapCache = (buzzType: BuzzSpendType) => {
+  const bankableBuzzTypeString = getBankableBuzzTypeString(buzzType);
 
-    // Get tiers
-    const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
-      SELECT
-        cs."userId",
-        (p.metadata->>'tier') as tier
-      FROM "CustomerSubscription" cs
-      JOIN "Product" p ON p.id = cs."productId"
-      WHERE cs."userId" IN (${ids.join(',')});
-    `);
+  return createCachedObject<UserCapCacheItem>({
+    key: `${REDIS_KEYS.CREATOR_PROGRAM.CAPS}:${buzzType}`,
+    idKey: 'id',
+    dontCacheFn: (data) => !data.cap,
+    cacheNotFound: false,
+    staleWhileRevalidate: false,
+    debounceTime: 1, // 10s debounce is too long for this cache.
+    lookupFn: async (ids) => {
+      if (ids.length === 0 || !clickhouse) return {};
 
-    const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
-      SELECT
-        toAccountId as id,
-        toStartOfMonth(date) as month,
-        SUM(amount) as earned
-      FROM buzzTransactions
-      WHERE (
-        (type IN ('compensation')) -- Generation Comp
-        OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
-        OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
-      )
-      AND toAccountType IN (${bankableBuzzTypesString})
-      AND toAccountId IN (${ids})
-      AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
-      AND toStartOfMonth(date) < toStartOfMonth(now())
-      GROUP BY month, toAccountId
-      ORDER BY earned DESC
-      LIMIT 1;
-    `;
+      // Get tiers
+      const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
+        SELECT
+          cs."userId",
+          (p.metadata->>'tier') as tier
+        FROM "CustomerSubscription" cs
+        JOIN "Product" p ON p.id = cs."productId"
+        WHERE cs."userId" IN (${ids.join(',')});
+      `);
 
-    return Object.fromEntries(
-      subscriptions.map((s) => {
-        const definition = CAP_DEFINITIONS.find((cap) => cap.tier === s.tier);
-        if (!definition) throw new Error('Invalid user tier');
+      const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
+        SELECT
+          toAccountId as id,
+          toStartOfMonth(date) as month,
+          SUM(amount) as earned
+        FROM buzzTransactions
+        WHERE (
+          (type IN ('compensation')) -- Generation Comp
+          OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
+          OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+        )
+        AND toAccountType IN (${bankableBuzzTypeString})
+        AND toAccountId IN (${ids})
+        AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+        AND toStartOfMonth(date) < toStartOfMonth(now())
+        GROUP BY month, toAccountId
+        ORDER BY earned DESC
+        LIMIT 1;
+      `;
 
-        const peakEarning = peakEarnings.find((p) => p.id === s.userId) ?? {
-          id: s.userId,
-          month: new Date(),
-          earned: 0,
-        };
+      return Object.fromEntries(
+        subscriptions.map((s) => {
+          const definition = CAP_DEFINITIONS.find((cap) => cap.tier === s.tier);
+          if (!definition) throw new Error('Invalid user tier');
 
-        let cap = definition.limit ?? MIN_CAP;
-        if (definition.percentOfPeakEarning && peakEarning?.earned) {
-          const peakEarnedCap = peakEarning.earned * definition.percentOfPeakEarning;
-          if (peakEarnedCap < MIN_CAP) cap = MIN_CAP;
-          else cap = Math.min(peakEarnedCap, definition.limit ?? Infinity);
-        }
+          const peakEarning = peakEarnings.find((p) => p.id === s.userId) ?? {
+            id: s.userId,
+            month: new Date(),
+            earned: 0,
+          };
 
-        return [s.userId, { id: s.userId, definition, peakEarning, cap }];
-      })
-    );
-  },
-  ttl: CacheTTL.day,
-});
+          let cap = definition.limit ?? MIN_CAP;
+          if (definition.percentOfPeakEarning && peakEarning?.earned) {
+            const peakEarnedCap = peakEarning.earned * definition.percentOfPeakEarning;
+            if (peakEarnedCap < MIN_CAP) cap = MIN_CAP;
+            else cap = Math.min(peakEarnedCap, definition.limit ?? Infinity);
+          }
 
-export async function getBankCap(userId: number) {
-  return userCapCache.fetch(userId);
+          return [s.userId, { id: s.userId, definition, peakEarning, cap }];
+        })
+      );
+    },
+    ttl: CacheTTL.day,
+  });
+};
+
+// Cache per buzz type
+const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
+function getUserCapCache(buzzType: BuzzSpendType) {
+  if (!userCapCaches.has(buzzType)) {
+    userCapCaches.set(buzzType, createUserCapCache(buzzType));
+  }
+  return userCapCaches.get(buzzType)!;
+}
+
+export async function getBankCap(userId: number, buzzType: BuzzSpendType) {
+  const cache = getUserCapCache(buzzType);
+  return cache.fetch(userId);
 }
 
 export function getMonthAccount(month?: Date) {
@@ -150,36 +164,30 @@ export function getMonthAccount(month?: Date) {
   return Number(dayjs(month).format('YYYYMM'));
 }
 
-export async function getBanked(userId: number) {
+export async function getBanked(userId: number, buzzType: BuzzSpendType) {
   const monthAccount = getMonthAccount();
-  const balances = await fetchThroughCache(
-    `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
+  const balance = await fetchThroughCache(
+    `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}:${buzzType}`,
     async () => {
-      const supportedBalances = await Promise.all(
-        buzzBankTypes.map((type) =>
-          getCounterPartyBuzzTransactions({
-            accountId: monthAccount,
-            accountType: 'creatorprogrambank',
-            counterPartyAccountId: userId,
-            counterPartyAccountType: type,
-          })
-        )
-      );
+      const result = await getCounterPartyBuzzTransactions({
+        accountId: monthAccount,
+        accountType: 'creatorprogrambank',
+        counterPartyAccountId: userId,
+        counterPartyAccountType: buzzType,
+      });
 
-      return supportedBalances.map((balance) => ({
-        accountType: balance.counterPartyAccountType,
-        total: balance.totalBalance,
-      }));
+      return {
+        accountType: result.counterPartyAccountType,
+        total: result.totalBalance,
+      };
     },
     { ttl: CacheTTL.day }
   );
 
-  const total = balances.reduce((acc, balance) => acc + (balance.total ?? 0), 0);
-
   return {
-    balances,
-    total,
-    cap: (await getBankCap(userId))[userId],
+    balance,
+    total: balance.total ?? 0,
+    cap: (await getBankCap(userId, buzzType))[userId],
   };
 }
 export async function flushBankedCache() {
@@ -251,13 +259,17 @@ export async function joinCreatorsProgram(userId: number) {
   await invalidateSession(userId);
 }
 
-async function getPoolValue(month?: Date) {
+async function getPoolValue(month?: Date, buzzType?: BuzzSpendType) {
   month ??= new Date();
+  buzzType ??= 'yellow';
+
+  const bankableBuzzTypeString = getBankableBuzzTypeString(buzzType);
+
   const results = await clickhouse!.$query<{ balance: number }>`
     SELECT
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${bankableBuzzTypesString})
+    WHERE toAccountType IN (${bankableBuzzTypeString})
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
@@ -275,8 +287,10 @@ async function getPoolValue(month?: Date) {
   return poolValue;
 }
 
-async function getPoolSize(month?: Date) {
+async function getPoolSize(month?: Date, buzzType?: BuzzSpendType) {
   month ??= new Date();
+  buzzType ??= 'yellow';
+
   const monthAccount = getMonthAccount(month);
   const account = await getUserBuzzAccount({
     accountId: monthAccount,
@@ -286,13 +300,17 @@ async function getPoolSize(month?: Date) {
   return account[0]?.balance ?? 0;
 }
 
-async function getPoolForecast(month?: Date) {
+async function getPoolForecast(month?: Date, buzzType?: BuzzSpendType) {
   month ??= new Date();
+  buzzType ??= 'yellow';
+
+  const bankableBuzzTypeString = getBankableBuzzTypeString(buzzType);
+
   const [result] = await clickhouse!.$query<{ balance: number }>`
     SELECT
       SUM(amount) AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${bankableBuzzTypesString})
+    WHERE toAccountType IN (${bankableBuzzTypeString})
     AND (
       (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -303,14 +321,16 @@ async function getPoolForecast(month?: Date) {
   return result.balance * (env.CREATOR_POOL_FORECAST_PORTION / 100);
 }
 
-export async function getCompensationPool({ month }: CompensationPoolInput) {
+export async function getCompensationPool({ month, buzzType }: CompensationPoolInput) {
+  buzzType ??= 'yellow';
+
   if (month) {
     // Skip catching if fetching specific month
     return {
-      value: await getPoolValue(month),
+      value: await getPoolValue(month, buzzType),
       size: {
-        current: await getPoolSize(month),
-        forecasted: await getPoolForecast(month),
+        current: await getPoolSize(month, buzzType),
+        forecasted: await getPoolForecast(month, buzzType),
       },
 
       phases: getPhases({ month, flip: (await getFlippedPhaseStatus()) === 'true' }),
@@ -318,17 +338,17 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
   }
 
   const value = await fetchThroughCache(
-    REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
-    async () => await getPoolValue(),
+    `${REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE}:${buzzType}`,
+    async () => await getPoolValue(undefined, buzzType),
     { ttl: CacheTTL.day }
   );
 
   // Since it hits the buzz service, no need to cache this.
-  const current = await getPoolSize();
+  const current = await getPoolSize(undefined, buzzType);
 
   const forecasted = await fetchThroughCache(
-    REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
-    async () => await getPoolForecast(),
+    `${REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST}:${buzzType}`,
+    async () => await getPoolForecast(undefined, buzzType),
     { ttl: CacheTTL.day }
   );
 
@@ -354,11 +374,11 @@ async function getFlippedPhaseStatus() {
   return await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES);
 }
 
-export async function bankBuzz(
-  userId: number,
-  amount: number,
-  accountType: BuzzSpendType = 'yellow'
-) {
+export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpendType) {
+  if (buzzType === 'blue') {
+    throw throwBadRequestError('You cannot bank Blue Buzz.');
+  }
+
   // Check that we're in the banking phase
   const user = await dbWrite.user.findFirstOrThrow({
     where: { id: userId },
@@ -387,7 +407,7 @@ export async function bankBuzz(
   if (new Date() > phases.bank[1]) throw new Error('Banking phase is closed');
 
   // Adjust to not exceed cap
-  const banked = await getBanked(userId);
+  const banked = await getBanked(userId, buzzType);
   if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
   if (amount <= 0) throw new Error('Amount exceeds cap');
 
@@ -396,8 +416,7 @@ export async function bankBuzz(
   await createBuzzTransaction({
     amount,
     fromAccountId: userId,
-    // TODO.red-split: Need a way to specify multiple account types.
-    fromAccountType: accountType,
+    fromAccountType: buzzType,
     toAccountId: monthAccount,
     toAccountType: 'creatorprogrambank',
     type: TransactionType.Bank,
@@ -405,11 +424,10 @@ export async function bankBuzz(
   });
 
   // Bust affected caches
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}:${buzzType}`);
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE}:${buzzType}`);
 
-  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
-
-  const compensationPool = await getCompensationPool({});
+  const compensationPool = await getCompensationPool({ buzzType });
   signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,
     target: SignalMessages.CompensationPoolUpdate,
@@ -417,7 +435,11 @@ export async function bankBuzz(
   });
 }
 
-export async function extractBuzz(userId: number) {
+export async function extractBuzz(userId: number, buzzType: BuzzSpendType) {
+  if (buzzType === 'blue') {
+    throw throwBadRequestError('You cannot extract Blue Buzz.');
+  }
+
   // Check that we're in the extraction phase
   const user = await dbWrite.user.findFirstOrThrow({
     where: { id: userId },
@@ -433,7 +455,7 @@ export async function extractBuzz(userId: number) {
   else if (new Date() > phases.extraction[1]) throw new Error('Extraction phase is closed');
 
   // Get banked amount
-  const banked = await getBanked(userId);
+  const banked = await getBanked(userId, buzzType);
   if (banked.total <= 0) return;
 
   // Calculate extraction fee
@@ -442,41 +464,35 @@ export async function extractBuzz(userId: number) {
   // Charge fee and extract banked amount
   // Give full amount back to user, to then take fee...
   const monthAccount = getMonthAccount();
-  await Promise.all(
-    banked.balances.map((balance) => {
-      return createBuzzTransaction({
-        amount: balance.total,
-        fromAccountId: monthAccount,
-        fromAccountType: 'creatorprogrambank',
-        toAccountId: userId,
-        // TODO.red-split: Need a way to specify multiple account types.
-        toAccountType: balance.accountType,
-        type: TransactionType.Extract,
-        externalTransactionId: `extraction-${monthAccount}-${userId}-${balance.accountType ?? ''}`,
-        description: `Extracted from Bank`,
-      });
-    })
-  );
+  await createBuzzTransaction({
+    amount: banked.total,
+    fromAccountId: monthAccount,
+    fromAccountType: 'creatorprogrambank',
+    toAccountId: userId,
+    toAccountType: buzzType,
+    type: TransactionType.Extract,
+    externalTransactionId: `extraction-${monthAccount}-${userId}-${buzzType}`,
+    description: `Extracted from Bank`,
+  });
 
   if (fee > 0) {
     // Burn fee
-    await createMultiAccountBuzzTransaction({
+    await createBuzzTransaction({
       amount: fee,
       fromAccountId: userId,
-      fromAccountTypes: buzzBankTypes,
+      fromAccountType: buzzType,
       toAccountId: 0,
-      toAccountType: 'yellow',
       type: TransactionType.Fee,
-      externalTransactionIdPrefix: `extraction-fee-${monthAccount}-${userId}`,
+      externalTransactionId: `extraction-fee-${monthAccount}-${userId}-${buzzType}`,
       description: 'Extraction fee',
     });
   }
 
   // Bust affected caches
-  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}:${buzzType}`);
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE}:${buzzType}`);
 
-  const compensationPool = await getCompensationPool({});
+  const compensationPool = await getCompensationPool({ buzzType });
   signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,
     target: SignalMessages.CompensationPoolUpdate,
@@ -785,8 +801,15 @@ export async function withdrawCash(userId: number, amount: number) {
   }
 }
 
-export async function getPoolParticipants(month?: Date, includeNegativeAmounts = false) {
+export async function getPoolParticipants(
+  month?: Date,
+  includeNegativeAmounts = false,
+  buzzType?: BuzzSpendType
+) {
   month ??= new Date();
+  buzzType ??= 'yellow';
+
+  const bankableBuzzTypeString = getBankableBuzzTypeString(buzzType);
   const monthAccount = getMonthAccount(month);
   const participants = await clickhouse!.$query<{
     userId: number;
@@ -802,12 +825,12 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
       -- Banks
       toAccountType = 'creator-program-bank'
       AND toAccountId = ${monthAccount}
-      AND fromAccountType IN (${bankableBuzzTypesString})
+      AND fromAccountType IN (${bankableBuzzTypeString})
     ) OR (
       -- Extracts
       fromAccountType = 'creator-program-bank'
       AND fromAccountId = ${monthAccount}
-      AND toAccountType IN (${bankableBuzzTypesString})
+      AND toAccountType IN (${bankableBuzzTypeString})
     )
     GROUP BY userId
     ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};
@@ -942,13 +965,15 @@ export const updateCashWithdrawal = async ({
   }
 };
 
-export const getPrevMonthStats = async () => {
+export const getPrevMonthStats = async (buzzType?: BuzzSpendType) => {
+  if (!buzzType) throw new Error('buzzType is required for getPrevMonthStats');
+
   const data = await fetchThroughCache(
-    REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS,
+    `${REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS}:${buzzType}`,
     async () => {
       const month = dayjs().subtract(1, 'month').toDate();
-      const compensationPool = await getCompensationPool({ month });
-      const participants = (await getPoolParticipants(month, true)).sort(
+      const compensationPool = await getCompensationPool({ month, buzzType });
+      const participants = (await getPoolParticipants(month, true, buzzType)).sort(
         (a, b) => b.amount - a.amount
       );
       const cashedOutCreators = participants.filter((p) => p.amount > 0);

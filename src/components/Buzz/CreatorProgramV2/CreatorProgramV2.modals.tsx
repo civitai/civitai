@@ -1,6 +1,7 @@
 import { Anchor, Button, Center, Loader, Modal, Table } from '@mantine/core';
 import { capitalize } from 'lodash-es';
 import { useBankedBuzz } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -255,7 +256,8 @@ export const openCreatorScoreModal = () => {
 };
 
 export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }) => {
-  const { banked, isLoading } = useBankedBuzz();
+  const [activeBuzzType] = useAvailableBuzz();
+  const { banked, isLoading } = useBankedBuzz(activeBuzzType);
 
   if (isLoading) {
     return (
