@@ -40,6 +40,7 @@ export function ImageGenConfig<
       resources: args.resources,
       params: removeEmpty(getParamsMetadata(args)),
       remixOfId: args.remixOfId,
+      baseModel: args.params.baseModel,
     });
   }
 

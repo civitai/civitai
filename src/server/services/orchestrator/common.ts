@@ -67,6 +67,8 @@ import { isDefined } from '~/utils/type-guards';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
+import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { FliptClient } from '@flipt-io/flipt-client-js';
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -75,9 +77,21 @@ type WorkflowStepAggregate =
   | VideoGenStep
   | VideoEnhancementStep;
 
-export function createOrchestratorClient(token: string) {
+export function createOrchestratorClient(token: string, options?: {key?: string, fliptClient?: FliptClient | null, baseUrl?: string}) {
+  let baseUrl = options?.baseUrl ?? env.ORCHESTRATOR_ENDPOINT;
+
+  // Use alt url if the feature flag is enabled
+  if (env.ALT_ORCHESTRATION_ENDPOINT && options?.key && options?.fliptClient) {
+    const flag = options.fliptClient.evaluateBoolean({
+      flagKey: FLIPT_FEATURE_FLAGS.ORCHESTRATION_NEW,
+      entityId: options.key ?? 'other',
+      context: {},
+    });
+    if (flag.enabled) baseUrl = env.ALT_ORCHESTRATION_ENDPOINT;
+  }
+
   return createCivitaiClient({
-    baseUrl: env.ORCHESTRATOR_ENDPOINT,
+    baseUrl,
     env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
     auth: token,
   });
@@ -85,6 +99,11 @@ export function createOrchestratorClient(token: string) {
 
 /** Used to perform orchestrator operations with the system user account */
 export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
+export const altInternalOrchestratorClient = env.ALT_ORCHESTRATION_ENDPOINT ? createOrchestratorClient(
+  env.ALT_ORCHESTRATION_TOKEN ?? env.ORCHESTRATOR_ACCESS_TOKEN,
+  {baseUrl: env.ALT_ORCHESTRATION_ENDPOINT}
+) : undefined;
+export const internalClients = [internalOrchestratorClient, altInternalOrchestratorClient].filter(isDefined);
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(

@@ -6,7 +6,7 @@ import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.sc
 import { resourceDataCache } from '~/server/services/model-version.service';
 import {
   createOrchestratorClient,
-  internalOrchestratorClient,
+  internalClients,
 } from '~/server/services/orchestrator/common';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -37,11 +37,13 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
           id: resource.id,
         });
 
-        await invalidateResource({
-          client: internalOrchestratorClient,
-          path: { air },
-          query: userId ? { ...queryData, userId: [userId] } : queryData,
-        });
+        for (const client of internalClients) {
+          await invalidateResource({
+            client,
+            path: { air },
+            query: userId ? { ...queryData, userId: [userId] } : queryData,
+          });
+        }
       })
     );
   });

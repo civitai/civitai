@@ -12,6 +12,7 @@ import {
 } from '@civitai/client';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
+import FliptSingleton from '~/server/flipt/client';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -88,8 +89,10 @@ export async function submitWorkflow({
   body,
   query,
 }: Options<SubmitWorkflowData> & { token: string }) {
-  const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
+  // Extract baseModel from step metadata if available
+  const baseModel = (body?.steps?.find((x) => (x?.metadata?.params as any)?.baseModel)?.metadata?.params as any)?.baseModel as string | undefined;
+  const client = createOrchestratorClient(token, {key: baseModel, fliptClient: await FliptSingleton.getInstance()});
 
   // const steps = body.steps;
   // if (steps.length > 0) {
