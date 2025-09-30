@@ -112,8 +112,6 @@ export function SourceImageUploadMultiple({
     return images;
   }, [value, uploads]);
 
-  console.log({ previewImages });
-
   const previewItems = useMemo(() => {
     return [...previewImages.filter((x) => !x.linkToId), ...uploads];
   }, [previewImages, uploads]);

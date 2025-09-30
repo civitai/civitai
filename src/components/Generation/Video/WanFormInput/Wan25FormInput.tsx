@@ -28,6 +28,7 @@ export function Wan25FormInput() {
   const baseModelGroup: BaseModelGroup =
     process === 'txt2vid' ? 'WanVideo-25-T2V' : 'WanVideo-25-I2V';
   const resources = getGenerationBaseModelResourceOptions(baseModelGroup);
+  console.log({ resources, filtered: resources.filter((x) => x.type !== 'Checkpoint') });
 
   return (
     <>
@@ -51,7 +52,7 @@ export function Wan25FormInput() {
           </InputSourceImageUploadMultiple>
         </div>
       )}
-      {!!resources?.length && (
+      {/* {!!resources?.length && (
         <InputResourceSelectMultipleStandalone
           name="resources"
           options={{
@@ -61,9 +62,9 @@ export function Wan25FormInput() {
           buttonLabel="Add additional resource"
           limit={maxFalAdditionalResources}
         />
-      )}
+      )} */}
       <InputTextArea
-        required={isTxt2Img}
+        required
         name="prompt"
         label="Prompt"
         placeholder="Your prompt goes here..."
