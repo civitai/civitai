@@ -17,8 +17,8 @@ import { adunitToCivitaiMap } from '~/components/Ads/AdUnit';
 import { useInView as useInViewStandalone } from 'react-intersection-observer';
 import { env } from '~/env/client';
 import { v4 as uuidv4 } from 'uuid';
-import { useInterval } from '@mantine/hooks';
 import { isDev } from '~/env/other';
+import { usePausableInterval } from '~/utils/timer.utils';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -411,7 +411,7 @@ AdunitSizesStyles.displayName = 'AdunitSizesStyles';
 
 const civitaiAdvertisingUrl = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
 function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
-  const [id] = useState(props.id ?? uuidv4());
+  const [id, setId] = useState(props.id);
   const [imgLoaded, setImgLoaded] = useState(false);
   const { nodeRef } = useContainerContext();
   const node = useScrollAreaRef();
@@ -423,6 +423,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     trace: string;
     cta?: string;
     nsfwLevel?: number;
+    next?: boolean;
   } | null>(null);
 
   const { ref, inView } = useInViewStandalone({
@@ -432,6 +433,8 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
 
   const traceRef = useRef<string>();
   const handleServe = useCallback(() => {
+    const id = props.id ?? uuidv4();
+    if (!props.id) setId(id);
     if (fetchingRef.current || document.visibilityState !== 'visible') return;
     fetchingRef.current = true;
     const type = adunitToCivitaiMap[props.adUnit];
@@ -449,12 +452,12 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
         setData(data);
         traceRef.current = data.trace;
       }
-      fetchingRef.current = false;
+      fetchingRef.current = !data?.next;
       impressionRef.current = false;
     });
-  }, [browsingLevel, id, props.adUnit]);
+  }, [browsingLevel, props.adUnit, props.id]);
 
-  const interval = useInterval(handleServe, 30 * 1000);
+  const interval = usePausableInterval(handleServe, 30 * 1000);
 
   useEffect(() => {
     if (inView && !data) handleServe();
@@ -462,17 +465,21 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
 
   useEffect(() => {
     if (inView) interval.start();
-    else interval.stop();
+    else interval.pause();
+  }, [inView, handleServe, interval.start, interval.pause]);
 
-    return () => interval.stop();
-  }, [inView, handleServe, interval]);
+  useEffect(() => {
+    return () => {
+      interval.stop();
+    };
+  }, [interval.stop]);
 
   useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible' && inView) {
         interval.start();
       } else {
-        interval.stop();
+        interval.pause();
       }
     }
 
@@ -480,7 +487,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     return () => {
       window.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [interval.start, interval.pause, inView]);
 
   useEffect(() => {
     function handleImpression() {
