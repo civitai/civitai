@@ -2984,7 +2984,7 @@ export async function getFeaturedModels() {
           select: {
             position: true,
             modelVersion: {
-              select: { modelId: true },
+              select: { modelId: true, baseModel: true },
             },
           },
           orderBy: { position: 'asc' },
@@ -2992,20 +2992,11 @@ export async function getFeaturedModels() {
         if (data.length === 0) {
           retries++;
         } else {
-          return [
-            ...data
-              .reduce((map, row) => {
-                const current = map.get(row.modelVersion.modelId);
-                if (!current || row.position < current.position) {
-                  map.set(row.modelVersion.modelId, {
-                    modelId: row.modelVersion.modelId,
-                    position: row.position,
-                  });
-                }
-                return map;
-              }, new Map<number, { modelId: number; position: number }>())
-              .values(),
-          ];
+          return data.map((row) => ({
+            modelId: row.modelVersion.modelId,
+            position: row.position,
+            baseModel: row.modelVersion.baseModel as BaseModel,
+          }));
         }
       }
 
@@ -3019,7 +3010,7 @@ export async function getFeaturedModels() {
         ORDER BY "createdAt" desc
         LIMIT 500
       `;
-      return query.map((row) => ({ modelId: row.modelId, position: 0 }));
+      return query.map((row) => ({ modelId: row.modelId, position: 0, baseModel: '' }));
     });
   } catch (e) {
     const error = e as Error;
