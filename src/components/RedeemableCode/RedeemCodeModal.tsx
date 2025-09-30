@@ -32,32 +32,55 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
       let message = 'Code redeemed successfully';
 
       if (!consumedCode) {
-        showErrorNotification({ title: 'Error redeeming code', error: new Error('Code not found or invalid') });
+        showErrorNotification({
+          title: 'Error redeeming code',
+          error: new Error('Code not found or invalid'),
+        });
         return;
       }
-      
+
       if (consumedCode.type === RedeemableCodeType.Buzz) {
         const buzzAmount = numberWithCommas(consumedCode.unitValue);
         message = `${buzzAmount} Buzz has been added to your account!`;
       } else if (consumedCode.type === RedeemableCodeType.Membership && consumedCode.price) {
         const metadata = consumedCode.price.product.metadata as SubscriptionProductMetadata;
         const timeValue = consumedCode.unitValue;
-        const interval = consumedCode.price.interval;
-        
+        const interval = consumedCode.price.interval ?? '';
         // Calculate the time period
-        let timeDescription = `${timeValue} ${interval}${timeValue > 1 ? 's' : ''}`;
-        
-        const tierName = metadata.tier ? metadata.tier.charAt(0).toUpperCase() + metadata.tier.slice(1) : 'Premium';
+        const timeDescription = `${timeValue} ${interval}${timeValue > 1 ? 's' : ''}`;
+        const tierName = metadata.tier
+          ? metadata.tier.charAt(0).toUpperCase() + metadata.tier.slice(1)
+          : 'Premium';
         message = `${timeDescription} of ${tierName} tier membership has been added to your account!`;
       }
-      
+
       setSuccessMessage(message);
       setPlayAnimation(true);
-      await queryUtils.buzz.getAccountTransactions.invalidate();
       onSubmit?.();
+
+      await Promise.all([
+        queryUtils.buzz.getAccountTransactions.invalidate(),
+        queryUtils.buzz.getBuzzAccount.invalidate(),
+      ]);
     },
     onError: (error) => {
-      showErrorNotification({ title: 'Error redeeming code', error: new Error(error.message) });
+      let errorMessage: string;
+      try {
+        // Try to parse as JSON first
+        const parsedError = JSON.parse(error.message);
+        errorMessage = parsedError[0]?.message || parsedError.message || error.message;
+      } catch {
+        // If parsing fails, use the original message
+        errorMessage = error.message;
+      }
+
+      showErrorNotification({
+        title: 'Failed to redeem code',
+        error: new Error(
+          errorMessage ||
+            'There was an error processing your code. Please check the code and try again.'
+        ),
+      });
     },
   });
   const handleSubmit = (data: ConsumeRedeemableCodeInput) => {
