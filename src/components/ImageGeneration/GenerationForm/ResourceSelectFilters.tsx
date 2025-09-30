@@ -1,6 +1,5 @@
 import type { ChipProps } from '@mantine/core';
 import {
-  ActionIcon,
   Button,
   Chip,
   Divider,
@@ -11,7 +10,6 @@ import {
   ScrollArea,
   Stack,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
@@ -45,7 +43,6 @@ export function ResourceSelectFiltersDropdown() {
     filters: selectFilters,
     setFilters: setSelectFilters,
   } = useResourceSelectContext();
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
