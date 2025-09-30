@@ -1,6 +1,5 @@
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/router';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { AppHeader } from '~/components/AppLayout/AppHeader/AppHeader';
@@ -11,8 +10,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
-import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AdhesiveFooterAd } from '~/components/Ads/Playwire/AdhesiveFooterAd';
 import { openReadOnlyModal } from '~/components/Dialog/dialog-registry';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
@@ -93,17 +91,9 @@ export function AppLayout({
         </div>
       )}
       <ChatPortal showFooter={false} />
-      {footer && <AdhesiveFooter />}
+      {footer && <AdhesiveFooterAd />}
     </div>
   );
-}
-
-function AdhesiveFooter() {
-  const currentUser = useCurrentUser();
-  const router = useRouter();
-
-  if (currentUser?.isPaidMember || router.asPath.includes('/moderator')) return null;
-  return <AdhesiveAd />;
 }
 
 export function MainContent({

@@ -127,7 +127,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
-import { AdUnitTop } from '~/components/Ads/AdUnit';
+import { AdunitBanner } from '~/components/Ads/Playwire/Adunit';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -655,7 +655,6 @@ export default function ModelDetailsV2({
       />
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
-        {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
         <Container size="xl" data-tour="model:start" className="pb-8">
           <Stack gap="xl">
             <Stack gap="xs">
@@ -1302,5 +1301,5 @@ export default function ModelDetailsV2({
 }
 
 function AdUnitTopSection() {
-  return <AdUnitTop className="bg-gray-1 py-3 dark:bg-dark-6" preserveLayout />;
+  return <AdunitBanner className="bg-gray-1 py-3 dark:bg-dark-6" />;
 }

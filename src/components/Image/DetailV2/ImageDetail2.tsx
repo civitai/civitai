@@ -34,8 +34,6 @@ import {
 } from '@tabler/icons-react';
 import { useRef } from 'react';
 import clsx from 'clsx';
-import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -80,7 +78,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { Adunit_FooterImageDetail, Adunit_Modal } from '~/components/Ads/Playwire/Adunit';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -501,8 +499,7 @@ export function ImageDetail2() {
                           </Text>
                         </AlertWithIcon>
                       )}
-                      {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
-                      {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
+                      {!hideAds && <Adunit_Modal />}
                       <VotableTags
                         entityType="image"
                         entityId={image.id}
@@ -527,7 +524,7 @@ export function ImageDetail2() {
                       <ImageGenerationData imageId={image.id} />
                       {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
-                      {!hideAds && <AdUnitSide_3 />}
+                      {/* {!hideAds && <AdUnitSide_3 />} */}
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconBrandWechat />
@@ -547,7 +544,11 @@ export function ImageDetail2() {
                   </ScrollArea>
                 </div>
               </div>
-              {!hideAds && <AdhesiveAd closeable={false} preserveLayout />}
+              {!hideAds && (
+                <div className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9">
+                  <Adunit_FooterImageDetail />
+                </div>
+              )}
             </div>
           </BrowsingSettingsAddonsProvider>
         </BrowsingLevelProvider>
