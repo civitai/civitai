@@ -102,6 +102,7 @@ export function MembershipPlans({
 
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
     interval,
+    buzzType: selectedBuzzType, // Filter plans by selected buzz type
   });
 
   const isLoading = productsLoading;

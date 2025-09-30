@@ -45,6 +45,7 @@ import type {
   UpdateContentSettingsInput,
   UserMeta,
   UserSettingsInput,
+  UserSubscriptionsByBuzzType,
 } from '~/server/schema/user.schema';
 import { userSettingsSchema } from '~/server/schema/user.schema';
 import {
@@ -808,8 +809,16 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     },
   });
 
-  const subscription = await getUserSubscription({
-    userId,
+  // Get ALL user subscriptions (one per buzzType)
+  const allSubscriptions = await dbWrite.customerSubscription.findMany({
+    where: {
+      userId,
+      status: { notIn: ['canceled'] },
+    },
+    include: {
+      product: true,
+      price: true,
+    },
   });
 
   if (!response) return undefined;
@@ -817,6 +826,41 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // nb: doing this because these fields are technically nullable, but prisma
   // likes returning them as undefined. that messes with the typing.
   const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
+
+  // Build subscriptions object per buzzType
+  const subscriptionsByBuzzType: UserSubscriptionsByBuzzType = {};
+
+  let highestTier: UserTier | undefined = undefined;
+  let primarySubscriptionId: string | undefined = undefined;
+  let memberInBadState = false;
+
+  const tierOrder: Record<string, number> = { founder: 5, gold: 4, silver: 3, bronze: 2, free: 1 };
+
+  for (const sub of allSubscriptions) {
+    const metadata = sub.product.metadata as any;
+    const tier = metadata?.[env.TIER_METADATA_KEY] as UserTier | undefined;
+    const isActive = ['active', 'trialing'].includes(sub.status);
+    const isBadState = ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
+      sub.status
+    );
+
+    if (isBadState) memberInBadState = true;
+
+    if (tier && tier !== 'free') {
+      subscriptionsByBuzzType[sub.buzzType] = {
+        tier,
+        isMember: isActive,
+        subscriptionId: sub.id,
+        status: sub.status,
+      };
+
+      // Track highest tier for backward compatibility
+      if (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0)) {
+        highestTier = tier;
+        primarySubscriptionId = sub.id;
+      }
+    }
+  }
 
   const user = {
     ...response,
@@ -830,7 +874,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     deletedAt: response.deletedAt ?? undefined,
     customerId: response.customerId ?? undefined,
     paddleCustomerId: response.paddleCustomerId ?? undefined,
-    subscriptionId: subscription?.id ?? undefined,
+    subscriptionId: primarySubscriptionId ?? undefined,
     mutedAt: response.mutedAt ?? undefined,
     bannedAt: response.bannedAt ?? undefined,
     autoplayGifs: response.autoplayGifs ?? undefined,
@@ -841,14 +885,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   };
 
   const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
-  const tier: UserTier | undefined =
-    subscription && ['active', 'trialing'].includes(subscription.status)
-      ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]
-      : undefined;
-  const memberInBadState =
-    (subscription &&
-      ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status)) ??
-    undefined;
+  const tier = highestTier;
 
   const permissions: string[] = [];
   const systemPermissions = await getSystemPermissions();
@@ -865,9 +902,11 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   const sessionUser: SessionUser = {
     ...rest,
     image: profilePicture?.url ?? rest.image,
-    tier: tier !== 'free' ? tier : undefined,
+    tier: !!tier ? tier : undefined,
     permissions,
     memberInBadState,
+    subscriptions:
+      Object.keys(subscriptionsByBuzzType).length > 0 ? subscriptionsByBuzzType : undefined,
     allowAds:
       userSettings.success && userSettings.data.allowAds != null
         ? userSettings.data.allowAds

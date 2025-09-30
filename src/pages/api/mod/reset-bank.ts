@@ -57,37 +57,41 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     if (userId) {
       // Get user's current balance
-      const userBanked = await getBanked(userId);
+      await Promise.all(
+        ['yellow', 'green'].map(async (buzzType) => {
+          const userBanked = await getBanked(userId, buzzType as 'yellow' | 'green');
 
-      if (userBanked.total > 0) {
-        // Reset the banked amount by performing an extraction:
+          if (userBanked.total > 0) {
+            // Reset the banked amount by performing an extraction:
 
-        if (userBanked.total > currentValue) {
-          await createBuzzTransaction({
-            amount: userBanked.total - currentValue,
-            fromAccountId: 0,
-            fromAccountType: 'yellow',
-            toAccountId: monthAccount,
-            toAccountType: 'creatorprogrambank',
-            type: TransactionType.Bank,
-            description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-          });
+            if (userBanked.total > currentValue) {
+              await createBuzzTransaction({
+                amount: userBanked.total - currentValue,
+                fromAccountId: 0,
+                fromAccountType: 'yellow',
+                toAccountId: monthAccount,
+                toAccountType: 'creatorprogrambank',
+                type: TransactionType.Bank,
+                description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+              });
 
-          change += userBanked.total - currentValue;
-        }
+              change += userBanked.total - currentValue;
+            }
 
-        await createBuzzTransaction({
-          amount: userBanked.total,
-          fromAccountId: monthAccount,
-          fromAccountType: 'creatorprogrambank',
-          toAccountId: userId,
-          toAccountType: 'yellow',
-          type: TransactionType.Extract,
-          description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-        });
+            await createBuzzTransaction({
+              amount: userBanked.total,
+              fromAccountId: monthAccount,
+              fromAccountType: 'creatorprogrambank',
+              toAccountId: userId,
+              toAccountType: 'yellow',
+              type: TransactionType.Extract,
+              description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+            });
 
-        change -= userBanked.total;
-      }
+            change -= userBanked.total;
+          }
+        })
+      );
     }
 
     if (change !== 0) {

@@ -89,14 +89,15 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
-      // Get tiers
+      // Get tiers for the specific buzz type
       const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
         SELECT
           cs."userId",
           (p.metadata->>'tier') as tier
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
-        WHERE cs."userId" IN (${ids.join(',')});
+        WHERE cs."userId" IN (${ids.join(',')})
+          AND cs."buzzType" = '${buzzType}';
       `);
 
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
@@ -146,7 +147,7 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
 };
 
 // Cache per buzz type
-const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
+export const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
 function getUserCapCache(buzzType: BuzzSpendType) {
   if (!userCapCaches.has(buzzType)) {
     userCapCaches.set(buzzType, createUserCapCache(buzzType));
@@ -388,10 +389,11 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     throw throwBadRequestError('User is banned from the Creator Program');
   }
 
-  // Check if user has active membership
+  // Check if user has active membership for this buzzType
   const activeMembership = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
+      buzzType,
       status: 'active',
       currentPeriodEnd: {
         gt: new Date(),
@@ -400,7 +402,7 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   });
 
   if (!activeMembership) {
-    throw throwBadRequestError('Active membership required to bank buzz');
+    throw throwBadRequestError(`Active membership required to bank ${buzzType} buzz`);
   }
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });

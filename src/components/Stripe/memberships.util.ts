@@ -5,11 +5,14 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
+  buzzType,
 }: {
   checkWhenInBadState?: boolean;
+  buzzType?: BuzzSpendType;
 } = {}) => {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
@@ -18,9 +21,12 @@ export const useActiveSubscription = ({
     data: subscription,
     isLoading,
     isFetching,
-  } = trpc.subscriptions.getUserSubscription.useQuery(undefined, {
-    enabled: !!currentUser && !!(isMember || checkWhenInBadState),
-  });
+  } = trpc.subscriptions.getUserSubscription.useQuery(
+    { buzzType },
+    {
+      enabled: !!currentUser && !!(isMember || checkWhenInBadState),
+    }
+  );
 
   const meta = subscription?.product?.metadata as SubscriptionProductMetadata;
 

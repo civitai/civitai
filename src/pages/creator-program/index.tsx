@@ -391,6 +391,7 @@ const FunStatsSection = () => {
   );
 };
 const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
+  const [mainBuzzType] = useAvailableBuzz();
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -520,7 +521,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
           </Paper>
         </Grid.Col>
         <Grid.Col span={{ base: 12, sm: 4 }}>
-          <CompensationPoolCard />
+          <CompensationPoolCard buzzType={mainBuzzType} />
         </Grid.Col>
       </Grid>
     </Stack>

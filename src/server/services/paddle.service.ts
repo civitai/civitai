@@ -113,7 +113,10 @@ export const createBuzzPurchaseTransaction = async ({
 
   const subscription = await dbWrite.customerSubscription.findUnique({
     where: {
-      userId: user.id,
+      userId_buzzType: {
+        buzzType: 'yellow',
+        userId: user.id,
+      },
       status: {
         in: ['active', 'trialing'],
       },
@@ -246,7 +249,10 @@ export const purchaseBuzzWithSubscription = async ({
 }) => {
   const subscription = await dbWrite.customerSubscription.findUnique({
     where: {
-      userId,
+      userId_buzzType: {
+        buzzType: 'yellow',
+        userId,
+      },
       status: {
         in: ['active', 'trialing'],
       },
@@ -448,7 +454,12 @@ export const upsertSubscription = async (
     // });
     // @justin - Cancel at period end for now...
     await dbWrite.customerSubscription.update({
-      where: { userId: user.id },
+      where: {
+        userId_buzzType: {
+          buzzType: 'yellow',
+          userId: user.id,
+        },
+      },
       data: {
         status: userSubscription?.status ?? 'canceled',
         cancelAt: userSubscription?.currentPeriodEnd ?? new Date(),
@@ -471,7 +482,14 @@ export const upsertSubscription = async (
   if (startingNewSubscription) {
     log('upsertSubscription :: Subscription id changed, deleting old subscription');
     if (userSubscription) {
-      await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+      await dbWrite.customerSubscription.delete({
+        where: {
+          userId_buzzType: {
+            buzzType: 'yellow',
+            userId: user.id,
+          },
+        },
+      });
     }
     const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
     if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
@@ -492,14 +510,24 @@ export const upsertSubscription = async (
     return;
   }
 
+  // Get product to determine buzzType
+  const productId = mainSubscriptionItem.price?.productId as string;
+  const product = await dbWrite.product.findFirst({
+    where: { id: productId },
+  });
+
+  const productMeta = product?.metadata as any;
+  const buzzType = (productMeta?.buzzType ?? 'yellow') as string;
+
   const data = {
     id: subscriptionNotification.id,
     userId: user.id,
+    buzzType,
     metadata: subscriptionNotification?.customData ?? {},
     status: subscriptionNotification.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: mainSubscriptionItem.price?.id as string,
-    productId: mainSubscriptionItem.price?.productId as string,
+    productId,
     cancelAtPeriodEnd: isCancelingSubscription ? true : false,
     cancelAt: isSchedulingCancelation
       ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
@@ -518,7 +546,12 @@ export const upsertSubscription = async (
 
   await dbWrite.$transaction([
     dbWrite.customerSubscription.upsert({
-      where: { id: data.id },
+      where: {
+        userId_buzzType: {
+          userId: user.id,
+          buzzType,
+        },
+      },
       update: data,
       create: {
         ...data,
@@ -540,11 +573,6 @@ export const upsertSubscription = async (
 
   const userVault = await dbWrite.vault.findFirst({
     where: { userId: user.id },
-  });
-
-  // Get Stripe details on the vault:
-  const product = await dbWrite.product.findFirst({
-    where: { id: data.productId },
   });
 
   if (data.status === 'active') {

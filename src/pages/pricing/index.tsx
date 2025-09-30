@@ -31,6 +31,7 @@ export default function Pricing() {
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
   const { subscription, subscriptionPaymentProvider, isFreeTier } = useActiveSubscription({
     checkWhenInBadState: true,
+    buzzType: selectedBuzzType,
   });
 
   useEffect(() => {

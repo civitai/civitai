@@ -399,17 +399,21 @@ export const upsertSubscription = async (
     select: {
       id: true,
       customerId: true,
-      subscriptionId: true,
-      subscription: {
-        select: { updatedAt: true, status: true },
+      subscriptions: {
+        where: {
+          // Stripe only deals with green but user may have multiple subscriptions for different colors
+          buzzType: 'green',
+        },
+        select: { id: true, updatedAt: true, status: true },
       },
     },
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
 
-  const userHasSubscription = !!user.subscriptionId;
-  const isSameSubscriptionItem = user.subscriptionId === subscription.id;
+  const mainSubscription = user.subscriptions[0];
+  const userHasSubscription = !!mainSubscription;
+  const isSameSubscriptionItem = userHasSubscription && mainSubscription?.id === subscription.id;
   const isCreatingSubscription = eventType === 'customer.subscription.created';
   const isCancelingSubscription = eventType === 'customer.subscription.deleted';
 
@@ -421,7 +425,7 @@ export const upsertSubscription = async (
   if (isCancelingSubscription && subscription.cancel_at === null) {
     // immediate cancel:
     log('Subscription canceled immediately');
-    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+    await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     await getMultipliersForUser(user.id, true);
     await invalidateSession(user.id);
     return;
@@ -429,23 +433,32 @@ export const upsertSubscription = async (
 
   if (startingNewSubscription) {
     log('Subscription id changed, deleting old subscription');
-    if (user.subscriptionId) {
-      await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+    if (mainSubscription) {
+      await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     }
-    await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
   } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
     return;
   }
 
+  // Get product to determine buzzType
+  const productId = subscription.items.data[0].price.product as string;
+  const product = await dbRead.product.findFirst({
+    where: { id: productId },
+  });
+
+  const productMeta = product?.metadata as any;
+  const buzzType = (productMeta?.buzzType ?? 'green') as string;
+
   const data = {
     id: subscription.id,
     userId: user.id,
+    buzzType,
     metadata: subscription.metadata,
     status: subscription.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: subscription.items.data[0].price.id,
-    productId: subscription.items.data[0].price.product as string,
+    productId,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
     canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
@@ -457,18 +470,23 @@ export const upsertSubscription = async (
   };
 
   await dbWrite.$transaction([
-    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
-    dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
+    dbWrite.customerSubscription.upsert({
+      where: {
+        userId_buzzType: {
+          userId: user.id,
+          buzzType,
+        },
+      },
+      update: data,
+      create: data,
+    }),
   ]);
 
   const userVault = await dbRead.vault.findFirst({
     where: { userId: user.id },
   });
 
-  // Get Stripe details on the vault:
-  const product = await dbRead.product.findFirst({
-    where: { id: data.productId },
-  });
+  // Product already fetched above for buzzType
 
   if (data.status === 'canceled' && userVault) {
     await dbWrite.vault.update({

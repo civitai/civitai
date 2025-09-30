@@ -70,6 +70,7 @@ export function GreenMembershipPlans({
 
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
     interval,
+    buzzType: 'green', // Always green for green membership plans
   });
 
   const isLoading = productsLoading;

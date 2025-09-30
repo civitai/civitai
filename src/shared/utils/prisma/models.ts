@@ -322,8 +322,7 @@ export interface User {
   isModerator: boolean | null;
   createdAt: Date;
   deletedAt: Date | null;
-  subscriptionId: string | null;
-  subscription?: CustomerSubscription | null;
+  subscriptions?: CustomerSubscription[];
   mutedAt: Date | null;
   muted: boolean;
   muteConfirmedAt: Date | null;
@@ -445,6 +444,7 @@ export interface CustomerSubscription {
   id: string;
   userId: number;
   user?: User;
+  buzzType: string;
   metadata: JsonValue;
   status: string;
   priceId: string;

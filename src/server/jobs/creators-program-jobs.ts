@@ -9,7 +9,7 @@ import {
   flushBankedCache,
   getCompensationPool,
   getPoolParticipants,
-  userCapCache,
+  userCapCaches,
   userCashCache,
 } from '~/server/services/creator-program.service';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
@@ -160,7 +160,8 @@ export const creatorsProgramRollover = createJob(
   'creators-program-rollover',
   '0 0 1 * *',
   async () => {
-    await userCapCache.flush();
+    await userCapCaches.get('yellow')?.flush();
+    await userCapCaches.get('green')?.flush();
     await flushBankedCache();
     await bustCompensationPoolCache();
   }

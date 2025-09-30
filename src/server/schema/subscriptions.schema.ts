@@ -7,10 +7,14 @@ export type GetPlansSchema = z.infer<typeof getPlansSchema>;
 export const getPlansSchema = z.object({
   paymentProvider: z.enum(PaymentProvider).optional(),
   interval: z.enum(['month', 'year']).optional(),
+  buzzType: z.string().optional(),
 });
 
 export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
-export const getUserSubscriptionSchema = z.object({ userId: z.number() });
+export const getUserSubscriptionSchema = z.object({
+  userId: z.number(),
+  buzzType: z.string().optional(),
+});
 
 export type SubscriptionProductMetadata = z.infer<typeof subscriptionProductMetadataSchema>;
 export const subscriptionProductMetadataSchema = z
