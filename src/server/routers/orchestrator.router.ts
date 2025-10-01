@@ -181,7 +181,7 @@ export const orchestratorRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const group = getBaseModelGroup(input.params.baseModel);
-        const experimental = EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group as any)
+        const experimental = EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group)
           ? input.params.experimental
           : ctx.experimental;
 
