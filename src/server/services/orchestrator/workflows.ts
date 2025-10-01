@@ -20,6 +20,7 @@ import type {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
+import type { OrchestratorClientOpts } from '~/server/services/orchestrator/common';
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import {
   throwAuthorizationError,
@@ -27,6 +28,7 @@ import {
   throwInsufficientFundsError,
   throwInternalServerError,
 } from '~/server/utils/errorHandling';
+import { env } from '~/env/server';
 
 export async function queryWorkflows({
   token,
@@ -59,12 +61,19 @@ export async function queryWorkflows({
   return { nextCursor: next, items };
 }
 
-export async function getWorkflow({
-  token,
-  path,
-  query,
-}: Options<GetWorkflowData> & { token: string }) {
-  const client = createOrchestratorClient(token);
+export async function getWorkflow(
+  { token, path, query }: Options<GetWorkflowData> & { token: string },
+  forceAltOrchestor = false
+) {
+  const opts: OrchestratorClientOpts = {
+    // TODO: this needs to be passed in somehow
+    //key: baseModel,
+    fliptClient: await FliptSingleton.getInstance(),
+  };
+  if (forceAltOrchestor && env.ALT_ORCHESTRATION_ENDPOINT) {
+    opts.baseUrl = env.ALT_ORCHESTRATION_ENDPOINT;
+  }
+  const client = createOrchestratorClient(token, opts);
   const { data, error } = await clientGetWorkflow({ client, path, query });
   if (!data) {
     switch (error.status) {
@@ -74,6 +83,12 @@ export async function getWorkflow({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 404:
+        if (forceAltOrchestor) {
+          throw error;
+        } else {
+          return getWorkflow({ token, path, query }, true);
+        }
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
@@ -91,8 +106,13 @@ export async function submitWorkflow({
 }: Options<SubmitWorkflowData> & { token: string }) {
   if (!body) throw throwBadRequestError();
   // Extract baseModel from step metadata if available
-  const baseModel = (body?.steps?.find((x) => (x?.metadata?.params as any)?.baseModel)?.metadata?.params as any)?.baseModel as string | undefined;
-  const client = createOrchestratorClient(token, {key: baseModel, fliptClient: await FliptSingleton.getInstance()});
+  const baseModel = (
+    body?.steps?.find((x) => (x?.metadata?.params as any)?.baseModel)?.metadata?.params as any
+  )?.baseModel as string | undefined;
+  const client = createOrchestratorClient(token, {
+    key: baseModel,
+    fliptClient: await FliptSingleton.getInstance(),
+  });
 
   // const steps = body.steps;
   // if (steps.length > 0) {
