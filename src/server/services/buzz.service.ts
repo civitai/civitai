@@ -59,6 +59,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { isDev } from '~/env/other';
+import { toPascalCase } from '~/utils/string-helpers';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
@@ -992,7 +993,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
   };
 }
 
-type Row = { modelVersionId: number; date: Date; comp: number; tip: number; total: number };
+type Row = { modelVersionId: number; date: Date; total: number };
 
 export const getDailyCompensationRewardByUser = async ({
   userId,
@@ -1022,16 +1023,22 @@ export const getDailyCompensationRewardByUser = async ({
       JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
       WHERE m.userId = ${userId}
     )
-    SELECT DISTINCT
+    SELECT
       date,
-      modelVersionId,
-      comp,
-      tip,
-      total
-    FROM buzz_resource_compensation
-    WHERE modelVersionId IN (SELECT id FROM user_resources)
-    AND date BETWEEN ${minDate} AND ${maxDate} 
-    ORDER BY date DESC, total DESC;
+      modelVersionId, 
+	    MAX(FLOOR(amount))::int AS total
+    FROM orchestration.resourceCompensations
+    WHERE date BETWEEN ${minDate} AND ${maxDate}
+      AND modelVersionId IN (SELECT id FROM user_resources)
+      AND amount > 0
+      -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
+      AND ${
+        accountType
+          ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(accountType)}')`
+          : '1=1'
+      }
+    GROUP BY modelVersionId, date
+    ORDER BY date DESC, total DESC
   `;
 
   if (!generationData.length) return [];

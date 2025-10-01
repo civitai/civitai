@@ -119,17 +119,6 @@ export default function UserMembership() {
   const isUpdate = query.success ? query.data?.updated : false;
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
 
-  // Check if user has subscription but is on red environment
-  const showRedirectMessage = !features.isGreen && subscription;
-
-  const handleRedirectToGreen = () => {
-    window.open(
-      `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
-      '_blank',
-      'noreferrer'
-    );
-  };
-
   const handleRedirectToOtherEnvironment = () => {
     const targetDomain =
       otherBuzzType === 'green'
@@ -269,38 +258,7 @@ export default function UserMembership() {
                   buttonText={`View ${otherBuzzType === 'green' ? 'Green' : 'Yellow'} Membership`}
                 />
               )}
-              {showRedirectMessage && (
-                <Alert color="blue" variant="light">
-                  <Stack gap="md">
-                    <Group justify="space-between" align="flex-start">
-                      <Stack gap="xs" style={{ flex: 1 }}>
-                        <Text size="sm" fw={500}>
-                          Red Memberships Currently Unavailable
-                        </Text>
-                        <Text size="sm">
-                          Red memberships are currently unavailable. We&rsquo;re working on bringing
-                          them back soon. In the meantime, your existing membership needs to be
-                          managed on Civitai Green.
-                        </Text>
-                      </Stack>
-                      <Button
-                        size="sm"
-                        radius="xl"
-                        rightSection={<IconExternalLink size={16} />}
-                        onClick={handleRedirectToGreen}
-                        className={buzzClassNames?.btn}
-                        style={{ minWidth: '160px' }}
-                      >
-                        Manage on Green
-                      </Button>
-                    </Group>
-                    <Text size="sm" c="dimmed">
-                      Management actions like canceling, upgrading, or updating payment details are
-                      only available on the green environment.
-                    </Text>
-                  </Stack>
-                </Alert>
-              )}
+
               {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
@@ -317,9 +275,9 @@ export default function UserMembership() {
                 </Alert>
               )}
 
-              {!showRedirectMessage && (
-                <>
-                  {subscriptionPaymentProvider !== paymentProvider && (
+              <>
+                {subscriptionPaymentProvider !== paymentProvider &&
+                  subscriptionPaymentProvider !== PaymentProvider.Civitai && (
                     <Alert>
                       We are currently migrating your account info to our new payment processor,
                       until this is completed you will be unable to upgrade your subscription.
@@ -327,23 +285,22 @@ export default function UserMembership() {
                       it done as soon as possible.
                     </Alert>
                   )}
-                  {isDrowngrade && downgradedTier && (
-                    <Alert>
-                      You have successfully downgraded your membership to the{' '}
-                      {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan
-                      to take effect. You may refresh the page to see the changes.
-                    </Alert>
-                  )}
-                  {isUpdate && (
-                    <Alert>
-                      Your membership has been successfully updated. It may take a few minutes for
-                      your update to take effect. If you don&rsquo;t see the changes after
-                      refreshing the page in a few minutes, please contact support. Please note:
-                      Your membership bonus Buzz may take up to 1 hour to be delivered.
-                    </Alert>
-                  )}
-                </>
-              )}
+                {isDrowngrade && downgradedTier && (
+                  <Alert>
+                    You have successfully downgraded your membership to the{' '}
+                    {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan
+                    to take effect. You may refresh the page to see the changes.
+                  </Alert>
+                )}
+                {isUpdate && (
+                  <Alert>
+                    Your membership has been successfully updated. It may take a few minutes for
+                    your update to take effect. If you don&rsquo;t see the changes after refreshing
+                    the page in a few minutes, please contact support. Please note: Your membership
+                    bonus Buzz may take up to 1 hour to be delivered.
+                  </Alert>
+                )}
+              </>
 
               {subscription?.isBadState && (
                 <AlertWithIcon
