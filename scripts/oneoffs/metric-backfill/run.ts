@@ -1,3 +1,6 @@
+// Environment variables are loaded via ~/env/server when we import from ~/server/*
+// Make sure NODE_ENV is set before running (use: npx cross-env NODE_ENV=development npx tsx ...)
+
 import pLimit from 'p-limit';
 import { pgDbRead } from '~/server/db/pgDb';
 import { clickhouse } from '~/server/clickhouse/client';

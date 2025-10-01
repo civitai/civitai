@@ -1968,33 +1968,35 @@ const packagesToRun = packageEntries
 
 ## Usage
 
+**Note:** Run with `NODE_ENV=development` set to ensure environment variables are loaded:
+
 ```bash
 # Run all migrations with optimizations
-npm run tsx scripts/oneoffs/metric-backfill/run.ts \
+npx cross-env NODE_ENV=development npx tsx scripts/oneoffs/metric-backfill/run.ts \
   --concurrency 10 \
   --batch-size 500
 
 # Test specific packages with limited batches (perfect for testing queries/processing)
-npm run tsx scripts/oneoffs/metric-backfill/run.ts \
+npx cross-env NODE_ENV=development npx tsx scripts/oneoffs/metric-backfill/run.ts \
   --packages buzzTipPackage \
   --limit-batches 2 \
   --dry-run
 
 # Dry run to test queries (processes all batches but doesn't insert)
-npm run tsx scripts/oneoffs/metric-backfill/run.ts \
+npx tsx scripts/oneoffs/metric-backfill/run.ts \
   --dry-run \
   --packages buzzTipPackage
 
 # Run specific packages only
-npm run tsx scripts/oneoffs/metric-backfill/run.ts \
+npx tsx scripts/oneoffs/metric-backfill/run.ts \
   --packages buzzTipPackage,collectionItemPackage
 
 # Resume from a specific batch (if interrupted)
-npm run tsx scripts/oneoffs/metric-backfill/run.ts \
+npx tsx scripts/oneoffs/metric-backfill/run.ts \
   --start-from 150
 
 # Auto-resume from last saved progress
-npm run tsx scripts/oneoffs/metric-backfill/run.ts \
+npx tsx scripts/oneoffs/metric-backfill/run.ts \
   --auto-resume
 ```
 
