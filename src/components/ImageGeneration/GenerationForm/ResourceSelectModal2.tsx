@@ -316,7 +316,18 @@ function ResourceSelectModalContent() {
 
   if (selectedTab === 'featured') {
     if (!!featuredModels) {
-      meiliFilters.push(`id IN [${featuredModels.map((fm) => fm.modelId).join(',')}]`);
+      // Filter featured models by selected base models
+      const selectedBaseModels = filters.baseModels.length > 0 ? filters.baseModels : [];
+      const filteredFeatured =
+        selectedBaseModels.length > 0
+          ? featuredModels.filter((fm) =>
+              fm.baseModel ? selectedBaseModels.includes(fm.baseModel as BaseModel) : true
+            )
+          : featuredModels;
+
+      if (filteredFeatured.length > 0) {
+        meiliFilters.push(`id IN [${filteredFeatured.map((fm) => fm.modelId).join(',')}]`);
+      }
     }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
@@ -503,6 +514,18 @@ function ResourceHitList({
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
+  // Filter featured models by selected base models
+  const filteredFeaturedModels = useMemo(() => {
+    if (!featured || selectedTab !== 'featured') return featured;
+
+    const selectedBaseModels = resources.flatMap((r) => r.baseModels);
+    if (selectedBaseModels.length === 0) return featured;
+
+    return featured.filter((fm) =>
+      fm.baseModel ? selectedBaseModels.includes(fm.baseModel) : true
+    );
+  }, [featured, selectedTab, resources]);
+
   const filtered = useMemo(() => {
     if (!canGenerate && !resources.length) return models;
 
@@ -527,8 +550,8 @@ function ResourceHitList({
 
     if (selectedTab === 'featured') {
       ret.sort((a, b) => {
-        const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
-        const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+        const aPos = filteredFeaturedModels?.find((fm) => fm.modelId === a.id)?.position;
+        const bPos = filteredFeaturedModels?.find((fm) => fm.modelId === b.id)?.position;
         if (!aPos) return 1;
         if (!bPos) return -1;
         return aPos - bPos;
@@ -536,7 +559,7 @@ function ResourceHitList({
     }
 
     return ret;
-  }, [canGenerate, excludedIds, featured, models, resources, selectedTab]);
+  }, [canGenerate, excludedIds, filteredFeaturedModels, models, resources, selectedTab]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
@@ -576,9 +599,9 @@ function ResourceHitList({
 
   const filteredSorted =
     selectedTab === 'featured'
-      ? filtered.sort((a, b) => {
-          const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
-          const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+      ? [...filtered].sort((a, b) => {
+          const aPos = filteredFeaturedModels?.find((fm) => fm.modelId === a.id)?.position;
+          const bPos = filteredFeaturedModels?.find((fm) => fm.modelId === b.id)?.position;
           if (!aPos) return 1;
           if (!bPos) return -1;
           return aPos - bPos;
