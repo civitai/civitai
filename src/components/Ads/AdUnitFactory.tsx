@@ -1,12 +1,11 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React, { forwardRef, useCallback, useEffect, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
-import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import { AdUnitRenderable, useAdunitRenderableContext } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
@@ -14,6 +13,12 @@ import {
   useContainerContext,
   useContainerProviderStore,
 } from '~/components/ContainerProvider/ContainerProvider';
+import { adunitToCivitaiMap } from '~/components/Ads/AdUnit';
+import { useInView as useInViewStandalone } from 'react-intersection-observer';
+import { env } from '~/env/client';
+import { v4 as uuidv4 } from 'uuid';
+import { isDev } from '~/env/other';
+import { usePausableInterval } from '~/utils/timer.utils';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -39,7 +44,7 @@ function AdUnitContent({
   useEffect(() => {
     // if (loadedRef.current) return;
     // loadedRef.current = true;
-    const id = initialId ?? getRandomId();
+    const id = initialId ?? uuidv4();
     setId(id);
 
     if (!adUnitDictionary[adUnit]) adUnitDictionary[adUnit] = id;
@@ -116,18 +121,21 @@ function AdWrapper({
 }) {
   // const router = useRouter();
   // const key = router.asPath.split('?')[0];
-  const { adsBlocked, ready, isMember } = useAdsContext();
+  const { adsBlocked, ready, isMember, consent } = useAdsContext();
+  const { nsfw } = useAdunitRenderableContext();
 
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
 
   if (adSizes && !adSizes.length) return null;
 
-  const content = inView ? (
+  const content = (
     <>
-      {adsBlocked ? (
+      {adsBlocked || !consent ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
-      ) : ready && adSizes !== undefined ? (
+      ) : nsfw ? (
+        <CivitaiAdUnit adUnit={adUnit} id={id} />
+      ) : inView && ready && adSizes !== undefined ? (
         <AdUnitContent
           // key={key}
           adUnit={adUnit}
@@ -151,7 +159,7 @@ function AdWrapper({
         </div>
       )}
     </>
-  ) : null;
+  );
 
   const className2 = clsx(
     'relative box-content flex flex-col items-center justify-center gap-2',
@@ -400,3 +408,130 @@ const AdunitSizesStyles = forwardRef<
 });
 
 AdunitSizesStyles.displayName = 'AdunitSizesStyles';
+
+const civitaiAdvertisingUrl = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
+function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
+  const [id, setId] = useState(props.id);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const { nodeRef } = useContainerContext();
+  const node = useScrollAreaRef();
+  const { browsingLevel } = useAdunitRenderableContext();
+  const fetchingRef = React.useRef(false);
+  const impressionRef = React.useRef(false);
+  const [data, setData] = useState<{
+    url: string;
+    trace: string;
+    cta?: string;
+    nsfwLevel?: number;
+    next?: boolean;
+  } | null>(null);
+
+  const { ref, inView } = useInViewStandalone({
+    root: node?.current ?? nodeRef?.current ?? undefined,
+    threshold: 0.5,
+  });
+
+  const traceRef = useRef<string>();
+  const handleServe = useCallback(() => {
+    const id = props.id ?? uuidv4();
+    if (!props.id) setId(id);
+    if (fetchingRef.current || document.visibilityState !== 'visible') return;
+    fetchingRef.current = true;
+    const type = adunitToCivitaiMap[props.adUnit];
+    const searchParams = new URLSearchParams(
+      `placement=${id}&name=${type}&container=${
+        nodeRef.current?.clientWidth ?? 0
+      }&browsingLevel=${browsingLevel}`
+    );
+    if (traceRef.current) searchParams.append('trace', traceRef.current);
+    fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
+      credentials: 'include',
+    }).then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        setData(data);
+        traceRef.current = data.trace;
+      }
+      fetchingRef.current = !data?.next;
+      impressionRef.current = false;
+    });
+  }, [browsingLevel, props.adUnit, props.id]);
+
+  const interval = usePausableInterval(handleServe, 30 * 1000);
+
+  useEffect(() => {
+    if (inView && !data) handleServe();
+  }, [inView, data, handleServe]);
+
+  useEffect(() => {
+    if (inView) interval.start();
+    else interval.pause();
+  }, [inView, handleServe, interval.start, interval.pause]);
+
+  useEffect(() => {
+    return () => {
+      interval.stop();
+    };
+  }, [interval.stop]);
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible' && inView) {
+        interval.start();
+      } else {
+        interval.pause();
+      }
+    }
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [interval.start, interval.pause, inView]);
+
+  useEffect(() => {
+    function handleImpression() {
+      if (impressionRef.current) return;
+      if (imgLoaded && inView && data && document.visibilityState === 'visible') {
+        impressionRef.current = true;
+        fetch(`${civitaiAdvertisingUrl}/api/v1/view?trace=${data.trace}`, {
+          method: 'POST',
+          credentials: 'include',
+          body: JSON.stringify({ pathname: window.location.pathname }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }).then(() => {
+          window.dispatchEvent(
+            new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
+          );
+        });
+      }
+    }
+
+    const timeout = setTimeout(handleImpression, 1000);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [imgLoaded, inView, data, props.adUnit]);
+
+  return (
+    <div id={id} ref={ref}>
+      {data ? (
+        <a
+          target="_blank"
+          href={`${civitaiAdvertisingUrl}/api/v1/engagement?trace=${data.trace}`}
+          aria-label="visit advertiser"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`${env.NEXT_PUBLIC_IMAGE_LOCATION}/${data.url}/optimized=true/media.webp`}
+            alt="advertisement"
+            loading="lazy"
+            onLoad={() => setImgLoaded(true)}
+          />
+        </a>
+      ) : null}
+    </div>
+  );
+}
