@@ -121,7 +121,7 @@ function AdWrapper({
 }) {
   // const router = useRouter();
   // const key = router.asPath.split('?')[0];
-  const { adsBlocked, ready, isMember } = useAdsContext();
+  const { adsBlocked, ready, isMember, consent } = useAdsContext();
   const { nsfw } = useAdunitRenderableContext();
 
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
@@ -131,7 +131,7 @@ function AdWrapper({
 
   const content = (
     <>
-      {adsBlocked && !nsfw ? (
+      {adsBlocked || !consent ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
       ) : nsfw ? (
         <CivitaiAdUnit adUnit={adUnit} id={id} />

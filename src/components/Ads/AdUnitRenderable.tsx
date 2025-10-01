@@ -26,8 +26,8 @@ export function AdUnitRenderable({
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel);
 
-  if (!adsEnabled && !nsfw) return null;
-  if (hideOnBlocked && adsBlocked && !nsfw) return null;
+  if (!adsEnabled) return null;
+  if (hideOnBlocked && adsBlocked) return null;
   return (
     <AdunitRenderableContext.Provider
       value={{ nsfw, browsingLevel: browsingLevelOverride ?? browsingLevel }}
