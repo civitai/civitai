@@ -211,3 +211,7 @@ export function getRatio(a: number, b: number) {
   const c = gcd(a, b);
   return [a / c, b / c].join(':');
 }
+
+export function almostEqual(a: number, b: number, tolerance: number) {
+  return Math.abs(a - b) <= tolerance;
+}
