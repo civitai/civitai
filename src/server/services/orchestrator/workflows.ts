@@ -64,8 +64,12 @@ export async function getWorkflow({
   path,
   query,
 }: Options<GetWorkflowData> & { token: string }) {
-  const client = createOrchestratorClient(token);
+  const client = createOrchestratorClient(token, {
+    //key: baseModel,
+    fliptClient: await FliptSingleton.getInstance(),
+  });
   const { data, error } = await clientGetWorkflow({ client, path, query });
+  console.log(data, error);
   if (!data) {
     switch (error.status) {
       case 400:
@@ -91,8 +95,13 @@ export async function submitWorkflow({
 }: Options<SubmitWorkflowData> & { token: string }) {
   if (!body) throw throwBadRequestError();
   // Extract baseModel from step metadata if available
-  const baseModel = (body?.steps?.find((x) => (x?.metadata?.params as any)?.baseModel)?.metadata?.params as any)?.baseModel as string | undefined;
-  const client = createOrchestratorClient(token, {key: baseModel, fliptClient: await FliptSingleton.getInstance()});
+  const baseModel = (
+    body?.steps?.find((x) => (x?.metadata?.params as any)?.baseModel)?.metadata?.params as any
+  )?.baseModel as string | undefined;
+  const client = createOrchestratorClient(token, {
+    key: baseModel,
+    fliptClient: await FliptSingleton.getInstance(),
+  });
 
   // const steps = body.steps;
   // if (steps.length > 0) {
@@ -114,6 +123,7 @@ export async function submitWorkflow({
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
   });
+  console.log(data, error);
 
   if (!data) {
     const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
@@ -121,14 +131,14 @@ export async function submitWorkflow({
     };
     const message = messages?.length ? messages.join(',\n') : handleError(error);
 
-    if (!isProd) {
-      console.log('----Workflow Error----');
-      console.log({ token });
-      console.dir({ error }, { depth: null });
-      console.log('----Workflow Error Request Body----');
-      console.dir(JSON.stringify(body));
-      console.log('----Workflow End Error Request Body----');
-    }
+    //if (!isProd) {
+    console.log('----Workflow Error----');
+    console.log({ token });
+    console.dir({ error }, { depth: null });
+    console.log('----Workflow Error Request Body----');
+    console.dir(JSON.stringify(body));
+    console.log('----Workflow End Error Request Body----');
+    //}
     switch (response.status) {
       case 400:
         throw throwBadRequestError(message);

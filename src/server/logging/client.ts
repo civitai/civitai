@@ -11,6 +11,7 @@ const axiom = shouldConnect
   : null;
 
 export async function logToAxiom(data: MixedObject, datastream?: string) {
+  console.log('here logToAxiom', data);
   const sendData = { pod: env.PODNAME, ...data };
   if (isProd) {
     if (!axiom) return;
