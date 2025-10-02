@@ -125,7 +125,7 @@ export default function UserBuzzDashboard() {
           />
 
           {/* Redeem Buzz Code Section */}
-          <RedeemCodeCard />
+          {selectedAccountType === 'yellow' && <RedeemCodeCard />}
 
           <EarningBuzz withCTA accountType={selectedAccountType} />
 

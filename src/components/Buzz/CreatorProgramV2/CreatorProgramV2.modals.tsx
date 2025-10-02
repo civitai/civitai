@@ -20,10 +20,10 @@ import {
   formatCurrencyForDisplay,
   numberWithCommas,
 } from '~/utils/number-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
-import { buzzBankTypes } from '~/shared/constants/buzz.constants';
+import { getDisplayName, toPascalCase } from '~/utils/string-helpers';
+import { buzzBankTypes, BuzzSpendType } from '~/shared/constants/buzz.constants';
 
-export const openPhasesModal = () => {
+export const openPhasesModal = (buzztype: BuzzSpendType) => {
   dialogStore.trigger({
     component: AlertDialog,
     props: {
@@ -38,7 +38,7 @@ export const openPhasesModal = () => {
           <div className="flex flex-col gap-2">
             <h3 className="text-xl font-bold">Banking Phase</h3>
             <ul className="pl-4">
-              <li>During this phase, creators can Bank any Yellow Buzz they&rsquo;ve earned.</li>
+              <li>During this phase, creators can Bank any {toPascalCase(buzztype)} Buzz they&rsquo;ve earned.</li>
               <li>This phase lasts until 3 days before the end of the month (UTC).</li>
               <li>
                 As the month progresses, the value of your Banked Buzz{' '}

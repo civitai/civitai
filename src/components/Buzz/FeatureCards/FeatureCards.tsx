@@ -26,12 +26,13 @@ import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { Currency } from '~/shared/utils/prisma/enums';
 import dynamic from 'next/dynamic';
 import classes from './FeatureCards.module.scss';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 const RedeemCodeModal = dynamic(() =>
   import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
 );
 
 const getEarnings = (
+  accountType: BuzzAccountType,
   buzzConfig?: ReturnType<typeof useBuzzCurrencyConfig>
 ): (FeatureCardProps & { key: string })[] => [
   // {
@@ -78,6 +79,7 @@ const getEarnings = (
     },
   },
   {
+    disabled: accountType !== 'yellow',
     key: 'redeem',
     icon: <IconBarcode size={32} />,
     title: 'Redeem a code',
@@ -90,11 +92,11 @@ const getEarnings = (
       color: buzzConfig?.color,
     },
   },
-];
+].filter((item) => !item.disabled);
 
 export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow' }: Props) => {
   const buzzConfig = useBuzzCurrencyConfig(accountType);
-  const earnings = getEarnings(buzzConfig);
+  const earnings = getEarnings(accountType, buzzConfig);
   const accountTypeLabel = getAccountTypeLabel(accountType);
 
   return (
@@ -235,6 +237,7 @@ type FeatureCardProps = {
     onClick?: (e: MouseEvent<HTMLElement>) => void;
   };
   withCTA?: boolean;
+  disabled?: boolean;
 };
 
 export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: FeatureCardProps) => {
