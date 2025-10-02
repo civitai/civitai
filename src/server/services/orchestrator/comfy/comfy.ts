@@ -24,6 +24,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -113,10 +114,11 @@ export async function createComfy(
     experimental?: boolean;
     isGreen?: boolean;
     allowMatureContent: boolean;
+    currencies: BuzzSpendType[];
   }
 ) {
   const step = await createComfyStep(args);
-  const { user, tips, params, experimental, isGreen, allowMatureContent } = args;
+  const { user, tips, params, experimental, isGreen, allowMatureContent, currencies } = args;
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
@@ -138,6 +140,7 @@ export async function createComfy(
       callbacks: getOrchestratorCallbacks(user.id),
       nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
+      currencies,
     },
   })) as TextToImageResponse;
 

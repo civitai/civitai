@@ -14,6 +14,7 @@ import {
 } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -116,10 +117,11 @@ export async function createTextToImage(
     batchAll?: boolean;
     isGreen?: boolean;
     allowMatureContent: boolean;
+    currencies: BuzzSpendType[];
   }
 ) {
   const step = await createTextToImageStep(args);
-  const { params, tips, user, experimental, isGreen, allowMatureContent } = args;
+  const { params, tips, user, experimental, isGreen, allowMatureContent, currencies } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
   const workflow = (await submitWorkflow({
@@ -140,6 +142,7 @@ export async function createTextToImage(
       // Ensures private generation does not allow mature content
       nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent: allowMatureContent,
+      currencies,
     },
   })) as TextToImageResponse;
 

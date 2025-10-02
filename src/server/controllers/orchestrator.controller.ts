@@ -12,11 +12,12 @@ import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent: boolean };
+type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent: boolean , currencies?: BuzzSpendType[]};
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
@@ -114,6 +115,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
       steps: [step],
       experimental: args.experimental,
       allowMatureContent: args.allowMatureContent,
+      currencies: args.currencies,
     },
     query: { whatif: true },
   });

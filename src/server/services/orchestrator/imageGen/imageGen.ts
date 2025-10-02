@@ -7,6 +7,7 @@ import type { generateImageSchema } from '~/server/schema/orchestrator/textToIma
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { imageGenConfig } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
@@ -49,9 +50,10 @@ export async function createImageGen(
     experimental?: boolean;
     isGreen?: boolean;
     allowMatureContent: boolean;
+    currencies: BuzzSpendType[];
   }
 ) {
-  const { tips, user, experimental, isGreen, allowMatureContent } = args;
+  const { tips, user, experimental, isGreen, allowMatureContent, currencies } = args;
   if (!args.params.engine)
     throw new Error(`cannot generate with $type:'imageGen' without specifying an engine`);
   const config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
@@ -70,6 +72,7 @@ export async function createImageGen(
       callbacks: getOrchestratorCallbacks(user.id),
       nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
+      currencies,
     },
   })) as TextToImageResponse;
 

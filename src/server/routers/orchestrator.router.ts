@@ -72,6 +72,7 @@ import {
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
 import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -193,6 +194,7 @@ export const orchestratorRouter = router({
           batchAll: ctx.batchAll,
           // isGreen: ctx.features.isGreen,
           allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
@@ -234,6 +236,7 @@ export const orchestratorRouter = router({
           token: ctx.token,
           batchAll: ctx.batchAll,
           allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
@@ -251,6 +254,7 @@ export const orchestratorRouter = router({
             steps: [step],
             tips: args.tips,
             experimental: ctx.experimental,
+            currencies: args.currencies,
           },
           query: {
             whatif: true,
@@ -300,6 +304,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         experimental: ctx.experimental,
         allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       })
     ),
   generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
@@ -310,6 +315,7 @@ export const orchestratorRouter = router({
       experimental: ctx.experimental,
       isGreen: ctx.features.isGreen,
       allowMatureContent: ctx.allowMatureContent,
+      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
     })
   ),
   // #endregion
@@ -326,13 +332,13 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token, user: ctx.user };
+      const args = { ...input, token: ctx.token, user: ctx.user, currencies: getAllowedAccountTypes(ctx.features, ['blue']) };
       return await createTrainingWorkflow(args);
     }),
   createTrainingWhatif: orchestratorProcedure
     .input(imageTrainingRouterWhatIfSchema)
     .query(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token };
+      const args = { ...input, token: ctx.token, currencies: getAllowedAccountTypes(ctx.features, ['blue']), };
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion
