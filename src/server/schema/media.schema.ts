@@ -11,6 +11,7 @@ const sharedMetadata = z.object({
   username: z.string().optional(),
   userId: z.number().optional(),
   skipScannedAtReassignment: z.boolean().optional(),
+  nsfwLevelReason: z.string().nullish(),
 });
 
 export type ImageMetadata = z.infer<typeof imageMetadataSchema>;

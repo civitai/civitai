@@ -436,6 +436,7 @@ export const updateImageNsfwLevelSchema = z.object({
   id: z.number(),
   nsfwLevel: z.enum(NsfwLevel),
   status: z.enum(ReportStatus).optional(),
+  reason: z.string().optional(),
 });
 
 export const getImageRatingRequestsSchema = paginationSchema.extend({
