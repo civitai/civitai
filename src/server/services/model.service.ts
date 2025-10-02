@@ -120,7 +120,6 @@ import {
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -1060,11 +1059,9 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: { id: true, url: true },
   });
 
-  const s3 = getS3Client();
   const tasks = modelFiles.map((file) => async () => {
     await requestScannerTasks({
       file,
-      s3,
       tasks: ['Hash', 'Scan', 'ParseMetadata'],
       lowPriority: true,
     });

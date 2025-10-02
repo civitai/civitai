@@ -273,13 +273,18 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
         if (updatesToMake.length > 0) {
           if (dryRun) {
             console.log(
-              `[DRY RUN] Would update ${updatesToMake.length} articles (${start} - ${end}):`,
-              updatesToMake.map((u) => ({
-                id: u.id,
-                nsfw: u.nsfw,
-                userNsfwLevel: u.userNsfwLevel,
-                metadata: u.metadata,
-              }))
+              `[DRY RUN] Would update ${updatesToMake.length} articles (${start} - ${end}):`
+            );
+            console.dir(
+              {
+                result: updatesToMake.map((u) => ({
+                  id: u.id,
+                  nsfw: u.nsfw,
+                  userNsfwLevel: u.userNsfwLevel,
+                  metadata: u.metadata,
+                })),
+              },
+              { depth: null }
             );
           } else {
             // Update database using parameterized bulk update
@@ -412,8 +417,13 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
         if (updatesToMake.length > 0) {
           if (dryRun) {
             console.log(
-              `[DRY RUN] Would update ${updatesToMake.length} bounties (${start} - ${end}):`,
-              updatesToMake.map((u) => ({ id: u.id, nsfw: u.nsfw }))
+              `[DRY RUN] Would update ${updatesToMake.length} bounties (${start} - ${end}):`
+            );
+            console.dir(
+              {
+                result: updatesToMake.map((u) => ({ id: u.id, nsfw: u.nsfw, details: u.details })),
+              },
+              { depth: null }
             );
           } else {
             // Update database using parameterized bulk update

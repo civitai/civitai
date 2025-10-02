@@ -3,7 +3,6 @@ import { dbRead } from '~/server/db/client';
 import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { Prisma } from '@prisma/client';
-import { getS3Client } from '~/utils/s3-utils';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -44,9 +43,8 @@ export default ModEndpoint(
       select: { id: true, url: true },
     });
 
-    const s3 = getS3Client();
     const tasks = modelFiles.map((file) => async () => {
-      await requestScannerTasks({ file, s3, tasks: ['Hash', 'ParseMetadata'], lowPriority: true });
+      await requestScannerTasks({ file, tasks: ['Hash', 'ParseMetadata'], lowPriority: true });
     });
 
     if (wait) {
