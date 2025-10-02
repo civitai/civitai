@@ -642,12 +642,20 @@ const commonAspectRatios = [
   { label: 'Portrait', width: 832, height: 1216 },
 ];
 
-export const seedreamSizes = [
-  { label: '16:9', width: 2272, height: 1280 },
-  { label: '4:3', width: 1696, height: 1280 },
-  { label: '1:1', width: 1280, height: 1280 },
-  { label: '3:4', width: 1280, height: 1696 },
-  { label: '9:16', width: 1280, height: 2272 },
+export const seedream4Sizes = [
+  { label: '16:9', width: 2560, height: 1440 },
+  { label: '4:3', width: 2304, height: 1728 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1728, height: 2304 },
+  { label: '9:16', width: 1440, height: 2560 },
+];
+
+export const seedream3Sizes = [
+  { label: '16:9', width: 1280, height: 720 },
+  { label: '4:3', width: 1152, height: 864 },
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', width: 864, height: 1152 },
+  { label: '9:16', width: 720, height: 1280 },
 ];
 
 export const generationConfig = {
@@ -852,7 +860,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Seedream: {
-    aspectRatios: seedreamSizes,
+    aspectRatios: seedream4Sizes,
     checkpoint: {
       id: 2208278,
       name: 'v4.0',
