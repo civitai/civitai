@@ -117,11 +117,16 @@ const formSchema = createBountyInputSchema
   .refine((data) => data.expiresAt > data.startsAt, {
     error: 'Expiration date must be after start date',
     path: ['expiresAt'],
+  })
+  .refine((data) => data.nsfw && data.buzzType === 'green', {
+    error: 'When using Green Buzz, you are not allowed to create NSFW content',
+    path: ['nsfw']
   });
 
 export function BountyCreateForm() {
   const router = useRouter();
   const availableBuzzTypes = useAvailableBuzz();
+  const [mainBuzzType] = availableBuzzTypes;
   const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
@@ -153,6 +158,7 @@ export function BountyCreateForm() {
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
       nsfw: false,
+      buzzType: mainBuzzType as 'yellow' | 'green',
     },
     shouldUnregister: false,
   });
@@ -215,6 +221,7 @@ export function BountyCreateForm() {
       try {
         const result = await createBounty({
           ...data,
+          buzzType: mainBuzzType as 'green' | 'yellow', // technically, also red by anyways
           images: filteredImages,
         });
         await router.push(`/bounties/${result.id}`);
@@ -562,28 +569,30 @@ export function BountyCreateForm() {
                   </Stack>
                 }
               />
-              <InputSwitch
-                name="nsfw"
-                label={
-                  <Stack gap={4}>
-                    <Group gap={4}>
-                      <Text inline>Mature theme</Text>
-                      <LegacyActionIcon
-                        color="gray"
-                        variant="subtle"
-                        radius="xl"
-                        size="xs"
-                        onClick={openBrowsingLevelGuide}
-                      >
-                        <IconQuestionMark />
-                      </LegacyActionIcon>
-                    </Group>
-                    <Text size="xs" c="dimmed">
-                      This bounty is intended to produce mature content.
-                    </Text>
-                  </Stack>
-                }
-              />
+              {mainBuzzType !== 'green' && (
+                <InputSwitch
+                  name="nsfw"
+                  label={
+                    <Stack gap={4}>
+                      <Group gap={4}>
+                        <Text inline>Mature theme</Text>
+                        <LegacyActionIcon
+                          color="gray"
+                          variant="subtle"
+                          radius="xl"
+                          size="xs"
+                          onClick={openBrowsingLevelGuide}
+                        >
+                          <IconQuestionMark />
+                        </LegacyActionIcon>
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        This bounty is intended to produce mature content.
+                      </Text>
+                    </Stack>
+                  }
+                />
+              )}
               {hasPoiInNsfw && (
                 <>
                   <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>

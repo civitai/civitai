@@ -180,6 +180,11 @@ export const createBounty = async ({
       break;
   }
 
+  if (buzzType === 'green' && data.nsfw) {
+    throw new Error('When using Green Buzz, you are not allowed to create NSFW content');
+  }
+
+
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
@@ -188,6 +193,8 @@ export const createBounty = async ({
       const bounty = await tx.bounty.create({
         data: {
           ...data,
+          // Ensure we block NSFW after a bounty's been paid in green buzz.
+          lockedProperties: buzzType === 'green' ? ['nsfw'] : undefined,
           startsAt,
           expiresAt,
           // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
@@ -308,11 +315,12 @@ export const updateBountyById = async ({
           id: true,
           entryLimit: true,
           complete: true,
-          _count: { select: { entries: true } },
+          _count: { select: { entries: true, } },
         },
       });
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
+
 
       if (
         entryLimit &&
