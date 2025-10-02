@@ -128,12 +128,3 @@ export const AdUnitAdhesive = adUnitFactory({
     ],
   ],
 });
-
-export const adunitToCivitaiMap: Record<string, string> = {
-  incontent_1: 'feed',
-  side_1: 'side_sky',
-  side_2: 'side',
-  side_3: 'side',
-  top: 'banner',
-  adhesive: 'footer',
-};

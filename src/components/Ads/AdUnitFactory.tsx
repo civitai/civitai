@@ -13,7 +13,6 @@ import {
   useContainerContext,
   useContainerProviderStore,
 } from '~/components/ContainerProvider/ContainerProvider';
-import { adunitToCivitaiMap } from '~/components/Ads/AdUnit';
 import { useInView as useInViewStandalone } from 'react-intersection-observer';
 import { env } from '~/env/client';
 import { v4 as uuidv4 } from 'uuid';
@@ -536,3 +535,12 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     </div>
   );
 }
+
+const adunitToCivitaiMap: Record<string, string> = {
+  incontent_1: 'feed',
+  side_1: 'side_sky',
+  side_2: 'side',
+  side_3: 'side',
+  top: 'banner',
+  adhesive: 'footer',
+};
