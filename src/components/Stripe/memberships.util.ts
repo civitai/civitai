@@ -6,6 +6,7 @@ import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
@@ -44,9 +45,10 @@ export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
     useActiveSubscription();
-  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
-    {}
-  );
+  const paymentProvider = usePaymentProvider();
+  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
+    paymentProvider,
+  });
   const features = useFeatureFlags();
 
   if (!features.prepaidMemberships && features.disablePayments) {

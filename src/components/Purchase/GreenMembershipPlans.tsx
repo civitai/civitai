@@ -39,6 +39,7 @@ import classes from '~/pages/pricing/index.module.scss';
 import type { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 interface MembershipPlansProps {
   reason?: JoinRedirectReason;
@@ -71,6 +72,7 @@ export function GreenMembershipPlans({
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
     interval,
     buzzType: 'green', // Always green for green membership plans
+    paymentProvider,
   });
 
   const isLoading = productsLoading;
