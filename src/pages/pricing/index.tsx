@@ -104,10 +104,20 @@ export default function Pricing() {
   }
 
   // Main membership plans view
-  const membershipTitle = selectedBuzzType === 'green' ? 'Green Memberships' : selectedBuzzType === 'yellow' ? 'Yellow Memberships' : 'Memberships';
+  const membershipTitle =
+    selectedBuzzType === 'green'
+      ? 'Green Memberships'
+      : selectedBuzzType === 'yellow'
+      ? 'Yellow Memberships'
+      : 'Memberships';
 
   return (
-    <MembershipPageWrapper title={membershipTitle} reason={reason} showBuzzTopUp={true} buzzType={selectedBuzzType}>
+    <MembershipPageWrapper
+      title={membershipTitle}
+      reason={reason}
+      showBuzzTopUp={true}
+      buzzType={selectedBuzzType}
+    >
       <div
         style={{
           // @ts-ignore

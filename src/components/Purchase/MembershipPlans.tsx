@@ -52,7 +52,7 @@ interface MembershipPlansProps {
     typeof useActiveSubscription
   >['subscriptionPaymentProvider'];
   isFreeTier: ReturnType<typeof useActiveSubscription>['isFreeTier'];
-  paymentProvider: string;
+  paymentProvider: PaymentProvider;
 }
 
 const getBuzzTypeLabel = (buzzType?: BuzzSpendType): string => {
