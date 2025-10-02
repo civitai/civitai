@@ -239,7 +239,7 @@ export default function UserMembership() {
                   buttonText={`View ${otherBuzzType === 'green' ? 'Green' : 'Yellow'} Membership`}
                 />
               )}
-
+              {/* 
               {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
@@ -247,7 +247,7 @@ export default function UserMembership() {
                   taking a bit longer than expected, but we are working hard to get it done as soon
                   as possible.
                 </Alert>
-              )}
+              )} */}
               {isDrowngrade && downgradedTier && (
                 <Alert>
                   You have successfully downgraded your membership to the{' '}

@@ -70,7 +70,7 @@ export function SendTipModal({
   entityId?: number;
 }) {
   // Use domain-aware buzz types, including blue for tipping
-  const selectedCurrencyType = useAvailableBuzz(['blue'])[0] as BuzzSpendType;
+  const selectedCurrencyType = useAvailableBuzz()[0] as BuzzSpendType;
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
   const [loading, setLoading] = useState(false);

@@ -51,6 +51,7 @@ export const buzzTransactionDetails = z
     entityId: z.number().optional(),
     entityType: z.string().optional(),
     url: z.string().optional(),
+    toAccountType: z.enum(buzzAccountTypes).optional(),
   })
   .passthrough();
 

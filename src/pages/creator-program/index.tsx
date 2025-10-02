@@ -543,7 +543,7 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   },
   {
     q: 'What types of Buzz can be Banked?',
-    a: 'Any earned Yellow Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
+    a: 'Any earned Yellow or Green Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
   },
   {
     q: 'Do I need an active membership to Bank Buzz?',

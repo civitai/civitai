@@ -328,7 +328,8 @@ export async function upsertBuzzTip({
   fromAccountId,
   toAccountId,
   description,
-}: Pick<CreateBuzzTransactionInput, 'amount' | 'toAccountId' | 'description'> & {
+  toAccountType
+}: Pick<CreateBuzzTransactionInput, 'amount' | 'toAccountId' | 'description' | 'toAccountType'> & {
   entityId: number;
   entityType: string;
   toAccountId: number;
@@ -392,6 +393,7 @@ export async function upsertBuzzTip({
         message: description,
         entityId,
         entityType,
+        toAccountType,
       },
     });
   }

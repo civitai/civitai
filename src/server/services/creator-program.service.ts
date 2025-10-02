@@ -399,7 +399,6 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   const activeMembership = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
-      buzzType,
       status: 'active',
       currentPeriodEnd: {
         gt: new Date(),
