@@ -10,7 +10,7 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { BuzzAccountType, BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   BuzzType,
   BuzzTypes,
@@ -74,6 +74,10 @@ type UserCapCacheItem = {
 
 const getBankableBuzzTypeString = (buzzType: BuzzSpendType) => {
   return `'${toKebabCase(BuzzTypes.toApiType(buzzType))}'`;
+};
+
+const getBankAccountType = (buzzType: BuzzSpendType): BuzzCreatorProgramType => {
+  return buzzType === 'green' ? 'creatorprogrambankgreen' : 'creatorprogrambank';
 };
 
 const createUserCapCache = (buzzType: BuzzSpendType) => {
@@ -167,12 +171,13 @@ export function getMonthAccount(month?: Date) {
 
 export async function getBanked(userId: number, buzzType: BuzzSpendType) {
   const monthAccount = getMonthAccount();
+  const bankAccountType = getBankAccountType(buzzType);
   const balance = await fetchThroughCache(
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}:${buzzType}`,
     async () => {
       const result = await getCounterPartyBuzzTransactions({
         accountId: monthAccount,
-        accountType: 'creatorprogrambank',
+        accountType: bankAccountType,
         counterPartyAccountId: userId,
         counterPartyAccountType: buzzType,
       });
@@ -293,9 +298,10 @@ async function getPoolSize(month?: Date, buzzType?: BuzzSpendType) {
   buzzType ??= 'yellow';
 
   const monthAccount = getMonthAccount(month);
+  const bankAccountType = getBankAccountType(buzzType);
   const account = await getUserBuzzAccount({
     accountId: monthAccount,
-    accountType: 'creatorprogrambank',
+    accountType: bankAccountType,
   });
 
   return account[0]?.balance ?? 0;
@@ -415,12 +421,13 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
 
   // Create buzz transaction to bank
   const monthAccount = getMonthAccount();
+  const bankAccountType = getBankAccountType(buzzType);
   await createBuzzTransaction({
     amount,
     fromAccountId: userId,
     fromAccountType: buzzType,
     toAccountId: monthAccount,
-    toAccountType: 'creatorprogrambank',
+    toAccountType: bankAccountType,
     type: TransactionType.Bank,
     description: 'Banked for Creator Program',
   });
@@ -466,10 +473,11 @@ export async function extractBuzz(userId: number, buzzType: BuzzSpendType) {
   // Charge fee and extract banked amount
   // Give full amount back to user, to then take fee...
   const monthAccount = getMonthAccount();
+  const bankAccountType = getBankAccountType(buzzType);
   await createBuzzTransaction({
     amount: banked.total,
     fromAccountId: monthAccount,
-    fromAccountType: 'creatorprogrambank',
+    fromAccountType: bankAccountType,
     toAccountId: userId,
     toAccountType: buzzType,
     type: TransactionType.Extract,
@@ -812,6 +820,8 @@ export async function getPoolParticipants(
   buzzType ??= 'yellow';
 
   const bankableBuzzTypeString = getBankableBuzzTypeString(buzzType);
+  const bankAccountType = getBankAccountType(buzzType);
+  const bankAccountTypeKebab = toKebabCase(BuzzTypes.toApiType(bankAccountType));
   const monthAccount = getMonthAccount(month);
   const participants = await clickhouse!.$query<{
     userId: number;
@@ -819,18 +829,18 @@ export async function getPoolParticipants(
     extracted: number;
   }>`
     SELECT
-      if(toAccountType = 'creator-program-bank', fromAccountId, toAccountId) as userId,
-      SUM(if(toAccountType = 'creator-program-bank', amount, -amount)) as amount,
-      SUM(if(toAccountType = 'creator-program-bank', 0, bt.amount)) as extracted
+      if(toAccountType = '${bankAccountTypeKebab}', fromAccountId, toAccountId) as userId,
+      SUM(if(toAccountType = '${bankAccountTypeKebab}', amount, -amount)) as amount,
+      SUM(if(toAccountType = '${bankAccountTypeKebab}', 0, bt.amount)) as extracted
     FROM buzzTransactions bt
     WHERE (
       -- Banks
-      toAccountType = 'creator-program-bank'
+      toAccountType = '${bankAccountTypeKebab}'
       AND toAccountId = ${monthAccount}
       AND fromAccountType IN (${bankableBuzzTypeString})
     ) OR (
       -- Extracts
-      fromAccountType = 'creator-program-bank'
+      fromAccountType = '${bankAccountTypeKebab}'
       AND fromAccountId = ${monthAccount}
       AND toAccountType IN (${bankableBuzzTypeString})
     )

@@ -43,10 +43,11 @@ export const buzzApiAccountTypes = [
   'CashPending',
   'CashSettled',
   'CreatorProgramBank',
+  'CreatorProgramBankGreen',
 ] as const;
 
 export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
-export type BuzzCreatorProgramType = 'creatorprogrambank';
+export type BuzzCreatorProgramType = 'creatorprogrambank' | 'creatorprogrambankgreen';
 export type BuzzCashType = 'cashpending' | 'cashsettled';
 export type LegacyBuzzType = 'club';
 export type BuzzAccountType =
@@ -82,6 +83,7 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
   yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true },
   red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true, disabled: true },
   creatorprogrambank: { type: 'bank', value: 'CreatorProgramBank' },
+  creatorprogrambankgreen: { type: 'bank', value: 'CreatorProgramBankGreen' },
   cashpending: { type: 'cash', value: 'CashPending' },
   cashsettled: { type: 'cash', value: 'CashSettled' },
   club: { type: 'legacy', value: 'Club' },

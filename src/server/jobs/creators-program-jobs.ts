@@ -2,7 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import {
   bustCompensationPoolCache,
@@ -47,37 +47,43 @@ export const creatorsProgramDistribute = createJob(
     let month = await dbKV.get('compensation-pool-month', FIRST_CREATOR_PROGRAM_MONTH);
     month = dayjs(month).startOf('month').toDate();
 
-    // Get pool data
-    const pool = await getCompensationPool({ month });
+    const allAllocations: [number, number][] = [];
+    const allAffectedUsers = new Set<number>();
 
-    // Get totals for all participants in bank
-    const participants = await getPoolParticipants(month);
+    // Process each buzz type
+    for (const buzzType of buzzBankTypes) {
+      // Get pool data
+      const pool = await getCompensationPool({ month, buzzType });
 
-    // Allocate pool value based on participant portion
-    const allocations: [number, number][] = [];
-    let availablePoolValue = Math.floor(pool.value * 100);
-    for (const participant of participants) {
-      // If we're out of pool value, we're done... (sorry folks)
-      if (availablePoolValue <= 0) break;
+      // Get totals for all participants in bank
+      const participants = await getPoolParticipants(month, false, buzzType);
 
-      // Determine participant share
-      const participantPortion = participant.amount / pool.size.current;
-      let participantShare = Math.floor(pool.value * participantPortion * 100);
-      const perBuzzValue = participantShare / participant.amount;
-      // Cap Buzz value
-      if (perBuzzValue > CAPPED_BUZZ_VALUE)
-        participantShare = participant.amount * CAPPED_BUZZ_VALUE;
+      // Allocate pool value based on participant portion
+      let availablePoolValue = Math.floor(pool.value * 100);
+      for (const participant of participants) {
+        // If we're out of pool value, we're done... (sorry folks)
+        if (availablePoolValue <= 0) break;
 
-      // Set allocation
-      allocations.push([participant.userId, participantShare]);
-      availablePoolValue -= participantShare;
+        // Determine participant share
+        const participantPortion = participant.amount / pool.size.current;
+        let participantShare = Math.floor(pool.value * participantPortion * 100);
+        const perBuzzValue = participantShare / participant.amount;
+        // Cap Buzz value
+        if (perBuzzValue > CAPPED_BUZZ_VALUE)
+          participantShare = participant.amount * CAPPED_BUZZ_VALUE;
+
+        // Set allocation
+        allAllocations.push([participant.userId, participantShare]);
+        allAffectedUsers.add(participant.userId);
+        availablePoolValue -= participantShare;
+      }
     }
 
     // Send pending cash transactions from bank with retry
     const monthStr = dayjs(month).format('YYYY-MM');
     await withRetries(async () => {
       createBuzzTransactionMany(
-        allocations.map(([userId, amount]) => ({
+        allAllocations.map(([userId, amount]) => ({
           type: TransactionType.Compensation,
           toAccountType: 'cashpending',
           toAccountId: userId,
@@ -91,7 +97,7 @@ export const creatorsProgramDistribute = createJob(
     });
 
     // Bust user caches
-    const affectedUsers = participants.map((p) => p.userId);
+    const affectedUsers = Array.from(allAffectedUsers);
     userCashCache.bust(affectedUsers);
 
     signalClient.topicSend({
@@ -160,8 +166,10 @@ export const creatorsProgramRollover = createJob(
   'creators-program-rollover',
   '0 0 1 * *',
   async () => {
-    await userCapCaches.get('yellow')?.flush();
-    await userCapCaches.get('green')?.flush();
+    // Flush caches for all bankable buzz types
+    for (const buzzType of buzzBankTypes) {
+      await userCapCaches.get(buzzType)?.flush();
+    }
     await flushBankedCache();
     await bustCompensationPoolCache();
   }
