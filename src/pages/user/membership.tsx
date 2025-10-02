@@ -206,25 +206,6 @@ export default function UserMembership() {
                   If you believe this is a mistake, you may try refreshing your session in your
                   settings.
                 </Text>
-
-                {currentUser?.paddleCustomerId && (
-                  <>
-                    <Text size="sm">
-                      If you have signed up for a subscription with our new Paddle payment
-                      processor, click below to sync your account.
-                    </Text>
-
-                    <Button
-                      radius="md"
-                      loading={refreshingSubscription}
-                      onClick={handleRefreshSubscription}
-                      className={buzzClassNames?.btn}
-                      leftSection={<IconRotateClockwise size={18} />}
-                    >
-                      Refresh now
-                    </Button>
-                  </>
-                )}
               </Stack>
             </Card>
           </Stack>
@@ -371,7 +352,7 @@ export default function UserMembership() {
                       <Group gap="xs">
                         {subscription.canceledAt && (
                           <>
-                            {price.active && !showRedirectMessage && (
+                            {price.active && (
                               <SubscribeButton
                                 priceId={price.id}
                                 disabled={features.disablePayments}
@@ -397,12 +378,12 @@ export default function UserMembership() {
                             )}
                           </>
                         )}
-                        {canUpgrade && !showRedirectMessage && (
+                        {canUpgrade && (
                           <Button component={Link} href="/pricing" radius="xl">
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && !showRedirectMessage && !isCivitaiProvider && (
+                        {!subscription.cancelAt && !isCivitaiProvider && (
                           <CancelMembershipAction
                             variant="button"
                             buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
@@ -410,7 +391,6 @@ export default function UserMembership() {
                         )}
                       </Group>
                       {!subscription.cancelAt &&
-                        !showRedirectMessage &&
                         isPaddle &&
                         managementUrls?.updatePaymentMethod && (
                           <Anchor

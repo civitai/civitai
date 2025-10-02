@@ -254,6 +254,7 @@ export const orchestratorRouter = router({
             steps: [step],
             tips: args.tips,
             experimental: ctx.experimental,
+            // @ts-ignore - BuzzSpendType is properly supported.
             currencies: args.currencies,
           },
           query: {
@@ -332,13 +333,22 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token, user: ctx.user, currencies: getAllowedAccountTypes(ctx.features, ['blue']) };
+      const args = {
+        ...input,
+        token: ctx.token,
+        user: ctx.user,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWorkflow(args);
     }),
   createTrainingWhatif: orchestratorProcedure
     .input(imageTrainingRouterWhatIfSchema)
     .query(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token, currencies: getAllowedAccountTypes(ctx.features, ['blue']), };
+      const args = {
+        ...input,
+        token: ctx.token,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion

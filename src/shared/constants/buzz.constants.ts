@@ -46,7 +46,7 @@ export const buzzApiAccountTypes = [
   'CreatorProgramBankGreen',
 ] as const;
 
-export type BuzzSpendType = 'blue' | 'green' | 'yellow'; // 'red' is disabled
+export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
 export type BuzzCreatorProgramType = 'creatorprogrambank' | 'creatorprogrambankgreen';
 export type BuzzCashType = 'cashpending' | 'cashsettled';
 export type LegacyBuzzType = 'club';

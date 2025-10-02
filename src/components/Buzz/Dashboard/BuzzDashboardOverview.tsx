@@ -328,7 +328,7 @@ export const BuzzDashboardOverview = ({
         <Paper p="lg" radius="md" h="100%" className={classes.tileCard} style={{ flex: 1 }}>
           <Stack gap="xs">
             <Title order={3}>Recent {currentAccountTypeLabel} Transactions</Title>
-            <Anchor component={Link} href="/user/transactions" size="xs">
+            <Anchor component={Link} href={`/user/transactions?accountType=${currentAccountType}`} size="xs">
               <Group gap={2}>
                 <IconArrowRight size={18} />
                 <span>View all</span>

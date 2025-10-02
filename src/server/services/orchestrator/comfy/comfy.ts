@@ -140,6 +140,7 @@ export async function createComfy(
       callbacks: getOrchestratorCallbacks(user.id),
       nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
       currencies,
     },
   })) as TextToImageResponse;

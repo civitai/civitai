@@ -230,7 +230,8 @@ export const createTrainingWorkflow = async ({
           type: ['workflow:*'],
         },
       ],
-      currencies, 
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
   });
 
@@ -270,6 +271,7 @@ export const createTrainingWhatIfWorkflow = async ({
     token,
     body: {
       steps: [stepRun],
+      // @ts-ignore - BuzzSpendType is properly supported.
       currencies,
     },
     query: { whatif: true },

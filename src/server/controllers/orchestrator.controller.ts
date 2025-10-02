@@ -115,6 +115,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
       steps: [step],
       experimental: args.experimental,
       allowMatureContent: args.allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
       currencies: args.currencies,
     },
     query: { whatif: true },

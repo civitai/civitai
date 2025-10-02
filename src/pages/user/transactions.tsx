@@ -17,6 +17,7 @@ import { DatePickerInput } from '@mantine/dates';
 import { IconBolt } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/router';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -64,8 +65,19 @@ export const getServerSideProps = createServerSideProps({
 
 export default function UserTransactions() {
   const currentUser = useCurrentUser();
+  const router = useRouter();
 
-  const [filters, setFilters] = useState<GetUserBuzzTransactionsSchema>({ ...defaultFilters });
+  // Get account type from query parameter
+  const queryAccountType = router.query.accountType as BuzzSpendType | undefined;
+  const initialAccountType =
+    queryAccountType && buzzSpendTypes.includes(queryAccountType)
+      ? queryAccountType
+      : defaultFilters.accountType;
+
+  const [filters, setFilters] = useState<GetUserBuzzTransactionsSchema>({
+    ...defaultFilters,
+    accountType: initialAccountType,
+  });
   const { data, isLoading, fetchNextPage, isFetchingNextPage, hasNextPage } =
     trpc.buzz.getUserTransactions.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.cursor,
