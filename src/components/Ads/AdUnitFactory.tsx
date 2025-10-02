@@ -19,6 +19,7 @@ import { env } from '~/env/client';
 import { v4 as uuidv4 } from 'uuid';
 import { isDev } from '~/env/other';
 import { usePausableInterval } from '~/utils/timer.utils';
+import { getMatchingPathname } from '~/shared/constants/pathname.constants';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -497,7 +498,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
         fetch(`${civitaiAdvertisingUrl}/api/v1/view?trace=${data.trace}`, {
           method: 'POST',
           credentials: 'include',
-          body: JSON.stringify({ pathname: window.location.pathname }),
+          body: JSON.stringify({ pathname: getMatchingPathname(window.location.pathname) }),
           headers: {
             'Content-Type': 'application/json',
           },
