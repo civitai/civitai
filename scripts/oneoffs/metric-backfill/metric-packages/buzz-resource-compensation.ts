@@ -1,62 +1,68 @@
 import type { MigrationPackage, EntityMetricEvent } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createTimestampRangeFetcher } from './base';
+import { createTimestampRangeFetcher, TIME_FETCHER_BATCH } from './base';
 
 type BuzzResourceCompensationRow = {
-  modelId: number | null;
-  modelVersionId: number | null;
-  toUserId: number;
-  amount: number;
-  createdAt: Date;
+  modelVersionId: number;
+  total: number;
+  date: Date;
 };
 
 export const buzzResourceCompensationPackage: MigrationPackage<BuzzResourceCompensationRow> = {
-  queryBatchSize: 86400, // 1 day in seconds
+  queryBatchSize: TIME_FETCHER_BATCH.day,
   range: createTimestampRangeFetcher(
     'buzz_resource_compensation',
-    'createdAt',
-    `createdAt < '${CUTOFF_DATE}'`
+    'date'
   ),
 
   query: async ({ ch }, { start, end }) => {
     return ch.query<BuzzResourceCompensationRow>(`
       SELECT
-        modelId,
         modelVersionId,
-        toUserId,
-        amount,
-        createdAt
-      FROM buzz_resource_compensation
-      WHERE createdAt < '${CUTOFF_DATE}'
-        AND toUnixTimestamp(createdAt) >= ${start}
-        AND toUnixTimestamp(createdAt) <= ${end}
-      ORDER BY createdAt
+        total,
+        date
+      FROM buzz_resource_compensation FINAL
+      WHERE toUnixTimestamp(date) >= ${start}
+        AND toUnixTimestamp(date) <= ${end}
     `);
   },
 
-  processor: ({ rows, addMetrics }) => {
-    rows.forEach((row) => {
-      if (row.modelId) {
-        addMetrics({
-          entityType: 'Model',
-          entityId: row.modelId,
-          userId: row.toUserId,
-          metricType: 'earnedAmount',
-          metricValue: row.amount,
-          createdAt: row.createdAt,
-        });
-      }
+  processor: async ({ rows, addMetrics, pg }) => {
+    // Add version metrics
+    addMetrics(rows.map((row) => ({
+      entityType: 'ModelVersion',
+      entityId: row.modelVersionId,
+      userId: 0,
+      metricType: 'earnedAmount',
+      metricValue: row.total,
+      createdAt: row.date,
+    })));
 
-      if (row.modelVersionId) {
-        addMetrics({
-          entityType: 'ModelVersion',
-          entityId: row.modelVersionId,
-          userId: row.toUserId,
-          metricType: 'earnedAmount',
-          metricValue: row.amount,
-          createdAt: row.createdAt,
-        });
-      }
-    });
+    // Get models
+    const models = await pg.query<{ modelId: number, modelVersionId: number }>(`
+      SELECT
+        "modelId",
+        "id" as "modelVersionId"
+      FROM "ModelVersion"
+      WHERE "id" = ANY($1)
+    `, [rows.map(r => r.modelVersionId)]);
+    const modelMap = new Map(models.map(m => [m.modelVersionId, m.modelId]));
+    const modelEarnings: Map<number, number> = new Map();
+    for (const row of rows) {
+      const modelId = modelMap.get(row.modelVersionId);
+      if (!modelId) return;
+      const prev = modelEarnings.get(modelId) ?? 0;
+      modelEarnings.set(modelId, prev + row.total);
+    }
+
+    // Add model metrics
+    addMetrics(Array.from(modelEarnings.entries()).map(([modelId, total]) => ({
+      entityType: 'Model',
+      entityId: modelId,
+      userId: 0,
+      metricType: 'earnedAmount',
+      metricValue: total,
+      createdAt: rows[0].date,
+    })));
   },
 };

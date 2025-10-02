@@ -1,11 +1,11 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage, Reactions } from '../types';
 import { CUTOFF_DATE } from '../utils';
 import { createIdRangeFetcher } from './base';
 
 type ArticleReactionRow = {
   articleId: number;
   userId: number;
-  reaction: string;
+  reaction: Reactions;
   createdAt: Date;
   articleOwnerId: number;
 };

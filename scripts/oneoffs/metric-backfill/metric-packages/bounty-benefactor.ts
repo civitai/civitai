@@ -1,6 +1,6 @@
 import type { MigrationPackage, EntityMetricEvent } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createColumnRangeFetcher } from './base';
 
 type BountyBenefactorRow = {
   bountyId: number;
@@ -11,16 +11,16 @@ type BountyBenefactorRow = {
 
 export const bountyBenefactorPackage: MigrationPackage<BountyBenefactorRow> = {
   queryBatchSize: 2000,
-  range: createIdRangeFetcher('BountyBenefactor', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createColumnRangeFetcher('BountyBenefactor', 'bountyId', `"createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<BountyBenefactorRow>(
       `SELECT "bountyId", "userId", "unitAmount", "createdAt"
        FROM "BountyBenefactor"
        WHERE "createdAt" < $1
-         AND id >= $2
-         AND id <= $3
-       ORDER BY id`,
+         AND "bountyId" >= $2
+         AND "bountyId" <= $3
+       ORDER BY "bountyId"`,
       [CUTOFF_DATE, start, end]
     );
   },

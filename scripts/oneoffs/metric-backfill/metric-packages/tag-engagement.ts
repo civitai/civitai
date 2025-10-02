@@ -1,6 +1,6 @@
 import type { MigrationPackage, EntityMetricEvent } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createColumnRangeFetcher } from './base';
 
 type TagEngagementRow = {
   tagId: number;
@@ -11,16 +11,16 @@ type TagEngagementRow = {
 
 export const tagEngagementPackage: MigrationPackage<TagEngagementRow> = {
   queryBatchSize: 5000,
-  range: createIdRangeFetcher('TagEngagement', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createColumnRangeFetcher('TagEngagement', 'tagId', `"createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<TagEngagementRow>(
       `SELECT "tagId", "userId", "type", "createdAt"
        FROM "TagEngagement"
        WHERE "createdAt" < $1
-         AND id >= $2
-         AND id <= $3
-       ORDER BY id`,
+         AND "tagId" >= $2
+         AND "tagId" <= $3
+       ORDER BY "tagId"`,
       [CUTOFF_DATE, start, end]
     );
   },

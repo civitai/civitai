@@ -1,12 +1,32 @@
 import fs from 'fs/promises';
 import { chunk } from 'lodash-es';
-import { createLogger } from '~/utils/logging';
-import { clickhouse } from '~/server/clickhouse/client';
+import { env } from '~/env/server';
+import { createClient } from '@clickhouse/client';
 import type { EntityMetricEvent } from './types';
-
-const logger = createLogger('metric-backfill');
+import { Pool } from 'pg';
 
 export const CUTOFF_DATE = '2024-08-07 15:44:39.044';
+
+const pgConnString = new URL(env.DATABASE_URL);
+if (env.DATABASE_SSL !== false) pgConnString.searchParams.set('sslmode', 'no-verify');
+export const pgDb = new Pool({
+  connectionString: pgConnString.toString(),
+  connectionTimeoutMillis: 0,
+  min: 0,
+  max: 40,
+  application_name: 'metric-backfill',
+})
+
+export const clickhouse = createClient({
+  host: env.CLICKHOUSE_HOST,
+  username: env.CLICKHOUSE_USERNAME,
+  password: env.CLICKHOUSE_PASSWORD,
+  clickhouse_settings: {
+    async_insert: 1,
+    wait_for_async_insert: 0,
+    output_format_json_quote_64bit_integers: 0, // otherwise they come as strings
+  },
+});
 
 export class ProgressTracker {
   private progressFile = './metric-backfill-progress.json';
@@ -17,7 +37,7 @@ export class ProgressTracker {
   private metricsPerSecond: number[] = [];
 
   start(name: string) {
-    logger.info(`Starting migration: ${name}`);
+    console.log(`Starting migration: ${name}`);
     this.packageProgress.set(name, {
       current: 0,
       total: 0,
@@ -30,7 +50,7 @@ export class ProgressTracker {
     const progress = this.packageProgress.get(name);
     if (progress) {
       progress.total = total;
-      logger.info(`${name}: ${total} batches to process`);
+      console.log(`${name}: ${total} batches to process`);
     }
   }
 
@@ -44,14 +64,18 @@ export class ProgressTracker {
       const rate = progress.metrics / elapsed;
       this.metricsPerSecond.push(rate);
 
+      // Keep only last 10 entries to prevent unbounded memory growth
+      if (this.metricsPerSecond.length > 10) {
+        this.metricsPerSecond = this.metricsPerSecond.slice(-10);
+      }
+
       const avgRate =
-        this.metricsPerSecond.slice(-10).reduce((a, b) => a + b, 0) /
-        Math.min(this.metricsPerSecond.length, 10);
+        this.metricsPerSecond.reduce((a, b) => a + b, 0) / this.metricsPerSecond.length;
 
       const remaining = progress.total - progress.current;
       const eta = remaining > 0 && avgRate > 0 ? remaining / (avgRate / 1000) : 0;
 
-      logger.info(
+      console.log(
         `${name}: Batch ${batchNumber}/${progress.total} - ` +
           `${metricsCount} metrics (${progress.metrics} total) - ` +
           `${avgRate.toFixed(0)} metrics/sec - ` +
@@ -64,12 +88,12 @@ export class ProgressTracker {
   }
 
   complete(name: string, totalMetrics: number) {
-    logger.info(`✓ Completed migration: ${name} - ${totalMetrics} metrics inserted`);
+    console.log(`✓ Completed migration: ${name} - ${totalMetrics} metrics inserted`);
     this.packageProgress.delete(name);
   }
 
   error(name: string, error: any) {
-    logger.error(`✗ Failed migration: ${name}`, error);
+    console.error(`✗ Failed migration: ${name}`, error);
     this.packageProgress.delete(name);
   }
 
@@ -79,7 +103,7 @@ export class ProgressTracker {
       progress[packageName] = lastBatch;
       await fs.writeFile(this.progressFile, JSON.stringify(progress, null, 2));
     } catch (error) {
-      logger.warn(`Failed to save progress: ${error}`);
+      console.log(`Failed to save progress: ${error}`);
     }
   }
 
@@ -109,7 +133,7 @@ export async function batchInsertClickhouse(
   if (metrics.length === 0) return;
 
   if (dryRun) {
-    logger.info(`[DRY RUN] Would insert ${metrics.length} metrics`);
+    console.log(`[DRY RUN] Would insert ${metrics.length} metrics`);
     return;
   }
 
@@ -119,13 +143,12 @@ export async function batchInsertClickhouse(
   await Promise.all(
     batches.map((batch) =>
       clickhouse.insert({
-        table: 'entityMetricEvents',
+        table: 'entityMetricEvents_testing',
         values: batch,
         format: 'JSONEachRow',
         clickhouse_settings: {
           async_insert: 1,
           wait_for_async_insert: 0,
-          max_insert_block_size: 100000,
         },
       })
     )
@@ -142,7 +165,7 @@ export async function retryable<T>(
       return await fn();
     } catch (error) {
       if (i === maxRetries - 1) throw error;
-      logger.warn(`Retry ${i + 1}/${maxRetries} after error:`, error);
+      console.log(`Retry ${i + 1}/${maxRetries} after error:`, error);
       await new Promise((resolve) => setTimeout(resolve, backoff * (i + 1)));
     }
   }

@@ -1,9 +1,9 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createTimestampPgRangeFetcher, TIME_FETCHER_BATCH } from './base';
 
 type BuzzTipRow = {
-  entityType: string;
+  entityType: 'Article' | 'Post' | 'Image' | 'Model';
   entityId: number;
   toUserId: number;
   fromUserId: number;
@@ -12,63 +12,61 @@ type BuzzTipRow = {
 };
 
 export const buzzTipPackage: MigrationPackage<BuzzTipRow> = {
-  queryBatchSize: 2000,
-  range: createIdRangeFetcher('BuzzTip', `"createdAt" < '${CUTOFF_DATE}'`),
-
+  queryBatchSize: 2*TIME_FETCHER_BATCH.day,
+  range: createTimestampPgRangeFetcher('BuzzTip', 'createdAt', `"createdAt" < '${CUTOFF_DATE}' AND "entityType" != 'Image'`),
   query: async ({ pg }, { start, end }) => {
     return pg.query<BuzzTipRow>(
       `SELECT "entityType", "entityId", "toUserId", "fromUserId", "amount", "createdAt"
        FROM "BuzzTip"
-       WHERE "createdAt" < $1
-         AND id >= $2
-         AND id <= $3
-       ORDER BY id`,
-      [CUTOFF_DATE, start, end]
+       WHERE
+        extract(epoch from "createdAt") >= $1
+        AND extract(epoch from "createdAt") <= $2
+        AND "entityType" != 'Image'
+      `,
+      [start, end]
     );
   },
-
   processor: ({ rows, addMetrics }) => {
     rows.forEach((tip) => {
-      // Tips received by the entity
-      if (tip.entityType === 'User') {
-        addMetrics(
-          {
-            entityType: 'User',
-            entityId: tip.toUserId,
-            userId: tip.fromUserId,
-            metricType: 'tippedCount',
-            metricValue: 1,
-            createdAt: tip.createdAt,
-          },
-          {
-            entityType: 'User',
-            entityId: tip.toUserId,
-            userId: tip.fromUserId,
-            metricType: 'tippedAmount',
-            metricValue: tip.amount,
-            createdAt: tip.createdAt,
-          }
-        );
-      } else {
-        addMetrics(
-          {
-            entityType: tip.entityType,
-            entityId: tip.entityId,
-            userId: tip.fromUserId,
-            metricType: 'tippedCount',
-            metricValue: 1,
-            createdAt: tip.createdAt,
-          },
-          {
-            entityType: tip.entityType,
-            entityId: tip.entityId,
-            userId: tip.fromUserId,
-            metricType: 'tippedAmount',
-            metricValue: tip.amount,
-            createdAt: tip.createdAt,
-          }
-        );
-      }
+      // Tip given to entity
+      addMetrics(
+        {
+          entityType: tip.entityType,
+          entityId: tip.entityId,
+          userId: tip.fromUserId,
+          metricType: 'tippedCount',
+          metricValue: 1,
+          createdAt: tip.createdAt,
+        },
+        {
+          entityType: tip.entityType,
+          entityId: tip.entityId,
+          userId: tip.fromUserId,
+          metricType: 'tippedAmount',
+          metricValue: tip.amount,
+          createdAt: tip.createdAt,
+        }
+      );
+
+      // Tips given to target user
+      addMetrics(
+        {
+          entityType: 'User',
+          entityId: tip.toUserId,
+          userId: tip.fromUserId,
+          metricType: 'tippedCount',
+          metricValue: 1,
+          createdAt: tip.createdAt,
+        },
+        {
+          entityType: 'User',
+          entityId: tip.toUserId,
+          userId: tip.fromUserId,
+          metricType: 'tippedAmount',
+          metricValue: tip.amount,
+          createdAt: tip.createdAt,
+        }
+      );
 
       // Tips given by user
       addMetrics(

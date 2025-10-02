@@ -1,12 +1,7 @@
-export type EntityMetricEvent = {
-  entityType: string;
-  entityId: number;
-  userId: number;
-  metricType: string;
-  metricValue: number;
-  createdAt: Date;
-};
+import { EntityMetricEvent as ExtEntityMetricEvent } from '@civitai/event-engine-common/types/metric-types';
 
+export type EntityMetricEvent = ExtEntityMetricEvent;
+export type Reactions = 'Cry' | 'Dislike' | 'Heart' | 'Laugh' | 'Like';
 export type BatchRange = {
   start: number;
   end: number;
