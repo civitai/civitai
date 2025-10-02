@@ -1079,7 +1079,7 @@ export const BuzzPurchaseImproved = ({
                       )}
 
                       {/* Alternative Payment Section */}
-                      {liveFeatures.buzzGiftCards && buzzType === 'yellow' && (
+                      {liveFeatures.buzzGiftCards && selectedBuzzType === 'yellow' && (
                         <RedeemableCodesSection buzzConfig={buzzConfig} />
                       )}
 
