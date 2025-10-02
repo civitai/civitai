@@ -55,7 +55,7 @@ export default function BuyBuzzModal({
           content={
             <Anchor
               size="sm"
-              href="/user/buzz-dashboard#rewards"
+              href="/user/buzz-dashboard?buzzType=blue#rewards"
               target="_blank"
               td="underline"
               inherit

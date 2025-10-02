@@ -13,6 +13,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
@@ -57,6 +58,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function UserBuzzDashboard() {
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
@@ -64,7 +66,11 @@ export default function UserBuzzDashboard() {
   const [mainBuzztype] = useAvailableBuzz();
 
   // Account type selection state
-  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzSpendType>(mainBuzztype);
+  const buzzTypeFromQuery = router.query.buzzType as BuzzSpendType | undefined;
+  const initialBuzzType = buzzTypeFromQuery && buzzSpendTypes.includes(buzzTypeFromQuery)
+    ? buzzTypeFromQuery
+    : mainBuzztype;
+  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzSpendType>(initialBuzzType);
 
   const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
 

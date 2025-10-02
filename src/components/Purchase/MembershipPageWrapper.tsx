@@ -30,6 +30,7 @@ interface MembershipPageWrapperProps {
   showBuzzTopUp?: boolean;
   containerSize?: 'sm' | 'md' | 'lg' | 'xl';
   reason?: JoinRedirectReason;
+  buzzType?: string;
   children: ReactNode;
 }
 
@@ -39,6 +40,7 @@ export function MembershipPageWrapper({
   showBuzzTopUp = false,
   containerSize = 'xl',
   reason,
+  buzzType,
   children,
 }: MembershipPageWrapperProps) {
   const features = useFeatureFlags();

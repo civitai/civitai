@@ -63,6 +63,7 @@ export default function Pricing() {
         introText="Before selecting a membership plan, please choose which type of Buzz you'd like to receive with your membership benefits."
         reason={reason}
         containerSize="md"
+        buzzType={selectedBuzzType}
       >
         <MembershipTypeSelector onSelect={setSelectedBuzzType} />
       </MembershipPageWrapper>
@@ -72,7 +73,7 @@ export default function Pricing() {
   // If green membership is selected but we're not in green environment, redirect to green
   if (!features.isGreen && selectedBuzzType === 'green') {
     return (
-      <MembershipPageWrapper title="Green Memberships" reason={reason}>
+      <MembershipPageWrapper title="Green Memberships" reason={reason} buzzType={selectedBuzzType}>
         <GreenEnvironmentRedirect
           queryParams={{
             reason,
@@ -86,7 +87,7 @@ export default function Pricing() {
   // If red membership is selected, show unavailable message
   if (!features.isGreen && ['red', 'fakered'].some((s) => s === selectedBuzzType)) {
     return (
-      <MembershipPageWrapper title="Red Memberships" reason={reason}>
+      <MembershipPageWrapper title="Red Memberships" reason={reason} buzzType={selectedBuzzType}>
         <div
           style={{
             // @ts-ignore
@@ -106,7 +107,7 @@ export default function Pricing() {
   const membershipTitle = selectedBuzzType === 'green' ? 'Green Memberships' : selectedBuzzType === 'yellow' ? 'Yellow Memberships' : 'Memberships';
 
   return (
-    <MembershipPageWrapper title={membershipTitle} reason={reason} showBuzzTopUp={true}>
+    <MembershipPageWrapper title={membershipTitle} reason={reason} showBuzzTopUp={true} buzzType={selectedBuzzType}>
       <div
         style={{
           // @ts-ignore

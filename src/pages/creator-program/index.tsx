@@ -534,6 +534,10 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     a: `Yes! If you're eligible for the program, but don't want to participate, nobody's forcing you! Even if you do join the program, but don't want to contribute Buzz, that's fine – there's no requirement to Bank anything.`,
   },
   {
+    q: 'Is the Compensation Pool shared between Civitai.green and Civitai.com? ',
+    a: `No, Civitai.green and Civitai.com have distinct compensation pools. If you have any form of Membership (Green or Prepaid) you can Bank Buzz in either pool, or both, each month. Earnings from both pools drop into your Tipalti account for withdrawal.`,
+  },
+  {
     q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',
     a: 'Not your earnings, as such, but it does increase the maximum you can Bank each month.',
   },
