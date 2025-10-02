@@ -305,6 +305,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       hasAuthCookie,
       region,
       allowMatureContent,
+      // @ts-ignore
+      host: appContext.ctx.req?.headers.host,
     },
     ...appProps,
   };
