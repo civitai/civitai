@@ -642,7 +642,7 @@ const commonAspectRatios = [
   { label: 'Portrait', width: 832, height: 1216 },
 ];
 
-export const seedream4Sizes = [
+export const seedreamSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
@@ -650,12 +650,12 @@ export const seedream4Sizes = [
   { label: '9:16', width: 1440, height: 2560 },
 ];
 
-export const seedream3Sizes = [
-  { label: '16:9', width: 1280, height: 720 },
-  { label: '4:3', width: 1152, height: 864 },
-  { label: '1:1', width: 1024, height: 1024 },
-  { label: '3:4', width: 864, height: 1152 },
-  { label: '9:16', width: 720, height: 1280 },
+export const qwenSizes = [
+  { label: '16:9', width: 1664, height: 928 },
+  { label: '4:3', width: 1472, height: 1140 },
+  { label: '1:1', width: 1328, height: 1328 },
+  { label: '3:4', width: 1140, height: 1472 },
+  { label: '9:16', width: 928, height: 1664 },
 ];
 
 export const generationConfig = {
@@ -841,7 +841,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Qwen: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: qwenSizes,
     checkpoint: {
       id: 2113658,
       name: 'Qwen-Image Full BF16',
@@ -860,7 +860,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Seedream: {
-    aspectRatios: seedream4Sizes,
+    aspectRatios: seedreamSizes,
     checkpoint: {
       id: 2208278,
       name: 'v4.0',
