@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -43,19 +44,27 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
   // Initialize profanity filter
   const profanityFilter = createProfanityFilter();
 
+  // CSV records for dry run
+  const csvRecords: Array<{
+    id: number;
+    analyzedText: string;
+    profanityMatches: string;
+  }> = [];
+
   const entityConfig = {
     models: {
       tableName: 'Model',
       searchIndex: MODELS_SEARCH_INDEX,
-      textFields: ['name', 'description'],
+      textFields: ['name'],
       rangeFetcher: async () => {
-        if (params.after) {
+        if (params.after || params.before) {
           const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
             WITH dates AS (
               SELECT
               MIN("createdAt") as start,
               MAX("createdAt") as end
-              FROM "Model" WHERE "createdAt" > ${params.after}
+              FROM "Model" WHERE "createdAt" > ${params.after ?? new Date(0)}
+              ${params.before ? Prisma.sql`AND "createdAt" < ${params.before}` : Prisma.empty}
             )
             SELECT MIN(id) as start, MAX(id) as end
             FROM "Model" m
@@ -82,15 +91,16 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           {
             id: number;
             name: string;
-            description: string | null;
             nsfw: boolean;
             lockedProperties: string[];
             meta: ModelMeta;
           }[]
         >`
-          SELECT id, name, description, nsfw, "lockedProperties", meta
+          SELECT id, name, nsfw, "lockedProperties", meta
           FROM "Model"
           WHERE id BETWEEN ${start} AND ${end}
+          AND status = 'Published'
+          AND nsfw = false
         `;
 
         const updatesToMake: {
@@ -102,7 +112,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
         const searchIndexUpdates: { id: number }[] = [];
 
         for (const record of records) {
-          const textToCheck = [record.name, record.description].filter(Boolean).join(' ');
+          const textToCheck = [record.name].filter(Boolean).join(' ');
           const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
 
           if (isProfane && !record.nsfw) {
@@ -128,12 +138,17 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         if (updatesToMake.length > 0) {
           if (dryRun) {
+            // Add to CSV records
+            for (const update of updatesToMake) {
+              const originalRecord = records.find((r) => r.id === update.id);
+              csvRecords.push({
+                id: update.id,
+                analyzedText: originalRecord?.name || '',
+                profanityMatches: update.meta.profanityMatches?.join(', ') || '',
+              });
+            }
             console.log(
-              `[DRY RUN] Would update ${updatesToMake.length} models (${start} - ${end}):`
-            );
-            console.dir(
-              { result: updatesToMake.map((u) => ({ id: u.id, nsfw: u.nsfw, meta: u.meta })) },
-              { depth: null }
+              `[DRY RUN] Would update ${updatesToMake.length} models (${start} - ${end})`
             );
           } else {
             // Update database using parameterized bulk update
@@ -190,13 +205,14 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
       searchIndex: ARTICLES_SEARCH_INDEX,
       textFields: ['title', 'content'],
       rangeFetcher: async () => {
-        if (params.after) {
+        if (params.after || params.before) {
           const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
             WITH dates AS (
               SELECT
               MIN("createdAt") as start,
               MAX("createdAt") as end
-              FROM "Article" WHERE "createdAt" > ${params.after}
+              FROM "Article" WHERE "createdAt" > ${params.after ?? new Date(0)}
+              ${params.before ? Prisma.sql`AND "createdAt" < ${params.before}` : Prisma.empty}
             )
             SELECT MIN(id) as start, MAX(id) as end
             FROM "Article" a
@@ -232,6 +248,8 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           SELECT id, title, content, nsfw, "userNsfwLevel", "lockedProperties", metadata
           FROM "Article"
           WHERE id BETWEEN ${start} AND ${end}
+          AND status = 'Published'
+          AND nsfw = false
         `;
 
         const updatesToMake: {
@@ -272,19 +290,20 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         if (updatesToMake.length > 0) {
           if (dryRun) {
+            // Add to CSV records
+            for (const update of updatesToMake) {
+              const originalRecord = records.find((r) => r.id === update.id);
+              const analyzedText = [originalRecord?.title, originalRecord?.content]
+                .filter(Boolean)
+                .join(' ');
+              csvRecords.push({
+                id: update.id,
+                analyzedText,
+                profanityMatches: update.metadata.profanityMatches?.join(', ') || '',
+              });
+            }
             console.log(
-              `[DRY RUN] Would update ${updatesToMake.length} articles (${start} - ${end}):`
-            );
-            console.dir(
-              {
-                result: updatesToMake.map((u) => ({
-                  id: u.id,
-                  nsfw: u.nsfw,
-                  userNsfwLevel: u.userNsfwLevel,
-                  metadata: u.metadata,
-                })),
-              },
-              { depth: null }
+              `[DRY RUN] Would update ${updatesToMake.length} articles (${start} - ${end})`
             );
           } else {
             // Update database using parameterized bulk update
@@ -338,13 +357,14 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
       searchIndex: BOUNTIES_SEARCH_INDEX,
       textFields: ['name', 'description'],
       rangeFetcher: async () => {
-        if (params.after) {
+        if (params.after || params.before) {
           const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
             WITH dates AS (
               SELECT
               MIN("createdAt") as start,
               MAX("createdAt") as end
-              FROM "Bounty" WHERE "createdAt" > ${params.after}
+              FROM "Bounty" WHERE "createdAt" > ${params.after ?? new Date(0)}
+              ${params.before ? Prisma.sql`AND "createdAt" < ${params.before}` : Prisma.empty}
             )
             SELECT MIN(id) as start, MAX(id) as end
             FROM "Bounty" b
@@ -379,6 +399,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           SELECT id, name, description, nsfw, "lockedProperties", details
           FROM "Bounty"
           WHERE id BETWEEN ${start} AND ${end}
+          AND nsfw = false
         `;
 
         const updatesToMake: {
@@ -416,14 +437,20 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         if (updatesToMake.length > 0) {
           if (dryRun) {
+            // Add to CSV records
+            for (const update of updatesToMake) {
+              const originalRecord = records.find((r) => r.id === update.id);
+              const analyzedText = [originalRecord?.name, originalRecord?.description]
+                .filter(Boolean)
+                .join(' ');
+              csvRecords.push({
+                id: update.id,
+                analyzedText,
+                profanityMatches: update.details.profanityMatches?.join(', ') || '',
+              });
+            }
             console.log(
-              `[DRY RUN] Would update ${updatesToMake.length} bounties (${start} - ${end}):`
-            );
-            console.dir(
-              {
-                result: updatesToMake.map((u) => ({ id: u.id, nsfw: u.nsfw, details: u.details })),
-              },
-              { depth: null }
+              `[DRY RUN] Would update ${updatesToMake.length} bounties (${start} - ${end})`
             );
           } else {
             // Update database using parameterized bulk update
@@ -481,4 +508,21 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
     rangeFetcher: config.rangeFetcher,
     processor: config.processor,
   });
+
+  // Generate CSV output for dry run
+  if (dryRun && csvRecords.length > 0) {
+    const header = ['ID', 'Analyzed Text', 'Profanity Matches'];
+    const csvRows = csvRecords.map((record) => [
+      record.id,
+      record.analyzedText,
+      record.profanityMatches,
+    ]);
+    const csvContent = [header, ...csvRows]
+      .map((row) => row.map((item) => `"${item}"`).join(','))
+      .join('\n');
+
+    console.log('\n=== CSV OUTPUT ===');
+    console.log(csvContent);
+    console.log(`\nTotal records with profanity: ${csvRecords.length}`);
+  }
 }
