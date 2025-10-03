@@ -451,8 +451,10 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
         const data = await res.json();
         setData(data);
         traceRef.current = data.trace;
+        fetchingRef.current = !data?.next;
+      } else {
+        fetchingRef.current = false;
       }
-      fetchingRef.current = !data?.next;
       impressionRef.current = false;
     });
   }, [browsingLevel, props.adUnit, props.id]);
