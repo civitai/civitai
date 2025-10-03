@@ -18,9 +18,9 @@ export const parseBuzzTransactionDetails = (
   }
 
   const fallbackUrl = details.user && details.user !== 'a user' ? `/user/${details.user}` : '';
-  const baseNotification = `You received a tip of ${String(details.amount)} ${details.toAccountType ?? 'Yellow'} Buzz from ${
-    details.user ? `@${details.user}` : 'a user'
-  }`;
+  const baseNotification = `You received a tip of ${String(details.amount)} ${
+    details.toAccountType ?? 'Yellow'
+  } Buzz from ${details.user ? `@${details.user}` : 'a user'}`;
 
   if (!details.entityId || !details.entityType) {
     return {
@@ -173,7 +173,16 @@ export const createBuzzDistributionGradient = ({
   if (!typeDistribution) return undefined;
 
   const entries = Object.entries(typeDistribution.pct).filter(([, pct]) => (pct || 0) > 0);
-  if (entries.length <= 1) return undefined;
+  if (entries.length <= 1) {
+    if (entries.length === 0) return undefined;
+
+    const config = getCurrencyConfig({
+      currency: Currency.BUZZ,
+      type: entries[0]?.[0] as BuzzSpendType,
+    });
+
+    return config.color;
+  }
 
   let currentPct = 0;
   const gradientStops = entries.map(([accountType, pct]) => {
