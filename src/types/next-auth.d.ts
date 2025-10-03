@@ -1,6 +1,6 @@
 import type { DefaultSession, DefaultUser } from 'next-auth';
 import type { UserTier } from '~/server/schema/user.schema';
-import type { User as PrismaUser } from '~/shared/utils/prisma/enums';
+import type { User as PrismaUser } from '~/shared/utils/prisma/models';
 import type { getUserBanDetails } from '~/utils/user-helpers';
 
 interface ExtendedUser {

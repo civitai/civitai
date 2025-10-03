@@ -108,9 +108,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           while (!username) username = await setUserName(Number(user.id), startingUsername);
         }
       },
-      signOut: async ({ token }) => {
-        await invalidateToken(token);
-      },
     },
     callbacks: {
       async signIn({ account, email, user }) {
@@ -146,7 +143,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
         if (trigger === 'update') {
           await invalidateSession(Number(token.sub));
-          console.log('firfirea');
           token.user = await getSessionUser({ userId: Number(token.sub) });
         } else {
           token.sub = Number(token.sub) as any; //eslint-disable-line
@@ -155,6 +151,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           token.user = { ...restUser };
         }
         if (!token.id) token.id = uuid();
+        if (!token.signedAt) token.signedAt = Date.now(); // Initialize signedAt on token creation
 
         return token;
       },
@@ -162,8 +159,23 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         // console.log(new Date().toISOString() + ' ::', 'session', session.user?.email);
         const newToken = await refreshToken(token);
         // console.log(new Date().toISOString() + ' ::', newToken?.name);
-        if (!newToken?.user) return {} as Session;
-        session.user = (newToken.user ? newToken.user : session.user) as Session['user'];
+
+        // Token was explicitly invalidated (clearedAt, invalid token hash)
+        if (!newToken) return {} as Session;
+
+        if (!newToken.user && token.user) {
+          // Transient failure during refresh - keep existing session
+          if (token.sub)
+            console.warn(`Session refresh failed for token ${token.sub}, using cached session`);
+          session.user = token.user as Session['user'];
+
+          return session;
+        }
+
+        // No user data available at all
+        if (!newToken.user) return {} as Session;
+
+        session.user = newToken.user as Session['user'];
         return session;
       },
       async redirect({ url, baseUrl }) {
@@ -328,7 +340,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
   // Handle request hostname
   const protocol = getProtocol(req);
-  req.headers.origin = `${protocol}://${req.headers.host}`;
+  req.headers.origin = `${protocol}://${req.headers.host as string}`;
   const { hostname: reqHostname } = new URL(req.headers.origin);
 
   // Handle domain-specific cookie
@@ -376,17 +388,15 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   }
 
   customAuthOptions.events ??= {};
-  // customAuthOptions.events.session = async (message) => {
-  //   console.log('session event', message.session?.user?.email, message.token?.email);
-  // };
 
-  customAuthOptions.events.signOut = async (context) => {
-    // console.log('signout event', context.user?.email, context.account?.userId);
+  customAuthOptions.events.signOut = async ({ token }) => {
+    // Invalidate the token
+    await invalidateToken(token);
+    // Delete encrypted cookies
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
   };
 
   customAuthOptions.events.signIn = async (context) => {
-    // console.log('signin event', context.user?.email, context.account?.userId);
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
 
     const source = req.cookies['ref_source'] as string;

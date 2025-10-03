@@ -24,13 +24,18 @@ const TOKEN_ID_ENFORCEMENT = 1713139200000;
 export async function invalidateToken(token: JWT) {
   if (!token?.id || typeof token.id !== 'string') return;
 
-  await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id as string, Date.now());
+  await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, Date.now());
+  // Refresh TTL on the hash to prevent unbounded growth
+  // Note: The hourly cleanup job handles bulk cleanup, but TTL adds defense-in-depth
+  await sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, DEFAULT_EXPIRATION);
   log(`Invalidated token ${token.id}`);
 }
 
-export async function refreshToken(token: JWT) {
+export async function refreshToken(token: JWT): Promise<JWT | null> {
   if (!token.user) return token;
   const user = token.user as User;
+
+  // Return null only for explicit invalidations
   if (!!(user as any).clearedAt) return null;
   if (!user.id) return token;
 
@@ -45,7 +50,7 @@ export async function refreshToken(token: JWT) {
       REDIS_SYS_KEYS.SESSION.INVALID_TOKENS,
       token.id as string
     );
-    if (tokenInvalid) return null;
+    if (tokenInvalid) return null; // Explicit invalidation
   }
 
   // Enforce Token Refresh
@@ -72,6 +77,13 @@ export async function refreshToken(token: JWT) {
   if (!shouldRefresh) return token;
 
   const refreshedUser = await getSessionUser({ userId: user.id });
+
+  // Graceful degradation: if refresh fails, keep existing session
+  if (!refreshedUser) {
+    log(`Session refresh failed for user ${user.id}, keeping existing session`);
+    return token; // Return existing token instead of setting user=undefined
+  }
+
   setToken(token, refreshedUser);
   log(`Refreshed session for user ${user.id}`);
 
