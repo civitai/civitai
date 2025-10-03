@@ -58,6 +58,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { buzzBankTypes } from '~/shared/constants/buzz.constants';
+import clsx from 'clsx';
 
 const sizing = {
   header: {
@@ -81,9 +82,8 @@ const sizing = {
 function CreatorsClubV1() {
   const applyFormUrl = `/user/buzz-dashboard`;
   const availability = getCreatorProgramAvailability();
-  const { classNames: greenClassNames, colorRgb: greenColorRgb } = useBuzzCurrencyConfig(
-    buzzBankTypes[0]
-  );
+  const [mainBuzzColor] = useAvailableBuzz();
+  const { classNames, colorRgb } = useBuzzCurrencyConfig(mainBuzzColor);
 
   return (
     <>
@@ -108,11 +108,15 @@ function CreatorsClubV1() {
             <Grid.Col span={12}>
               <Paper
                 withBorder
-                className={`${classes.card} ${classes.highlightCard} ${classes.earnBuzzCard} ${greenClassNames?.gradient}`}
+                className={clsx({
+                  [classes.card]: true,
+                  [classes.highlightCard]: true,
+                  [classNames?.gradient ?? '']: !!classNames?.gradient,
+                })}
                 h="100%"
                 style={{
                   // @ts-ignore
-                  '--buzz-color': greenColorRgb,
+                  '--buzz-color': colorRgb,
                 }}
               >
                 <Stack>
@@ -244,9 +248,11 @@ const FunStatsSection = () => {
   const [activeBuzzType] = useAvailableBuzz();
   const { prevMonthStats, isLoading } = usePrevMonthStats(activeBuzzType);
 
-  if (isLoading || !prevMonthStats) {
+  if (isLoading) {
     return <Skeleton className={classes.section} width="100%" height="200px" />;
   }
+
+  if (!prevMonthStats) return null;
 
   return (
     <Stack className={classes.section}>

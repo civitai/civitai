@@ -10,7 +10,11 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type { BuzzAccountType, BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type {
+  BuzzAccountType,
+  BuzzCreatorProgramType,
+  BuzzSpendType,
+} from '~/shared/constants/buzz.constants';
 import {
   BuzzType,
   BuzzTypes,
@@ -86,7 +90,7 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
   return createCachedObject<UserCapCacheItem>({
     key: `${REDIS_KEYS.CREATOR_PROGRAM.CAPS}:${buzzType}`,
     idKey: 'id',
-    dontCacheFn: (data) => !data.cap,
+    dontCacheFn: (data) => !data?.cap,
     cacheNotFound: false,
     staleWhileRevalidate: false,
     debounceTime: 1, // 10s debounce is too long for this cache.
@@ -219,6 +223,7 @@ export async function getCreatorRequirements(userId: number) {
       FROM "CustomerSubscription" cs
       JOIN "Product" p ON p.id = cs."productId"
       WHERE status IN ('incomplete', 'active') AND cs."userId" = u.id
+      LIMIT 1
     ) as membership
     FROM "User" u
     WHERE id = ${userId};
@@ -409,6 +414,7 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   if (!activeMembership) {
     throw throwBadRequestError(`Active membership required to bank ${buzzType} buzz`);
   }
+
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (new Date() > phases.bank[1]) throw new Error('Banking phase is closed');

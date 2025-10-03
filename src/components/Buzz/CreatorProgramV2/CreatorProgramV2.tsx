@@ -547,7 +547,7 @@ const BankBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
                 {shouldUseCountdown ? <Countdown endTime={end} /> : endDate}
               </p>
             </div>
-            <LegacyActionIcon onClick={openPhasesModal}>
+            <LegacyActionIcon onClick={() => openPhasesModal(buzzType)}>
               <IconInfoCircle size={18} />
             </LegacyActionIcon>
           </div>
@@ -674,7 +674,7 @@ const EstimatedEarningsCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
               You can extract Buzz during the{' '}
-              <Anchor onClick={openPhasesModal} inherit>
+              <Anchor onClick={() => openPhasesModal(buzzType)} inherit>
                 Extraction Phase
               </Anchor>
               :
@@ -1163,7 +1163,7 @@ const ExtractBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
                 {shouldUseCountdown ? <Countdown endTime={end} /> : endDate}
               </p>
             </div>
-            <LegacyActionIcon onClick={openPhasesModal}>
+            <LegacyActionIcon onClick={() => openPhasesModal(buzzType)}>
               <IconInfoCircle size={18} />
             </LegacyActionIcon>
           </div>

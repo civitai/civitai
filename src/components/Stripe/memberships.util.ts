@@ -7,6 +7,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
@@ -17,13 +18,14 @@ export const useActiveSubscription = ({
 } = {}) => {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
+  const [mainBuzzType] = useAvailableBuzz();
 
   const {
     data: subscription,
     isLoading,
     isFetching,
   } = trpc.subscriptions.getUserSubscription.useQuery(
-    { buzzType },
+    { buzzType: buzzType || mainBuzzType },
     {
       enabled: !!currentUser && !!(isMember || checkWhenInBadState),
     }

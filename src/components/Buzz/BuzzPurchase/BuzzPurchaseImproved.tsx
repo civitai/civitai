@@ -1084,56 +1084,57 @@ export const BuzzPurchaseImproved = ({
                       )}
 
                       {/* Footer Info */}
-                      {(features.nowpaymentPayments || features.coinbasePayments || onCancel) && (
-                        <>
-                          <Stack gap="xs" mt="xs">
-                            {liveFeatures.buzzGiftCards && (
-                              <Text ta="center" size="xs" c="dimmed">
-                                Don&apos;t see a supported payment method?{' '}
-                                <Anchor
-                                  href="https://buybuzz.io/"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  size="xs"
-                                  className={classes.giftCardLink}
-                                >
-                                  Buy a gift card!
-                                </Anchor>
-                              </Text>
-                            )}
-
-                            {(features.nowpaymentPayments || features.coinbasePayments) &&
-                              selectedBuzzType === 'yellow' && (
+                      {(features.nowpaymentPayments || features.coinbasePayments || onCancel) &&
+                        selectedBuzzType === 'yellow' && (
+                          <>
+                            <Stack gap="xs" mt="xs">
+                              {liveFeatures.buzzGiftCards && (
                                 <Text ta="center" size="xs" c="dimmed">
-                                  New to crypto?{' '}
+                                  Don&apos;t see a supported payment method?{' '}
                                   <Anchor
-                                    href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                                    href="https://buybuzz.io/"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     size="xs"
-                                    className={classes.cryptoLink}
+                                    className={classes.giftCardLink}
                                   >
-                                    Learn how →
+                                    Buy a gift card!
                                   </Anchor>
                                 </Text>
                               )}
 
-                            {onCancel && (
-                              <Group justify="center">
-                                <Button
-                                  variant="subtle"
-                                  color="gray"
-                                  onClick={onCancel}
-                                  size="sm"
-                                  className={classes.cancelButton}
-                                >
-                                  Cancel
-                                </Button>
-                              </Group>
-                            )}
-                          </Stack>
-                        </>
-                      )}
+                              {(features.nowpaymentPayments || features.coinbasePayments) &&
+                                selectedBuzzType === 'yellow' && (
+                                  <Text ta="center" size="xs" c="dimmed">
+                                    New to crypto?{' '}
+                                    <Anchor
+                                      href="https://education.civitai.com/civitais-guide-to-purchasing-buzz-with-crypto/"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      size="xs"
+                                      className={classes.cryptoLink}
+                                    >
+                                      Learn how →
+                                    </Anchor>
+                                  </Text>
+                                )}
+
+                              {onCancel && (
+                                <Group justify="center">
+                                  <Button
+                                    variant="subtle"
+                                    color="gray"
+                                    onClick={onCancel}
+                                    size="sm"
+                                    className={classes.cancelButton}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </Group>
+                              )}
+                            </Stack>
+                          </>
+                        )}
                     </Stack>
                   </Card>
                 </Stack>

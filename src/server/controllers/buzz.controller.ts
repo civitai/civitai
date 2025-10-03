@@ -251,6 +251,7 @@ export async function createBuzzTipTransactionHandler({
             user: fromUser?.username,
             fromUserId: fromAccountId,
             message: description,
+            toAccountType: input.toAccountType,
           },
         });
       }

@@ -120,6 +120,7 @@ export const BuzzDashboardOverview = ({
   accountId: number;
   selectedAccountType?: BuzzSpendType;
 }) => {
+  const features = useFeatureFlags();
   // Use the selected account type for transactions, defaulting to 'yellow'
   const currentAccountType = selectedAccountType || 'yellow';
   const currentAccountTypeLabel: string = getAccountTypeLabel(currentAccountType);
@@ -258,7 +259,7 @@ export const BuzzDashboardOverview = ({
                 </Group>
 
                 {/* Top Up Card - Show when buzz is low */}
-                {currentAccountType === 'yellow' && (
+                {currentAccountType === 'yellow' && !features.isGreen && (
                   <BuzzTopUpCard
                     accountId={accountId}
                     variant="banner"
@@ -328,7 +329,11 @@ export const BuzzDashboardOverview = ({
         <Paper p="lg" radius="md" h="100%" className={classes.tileCard} style={{ flex: 1 }}>
           <Stack gap="xs">
             <Title order={3}>Recent {currentAccountTypeLabel} Transactions</Title>
-            <Anchor component={Link} href={`/user/transactions?accountType=${currentAccountType}`} size="xs">
+            <Anchor
+              component={Link}
+              href={`/user/transactions?accountType=${currentAccountType}`}
+              size="xs"
+            >
               <Group gap={2}>
                 <IconArrowRight size={18} />
                 <span>View all</span>

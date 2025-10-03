@@ -12,9 +12,13 @@ import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembers
 import { env } from '~/env/client';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export function SubscriptionCard() {
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const [mainBuzzType] = useAvailableBuzz();
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    buzzType: mainBuzzType,
+  });
   const features = useFeatureFlags();
   const { classNames: greenClassNames } = useBuzzCurrencyConfig('green');
   const price = subscription?.price;
