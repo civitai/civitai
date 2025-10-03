@@ -289,7 +289,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     (appContext.ctx.req as any)['session'] = session;
   }
   const allowMatureContent =
-    appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN;
+    appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN && !flags.isGreen;
 
   return {
     pageProps: {
@@ -305,6 +305,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       hasAuthCookie,
       region,
       allowMatureContent,
+      // @ts-ignore
+      host: appContext.ctx.req?.headers.host,
     },
     ...appProps,
   };

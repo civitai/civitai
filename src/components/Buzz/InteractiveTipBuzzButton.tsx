@@ -1,27 +1,20 @@
 import type { UnstyledButtonProps } from '@mantine/core';
-import {
-  ActionIcon,
-  Group,
-  Popover,
-  Stack,
-  Text,
-  UnstyledButton,
-  useMantineTheme,
-} from '@mantine/core';
+import { Group, Popover, Stack, Text, UnstyledButton, Button } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { isTouchDevice } from '~/utils/device-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -30,6 +23,8 @@ import { useBuzzTransaction } from './buzz.utils';
 import classes from './InteractiveTipBuzzButton.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { buzzConstants, type BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 
 type Props = UnstyledButtonProps &
   React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -39,7 +34,6 @@ type Props = UnstyledButtonProps &
     hideLoginPopover?: boolean;
   };
 
-const CONFIRMATION_THRESHOLD = 100;
 const CLICK_AMOUNT = 10;
 const CONFIRMATION_TIMEOUT = 5000;
 
@@ -89,6 +83,7 @@ export const useBuzzTippingStore = ({
   return useStore(useCallback((state) => state.tips[key] ?? 0, [key]));
 };
 
+
 const steps: [number, number][] = [
   // [20000, 2500],
   // [5000, 1000],
@@ -108,11 +103,19 @@ export function InteractiveTipBuzzButton({
   hideLoginPopover = false,
   ...buttonProps
 }: Props) {
-  const theme = useMantineTheme();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz(undefined, 'user');
   const features = useFeatureFlags();
+
+  // Get the single domain-based currency type (either green or yellow)
+  const availableBuzzTypes = useAvailableBuzz([]);
+  const selectedCurrencyType = availableBuzzTypes[0] as BuzzSpendType; // Use the primary domain currency
+
+  const {
+    data: { total },
+  } = useQueryBuzz([selectedCurrencyType]);
+  const currencyBalance = total;
+  const buzzConfig = useBuzzCurrencyConfig(selectedCurrencyType);
 
   const [buzzCounter, setBuzzCounter] = useState(0);
   const startTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -123,7 +126,10 @@ export function InteractiveTipBuzzButton({
   const interval = useInterval(() => {
     setBuzzCounter((prevCounter) => {
       const [, step] = steps.find(([min]) => prevCounter >= min) ?? [0, 10];
-      return Math.min(constants.buzz.maxEntityTip, Math.min(balance ?? 0, prevCounter + step));
+      return Math.min(
+        buzzConstants.maxEntityTip,
+        Math.min(currencyBalance ?? 0, prevCounter + step)
+      );
     });
   }, 100);
 
@@ -139,6 +145,7 @@ export function InteractiveTipBuzzButton({
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: false,
+    accountTypes: [selectedCurrencyType],
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>
         <Text>Thank you for your purchase!</Text>
@@ -190,6 +197,8 @@ export function InteractiveTipBuzzButton({
           amount,
           entityId,
           entityType,
+          fromAccountType: selectedCurrencyType,
+          toAccountType: selectedCurrencyType,
           details: {
             entityId,
             entityType,
@@ -218,8 +227,8 @@ export function InteractiveTipBuzzButton({
   const processEnteredNumber = (value: string) => {
     let amount = Number(value);
     if (isNaN(amount) || amount < 1) amount = 1;
-    else if (amount > constants.buzz.maxEntityTip) amount = constants.buzz.maxEntityTip;
-    else if (balance && amount > balance) amount = balance ?? 0;
+    else if (amount > buzzConstants.maxEntityTip) amount = buzzConstants.maxEntityTip;
+    else if (currencyBalance && amount > currencyBalance) amount = currencyBalance ?? 0;
     setBuzzCounter(amount);
 
     return amount;
@@ -248,15 +257,8 @@ export function InteractiveTipBuzzButton({
     }, CONFIRMATION_TIMEOUT);
   };
 
-  const stopCountdown = () => {
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
-    setShowCountDown(false);
-  };
 
-  const clickStart = (e: any) => {
+  const clickStart = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice()) {
       e.preventDefault();
       e.stopPropagation();
@@ -282,12 +284,12 @@ export function InteractiveTipBuzzButton({
     }, 150);
   };
 
-  const clickEnd = (e: any) => {
+  const clickEnd = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice() && e.type == 'mouseup') return;
 
     if (startTimerTimeoutRef.current !== null) {
       // Was click
-      setBuzzCounter((x) => Math.min(constants.buzz.maxEntityTip, x + CLICK_AMOUNT));
+      setBuzzCounter((x) => Math.min(buzzConstants.maxEntityTip, x + CLICK_AMOUNT));
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
 
@@ -320,7 +322,7 @@ export function InteractiveTipBuzzButton({
 
   useEffect(() => {
     return () => interval.stop(); // when App is unmounted we should stop counter
-  }, []);
+  }, [interval]);
 
   if (!features.buzz) return null;
 
@@ -371,7 +373,11 @@ export function InteractiveTipBuzzButton({
           {children}
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown py={4} className={clsx({ [classes.confirming]: showCountDown })}>
+      <Popover.Dropdown
+        py={4}
+        className={clsx({ [classes.confirming]: showCountDown })}
+        style={{ '--buzz-color': buzzConfig.color } as React.CSSProperties}
+      >
         <Group className={classes.popoverContent}>
           {status !== 'pending' && (
             <LegacyActionIcon variant="subtle" color="red.5" onClick={cancelTip}>
@@ -379,11 +385,21 @@ export function InteractiveTipBuzzButton({
             </LegacyActionIcon>
           )}
           <Stack gap={2} align="center">
-            <Text c="yellow.7" fw={500} size="xs" opacity={0.8}>
+            {/* Currency Balance Display */}
+            <Group gap={4} mb={2}>
+              <Group gap={4}>
+                <CurrencyIcon currency="BUZZ" size={12} type={selectedCurrencyType} />
+                <Text size="xs" c={buzzConfig.color} fw={500}>
+                  {numberWithCommas(currencyBalance || 0)}
+                </Text>
+              </Group>
+            </Group>
+
+            <Text c={buzzConfig.color} fw={500} size="xs" opacity={0.8}>
               Tipping
             </Text>
             <Group gap={0} ml={-8}>
-              <IconBolt style={{ fill: theme.colors.yellow[7] }} color="yellow.7" size={20} />
+              <IconBolt style={{ fill: buzzConfig.color }} color={buzzConfig.color} size={20} />
               <div
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
@@ -395,7 +411,7 @@ export function InteractiveTipBuzzButton({
                     sendTip(amount);
                   }
                 }}
-                onFocus={stopCountdown}
+                onFocus={() => setShowCountDown(false)}
                 className={classes.tipAmount}
                 dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
               />
@@ -404,7 +420,7 @@ export function InteractiveTipBuzzButton({
           {status !== 'pending' && (
             <LegacyActionIcon
               variant="transparent"
-              color={status === 'confirmed' ? 'green' : 'yellow.5'}
+              color={status === 'confirmed' ? 'green' : buzzConfig.color}
               onClick={status === 'confirming' ? () => sendTip() : undefined}
               loading={tipUserMutation.isLoading}
             >

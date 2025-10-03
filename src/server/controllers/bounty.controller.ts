@@ -430,7 +430,11 @@ export const addBenefactorUnitAmountHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const bountyBenefactor = await addBenefactorUnitAmount({ ...input, userId });
+    const bountyBenefactor = await addBenefactorUnitAmount({
+      ...input,
+      userId,
+      buzzType: ctx.features.isGreen ? 'green' : 'yellow',
+    });
 
     ctx.track
       .bountyBenefactor({

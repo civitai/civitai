@@ -2,6 +2,7 @@ import type { SessionUser } from 'next-auth';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const imageTrainingBaseSchema = z.object({
   model: z.string(),
@@ -41,6 +42,7 @@ export const imageTrainingRouterInputSchema = z.object({
 
 const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
   token: z.string(),
+  currencies: z.array(z.enum(buzzSpendTypes)).optional(),
 });
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
@@ -48,5 +50,6 @@ export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSc
 
 const imageTraininWhatIfgWorkflowSchema = imageTrainingRouterWhatIfSchema.extend({
   token: z.string(),
+  currencies: z.array(z.enum(buzzSpendTypes)).optional(),
 });
 export type ImageTraininWhatIfWorkflowSchema = z.infer<typeof imageTraininWhatIfgWorkflowSchema>;

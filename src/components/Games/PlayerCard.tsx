@@ -158,7 +158,7 @@ export function PlayerStats({
         tooltip={`Total Buzz: ${numberWithCommas(totalBuzz)}`}
         size={size}
         color="yellow.7"
-        icon={<CurrencyIcon type={Currency.BUZZ} size={iconSize} stroke={1.5} />}
+        icon={<CurrencyIcon currency={Currency.BUZZ} type="yellow" size={iconSize} stroke={1.5} />}
       >
         {abbreviateNumber(totalBuzz)}
       </IconBadge>

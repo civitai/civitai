@@ -1,0 +1,53 @@
+.instructionalCard {
+  height: 100%;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+}
+
+.stepIndicator {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--red-buzz-color);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.iconContainer {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background-color: color-mix(in srgb, var(--red-buzz-color) 20%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--red-buzz-color);
+}
+
+.contentContainer {
+  flex: 1;
+}
+
+.cardTitle {
+  color: var(--red-buzz-color);
+  margin-bottom: var(--mantine-spacing-xs);
+}
+
+.poweredByText {
+  font-style: italic;
+  text-align: center;
+  margin-top: var(--mantine-spacing-sm);
+}

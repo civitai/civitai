@@ -25,6 +25,22 @@ import {
 export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
 
+export const userSubscriptionByBuzzTypeSchema = z.object({
+  tier: userTierSchema,
+  isMember: z.boolean(),
+  subscriptionId: z.string(),
+  status: z.string(),
+});
+
+export type UserSubscriptionByBuzzType = z.infer<typeof userSubscriptionByBuzzTypeSchema>;
+
+export const userSubscriptionsByBuzzTypeSchema = z.record(
+  z.string(),
+  userSubscriptionByBuzzTypeSchema
+);
+
+export type UserSubscriptionsByBuzzType = z.infer<typeof userSubscriptionsByBuzzTypeSchema>;
+
 export const userPageQuerySchema = z
   .object({
     username: z.string(),

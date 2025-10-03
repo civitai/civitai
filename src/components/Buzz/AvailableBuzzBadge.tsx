@@ -20,7 +20,7 @@ export const AvailableBuzzBadge = () => {
         <Text size="xs" c="dimmed" tt="capitalize" fw={600}>
           Available Buzz
         </Text>
-        <UserBuzz iconSize={16} textSize="sm" accountType="user" withTooltip />
+        <UserBuzz iconSize={16} textSize="sm" withTooltip />
       </Group>
     </Badge>
   );

@@ -34,6 +34,7 @@ import type { Price } from '~/shared/utils/prisma/models';
 import { showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -299,9 +300,11 @@ export const CancelMembershipBenefitsModal = () => {
   const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
+  const [mainBuzzType] = useAvailableBuzz();
   const { vault, isLoading: vaultLoading } = useQueryVault();
-  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
-    useActiveSubscription();
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
+    buzzType: mainBuzzType,
+  });
 
   const product = subscription?.product;
   const details = product ? getPlanDetails(product, features) : null;

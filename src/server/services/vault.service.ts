@@ -3,10 +3,8 @@ import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  SubscriptionProductMetadata,
-  subscriptionProductMetadataSchema,
-} from '~/server/schema/subscriptions.schema';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import type {
   GetPaginatedVaultItemsSchema,
   VaultItemFilesSchema,
@@ -66,14 +64,19 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
   const user = await dbWrite.user.findFirstOrThrow({
     where: { id: userId },
     select: {
-      subscription: { select: { status: true, product: { select: { metadata: true } } } },
+      subscriptions: {
+        where: {
+          status: { in: ['active', 'trialing'] },
+        },
+        select: { status: true, product: { select: { metadata: true } } },
+      },
     },
   });
 
-  const { subscription } = user;
-  const isActiveSubscription = ['active', 'trialing'].includes(subscription?.status ?? 'inactive');
+  // TODO: We should probably get the "highest" tier here.
+  const subscription = user.subscriptions[0];
 
-  if (!subscription || !isActiveSubscription)
+  if (!subscription)
     throw throwBadRequestError(
       'User does not have an active membership.',
       new Error('MEMBERSHIP_REQUIRED')

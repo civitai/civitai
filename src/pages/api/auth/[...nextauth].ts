@@ -451,6 +451,7 @@ async function sendVerificationRequest({
   try {
     await verificationEmail.send({ to, url, theme });
     await emailLimiter.increment(to).catch(() => null);
+    
   } catch (error) {
     logToAxiom({
       name: 'verification-email',

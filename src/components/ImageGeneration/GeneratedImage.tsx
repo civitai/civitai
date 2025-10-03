@@ -258,7 +258,9 @@ export function GeneratedImage({
   }
 
   const blockedReason = getImageBlockedReason(image.blockedReason);
-  const isBlocked = !!nsfwLevelError || !!blockedReason;
+  const isBlockedDueToMatureContent =
+    (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''];
+  const isBlocked = !!nsfwLevelError || !!blockedReason || !isBlockedDueToMatureContent;
   const aspectRatio = isBlocked ? 1 : image.aspect;
 
   return (

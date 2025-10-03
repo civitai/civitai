@@ -102,7 +102,7 @@ export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "C
 
 export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
-export type BuzzAccountType = "user" | "generation" | "club";
+export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
 export type ArticleStatus = "Draft" | "Published" | "Unpublished";
 
@@ -322,8 +322,7 @@ export interface User {
   isModerator: boolean | null;
   createdAt: Date;
   deletedAt: Date | null;
-  subscriptionId: string | null;
-  subscription?: CustomerSubscription | null;
+  subscriptions?: CustomerSubscription[];
   mutedAt: Date | null;
   muted: boolean;
   muteConfirmedAt: Date | null;
@@ -445,6 +444,7 @@ export interface CustomerSubscription {
   id: string;
   userId: number;
   user?: User;
+  buzzType: string;
   metadata: JsonValue;
   status: string;
   priceId: string;
@@ -2120,6 +2120,7 @@ export interface BountyBenefactor {
   awardedToId: number | null;
   awartedTo?: BountyEntry | null;
   currency: Currency;
+  buzzTransactionId: string | null;
 }
 
 export interface BountyEngagement {

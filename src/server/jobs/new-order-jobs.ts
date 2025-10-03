@@ -14,7 +14,7 @@ import {
   poolCounters,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
 import { createNotification } from '~/server/services/notification.service';
