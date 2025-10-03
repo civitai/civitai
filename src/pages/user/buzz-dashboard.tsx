@@ -67,10 +67,12 @@ export default function UserBuzzDashboard() {
 
   // Account type selection state
   const buzzTypeFromQuery = router.query.buzzType as BuzzSpendType | undefined;
-  const initialBuzzType = buzzTypeFromQuery && buzzSpendTypes.includes(buzzTypeFromQuery)
-    ? buzzTypeFromQuery
-    : mainBuzztype;
-  const [selectedAccountType, setSelectedAccountType] = React.useState<BuzzSpendType>(initialBuzzType);
+  const initialBuzzType =
+    buzzTypeFromQuery && buzzSpendTypes.includes(buzzTypeFromQuery)
+      ? buzzTypeFromQuery
+      : mainBuzztype;
+  const [selectedAccountType, setSelectedAccountType] =
+    React.useState<BuzzSpendType>(initialBuzzType);
 
   const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
 
@@ -91,12 +93,6 @@ export default function UserBuzzDashboard() {
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
-  const showMismatchAlert =
-    isMember &&
-    !multipliersLoading &&
-    rewardsMultiplier !== Number(meta?.rewardsMultiplier ?? 1) &&
-    features.membershipsV2 &&
-    !isFreeTier;
 
   return (
     <>
@@ -137,15 +133,6 @@ export default function UserBuzzDashboard() {
 
           <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
-              {showMismatchAlert && (
-                <Alert color="red" title="Looks like we have an issue!">
-                  <Text>
-                    Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz.
-                    Try to <RefreshSessionButton />, if that doesn&rsquo;t work please contact
-                    support <Anchor href="https://civitai.com/support">here</Anchor>
-                  </Text>
-                </Alert>
-              )}
               <Group justify="space-between">
                 <Title order={3} id="rewards">
                   Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
@@ -202,7 +189,16 @@ export default function UserBuzzDashboard() {
           </Text>
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
-          {['yellow', 'green'].includes(selectedAccountType) && <CreatorProgramV2 />}
+          {selectedAccountType === 'green' && (
+            <Alert color="yellow" title="Green Creator Program Temporarily Disabled">
+              <Text>
+                The Green Creator Program is temporarily disabled and will return in November. In
+                the meantime, you can still earn and use Green Buzz for other activities on the
+                platform.
+              </Text>
+            </Alert>
+          )}
+          {selectedAccountType === 'yellow' && <CreatorProgramV2 />}
           {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>
