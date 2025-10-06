@@ -24,7 +24,7 @@ import { getImageDimensions } from '~/utils/image-utils';
 import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';
 import type { Blob as ImageBlob } from '@civitai/client';
-import { formatBytes } from '~/utils/number-helpers';
+import { almostEqual, formatBytes } from '~/utils/number-helpers';
 import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { IconUpload, IconX } from '@tabler/icons-react';
@@ -112,8 +112,6 @@ export function SourceImageUploadMultiple({
     return images;
   }, [value, uploads]);
 
-  console.log({ previewImages });
-
   const previewItems = useMemo(() => {
     return [...previewImages.filter((x) => !x.linkToId), ...uploads];
   }, [previewImages, uploads]);
@@ -128,14 +126,16 @@ export function SourceImageUploadMultiple({
     if (cropToFirstImage) {
       const { width, height } = previewImages[0];
       const ratio = width / height;
-      allMatch = previewImages.every(({ width, height }) => width / height === ratio);
+      allMatch = previewImages.every(({ width, height }) =>
+        almostEqual(ratio, width / height, 0.001)
+      );
     } else if (!!aspectRatios?.length) {
       const ratios = aspectRatios.map((ratio) => {
         const [w, h] = ratio.split(':').map(Number);
         return w / h;
       });
       allMatch = previewImages.every(({ width, height }) =>
-        ratios.some((r) => r === width / height)
+        ratios.some((r) => almostEqual(r, width / height, 0.001))
       );
     }
     return !allMatch;

@@ -94,6 +94,14 @@ function createFormSchema(domainColor: string) {
         }
       }
 
+      if ((data.baseModel === 'Imagen4' || data.baseModel === 'NanoBanana') && data.quantity > 4) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${data.baseModel} generation currently only supports a maximum quantity of 4`,
+          path: ['model'],
+        });
+      }
+
       if (data.prompt.length > 1500) {
         ctx.addIssue({
           code: 'custom',

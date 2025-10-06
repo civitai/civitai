@@ -1,11 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
-import type { S3Client } from '@aws-sdk/client-s3';
 import dayjs from '~/shared/utils/dayjs';
 
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { getS3Client } from '~/utils/s3-utils';
 
 import { createJob } from './job';
 import { getDownloadUrl } from '~/utils/delivery-worker';
@@ -25,11 +23,10 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     select: { id: true, url: true },
   });
 
-  const s3 = getS3Client();
   const sent: number[] = [];
   const failed: number[] = [];
   for (const file of files) {
-    const success = await requestScannerTasks({ file, s3 });
+    const success = await requestScannerTasks({ file });
     if (success) sent.push(file.id);
     else failed.push(file.id);
   }
@@ -49,14 +46,12 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
 
 type ScannerRequest = {
   file: FileScanRequest;
-  s3: S3Client;
   tasks?: ScannerTask[] | ScannerTask;
   lowPriority?: boolean;
 };
 
 export async function requestScannerTasks({
   file: { id: fileId, url: s3Url },
-  s3,
   tasks = ['Scan', 'Hash', 'ParseMetadata'],
   lowPriority = false,
 }: ScannerRequest) {

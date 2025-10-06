@@ -1,4 +1,5 @@
 import dynamic from 'next/dynamic';
+import type { SetBrowsingLevelModalProps } from '~/components/BrowsingLevel/SetBrowsingLevelModal';
 import type { CollectionSelectModalProps } from '~/components/CollectionSelectModal/CollectionSelectModal';
 import { dialogStore, createDialogTrigger } from '~/components/Dialog/dialogStore';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
@@ -98,7 +99,7 @@ export const openLoginModal = createDialogTrigger(LoginModal);
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
-export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>
+export const openSetBrowsingLevelModal = (props: SetBrowsingLevelModalProps) =>
   dialogStore.trigger({ component: SetBrowsingLevelModal, props });
 // export const openHiddenTagsModal = () =>
 //   dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });

@@ -212,7 +212,7 @@ export const ImageContestCollectionDetails = ({
 
                     <Text>Share the link to your submission and have your friends react.</Text>
                     <Text>
-                      Please note than an account is required to react and reaction votes are
+                      Please note that an account is required to react and reaction votes are
                       limited to one per account.
                     </Text>
                     <ShareButton

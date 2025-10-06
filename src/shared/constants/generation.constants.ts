@@ -367,7 +367,7 @@ export const fluxUltraAirId = 1088507;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Experimental mode supported models - only for Text-to-Image workflow
-export const EXPERIMENTAL_MODE_SUPPORTED_MODELS = ['SD1', 'SDXL', 'Pony'] as const;
+export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = ['SD1', 'SDXL', 'Pony'];
 export type ExperimentalModeSupportedModel = (typeof EXPERIMENTAL_MODE_SUPPORTED_MODELS)[number];
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },

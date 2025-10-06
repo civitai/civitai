@@ -1,7 +1,6 @@
 import { Badge, Card, Group, Popover, Stack, Switch, Text } from '@mantine/core';
 import { IconSparkles } from '@tabler/icons-react';
 import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
-import type { ExperimentalModeSupportedModel } from '~/shared/constants/generation.constants';
 import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { withController } from '~/libs/form/hoc/withController';
@@ -24,7 +23,7 @@ export function ExperimentalModeCard({
   const isSupported =
     workflow === 'txt2img' && // Text-to-image workflow only
     baseModelGroup &&
-    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(baseModelGroup as ExperimentalModeSupportedModel);
+    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(baseModelGroup);
 
   if (!isSupported) {
     return null;

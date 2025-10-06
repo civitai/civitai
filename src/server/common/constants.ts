@@ -645,11 +645,19 @@ const commonAspectRatios = [
 ];
 
 export const seedreamSizes = [
-  { label: '16:9', width: 2272, height: 1280 },
-  { label: '4:3', width: 1696, height: 1280 },
-  { label: '1:1', width: 1280, height: 1280 },
-  { label: '3:4', width: 1280, height: 1696 },
-  { label: '9:16', width: 1280, height: 2272 },
+  { label: '16:9', width: 2560, height: 1440 },
+  { label: '4:3', width: 2304, height: 1728 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1728, height: 2304 },
+  { label: '9:16', width: 1440, height: 2560 },
+];
+
+export const qwenSizes = [
+  { label: '16:9', width: 1664, height: 928 },
+  { label: '4:3', width: 1472, height: 1140 },
+  { label: '1:1', width: 1328, height: 1328 },
+  { label: '3:4', width: 1140, height: 1472 },
+  { label: '9:16', width: 928, height: 1664 },
 ];
 
 export const generationConfig = {
@@ -835,7 +843,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Qwen: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: qwenSizes,
     checkpoint: {
       id: 2113658,
       name: 'Qwen-Image Full BF16',
