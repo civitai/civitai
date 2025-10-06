@@ -73,19 +73,22 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
     },
   });
 
-  // TODO: We should probably get the "highest" tier here.
-  const subscription = user.subscriptions[0];
-
-  if (!subscription)
+  if (!user.subscriptions.length)
     throw throwBadRequestError(
       'User does not have an active membership.',
       new Error('MEMBERSHIP_REQUIRED')
     );
 
-  const { vaultSizeKb }: SubscriptionProductMetadata =
-    (subscription.product.metadata as SubscriptionProductMetadata) ?? {};
+  // Sum vault sizes from all active memberships
+  const totalVaultSizeKb = user.subscriptions.reduce(
+    (total: number, subscription: { status: boolean; product: { metadata: unknown } }) => {
+      const metadata = subscription.product.metadata as SubscriptionProductMetadata;
+      return total + (metadata?.vaultSizeKb ?? 0);
+    },
+    0
+  );
 
-  if (!vaultSizeKb) {
+  if (!totalVaultSizeKb) {
     throw throwBadRequestError(
       'Vault size has not been configured correctly. Please contact administration.'
     );
@@ -95,7 +98,7 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
   await dbWrite.vault.create({
     data: {
       userId,
-      storageKb: Number(vaultSizeKb),
+      storageKb: totalVaultSizeKb,
     },
   });
 
@@ -484,7 +487,7 @@ export const toggleModelVersionOnVault = async ({
 };
 
 export const setVaultFromSubscription = async ({ userId }: { userId: number }) => {
-  const subscription = await dbWrite.customerSubscription.findFirst({
+  const subscriptions = await dbWrite.customerSubscription.findMany({
     where: {
       userId,
       status: { in: ['active', 'trialing'] },
@@ -503,7 +506,7 @@ export const setVaultFromSubscription = async ({ userId }: { userId: number }) =
     where: { userId: userId },
   });
 
-  if (!subscription) {
+  if (!subscriptions.length) {
     await dbWrite.vault.update({
       where: { userId },
       data: {
@@ -514,13 +517,18 @@ export const setVaultFromSubscription = async ({ userId }: { userId: number }) =
     throw throwBadRequestError('User does not have an active subscription.');
   }
 
-  const parsedMeta = subscriptionProductMetadataSchema.safeParse(subscription?.product?.metadata);
+  // Sum vault sizes from all active memberships
+  const totalVaultSizeKb = subscriptions.reduce((total, subscription) => {
+    const parsedMeta = subscriptionProductMetadataSchema.safeParse(subscription?.product?.metadata);
+    return total + (parsedMeta.success ? parsedMeta.data.vaultSizeKb ?? 0 : 0);
+  }, 0);
+
   const vault = userVault ? userVault : await getOrCreateVault({ userId });
-  if (parsedMeta.success && vault.storageKb !== parsedMeta.data.vaultSizeKb) {
+  if (vault.storageKb !== totalVaultSizeKb) {
     await dbWrite.vault.update({
       where: { userId: vault.userId },
       data: {
-        storageKb: Number(parsedMeta.data.vaultSizeKb),
+        storageKb: totalVaultSizeKb,
       },
     });
   }
