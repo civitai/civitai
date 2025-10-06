@@ -112,6 +112,7 @@ import type {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -885,7 +886,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
             : undefined,
         // feedbackToken,
       };
+
       await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
+      await invalidateCivitaiUser({ userId });
 
       return sessionUser;
     },
