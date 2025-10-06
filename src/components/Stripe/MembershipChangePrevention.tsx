@@ -395,10 +395,12 @@ export const VaultStorageDowngrade = ({
               <Text component="span" fw="bold">
                 {pagination?.totalItems ?? 0} models
               </Text>{' '}
-              stored on your Vault. After downgrading, your Vault will be frozen.
+              stored on your Vault. After this change, your available Vault storage may be reduced,
+              and if the new storage limit is exceeded, your Vault will be frozen.
             </Text>
             <Text c="dimmed" align="center">
-              You will have a 7 day grace period to download models from your Vault.
+              You will have a 7 day grace period to download models from your Vault if it becomes
+              frozen.
             </Text>
           </Stack>
           <Group grow>
