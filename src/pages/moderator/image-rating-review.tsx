@@ -1,22 +1,27 @@
 import type { MantineColor } from '@mantine/core';
-import { Button, Center, Loader, Progress, Select, Title } from '@mantine/core';
+import { Button, Center, Checkbox, Group, Loader, Progress, Select, Title } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import { ReportStatus } from '~/shared/utils/prisma/enums';
+import clsx from 'clsx';
 import React, { useMemo, useState } from 'react';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { NsfwLevel } from '~/server/common/enums';
 import type { getImageRatingRequests } from '~/server/services/image.service';
 import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import clsx from 'clsx';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+
+const limitsData = [10, 25, 50, 100].map((num) => ({ value: String(num), label: `${num} items` }));
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');
   const [cursor, setCursor] = useState<number | undefined>();
+  const [requireReason, setRequireReason] = useState(false);
   const { data, isLoading, isFetching } = trpc.image.getImageRatingRequests.useQuery({
     limit: Number(limit),
     cursor,
@@ -28,16 +33,23 @@ export default function ImageRatingReview() {
 
   return (
     <div className="flex  flex-col gap-4 p-4">
-      <div className="flex items-center justify-center gap-4">
+      <div className="flex items-center justify-between gap-4">
         <Title>Image Rating Review</Title>
-        <Select
-          placeholder="Limit"
-          value={limit}
-          data={['10', '25', '50', '100']}
-          onChange={(limit) => {
-            if (limit) setLimit(limit);
-          }}
-        />
+        <Group gap={8}>
+          <Checkbox
+            label="Require reason"
+            checked={requireReason}
+            onChange={(event) => setRequireReason(event.currentTarget.checked)}
+          />
+          <Select
+            placeholder="Limit"
+            value={limit}
+            data={limitsData}
+            onChange={(limit) => {
+              if (limit) setLimit(limit);
+            }}
+          />
+        </Group>
       </div>
       {isLoading ? (
         <Center p="xl">
@@ -52,7 +64,7 @@ export default function ImageRatingReview() {
             style={{ gridTemplateColumns: 'repeat(auto-fit, 300px' }}
           >
             {flatData?.map((item) => (
-              <ImageRatingCard key={item.id} {...item} />
+              <ImageRatingCard key={item.id} {...item} requireReason={requireReason} />
             ))}
           </div>
           {hasNextPage ? (
@@ -70,9 +82,12 @@ export default function ImageRatingReview() {
   );
 }
 
-function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['items'][number]) {
+function ImageRatingCard(
+  item: AsyncReturnType<typeof getImageRatingRequests>['items'][number] & { requireReason: boolean }
+) {
+  const { requireReason, ...imageItem } = item;
   // const maxRating = Math.max(...Object.values(item.votes));
-  const [nsfwLevel, setNsfwLevel] = useState(item.nsfwLevel);
+  const [nsfwLevel, setNsfwLevel] = useState(imageItem.nsfwLevel);
   const previous = usePrevious(nsfwLevel);
   const [updated, setUpdated] = useState(false);
 
@@ -83,24 +98,46 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
     },
   });
 
-  const handleSetLevel = (level: number) => {
-    setNsfwLevel(level);
-    mutate({ id: item.id, nsfwLevel: level, status: ReportStatus.Actioned });
-    setUpdated(true);
+  const handleSetLevel = (level: NsfwLevel) => {
+    if (requireReason) {
+      openSetBrowsingLevelModal({
+        imageId: imageItem.id,
+        nsfwLevel: level,
+        hideLevelSelect: true,
+        onSubmit: ({ reason }) => {
+          setNsfwLevel(level);
+          mutate({
+            id: imageItem.id,
+            nsfwLevel: level,
+            status: ReportStatus.Actioned,
+            reason: reason ?? undefined,
+          });
+          setUpdated(true);
+        },
+      });
+    } else {
+      setNsfwLevel(level);
+      mutate({
+        id: imageItem.id,
+        nsfwLevel: level,
+        status: ReportStatus.Actioned,
+      });
+      setUpdated(true);
+    }
   };
 
   return (
     <div className={clsx(`flex flex-col items-stretch card`, { [' opacity-50']: updated })}>
-      <Link href={`/images/${item.id}`} target="_blank">
-        <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
+      <Link href={`/images/${imageItem.id}`} target="_blank">
+        <EdgeMedia src={imageItem.url} type={imageItem.type} width={450} className="w-full" />
       </Link>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
-          {[...browsingLevels, 32].map((level) => {
-            const votes = item.votes[level];
+          {[...browsingLevels, NsfwLevel.Blocked].map((level) => {
+            const votes = imageItem.votes[level];
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
-              const percentage = votes / item.total;
+              const percentage = votes / imageItem.total;
               sections.unshift({
                 value: percentage * 100,
                 label: String(votes),
@@ -114,7 +151,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                   size="compact-sm"
                   onClick={() => handleSetLevel(level)}
                   color={
-                    item.nsfwLevelLocked && item.nsfwLevel === level
+                    imageItem.nsfwLevelLocked && imageItem.nsfwLevel === level
                       ? 'red'
                       : updated && nsfwLevel === level
                       ? 'green'
@@ -136,10 +173,10 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
         </div>
         <VotableTags
           entityType="image"
-          entityId={item.id}
-          tags={item.tags}
+          entityId={imageItem.id}
+          tags={imageItem.tags}
           canAddModerated
-          nsfwLevel={item.nsfwLevel}
+          nsfwLevel={imageItem.nsfwLevel}
         />
       </div>
     </div>
