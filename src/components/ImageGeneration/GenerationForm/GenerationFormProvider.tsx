@@ -35,7 +35,6 @@ import {
   useGenerationStore,
 } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
-import { auditPrompt } from '~/utils/metadata/audit';
 import type { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -118,32 +117,8 @@ function createFormSchema(domainColor: string) {
         });
       }
 
-      // Audit prompt validation with domain-aware profanity checking
-      if (data.prompt.length > 0) {
-        const checkProfanity = domainColor === 'green';
-        const { blockedFor, success } = auditPrompt(
-          data.prompt,
-          data.negativePrompt,
-          checkProfanity
-        );
-        if (!success) {
-          let message = `Blocked for: ${blockedFor.join(', ')}`;
-          const count = blockedRequest.increment();
-          const status = blockedRequest.status();
-          if (status === 'warned') {
-            message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-          } else if (status === 'notified') {
-            message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-          }
-
-          ctx.addIssue({
-            code: 'custom',
-            message,
-            params: { count },
-            path: ['prompt'],
-          });
-        }
-      }
+      // Note: Prompt auditing is now handled server-side in the generation endpoints
+      // This allows for proper allowMatureContent logic and centralized violation tracking
 
       if (data.workflow.startsWith('img2img') && !data.sourceImage) {
         ctx.addIssue({
@@ -154,36 +129,6 @@ function createFormSchema(domainColor: string) {
       }
     });
 }
-export const blockedRequest = (() => {
-  let instances: number[] = [];
-  const updateStorage = () => {
-    localStorage.setItem('brc', JSON.stringify(instances));
-  };
-  const increment = () => {
-    instances.push(Date.now());
-    updateStorage();
-    return instances.length;
-  };
-  const status = () => {
-    const count = instances.length;
-    if (count > constants.imageGeneration.requestBlocking.muted) return 'muted';
-    if (count > constants.imageGeneration.requestBlocking.notified) return 'notified';
-    if (count > constants.imageGeneration.requestBlocking.warned) return 'warned';
-    return 'ok';
-  };
-  if (typeof window !== 'undefined') {
-    const storedInstances = JSON.parse(localStorage.getItem('brc') ?? '[]');
-    const cutOff = Date.now() - 1000 * 60 * 60 * 24;
-    instances = storedInstances.filter((x: number) => x > cutOff);
-    updateStorage();
-  }
-
-  return {
-    status,
-    increment,
-  };
-})();
-
 // #endregion
 
 // #region [data formatter]

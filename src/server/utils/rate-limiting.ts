@@ -53,12 +53,17 @@ export function createLimiter({
   }
 
   async function increment(userKey: string, by = 1) {
-    let count = await getCount(userKey);
-    if (count === undefined) count = await populateCount(userKey);
-    await redis.incrBy(`${counterKey}:${userKey}`, by);
+    // Ensure key exists before incrementing
+    const exists = await redis.exists(`${counterKey}:${userKey}`);
+    if (!exists) await populateCount(userKey);
 
+    // Increment and get new count
+    const newCount = await redis.incrBy(`${counterKey}:${userKey}`, by);
+
+    // Check if limit exceeded and set limit hit time
     const limit = await getLimit(userKey);
-    if (limit !== 0 && count && count + by > limit) await setLimitHitTime(userKey);
+    if (limit !== 0 && newCount > limit) await setLimitHitTime(userKey);
+    return newCount;
   }
 
   async function getLimitHitTime(userKey: string) {

@@ -312,37 +312,32 @@ export function GenerationFormContent() {
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
-      try {
-        const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
-        setSubmitError(undefined);
-        await mutateAsync({
-          resources,
-          params: {
-            ...params,
-            // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            disablePoi: browsingSettingsAddons.settings.disablePoi,
-            experimental: data.experimental,
-          },
-          tips,
-          remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
-        }).catch((error: any) => {
-          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
-        });
 
-        if (hasEarlyAccess) {
-          invalidateWhatIf();
-        }
-      } catch (e) {
-        const error = e as Error;
-        if (error.message.startsWith('Your prompt was flagged')) {
-          setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
-          currentUser?.refresh();
-        }
-
-        if (error.message.includes('POI')) {
+      const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
+      setSubmitError(undefined);
+      await mutateAsync({
+        resources,
+        params: {
+          ...params,
+          // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+          disablePoi: browsingSettingsAddons.settings.disablePoi,
+          experimental: data.experimental,
+        },
+        tips,
+        remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+      }).catch((error: any) => {
+        if (
+          allowMatureContent &&
+          (error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI'))
+        ) {
           setPromptWarning(error.message);
           currentUser?.refresh();
-        }
+        } else
+          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
+      });
+
+      if (hasEarlyAccess) {
+        invalidateWhatIf();
       }
     }
 
@@ -353,25 +348,6 @@ export function GenerationFormContent() {
       setFilters({ marker: undefined });
     }
   }
-
-  const { mutateAsync: reportProhibitedRequest } =
-    trpc.orchestrator.reportProhibitedRequest.useMutation();
-  const handleError = async (e: unknown) => {
-    const promptError = (e as any)?.prompt as any;
-    if (promptError?.type === 'custom' && promptError.message.startsWith('Blocked for')) {
-      const status = blockedRequest.status();
-      setPromptWarning(promptError.message);
-      if (status === 'notified' || status === 'muted') {
-        const { prompt, negativePrompt } = form.getValues();
-        if (allowMatureContent) {
-          const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
-          if (isBlocked) currentUser?.refresh();
-        }
-      }
-    } else {
-      setPromptWarning(null);
-    }
-  };
 
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
@@ -480,7 +456,6 @@ export function GenerationFormContent() {
       <GenForm
         form={form}
         onSubmit={handleSubmit}
-        onError={handleError}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
         <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
@@ -1523,7 +1498,7 @@ export function GenerationFormContent() {
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
-                        <Text>{promptWarning}</Text>
+                        <Text className="whitespace-pre-wrap ">{promptWarning}</Text>
                         <Button
                           color="red"
                           variant="light"
@@ -1600,7 +1575,7 @@ export function GenerationFormContent() {
                               icon={<IconX size={18} />}
                               color="red"
                               onClose={() => setSubmitError(undefined)}
-                              className="rounded-md bg-red-8/20"
+                              className="whitespace-pre-wrap rounded-md bg-red-8/20"
                             >
                               {submitError}
                             </Notification>

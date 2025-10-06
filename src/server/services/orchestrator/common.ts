@@ -20,8 +20,6 @@ import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
 import { env } from '~/env/server';
-import { extModeration } from '~/server/integrations/moderation';
-import { logToAxiom } from '~/server/logging/client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -303,19 +301,8 @@ export async function parseGenerateImageInput({
   params = sanitizeTextToImageParams(params, limits);
   // #endregion
 
-  // handle moderate prompt
-  if (!whatIf) {
-    const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
-      logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-      return { flagged: false, categories: [] as string[] };
-    });
-
-    if (moderationResult.flagged) {
-      throw throwBadRequestError(
-        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-      );
-    }
-  }
+  // Note: Prompt auditing (including external moderation) is now handled at the service layer
+  // (in createTextToImage, createComfy, createImageGen, and generate functions)
 
   // Disable nsfw if the prompt contains poi/minor words
   const hasPoi = includesPoi(params.prompt) || hasPoiResource;
