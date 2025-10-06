@@ -193,9 +193,13 @@ export const orchestratorRouter = router({
       }
 
       const group = getBaseModelGroup(input.params.baseModel);
-      const experimental = EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group)
-        ? input.params.experimental
-        : ctx.experimental;
+      if (
+        EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group) &&
+        !input.params.enhancedCompatibility
+      ) {
+        input.params.engine = 'comfyui';
+      }
+      const experimental = true; // ctx.experimental;
 
       const args = {
         ...input,
@@ -212,7 +216,8 @@ export const orchestratorRouter = router({
       //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
       // }
       // TODO - handle createImageGen
-      if (input.params.engine && input.params.engine !== 'flux-pro-raw') {
+      const engine = input.params.engine;
+      if (engine && !['flux-pro-raw', 'comfyui'].includes(engine)) {
         return await createImageGen(args);
       } else if (input.params.workflow === 'txt2img') {
         return await createTextToImage({ ...args });
