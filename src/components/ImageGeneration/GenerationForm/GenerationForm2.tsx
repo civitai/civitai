@@ -54,7 +54,6 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { InputExperimentalMode } from '~/components/ImageGeneration/GenerationForm/ExperimentalModeCard';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
@@ -107,6 +106,7 @@ import {
   getIsFluxKrea,
   getIsQwen,
   getIsChroma,
+  EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -141,6 +141,7 @@ import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerat
 import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
+  getBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
 import { getIsNanoBanana } from '~/shared/orchestrator/ImageGen/gemini.config';
 import {
@@ -318,7 +319,7 @@ export function GenerationFormContent() {
           ...params,
           // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
           disablePoi: browsingSettingsAddons.settings.disablePoi,
-          experimental: data.experimental,
+          experimental: data.enhancedCompatibility,
         },
         tips,
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -826,12 +827,6 @@ export function GenerationFormContent() {
                       );
                     }}
                   </Watch>
-
-                  <InputExperimentalMode
-                    name="experimental"
-                    baseModel={baseModel}
-                    workflow={workflow}
-                  />
 
                   {enableImageInput && (
                     <InputSourceImageUpload
@@ -1463,6 +1458,25 @@ export function GenerationFormContent() {
                                 }}
                               />
                             )}
+                            {getBaseModelGroup(baseModel) &&
+                              EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
+                                getBaseModelGroup(baseModel)!
+                              ) && (
+                                <InputSwitch
+                                  name="enhancedCompatibility"
+                                  labelPosition="left"
+                                  label={
+                                    <div className="relative flex items-center gap-1">
+                                      <Input.Label>Enhanced Compatibility</Input.Label>
+                                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                                        Increases compatibility with a wider range of resources by
+                                        using an alternative generation engine. This may result in
+                                        slightly different outputs.
+                                      </InfoPopover>
+                                    </div>
+                                  }
+                                />
+                              )}
                           </div>
                           {/* <Text variant="link" onClick={() => {
                           const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};
