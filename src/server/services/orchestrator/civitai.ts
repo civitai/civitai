@@ -8,6 +8,6 @@ export async function invalidateCivitaiUser({ userId }: { userId: number | strin
 
   const client = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN!);
   await client.delete({
-    url: `/v2/consumers/civitai/${userId}`,
+    url: `/v2/consumer/civitai/${userId}`,
   });
 }
