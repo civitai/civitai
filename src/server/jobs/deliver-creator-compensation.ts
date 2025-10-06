@@ -5,21 +5,17 @@ import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
 import dayjs from 'dayjs';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
-const IMAGE_CREATOR_COMP = 0.25;
-const VIDEO_CREATOR_COMP = 0.1;
-const BASE_MODEL_COMP = 0.25;
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
   '15 * * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
   async () => {
     if (!clickhouse) return;
-
 
     // If it's a new day, we need to run the compensation payout job
     const [lastPayout, setLastPayout] = await getJobDate(
@@ -27,69 +23,18 @@ export const updateCreatorResourceCompensation = createJob(
       new Date()
     );
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
-    // If we're preping for payout, we need to grab the last numbers for yesterday.
-    const subtractDays = shouldPayout ? 1 : 0;
-    const addDays = 1;
-
-    await clickhouse.$query`
-      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count, final)
-      SELECT
-        toStartOfDay(createdAt) as date,
-        modelVersionId,
-        FLOOR(SUM(comp)) as comp,
-        FLOOR(SUM(tip)) AS tip,
-        comp + tip as total,
-        count(*) as count,
-        date < toStartOfDay(now()) as final
-      FROM (
-        SELECT
-        modelVersionId,
-        createdAt,
-        max(jobCost) * (if(isVideo, ${VIDEO_CREATOR_COMP}, ${IMAGE_CREATOR_COMP})) as creator_comp,
-        max(creatorsTip) as full_tip,
-        max(resource_count) as resource_count,
-        creator_comp * if(max(isBaseModel) = 1, ${BASE_MODEL_COMP}, 0) as base_model_comp,
-        creator_comp * ${1 - BASE_MODEL_COMP} / resource_count as resource_comp,
-        base_model_comp + resource_comp as comp,
-        full_tip / resource_count as tip,
-        comp + tip as total
-        FROM (
-          SELECT
-            rj.modelVersionId as modelVersionId,
-            rj.resource_count as resource_count,
-            rj.createdAt as createdAt,
-            rj.jobCost as jobCost,
-            rj.jobId as jobId,
-            rj.creatorsTip as creatorsTip,
-            m.type = 'Checkpoint' as isBaseModel,
-            rj.isVideo as isVideo
-          FROM (
-            SELECT
-              arrayJoin(resourcesUsed) AS modelVersionId,
-              length(arrayFilter(x -> NOT x IN (250708, 250712, 106916), resourcesUsed)) as resource_count,
-              createdAt,
-              cost as jobCost,
-              jobId,
-              creatorsTip,
-              jobType = 'comfyVideoGen' as isVideo
-            FROM orchestration.jobs
-            WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
-              AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays})) AND toStartOfDay(addDays(now(),${addDays}))
-              AND modelVersionId NOT IN (250708, 250712, 106916)
-          ) rj
-          JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
-          JOIN civitai_pg.Model m ON m.id = mv.modelId
-        ) resource_job_details
-        GROUP BY modelVersionId, jobId, createdAt, isVideo
-      ) resource_job_values
-      GROUP BY date, modelVersionId
-      HAVING total >= 1
-      ORDER BY total DESC;
-    `;
 
     if (shouldPayout) {
       await runPayout(lastPayout);
       await setLastPayout();
+      try {
+        await clickhouse.$query`
+          INSERT INTO kafka.manual_events VALUES
+            (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
+        `;
+      } catch (error) {
+        console.error('Error queueing compensation update event', error);
+      }
     }
   }
 );
