@@ -176,3 +176,46 @@ export const browsingModeDefaults = {
   blurNsfw: true,
   browsingLevel: publicBrowsingLevelsFlag,
 };
+
+export const browsingLevelReasons = {
+  [NsfwLevel.Blocked]: ['Violates terms of service'],
+  [NsfwLevel.XXX]: [
+    'Sexual intercourse or penetration',
+    'Visible handjob or oral sex',
+    'Explicit breast/genital interaction',
+    'Visible masturbation',
+    'Visible ejaculation or bodily fluids',
+    'BDSM or bondage content',
+    'Tentacle-related sexual content',
+    'Extreme close-ups of stretched orifices',
+  ],
+  [NsfwLevel.X]: [
+    'Exposed genitalia',
+    'Visible genitals through clothing gaps',
+    'Extreme upskirt or crotch focus',
+    'Explicit genital focus, even if partially covered',
+    'Visible erection',
+  ],
+  [NsfwLevel.R]: [
+    'Visible uncovered female nipples or areolas',
+    'Full exposed buttocks',
+    'Adult toys or paraphernalia',
+    'Suggestive lingerie without outer clothing',
+    'Prominent genital outline through clothing',
+    'See-through wet clothing revealing anatomy',
+    'Sexually suggestive poses with clothing',
+  ],
+  [NsfwLevel.PG13]: [
+    'Excessive cleavage display',
+    'Exaggerated sexual body proportions',
+    'Focus on muscular physique with sexual undertones',
+    'Revealing or minimal clothing coverage',
+    'Swimwear or undergarments',
+  ],
+  [NsfwLevel.PG]: [
+    'Fully clothed content',
+    'Above-shoulder portraits',
+    'Safe for work content',
+    'All-ages appropriate content',
+  ],
+};

@@ -4956,6 +4956,7 @@ export async function updateImageNsfwLevel({
   status,
   isModerator,
   activity,
+  reason,
 }: UpdateImageNsfwLevelOutput & {
   userId: number;
   isModerator?: boolean;
@@ -4963,7 +4964,16 @@ export async function updateImageNsfwLevel({
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
-    await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    const image = await dbRead.image.findUnique({ where: { id }, select: { metadata: true } });
+    if (!image) throw throwNotFoundError('Image not found');
+
+    const metadata = (image.metadata as ImageMetadata) ?? undefined;
+    const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
+
+    await dbWrite.image.update({
+      where: { id },
+      data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
+    });
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);

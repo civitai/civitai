@@ -151,6 +151,7 @@ import {
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import { useAppContext } from '~/providers/AppProvider';
 
 let total = 0;
 const tips = {
@@ -160,6 +161,7 @@ const tips = {
 
 // #region [form component]
 export function GenerationFormContent() {
+  const { allowMatureContent } = useAppContext();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const featureFlags = useFeatureFlags();
@@ -361,8 +363,10 @@ export function GenerationFormContent() {
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
         const { prompt, negativePrompt } = form.getValues();
-        const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
-        if (isBlocked) currentUser?.refresh();
+        if (allowMatureContent) {
+          const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
+          if (isBlocked) currentUser?.refresh();
+        }
       }
     } else {
       setPromptWarning(null);
@@ -1678,6 +1682,7 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
+  const { allowMatureContent } = useAppContext();
   const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
