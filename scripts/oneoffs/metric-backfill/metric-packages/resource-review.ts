@@ -1,6 +1,6 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createFilteredIdRangeFetcher } from './base';
 
 type ResourceReviewRow = {
   modelId: number | null;
@@ -12,8 +12,7 @@ type ResourceReviewRow = {
 
 export const resourceReviewPackage: MigrationPackage<ResourceReviewRow> = {
   queryBatchSize: 2000,
-  range: createIdRangeFetcher('ResourceReview', `"createdAt" < '${CUTOFF_DATE}'`),
-
+  range: createFilteredIdRangeFetcher('ResourceReview', 'createdAt', `"createdAt" < '${CUTOFF_DATE}'`),
   query: async ({ pg }, { start, end }) => {
     return pg.query<ResourceReviewRow>(
       `SELECT "modelId", "modelVersionId", "userId", "recommended", "createdAt"
@@ -25,7 +24,6 @@ export const resourceReviewPackage: MigrationPackage<ResourceReviewRow> = {
       [CUTOFF_DATE, start, end]
     );
   },
-
   processor: ({ rows, addMetrics }) => {
     rows.forEach((review) => {
       // Model metrics

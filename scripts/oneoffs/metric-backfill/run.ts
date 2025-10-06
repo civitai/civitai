@@ -7,7 +7,7 @@ import { ProgressTracker, batchInsertClickhouse, CUTOFF_DATE, retryable, pgDb, c
 import * as migrationPackages from './metric-packages';
 
 // Wrapper to provide simplified query interface
-function createQueryContext() {
+function createQueryContext(dryRun: boolean) {
   return {
     pg: {
       query: async <T = any>(sql: string, params?: any[]) => {
@@ -21,6 +21,7 @@ function createQueryContext() {
         return result.json<T>();
       },
     },
+    dryRun,
   };
 }
 
@@ -32,7 +33,7 @@ export async function runMigrations(
   const progressBar = new ProgressTracker();
 
   console.log('Creating query context...');
-  const queryContext = createQueryContext();
+  const queryContext = createQueryContext(params.dryRun ?? false);
 
   // Filter packages if specified
   console.log('Loading migration packages...');
@@ -211,7 +212,9 @@ export async function runMigrations(
         for (let start = rangeStart + (startIndex * queryBatchSize);
              start <= rangeEnd && batchIndex < batchCount;
              start += queryBatchSize, batchIndex++) {
-          const end = Math.min(start + queryBatchSize, rangeEnd);
+          // Use start + queryBatchSize - 1 to avoid overlaps between batches
+          // Batch 1: [0, 999], Batch 2: [1000, 1999], etc.
+          const end = Math.min(start + queryBatchSize - 1, rangeEnd);
           yield {
             batchRange: { start, end },
             actualIndex: startIndex + batchIndex,

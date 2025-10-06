@@ -1,11 +1,11 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage, Reactions } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createFilteredIdRangeFetcher } from './base';
 
 type ImageReactionRow = {
   imageId: number;
   userId: number;
-  reaction: string;
+  reaction: Reactions;
   createdAt: Date;
   imageOwnerId: number;
   postId: number | null;
@@ -13,19 +13,22 @@ type ImageReactionRow = {
 
 export const imageReactionPackage: MigrationPackage<ImageReactionRow> = {
   queryBatchSize: 5000,
-  range: createIdRangeFetcher('ImageReaction', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createFilteredIdRangeFetcher('ImageReaction', 'createdAt', `"createdAt" < '${CUTOFF_DATE}'`, 'imageId'),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<ImageReactionRow>(
-      `SELECT ir."imageId", ir."userId", ir."reaction", ir."createdAt",
-              i."userId" as "imageOwnerId", i."postId"
+      `SELECT
+        ir."imageId",
+        ir."userId",
+        ir."reaction",
+        ir."createdAt",
+        i."userId" as "imageOwnerId",
+        i."postId"
        FROM "ImageReaction" ir
        JOIN "Image" i ON i.id = ir."imageId"
-       WHERE ir."createdAt" < $1
-         AND ir.id >= $2
-         AND ir.id <= $3
-       ORDER BY ir.id`,
-      [CUTOFF_DATE, start, end]
+       WHERE ir.id >= $1
+         AND ir.id <= $2`,
+      [start, end]
     );
   },
 

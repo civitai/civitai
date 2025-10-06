@@ -19,6 +19,7 @@ export type ChQuery = {
 export type QueryContext = {
   pg: PgQuery;
   ch: ChQuery;
+  dryRun: boolean;
 };
 
 export type ProcessorContext<TRow> = {
@@ -26,6 +27,7 @@ export type ProcessorContext<TRow> = {
   ch: ChQuery;
   rows: TRow[];
   addMetrics: (...metrics: (EntityMetricEvent | EntityMetricEvent[])[]) => void;
+  dryRun: boolean;
 };
 
 export type MigrationPackage<TRow = any> = {

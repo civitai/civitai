@@ -5,7 +5,7 @@ import { createClient } from '@clickhouse/client';
 import type { EntityMetricEvent } from './types';
 import { Pool } from 'pg';
 
-export const CUTOFF_DATE = '2024-08-07 15:44:39.044';
+export const CUTOFF_DATE = '2025-08-07 15:44:39.044';
 
 const pgConnString = new URL(env.DATABASE_URL);
 if (env.DATABASE_SSL !== false) pgConnString.searchParams.set('sslmode', 'no-verify');

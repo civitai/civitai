@@ -75,6 +75,34 @@ export function createTimestampPgRangeFetcher(
   };
 }
 
+/**
+ * Helper to create a range fetcher that uses subqueries to find min/max values
+ * from rows matching a filter condition. Useful when you want to ensure the range
+ * only covers rows that match specific criteria (e.g., within a date range).
+ */
+export function createFilteredIdRangeFetcher(
+  tableName: string,
+  orderColumn: string = 'createdAt',
+  whereClause?: string,
+  rangeColumn: string = 'id'
+) {
+  return async ({ pg }: QueryContext): Promise<BatchRange> => {
+    const where = whereClause ? `WHERE ${whereClause}` : '';
+    const result = await pg.query<{ min: number; max: number }>(`
+      SELECT
+        (SELECT "${rangeColumn}" FROM "${tableName}"
+        ${where}
+        ORDER BY "${orderColumn}" ASC
+        LIMIT 1) AS min,
+        (SELECT "${rangeColumn}" FROM "${tableName}"
+        ${where}
+        ORDER BY "${orderColumn}" DESC
+        LIMIT 1) AS max
+    `);
+    return { start: result[0]?.min ?? 0, end: result[0]?.max ?? 0 };
+  };
+}
+
 export const TIME_FETCHER_BATCH = {
   day: 60*60*24,
   week: 60*60*24*7,

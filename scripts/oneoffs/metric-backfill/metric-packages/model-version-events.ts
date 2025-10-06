@@ -1,54 +1,39 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage } from '../types';
 import { CUTOFF_DATE } from '../utils';
 import { createTimestampRangeFetcher } from './base';
 
-type ModelVersionEventRow = {
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  time: Date;
-};
-
-export const modelVersionEventsPackage: MigrationPackage<ModelVersionEventRow> = {
+export const modelVersionEventsPackage: MigrationPackage<any> = {
   queryBatchSize: 86400, // 1 day in seconds
   range: createTimestampRangeFetcher(
     'modelVersionEvents',
     'time',
-    `type = 'Download' AND time < '${CUTOFF_DATE}'`
+    `type = 'Download' AND time < parseDateTimeBestEffort('${CUTOFF_DATE}')`
   ),
 
-  query: async ({ ch }, { start, end }) => {
-    return ch.query<ModelVersionEventRow>(`
-      SELECT modelId, modelVersionId, userId, time
-      FROM modelVersionEvents
-      WHERE type = 'Download'
-        AND time < '${CUTOFF_DATE}'
-        AND toUnixTimestamp(time) >= ${start}
-        AND toUnixTimestamp(time) <= ${end}
-      ORDER BY time
-    `);
+  query: async (_ctx, { start, end }) => {
+    return [{start, end}];
   },
 
-  processor: ({ rows, addMetrics }) => {
-    rows.forEach((row) => {
-      addMetrics(
-        {
-          entityType: 'Model',
-          entityId: row.modelId,
-          userId: row.userId,
-          metricType: 'downloadCount',
-          metricValue: 1,
-          createdAt: row.time,
-        },
-        {
-          entityType: 'ModelVersion',
-          entityId: row.modelVersionId,
-          userId: row.userId,
-          metricType: 'downloadCount',
-          metricValue: 1,
-          createdAt: row.time,
-        }
-      );
-    });
+  processor: async ({ ch, rows, dryRun }) => {
+    const { start, end } = rows[0];
+    const insert = !dryRun ? 'INSERT INTO entityMetricEvents_testing (entityType, entityId, userId, metricType, metricValue, createdAt)' : '';
+    await ch.query(`
+      ${insert}
+      SELECT
+        tupleElement(x, 1) AS entityType,
+        tupleElement(x, 2) AS entityId,
+        userId,
+        'downloadCount' AS metricType,
+        1 AS metricValue,
+        time AS createdAt
+      FROM modelVersionEvents
+      ARRAY JOIN
+        [ tuple('Model', toString(modelId)), tuple('ModelVersion', toString(modelVersionId)) ] AS x
+      WHERE type = 'Download'
+        AND toUnixTimestamp(time) >= ${start}
+        AND toUnixTimestamp(time) <= ${end}
+        AND userId != -1
+        AND CAST(tupleElement(x, 2) AS UInt32) != 0
+    `);
   },
 };

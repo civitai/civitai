@@ -1,62 +1,51 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createTimestampRangeFetcher } from './base';
 
-type OrchestrationJobRow = {
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  createdAt: Date;
-};
+export const orchestrationJobsPackage: MigrationPackage<any> = {
+  queryBatchSize: 60*60, // 1 hour in seconds
+  range: async () => ({
+    start: Math.floor(new Date('2024-08-21 21:53:49.294').getTime() / 1000),
+    end: Math.ceil(new Date(CUTOFF_DATE).getTime() / 1000),
+  }),
 
-export const orchestrationJobsPackage: MigrationPackage<OrchestrationJobRow> = {
-  queryBatchSize: 86400, // 1 day in seconds
-  range: createTimestampRangeFetcher(
-    'orchestration.jobs',
-    'createdAt',
-    `type = 'GenerateImage' AND status = 'Completed' AND createdAt < '${CUTOFF_DATE}'`
-  ),
-
-  query: async ({ ch }, { start, end }) => {
-    return ch.query<OrchestrationJobRow>(`
-      SELECT
-        JSONExtractInt(params, 'modelId') as modelId,
-        JSONExtractInt(params, 'modelVersionId') as modelVersionId,
-        userId,
-        createdAt
-      FROM orchestration.jobs
-      WHERE type = 'GenerateImage'
-        AND status = 'Completed'
-        AND createdAt < '${CUTOFF_DATE}'
-        AND toUnixTimestamp(createdAt) >= ${start}
-        AND toUnixTimestamp(createdAt) <= ${end}
-      ORDER BY createdAt
-    `);
+  query: async (_ctx, { start, end }) => {
+    return [{start, end}];
   },
 
-  processor: ({ rows, addMetrics }) => {
-    rows.forEach((row) => {
-      // Only add metrics if we have valid model IDs
-      if (row.modelId && row.modelVersionId) {
-        addMetrics(
-          {
-            entityType: 'Model',
-            entityId: row.modelId,
-            userId: row.userId,
-            metricType: 'generationCount',
-            metricValue: 1,
-            createdAt: row.createdAt,
-          },
-          {
-            entityType: 'ModelVersion',
-            entityId: row.modelVersionId,
-            userId: row.userId,
-            metricType: 'generationCount',
-            metricValue: 1,
-            createdAt: row.createdAt,
-          }
-        );
-      }
-    });
+  processor: async ({ ch, rows, dryRun }) => {
+    const { start, end } = rows[0];
+    const insert = !dryRun ? 'INSERT INTO entityMetricEvents_testing (entityType, entityId, userId, metricType, metricValue, createdAt)' : '';
+    await ch.query(`
+      ${insert}
+      SELECT
+        tupleElement(x, 1) AS entityType,
+        tupleElement(x, 2) AS entityId,
+        userId,
+        'generationCount' AS metricType,
+        metricValue,
+        createdAt
+      FROM (
+        SELECT
+          mv.modelId,
+          t.modelVersionId,
+          t.metricValue,
+          t.userId,
+          t.createdAt
+        FROM (
+          SELECT
+            arrayJoin(resourcesUsed) AS modelVersionId,
+            createdAt,
+            if(blobsCount = 0, 1, blobsCount) AS metricValue,
+            userId
+          FROM orchestration.jobs
+          WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'comfyVideoGen')
+            AND createdAt >= toDateTime(${start}) AND createdAt <= toDateTime(${end})
+            AND modelVersionId NOT IN (250708, 250712, 106916)
+        ) t
+        INNER JOIN civitai_pg.ModelVersion mv ON mv.id = t.modelVersionId
+      ) j
+      ARRAY JOIN
+        [ tuple('Model', toString(j.modelId)), tuple('ModelVersion', toString(j.modelVersionId)) ] AS x
+    `);
   },
 };

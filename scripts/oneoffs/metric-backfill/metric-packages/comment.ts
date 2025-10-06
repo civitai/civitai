@@ -1,6 +1,6 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createFilteredIdRangeFetcher, createIdRangeFetcher } from './base';
 
 type CommentRow = {
   modelId: number;
@@ -10,18 +10,17 @@ type CommentRow = {
 
 export const commentPackage: MigrationPackage<CommentRow> = {
   queryBatchSize: 5000,
-  range: createIdRangeFetcher('Comment', `"modelId" IS NOT NULL AND "createdAt" < '${CUTOFF_DATE}'`),
+  range: createFilteredIdRangeFetcher('Comment', 'createdAt', `"modelId" IS NOT NULL AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<CommentRow>(
       `SELECT "modelId", "userId", "createdAt"
        FROM "Comment"
        WHERE "modelId" IS NOT NULL
-         AND "createdAt" < $1
-         AND id >= $2
-         AND id <= $3
+         AND id >= $1
+         AND id <= $2
        ORDER BY id`,
-      [CUTOFF_DATE, start, end]
+      [start, end]
     );
   },
 

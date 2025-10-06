@@ -1,6 +1,6 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
+import type { MigrationPackage, EntityMetricEvent, QueryContext, BatchRange } from '../types';
 import { CUTOFF_DATE } from '../utils';
-import { createIdRangeFetcher } from './base';
+import { createColumnRangeFetcher, createIdRangeFetcher } from './base';
 
 type ImageResourceRow = {
   modelId: number;
@@ -11,20 +11,31 @@ type ImageResourceRow = {
 
 export const imageResourcePackage: MigrationPackage<ImageResourceRow> = {
   queryBatchSize: 5000,
-  range: createIdRangeFetcher('ImageResourceNew', `EXISTS (SELECT 1 FROM "Image" i WHERE i.id = "ImageResourceNew"."imageId" AND i."createdAt" < '${CUTOFF_DATE}')`),
+  range: async (ctx: QueryContext): Promise<BatchRange> => {
+    const { pg } = ctx;
+    const lastImageId = await pg.query<{ id: number }>(`
+      SELECT id
+      FROM "Image"
+      WHERE "createdAt" < $1
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    `, [CUTOFF_DATE]);
+    return createColumnRangeFetcher('ImageResourceNew', 'imageId', `"imageId" <= ${lastImageId[0]?.id || 0}`)(ctx);
+  },
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<ImageResourceRow>(
-      `SELECT mv."modelId", ir."modelVersionId",
-              i."userId" as "imageUserId", i."createdAt" as "imageCreatedAt"
+      `SELECT
+          mv."modelId",
+          ir."modelVersionId",
+          i."userId" as "imageUserId",
+          i."createdAt" as "imageCreatedAt"
        FROM "ImageResourceNew" ir
        JOIN "Image" i ON i.id = ir."imageId"
        JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-       WHERE i."createdAt" < $1
-         AND ir.id >= $2
-         AND ir.id <= $3
-       ORDER BY ir.id`,
-      [CUTOFF_DATE, start, end]
+       WHERE ir."imageId" >= $1
+         AND ir."imageId" <= $2`,
+      [start, end]
     );
   },
 
