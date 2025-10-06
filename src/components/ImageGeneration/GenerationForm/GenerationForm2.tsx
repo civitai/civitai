@@ -48,10 +48,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import {
-  blockedRequest,
-  useGenerationForm,
-} from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
