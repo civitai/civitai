@@ -658,6 +658,14 @@ export const qwenSizes = [
   { label: '9:16', width: 928, height: 1664 },
 ];
 
+export const ponyV7Sizes = [
+  { label: '3:2', width: 1536, height: 1024 },
+  { label: '6:5', width: 1536, height: 1280 },
+  { label: '1:1', width: 1536, height: 1536 },
+  { label: '5:6', width: 1280, height: 1536 },
+  { label: '2:3', width: 1024, height: 1536 },
+];
+
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -721,7 +729,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   PonyV7: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: ponyV7Sizes,
     checkpoint: {
       id: 2152373,
       name: 'v7.0',
