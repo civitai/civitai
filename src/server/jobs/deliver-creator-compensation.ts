@@ -4,8 +4,9 @@ import { dbRead } from '~/server/db/client';
 import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
-import dayjs from '~/shared/utils/dayjs';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import dayjs from 'dayjs';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -18,6 +19,7 @@ export const updateCreatorResourceCompensation = createJob(
   '15 * * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
   async () => {
     if (!clickhouse) return;
+
 
     // If it's a new day, we need to run the compensation payout job
     const [lastPayout, setLastPayout] = await getJobDate(
@@ -93,10 +95,11 @@ export const updateCreatorResourceCompensation = createJob(
 );
 
 type UserVersions = { userId: number; modelVersionIds: number[] };
-type Compensation = { modelVersionId: number; comp: number; tip: number };
+type Compensation = { modelVersionId: number; amount: number; accountType: BuzzAccountType };
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
+
 export async function runPayout(lastUpdate: Date) {
   if (!clickhouse) return;
   if (lastUpdate < COMP_START_DATE) return;
@@ -105,11 +108,12 @@ export async function runPayout(lastUpdate: Date) {
   const compensations = await clickhouse.$query<Compensation>`
     SELECT
       modelVersionId,
-      MAX(comp) as comp,
-      MAX(tip) as tip
-    FROM buzz_resource_compensation FINAL
-    WHERE date = ${date} AND final
-    GROUP BY modelVersionId;
+	    accountType,
+	    MAX(FLOOR(amount))::int AS amount
+    FROM orchestration.resourceCompensations
+    WHERE date = ${date}
+    GROUP BY modelVersionId, accountType 
+    HAVING amount > 0;
   `;
   if (!compensations.length) return;
 
@@ -141,35 +145,37 @@ export async function runPayout(lastUpdate: Date) {
   }
   if (isEmpty(creatorsToPay)) return;
 
+  // Compensations and transactions are now one and the same.
   const compensationTransactions = Object.entries(creatorsToPay)
-    .map(([userId, compensations]) => ({
-      fromAccountId: 0,
-      toAccountId: Number(userId),
-      amount: compensations.reduce((acc, c) => acc + c.comp, 0),
-      description: `Generation creator compensation (${formatDate(date)})`,
-      type: TransactionType.Compensation,
-      externalTransactionId: `creator-comp-${formatDate(date, 'YYYY-MM-DD')}-${userId}`,
-    }))
-    .filter((comp) => comp.amount > 0);
+    .flatMap(([userId, compensations]) => {
+      const groupedCompensations = compensations.reduce<Partial<Record<BuzzAccountType, number>>>(
+        (acc, c) => {
+          acc[c.accountType] = (acc[c.accountType] || 0) + c.amount;
+          return acc;
+        },
+        {}
+      );
 
-  const tipTransactions = Object.entries(creatorsToPay)
-    .map(([userId, compensations]) => ({
-      fromAccountId: 0,
-      toAccountId: Number(userId),
-      amount: compensations.reduce((acc, c) => acc + c.tip, 0),
-      description: `Generation tips (${formatDate(date)})`,
-      type: TransactionType.Tip,
-      externalTransactionId: `creator-tip-${formatDate(date, 'YYYY-MM-DD')}-${userId}`,
-    }))
-    .filter((tip) => tip.amount > 0);
+      return Object.entries(groupedCompensations).map(([accountType, amount]) => ({
+        fromAccountId: 0,
+        toAccountId: Number(userId),
+        toAccountType: accountType as BuzzAccountType,
+        amount,
+        description: `Creator tip compensation (${formatDate(date)})`,
+        type: TransactionType.Compensation,
+        externalTransactionId: `creator-tip-comp-${formatDate(
+          date,
+          'YYYY-MM-DD'
+        )}-${userId}-${accountType}`,
+      }));
+    })
+    .filter((transaction) => transaction.amount > 0);
 
   const tasks = [
     ...chunk(compensationTransactions, BATCH_SIZE).map((batch) => async () => {
       await withRetries(() => createBuzzTransactionMany(batch), 1);
     }),
-    ...chunk(tipTransactions, BATCH_SIZE).map((batch) => async () => {
-      await withRetries(() => createBuzzTransactionMany(batch), 1);
-    }),
   ];
+
   await limitConcurrency(tasks, 2);
 }
