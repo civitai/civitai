@@ -16,12 +16,7 @@ import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const limitsData = [
-  { value: '10', label: '10 items' },
-  { value: '25', label: '25 items' },
-  { value: '50', label: '50 items' },
-  { value: '100', label: '100 items' },
-];
+const limitsData = [10, 25, 50, 100].map((num) => ({ value: String(num), label: `${num} items` }));
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');
