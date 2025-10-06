@@ -98,7 +98,7 @@ function ImageRatingCard(
     },
   });
 
-  const handleSetLevel = (level: number) => {
+  const handleSetLevel = (level: NsfwLevel) => {
     if (requireReason) {
       openSetBrowsingLevelModal({
         imageId: imageItem.id,
