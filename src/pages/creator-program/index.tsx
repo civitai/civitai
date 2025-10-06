@@ -84,6 +84,7 @@ function CreatorsClubV1() {
   const availability = getCreatorProgramAvailability();
   const [mainBuzzColor] = useAvailableBuzz();
   const { classNames, colorRgb } = useBuzzCurrencyConfig(mainBuzzColor);
+  const isGreenTemporarilyDisabled = mainBuzzColor === 'green';
 
   return (
     <>
@@ -140,9 +141,9 @@ function CreatorsClubV1() {
             </Grid.Col>
           </Grid>
           <HowItWorksSection />
-          <FunStatsSection />
+          {!isGreenTemporarilyDisabled && <FunStatsSection />}
           <JoinSection applyFormUrl={applyFormUrl} />
-          <CreatorCapsSection />
+          {!isGreenTemporarilyDisabled && <CreatorCapsSection />}
           <FAQ />
         </Stack>
       </Container>
@@ -410,6 +411,53 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
     OnboardingSteps.BannedCreatorProgram
   );
   const isJoined = Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram);
+  const isGreenTemporarilyDisabled = mainBuzzType === 'green';
+  const { colorRgb: greenColorRgb, color: greenColor } = useBuzzCurrencyConfig('green');
+
+  if (isGreenTemporarilyDisabled) {
+    return (
+      <Stack className={classes.section}>
+        <Stack gap={0} mb="sm">
+          <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+            Coming Soon to Civitai Green!
+          </Title>
+        </Stack>
+        <Paper
+          withBorder
+          className={clsx(classes.card, classes.highlightCard)}
+          style={{
+            // @ts-ignore
+            '--buzz-color': greenColorRgb,
+          }}
+        >
+          <Stack align="center" gap="xl" py="xl">
+            <Group gap={0}>
+              <IconBolt style={{ fill: greenColor }} color={greenColor} size={48} />
+              <IconBolt style={{ fill: greenColor }} color={greenColor} size={72} />
+              <IconBolt style={{ fill: greenColor }} color={greenColor} size={48} />
+            </Group>
+            <Stack gap="md" align="center" maw={600}>
+              <Title order={2} c="white" ta="center">
+                <span className="text-buzz">Green</span> Creator Program Returns in November!
+              </Title>
+              <Text size="lg" c="white" ta="center">
+                We&apos;re excited to start the <span className="text-buzz">Green</span> Creator
+                Program! Turn your <span className="text-buzz">Green</span> Buzz into real earnings
+                by banking your Buzz and claiming your share of the monthly compensation pool.
+              </Text>
+              <Text size="md" c="white" ta="center" fw={500}>
+                In the meantime, you can still earn and use <span className="text-buzz">Green</span>{' '}
+                Buzz for other activities on the platform. Stay tuned for the November launch!
+              </Text>
+            </Stack>
+            <Button size="xl" variant="white" disabled>
+              Launching in November
+            </Button>
+          </Stack>
+        </Paper>
+      </Stack>
+    );
+  }
 
   return (
     <Stack className={classes.section}>

@@ -218,7 +218,7 @@ export function MembershipPlans({
               </Text>
             </AlertWithIcon>
           )}
-          {(features.annualMemberships || interval === 'year') && (
+          {((features.annualMemberships && !features.isGreen) || interval === 'year') && (
             <Center>
               <SegmentedControl
                 radius="md"
