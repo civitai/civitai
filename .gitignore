@@ -72,6 +72,7 @@ trace/types.json
 # Local files
 /src/local
 .todo
+/analyze
 
 # Playwright
 /test-results/
@@ -80,3 +81,7 @@ trace/types.json
 /playwright/.cache/
 /tests/auth/*.json
 src/pages/api/dev-local/*
+/.playwright-mcp/
+
+# LLM
+/.serena/

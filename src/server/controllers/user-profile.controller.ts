@@ -42,6 +42,7 @@ export const getUserProfileHandler = async ({
     const user = await getUserWithProfile({
       username: input.username,
       isModerator: ctx.user?.isModerator,
+      sessionUserId: ctx.user?.id,
     });
 
     if (ctx.user && !ctx.user.isModerator) {

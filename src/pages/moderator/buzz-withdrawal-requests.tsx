@@ -33,7 +33,7 @@ import {
   IconInfoTriangleFilled,
   IconX,
 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
 import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
@@ -55,14 +55,11 @@ import {
   Currency,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
+import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
-import {
-  formatCurrencyForDisplay,
-  getBuzzWithdrawalDetails,
-  numberWithCommas,
-} from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 

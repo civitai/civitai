@@ -24,6 +24,7 @@ import type {
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
+  GetUserListSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
   SetLeaderboardEligibilitySchema,
@@ -58,7 +59,11 @@ import {
   deleteCustomerPaymentMethod,
   getCustomerPaymentMethods,
 } from '~/server/services/stripe.service';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import {
   claimCosmetic,
   createUserReferral,
@@ -74,6 +79,7 @@ import {
   getUserDownloads,
   getUserEngagedModels,
   getUserEngagedModelVersions,
+  getUserList,
   getUserPurchasedRewards,
   getUsers,
   getUserSettings,
@@ -107,18 +113,18 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
-import { CosmeticType, ModelEngagementType } from '~/shared/utils/prisma/enums';
+import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { verifyCaptchaToken } from '../recaptcha/client';
-import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import type { FeatureAccess } from '../services/feature-flags.service';
 import { toggleableFeatures } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -275,14 +281,23 @@ export const completeOnboardingHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { domain } = ctx;
     const { id } = ctx.user;
     const onboarding = Flags.addFlag(ctx.user.onboarding, input.step);
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
       case OnboardingSteps.TOS:
+        const now = new Date();
+        await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        await setUserSetting(
+          id,
+          domain === 'green' ? { tosGreenLastSeenDate: now } : { tosLastSeenDate: now }
+        );
+        break;
       case OnboardingSteps.RedTOS: {
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        await setUserSetting(id, { tosRedLastSeenDate: new Date() });
         break;
       }
       case OnboardingSteps.Profile: {
@@ -328,7 +343,7 @@ export const completeOnboardingHandler = async ({
             description: 'Onboarding bonus',
             type: TransactionType.Reward,
             externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
-            toAccountType: 'generation',
+            toAccountType: 'blue',
           })
         ).catch(handleLogError);
         break;
@@ -620,55 +635,49 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
   try {
     const { username } = input;
 
-    const user = await getUserByUsername({ username, select: { id: true, createdAt: true } });
+    const user = await getUserByUsername({ username, select: { id: true } });
     if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
     const filteredUsers = [-1, user.id]; // Exclude civitai user and the user themselves
 
-    const [userFollowing, userFollowers, userHidden, userBlocked] = await Promise.all([
-      getUserByUsername({
-        username,
-        select: {
-          _count: { select: { engagingUsers: { where: { type: 'Follow' } } } },
-          engagingUsers: {
-            select: { targetUser: { select: simpleUserSelect } },
-            where: { type: 'Follow', targetUserId: { notIn: filteredUsers } },
-          },
+    const [followingCount, followersCount] = await dbRead.$transaction([
+      dbRead.userEngagement.count({
+        where: {
+          userId: user.id,
+          type: UserEngagementType.Follow,
+          targetUserId: { notIn: filteredUsers },
         },
       }),
-      getUserByUsername({
-        username,
-        select: {
-          _count: { select: { engagedUsers: { where: { type: 'Follow' } } } },
-          engagedUsers: {
-            select: { user: { select: simpleUserSelect } },
-            where: { type: 'Follow', userId: { notIn: filteredUsers } },
-          },
+      dbRead.userEngagement.count({
+        where: {
+          targetUserId: user.id,
+          type: UserEngagementType.Follow,
+          userId: { notIn: filteredUsers },
         },
       }),
-      getUserByUsername({
-        username,
-        select: {
-          _count: { select: { engagingUsers: { where: { type: 'Hide' } } } },
-          engagingUsers: {
-            select: { targetUser: { select: simpleUserSelect } },
-            where: { type: 'Hide', targetUserId: { notIn: filteredUsers } },
-          },
-        },
-      }),
+    ]);
+
+    // Get blocked users separately since it uses cache
+    const [hiddenUsers, blockedUsers] = await Promise.all([
+      HiddenUsers.getCached({ userId: user.id }),
       BlockedUsers.getCached({ userId: user.id }),
     ]);
 
     return {
-      following: userFollowing?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
-      followingCount: userFollowing?._count.engagingUsers ?? 0,
-      followers: userFollowers?.engagedUsers.map(({ user }) => user) ?? [],
-      followersCount: userFollowers?._count.engagedUsers ?? 0,
-      hidden: userHidden?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
-      hiddenCount: userHidden?._count.engagingUsers ?? 0,
-      blocked: userBlocked ?? [],
-      blockedCount: userBlocked?.length ?? 0,
+      followingCount,
+      followersCount,
+      hiddenCount: hiddenUsers.length,
+      blockedCount: blockedUsers.length,
     };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getUserListHandler = async ({ input }: { input: GetUserListSchema }) => {
+  try {
+    return await getUserList(input);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

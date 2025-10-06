@@ -1,5 +1,5 @@
-import dayjs from 'dayjs';
-import * as z from 'zod/v4';
+import dayjs from '~/shared/utils/dayjs';
+import * as z from 'zod';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
@@ -10,7 +10,7 @@ export type GetImagesQueueSchema = z.input<typeof getImagesQueueSchema>;
 export const getImagesQueueSchema = z.object({
   // TODO: add playerId to the schema
   imageCount: z.number().optional().default(20),
-  queueType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
+  queueType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
 });
 
 export type GetPlayersInfiniteSchema = z.infer<typeof getPlayersInfiniteSchema>;
@@ -36,8 +36,8 @@ export const cleanseSmiteSchema = z.object({
 export type AddImageRatingInput = z.infer<typeof addImageRatingSchema>;
 export const addImageRatingSchema = z.object({
   imageId: z.number(),
-  rating: z.nativeEnum(NsfwLevel),
-  damnedReason: z.nativeEnum(NewOrderDamnedReason).optional(),
+  rating: z.enum(NsfwLevel),
+  damnedReason: z.enum(NewOrderDamnedReason).optional(),
 });
 
 const transformStatus = {

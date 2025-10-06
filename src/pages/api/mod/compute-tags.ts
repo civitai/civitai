@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
 import { TagSource } from '~/shared/utils/prisma/enums';

@@ -1,5 +1,5 @@
 import { CacheTTL } from '~/server/common/constants';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { applyRequestDomainColor, edgeCacheIt } from '~/server/middleware.trpc';
 import {
   createChangelogInput,
   deleteChangelogInput,
@@ -19,7 +19,13 @@ import { isFlagProtected, moderatorProcedure, publicProcedure, router } from '~/
 export const changelogRouter = router({
   getInfinite: publicProcedure
     .input(getChangelogsInput)
-    .query(({ input, ctx }) => getChangelogs({ ...input, hasFeature: ctx.features.changelogEdit })),
+    .use(applyRequestDomainColor)
+    .query(({ input, ctx }) =>
+      getChangelogs({
+        ...input,
+        hasFeature: ctx.features.changelogEdit,
+      })
+    ),
   create: moderatorProcedure
     .input(createChangelogInput)
     .use(isFlagProtected('changelogEdit'))
@@ -32,8 +38,13 @@ export const changelogRouter = router({
     .input(deleteChangelogInput)
     .use(isFlagProtected('changelogEdit'))
     .mutation(({ input }) => deleteChangelog(input)),
-  getAllTags: publicProcedure.query(() => getAllTags()),
+  getAllTags: publicProcedure
+    .input(getChangelogsInput.pick({ domain: true }).optional())
+    .use(applyRequestDomainColor)
+    .query(({ input }) => getAllTags(input)),
   getLatest: publicProcedure
+    .input(getChangelogsInput.pick({ domain: true }).optional())
+    .use(applyRequestDomainColor)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(() => getLatestChangelog()),
+    .query(({ input }) => getLatestChangelog(input)),
 });

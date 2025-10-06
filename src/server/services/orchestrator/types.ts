@@ -6,7 +6,17 @@ import type {
 } from '@civitai/client';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 
-export * from './comfy/comfy.types';
+export type {
+  WorkflowDefinitionType,
+  WorkflowDefinitionKey,
+  WorkflowDefinition,
+} from './comfy/comfy.types';
+
+export {
+  workflowDefinitionLabel,
+  workflowDefinitionFeatures,
+  workflowDefinitions,
+} from './comfy/comfy.types';
 
 export type GenerationWhatIfResponse = {
   cost?: WorkflowCost;

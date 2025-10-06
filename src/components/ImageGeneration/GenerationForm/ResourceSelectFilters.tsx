@@ -1,6 +1,5 @@
 import type { ChipProps } from '@mantine/core';
 import {
-  ActionIcon,
   Button,
   Chip,
   Divider,
@@ -11,7 +10,6 @@ import {
   ScrollArea,
   Stack,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
@@ -28,11 +26,10 @@ import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BaseModel } from '~/server/common/constants';
-import { activeBaseModels } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { sortByModelTypes } from '~/utils/array-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import classes from './ResourceSelectFilters.module.scss';
 import clsx from 'clsx';
@@ -46,7 +43,6 @@ export function ResourceSelectFiltersDropdown() {
     filters: selectFilters,
     setFilters: setSelectFilters,
   } = useResourceSelectContext();
-  const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();

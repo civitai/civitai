@@ -3,7 +3,7 @@ import { Alert, Anchor, Badge, Button, Text, ThemeIcon, Title, Tooltip } from '@
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -24,10 +24,28 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-import { Flags } from '~/shared/utils';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { isValidAIGeneration } from '~/utils/image-utils';
+import { isValidAIGeneration, hasImageLicenseViolation } from '~/utils/image-utils';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
+
+const getLicenseViolationDetails = (
+  images: Array<{ nsfwLevel: number; resourceHelper: ImageResourceHelper[] }>
+) => {
+  const violatingImages = images.filter((image) => {
+    return hasImageLicenseViolation(image).violation;
+  });
+
+  if (violatingImages.length === 0) return null;
+
+  const count = violatingImages.length;
+  const isPlural = count > 1;
+
+  return `${count} image${isPlural ? 's' : ''} violate${
+    isPlural ? '' : 's'
+  } license restrictions for ${
+    isPlural ? 'their' : 'its'
+  } NSFW content level. Check the alerts on your images for details.`;
+};
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -50,19 +68,31 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.images,
     ]);
   const todayRef = useRef(new Date());
-  const isAiVerified = !images.some(
+
+  const addedImages = useMemo(
+    () => images.filter((image) => image.type === 'added').map((image) => image.data),
+    [images]
+  );
+
+  const isAiVerified = !addedImages.some(
     (image) =>
-      image.type === 'added' &&
       !isValidAIGeneration({
-        id: image.data.id,
-        nsfwLevel: image.data.nsfwLevel,
-        resources: image.data.resourceHelper,
-        tools: image.data.tools,
-        meta: image.data.meta as ImageMetaProps,
-        tags: image.data.tags,
+        id: image.id,
+        nsfwLevel: image.nsfwLevel,
+        resources: image.resourceHelper,
+        tools: image.tools,
+        meta: image.meta as ImageMetaProps,
+        tags: image.tags,
       })
   );
-  const canPublish = hasImages && !isReordering && isAiVerified && features.canWrite;
+
+  // Check for NSFW license violations
+  const hasNsfwLicenseViolations = addedImages.some(
+    (image) => hasImageLicenseViolation(image).violation
+  );
+
+  const canPublish =
+    hasImages && !isReordering && isAiVerified && !hasNsfwLicenseViolations && features.canWrite;
 
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
   const { returnUrl, afterPublish } = params;
@@ -186,7 +216,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           </Badge>
         </div>
 
-        <Text size="xs">
+        <Text size="xs" component="div">
           {!post.publishedAt ? (
             <>
               Your {postLabel} is currently{' '}
@@ -204,7 +234,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               <ThemeIcon color="gray" variant="filled" radius="xl">
                 <IconClock size={20} />
               </ThemeIcon>
-              <span>Scheduled for {formatDate(post.publishedAt)}</span>
+              <span>Scheduled for {formatDate(post.publishedAt, 'MMMM D, h:mma')}</span>
             </div>
           ) : (
             <>
@@ -220,6 +250,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           label={
             !isAiVerified
               ? 'We could not verify some of your NSFW images were AI generated. Please add proper metadata before publishing this post.'
+              : hasNsfwLicenseViolations
+              ? getLicenseViolationDetails(addedImages)
               : isReordering
               ? 'Finish rearranging your images before you publish'
               : 'At least one image is required in order to publish this post to the community'

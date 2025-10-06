@@ -1,7 +1,6 @@
-import * as z from 'zod/v4';
-import { constants } from '~/server/common/constants';
+import * as z from 'zod';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 // import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
@@ -14,8 +13,8 @@ import {
   ModelEngagementType,
   TagEngagementType,
 } from '~/shared/utils/prisma/enums';
+import { usernameSchema } from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
-import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import {
   commaDelimitedEnumArray,
@@ -25,6 +24,22 @@ import {
 
 export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
+
+export const userSubscriptionByBuzzTypeSchema = z.object({
+  tier: userTierSchema,
+  isMember: z.boolean(),
+  subscriptionId: z.string(),
+  status: z.string(),
+});
+
+export type UserSubscriptionByBuzzType = z.infer<typeof userSubscriptionByBuzzTypeSchema>;
+
+export const userSubscriptionsByBuzzTypeSchema = z.record(
+  z.string(),
+  userSubscriptionByBuzzTypeSchema
+);
+
+export type UserSubscriptionsByBuzzType = z.infer<typeof userSubscriptionsByBuzzTypeSchema>;
 
 export const userPageQuerySchema = z
   .object({
@@ -38,12 +53,10 @@ export const userPageQuerySchema = z
     return removeEmpty({ ...props, username });
   });
 
-export const usernameInputSchema = zc.usernameValidationSchema
+export const usernameInputSchema = usernameSchema
   .min(3, 'Your username must be at least 3 characters long')
   .max(25, 'Your username must be at most 25 characters long')
   .transform((v) => v.trim());
-
-export const usernameSchema = zc.usernameValidationSchema.transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
   username: usernameSchema.optional(),
@@ -67,14 +80,14 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 export const profilePictureSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
-  url: z.string().url().or(z.string().uuid()),
+  url: z.url().or(z.string().uuid()),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
   metadata: z.object({}).passthrough().optional(),
-  type: z.nativeEnum(MediaType).default(MediaType.image),
+  type: z.enum(MediaType).default(MediaType.image),
 });
 
 export const creatorCardStatsPreferences = z.array(z.string()).max(3);
@@ -100,10 +113,10 @@ export const userUpdateSchema = z.object({
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({
-      format: z.enum(constants.modelFileFormats).optional(),
-      size: z.enum(constants.modelFileSizes).optional(),
-      fp: z.enum(constants.modelFileFp).optional(),
-      imageFormat: z.enum(constants.imageFormats).optional(),
+      format: z.string().optional(),
+      size: z.string().optional(),
+      fp: z.string().optional(),
+      imageFormat: z.string().optional(),
     })
     .optional(),
   leaderboardShowcase: z.string().nullish(),
@@ -128,7 +141,7 @@ export type ToggleFavoriteInput = z.infer<typeof toggleFavoriteInput>;
 
 export const toggleModelEngagementInput = z.object({
   modelId: z.number(),
-  type: z.nativeEnum(ModelEngagementType).optional(),
+  type: z.enum(ModelEngagementType).optional(),
 });
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
@@ -138,7 +151,7 @@ export const toggleFollowUserSchema = z.object({
 });
 export type ToggleFollowUserSchema = z.infer<typeof toggleFollowUserSchema>;
 
-export const getUserTagsSchema = z.object({ type: z.nativeEnum(TagEngagementType) });
+export const getUserTagsSchema = z.object({ type: z.enum(TagEngagementType) });
 export type GetUserTagsSchema = z.infer<typeof getUserTagsSchema>;
 
 export const toggleBlockedTagSchema = z.object({ tagId: z.number() });
@@ -149,6 +162,12 @@ export type BatchBlockTagsSchema = z.infer<typeof batchBlockTagsSchema>;
 
 export const getByUsernameSchema = z.object({ username: usernameSchema });
 export type GetByUsernameSchema = z.infer<typeof getByUsernameSchema>;
+
+export const getUserListSchema = paginationSchema.extend({
+  username: usernameSchema,
+  type: z.enum(['following', 'followers', 'hidden', 'blocked']),
+});
+export type GetUserListSchema = z.infer<typeof getUserListSchema>;
 
 export type DeleteUserInput = z.infer<typeof deleteUserSchema>;
 export const deleteUserSchema = z.object({
@@ -164,7 +183,7 @@ export const getUserCosmeticsSchema = z.object({
 
 export type GetUserArticleEngagementsInput = z.infer<typeof getUserArticleEngagementsSchema>;
 export const getUserArticleEngagementsSchema = z.object({
-  type: z.nativeEnum(ArticleEngagementType),
+  type: z.enum(ArticleEngagementType),
 });
 
 export type ToggleUserArticleEngagementsInput = z.infer<typeof toggleUserArticleEngagementSchema>;
@@ -174,7 +193,7 @@ export const toggleUserArticleEngagementSchema = getUserArticleEngagementsSchema
 
 export type GetUserBountyEngagementsInput = z.infer<typeof getUserBountyEngagementsSchema>;
 export const getUserBountyEngagementsSchema = z.object({
-  type: z.nativeEnum(BountyEngagementType),
+  type: z.enum(BountyEngagementType),
 });
 
 export type ToggleUserBountyEngagementsInput = z.infer<typeof toggleUserBountyEngagementSchema>;
@@ -219,7 +238,7 @@ export const userSettingsSchema = z.object({
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   assistantPersonality: userAssistantPersonality.optional(),
-  airEmail: z.string().email().optional(),
+  airEmail: z.email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean(), z.date()]).optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
@@ -235,6 +254,9 @@ export const userSettingsSchema = z.object({
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   redBrowsingLevel: z.number().optional(),
+  tosLastSeenDate: z.date().optional(),
+  tosGreenLastSeenDate: z.date().optional(),
+  tosRedLastSeenDate: z.date().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -254,6 +276,9 @@ export const setUserSettingsInput = z.object({
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
+  tosLastSeenDate: z.date().optional(),
+  tosGreenLastSeenDate: z.date().optional(),
+  tosRedLastSeenDate: z.date().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
@@ -298,7 +323,7 @@ export const userMeta = z.object({
   scores: userScoreMetaSchema.optional(),
   banDetails: z
     .object({
-      reasonCode: z.nativeEnum(BanReasonCode).optional(),
+      reasonCode: z.enum(BanReasonCode).optional(),
       detailsInternal: z.string().optional(),
       detailsExternal: z.string().optional(),
     })
@@ -330,8 +355,29 @@ export const updateContentSettingsSchema = z.object({
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
 export const toggleBanUserSchema = z.object({
   id: z.number(),
-  reasonCode: z.nativeEnum(BanReasonCode).optional(),
+  reasonCode: z.enum(BanReasonCode).optional(),
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),
+});
+
+// Email verification schemas
+export type RequestEmailChangeInput = z.infer<typeof requestEmailChangeSchema>;
+export const requestEmailChangeSchema = z.object({
+  newEmail: z.string().email(),
+});
+
+export type VerifyEmailChangeInput = z.infer<typeof verifyEmailChangeSchema>;
+export const verifyEmailChangeSchema = z.object({
+  token: z.string().min(1),
+});
+
+export type ResendEmailVerificationInput = z.infer<typeof resendEmailVerificationSchema>;
+export const resendEmailVerificationSchema = z.object({
+  email: z.string().email(),
+});
+
+export type ValidateEmailTokenInput = z.infer<typeof validateEmailTokenSchema>;
+export const validateEmailTokenSchema = z.object({
+  token: z.string().min(1),
 });

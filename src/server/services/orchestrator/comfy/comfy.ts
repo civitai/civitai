@@ -1,7 +1,7 @@
 import type { ComfyStepTemplate } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
+import { NsfwLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
@@ -21,8 +21,10 @@ import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/gener
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -82,6 +84,9 @@ export async function createComfyStep(
   const timeSpan = new TimeSpan(0, 10, 0);
   // add one minute for each additional resource minus the checkpoint
   timeSpan.addMinutes(Object.keys(resources).length - 1);
+  const isPrivateGen = resources.some(
+    (r) => r.availability === Availability.Private || !!r.epochDetails
+  );
 
   return {
     $type: 'comfy',
@@ -97,11 +102,7 @@ export async function createComfyStep(
       resources: input.resources,
       params: removeEmpty(input.params),
       remixOfId: input.remixOfId,
-      maxNsfwLevel: resources.some(
-        (r) => r.availability === Availability.Private || !!r.epochDetails
-      )
-        ? 'pG13'
-        : undefined,
+      maxNsfwLevel: isPrivateGen ? 'pG13' : undefined,
     },
   } as ComfyStepTemplate;
 }
@@ -111,10 +112,13 @@ export async function createComfy(
     user: SessionUser;
     token: string;
     experimental?: boolean;
+    isGreen?: boolean;
+    allowMatureContent: boolean;
+    currencies: BuzzSpendType[];
   }
 ) {
   const step = await createComfyStep(args);
-  const { user, tips, params, experimental } = args;
+  const { user, tips, params, experimental, isGreen, allowMatureContent, currencies } = args;
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
@@ -133,12 +137,11 @@ export async function createComfy(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
+      allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
   })) as TextToImageResponse;
 

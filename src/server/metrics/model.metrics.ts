@@ -1,12 +1,17 @@
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  executeRefreshWithParams,
+  getMetricJson,
+  snippets,
+} from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getLastAuctionReset } from '~/server/services/auction.service';
@@ -16,7 +21,7 @@ import { allInjectableResourceIds } from '~/shared/constants/generation.constant
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model');
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 200;
 
 type ModelMetricContext = MetricProcessorRunContext & {
   queuedModelVersions: number[];
@@ -60,7 +65,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionAggregationTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
-    for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
+    for (const tasks of modelTasks) await limitConcurrency(tasks, 2);
 
     // If beginning of day - clear top earners cache
     //---------------------------------------
@@ -133,7 +138,6 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
     `;
 
     ctx.jobContext.checkIfCanceled();
-    const downloadsJson = JSON.stringify(downloads);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
       SELECT mvm.modelVersionId,
@@ -150,7 +154,7 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
                        WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'all_time'
                        END
                      AS int)                                   as downloads
-            FROM json_array_elements('${downloadsJson}'::json) mvs
+            FROM jsonb_array_elements(${downloads}::jsonb) mvs
                    CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf) mvm
       WHERE mvm.downloads IS NOT NULL
         AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
@@ -198,7 +202,6 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     `;
 
     ctx.jobContext.checkIfCanceled();
-    const generationsJson = JSON.stringify(generations);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
       SELECT mvm.modelVersionId,
@@ -215,7 +218,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
                        WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'all_time'
                        END
                      AS int)                                   as generations
-            FROM json_array_elements('${generationsJson}'::json) mvs
+            FROM jsonb_array_elements(${generations}::jsonb) mvs
                    CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf) mvm
       WHERE mvm.generations IS NOT NULL
         AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
@@ -301,7 +304,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
-        AND r."modelVersionId" IN (${ids})
+        AND r."modelVersionId" = ANY(${ids}::int[])
         AND r."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY r."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
@@ -337,7 +340,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      WHERE dg."modelVersionId" IN (${ids})
+      WHERE dg."modelVersionId" = ANY(${ids}::int[])
         AND dg."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY dg."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
@@ -383,7 +386,6 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
     ctx.jobContext.checkIfCanceled();
     log('getVersionBuzzEarnedTasks', i + 1, 'of', tasks.length);
 
-    const json = JSON.stringify(batchData);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "earnedAmount")
       SELECT mvm.modelVersionId,
@@ -399,7 +401,7 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
                 WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'earned'
               END
           AS int) as earned
-        FROM json_array_elements('${json}'::json) mvs
+        FROM jsonb_array_elements(${batchData}::jsonb) mvs
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       ) mvm
       WHERE mvm.earned IS NOT NULL
@@ -426,27 +428,58 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getModelRatingTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update model rating metrics
-      INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
-      SELECT
-        r."modelId",
-        tf.timeframe,
-        ${snippets.timeframeCount('r."createdAt"', 'r."userId"', 'recommended')} "thumbsUpCount",
-        ${snippets.timeframeCount(
-          'r."createdAt"',
-          'r."userId"',
-          'NOT recommended'
-        )} "thumbsDownCount"
-      FROM "ResourceReview" r
-      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      WHERE r.exclude = FALSE
-        AND r."tosViolation" = FALSE
-        AND r."modelId" IN (${ids})
-      GROUP BY r."modelId", tf.timeframe
-      ON CONFLICT ("modelId", timeframe) DO UPDATE
-        SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await getMetricJson(ctx)`
+      -- Aggregate model rating metrics into JSON
+      WITH metric_data AS (
+        SELECT
+          r."modelId",
+          tf.timeframe,
+          ${snippets.timeframeCount('r."createdAt"', 'r."userId"', 'recommended')} "thumbsUpCount",
+          ${snippets.timeframeCount(
+            'r."createdAt"',
+            'r."userId"',
+            'NOT recommended'
+          )} "thumbsDownCount"
+        FROM "ResourceReview" r
+        CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+        WHERE r.exclude = FALSE
+          AND r."tosViolation" = FALSE
+          AND r."modelId" = ANY(${ids}::int[])
+        GROUP BY r."modelId", tf.timeframe
+      )
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'modelId', "modelId",
+          'timeframe', timeframe,
+          'thumbsUpCount', "thumbsUpCount",
+          'thumbsDownCount', "thumbsDownCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model rating metrics
+        INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
+        SELECT
+          (value->>'modelId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'thumbsUpCount')::int,
+          (value->>'thumbsDownCount')::int
+        FROM jsonb_array_elements($1::jsonb) AS value
+        ON CONFLICT ("modelId", timeframe) DO UPDATE
+          SET "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+              "thumbsDownCount" = EXCLUDED."thumbsDownCount",
+              "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
+    }
+
     log('getModelRatingTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -477,7 +510,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       FROM "Comment" c
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE c."tosViolation" = false
-        AND c."modelId" IN (${ids})
+        AND c."modelId" = ANY(${ids}::int[])
         AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY c."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
@@ -495,35 +528,63 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT "modelId" as id
     FROM "CollectionItem"
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    ORDER BY "modelId"
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update model collect metrics
+
+    // First, aggregate data into JSON to avoid blocking
+    const metrics = await getMetricJson(ctx)`
+      -- Aggregate model collection metrics into JSON
       WITH Timeframes AS (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      ),
+      metric_data AS (
+        SELECT
+          c."modelId",
+          tf.timeframe,
+          COUNT(DISTINCT c."addedById") AS "collectedCount"
+        FROM "CollectionItem" c
+        JOIN Timeframes tf ON
+          (tf.timeframe = 'AllTime')
+          OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
+          OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')
+          OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
+          OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
+        JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
+        WHERE c."modelId" = ANY(${ids}::int[])
+          AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        GROUP BY c."modelId", tf.timeframe
       )
-      INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
-      SELECT
-        c."modelId",
-        tf.timeframe,
-        COUNT(DISTINCT c."addedById") AS "collectedCount"
-      FROM "CollectionItem" c
-      JOIN Timeframes tf ON
-        (tf.timeframe = 'AllTime')
-        OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
-        OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')
-        OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
-        OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
-      JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-      WHERE c."modelId" = ANY (ARRAY[${ids}])
-        AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY c."modelId", tf.timeframe
-      ON CONFLICT ("modelId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'modelId', "modelId",
+          'timeframe', timeframe,
+          'collectedCount', "collectedCount"
+        )
+      ) as data
+      FROM metric_data
     `;
+
+    // Then perform the insert from the aggregated data
+    if (metrics) {
+      await executeRefreshWithParams(
+        ctx,
+        `-- Insert pre-aggregated model collection metrics
+        INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
+        SELECT
+          (value->>'modelId')::int,
+          (value->>'timeframe')::"MetricTimeframe",
+          (value->>'collectedCount')::int
+        FROM jsonb_array_elements($1::jsonb) AS value
+        ON CONFLICT ("modelId", timeframe) DO UPDATE
+          SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now()`,
+        [JSON.stringify(metrics)]
+      );
+    }
+
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
@@ -560,7 +621,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
         FROM "BuzzTip" bt
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE bt."entityType" = 'Model' AND bt."entityId" IS NOT NULL
-          AND bt."entityId" IN (${ids})
+          AND bt."entityId" = ANY(${ids}::int[])
           AND bt."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY "entityId", tf.timeframe
       ), "versionTips" AS (
@@ -571,7 +632,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
           SUM(mvm."tippedAmountCount") "tippedAmountCount"
         FROM "ModelVersionMetric" mvm
         JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-        WHERE mv."modelId" IN (${ids})
+        WHERE mv."modelId" = ANY(${ids}::int[])
           AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY mv."modelId", mvm.timeframe
       )
@@ -616,7 +677,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
         now() "updatedAt"
       FROM "ModelVersionMetric" mvm
       JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-      WHERE mv."modelId" IN (${ids})
+      WHERE mv."modelId" = ANY(${ids}::int[])
         AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY mv."modelId", mvm.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE

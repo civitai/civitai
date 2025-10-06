@@ -1,13 +1,11 @@
 import type { MenuItemProps } from '@mantine/core';
 import {
-  ActionIcon,
-  Center,
+  Anchor,
   Checkbox,
   Menu,
   Modal,
   Text,
   Stack,
-  ThemeIcon,
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
@@ -34,7 +32,7 @@ import clsx from 'clsx';
 import type { DragEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
@@ -47,7 +45,6 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { constants } from '~/server/common/constants';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   NormalizedGeneratedImage,
@@ -57,8 +54,8 @@ import type {
 import {
   getIsFlux,
   getIsHiDream,
+  getIsQwen,
   getIsSD3,
-  getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
@@ -84,15 +81,25 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
-import {
-  getIsFluxContextFromEngine,
-  getIsFluxKontext,
-} from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { NsfwLevel } from '@civitai/client';
+import { getSourceImageFromUrl } from '~/utils/image-utils';
+import { useAppContext } from '~/providers/AppProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: NormalizedGeneratedImageStep;
+};
+
+const matureDictionary: Record<string, boolean> = {
+  [NsfwLevel.P_G13]: true,
+  [NsfwLevel.R]: true,
+  [NsfwLevel.X]: true,
+  [NsfwLevel.XXX]: true,
 };
 
 export function GeneratedImage({
@@ -106,6 +113,8 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
+  const { allowMatureContent } = useAppContext();
+  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
@@ -136,7 +145,7 @@ export function GeneratedImage({
       dialogStore.trigger({
         id: 'generated-image',
         component: GeneratedImageLightbox,
-        props: { image, request },
+        props: { image },
       });
     }
   };
@@ -218,7 +227,12 @@ export function GeneratedImage({
   }
 
   function handleError() {
-    if (image.url.includes('nsfwLevel')) {
+    if (
+      step.metadata &&
+      step.metadata.hasOwnProperty('isPrivateGeneration') &&
+      // @ts-ignore This value can exist and we confirmed above.
+      step.metadata.isPrivateGeneration
+    ) {
       setNsfwLevelError(true);
     }
   }
@@ -244,8 +258,10 @@ export function GeneratedImage({
   }
 
   const blockedReason = getImageBlockedReason(image.blockedReason);
-  const isBlocked = !!nsfwLevelError || !!blockedReason;
-  const aspectRatio = isBlocked ? 1 : image.aspectRatio ?? image.width / image.height;
+  const isBlockedDueToMatureContent =
+    (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''];
+  const isBlocked = !!nsfwLevelError || !!blockedReason || !isBlockedDueToMatureContent;
+  const aspectRatio = isBlocked ? 1 : image.aspect;
 
   return (
     <TwCard
@@ -255,13 +271,29 @@ export function GeneratedImage({
     >
       {(isLightbox || inView) && (
         <>
-          {nsfwLevelError ? (
+          {nsfwLevelError || blockedReason === 'NSFWLevel' ? (
             <BlockedBlock
-              title="Blocked for Adult Content"
-              message="Private generation is limited to PG, PG-13 only."
+              title="Blocked for Mature Content"
+              message="Private Generation is limited to PG content."
             />
           ) : blockedReason ? (
             <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
+          ) : (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''] ? (
+            <BlockedBlock
+              title={'Blocked for Mature Content'}
+              message={
+                !allowMatureContent
+                  ? 'This image received a mature rating and is unavailable on this site'
+                  : () => (
+                      <Text align="center" size="sm">
+                        To view this content, enable mature content in your{' '}
+                        <Anchor component={NextLink} href="/user/account">
+                          account settings
+                        </Anchor>
+                      </Text>
+                    )
+              }
+            />
           ) : (
             <EdgeMedia2
               src={image.url}
@@ -400,7 +432,7 @@ export function GeneratedImage({
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
                 meta={step.params as any}
-                zIndex={constants.imageGeneration.drawerZIndex + 1}
+                zIndex={imageGenerationDrawerZIndex + 1}
                 hideSoftware
               >
                 <LegacyActionIcon variant="transparent" size="md">
@@ -444,15 +476,9 @@ function BlockedBlock({
   );
 }
 
-export function GeneratedImageLightbox({
-  image,
-  request,
-}: {
-  image: NormalizedGeneratedImage;
-  request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-}) {
+export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedImage }) {
   const dialog = useDialogContext();
-  const { steps } = useGetTextToImageRequestsImages();
+  const { requests, steps } = useGetTextToImageRequestsImages();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -469,6 +495,7 @@ export function GeneratedImageLightbox({
       .filter((x) => x.status === 'succeeded')
       .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
+  const workflows = requests?.map(({ steps, ...workflow }) => workflow) ?? [];
 
   const [slide, setSlide] = useState(() => {
     const initialSlide = images.findIndex((item) => item.id === image.id);
@@ -496,22 +523,26 @@ export function GeneratedImageLightbox({
         >
           <Embla.Viewport>
             <Embla.Container className="flex" style={{ height: 'calc(100vh - 84px)' }}>
-              {images.map((image, index) => (
-                <Embla.Slide
-                  key={`${image.workflowId}_${image.id}`}
-                  index={index}
-                  className="flex flex-[0_0_100%] items-center justify-center"
-                >
-                  {image.url && index === slide && (
-                    <GeneratedImage
-                      image={image} // TODO - fix this
-                      request={request}
-                      step={image.step}
-                      isLightbox
-                    />
-                  )}
-                </Embla.Slide>
-              ))}
+              {images.map((image, index) => {
+                const request = workflows.find((x) => x.id === image.workflowId);
+                if (!request) return null;
+                return (
+                  <Embla.Slide
+                    key={`${image.workflowId}_${image.id}`}
+                    index={index}
+                    className="flex flex-[0_0_100%] items-center justify-center"
+                  >
+                    {image.url && index === slide && (
+                      <GeneratedImage
+                        image={image}
+                        request={request}
+                        step={image.step}
+                        isLightbox
+                      />
+                    )}
+                  </Embla.Slide>
+                );
+              })}
             </Embla.Container>
           </Embla.Viewport>
         </Embla>
@@ -566,10 +597,11 @@ function GeneratedImageWorkflowMenuItems({
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
   const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
+  const isQwen = !isVideo && getIsQwen(step.params.baseModel);
   const isFlux = !isVideo && getIsFlux(step.params.baseModel);
   const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canImg2Img = !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
+  const canImg2Img = !isQwen && !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream;
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
   const img2imgWorkflows = !isVideo
     ? workflowDefinitions.filter(
@@ -639,15 +671,21 @@ function GeneratedImageWorkflowMenuItems({
       )?.[0];
     }
 
+    const { baseModel, ...params } = step.params as any;
+
+    const sourceImage = await getSourceImageFromUrl({ url: image.url });
     generationStore.setData({
       resources: [],
       params: {
-        ...(step.params as any),
-        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+        prompt: params.prompt,
+        negativePrompt: params.negativePrompt,
+        sourceImage: sourceImage,
+        images: [sourceImage],
         process: 'img2vid',
       },
       type: 'video',
       engine,
+      runType: 'patch',
     });
   }
 
@@ -726,7 +764,7 @@ function GeneratedImageWorkflowMenuItems({
         ]);
         handleCloseImageLightbox();
       },
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      zIndex: imageGenerationDrawerZIndex + 2,
       centered: true,
     });
   }
@@ -805,9 +843,9 @@ function GeneratedImageWorkflowMenuItems({
                 <IconInfoHexagon size={14} stroke={1.5} />
               )
             }
-            onClick={() => copy(image.jobId)}
+            onClick={() => copy(workflowId)}
           >
-            Copy Job ID
+            Copy Workflow ID
           </Menu.Item>
           {!isBlocked && (
             <Menu.Item
@@ -832,14 +870,9 @@ function WithMemberMenuItem({
   return memberOnly && !currentUser?.isPaidMember ? (
     <Tooltip label="Member only">
       <RequireMembership>
-        <Menu.Item {...props} className="relative pr-10">
-          <span>{children}</span>
-          <div className="absolute inset-y-0 right-1 flex items-center">
-            <ThemeIcon variant="filled" color="blue" size="md">
-              <IconDiamond stroke={2} />
-            </ThemeIcon>
-          </div>
-        </Menu.Item>
+        <SupportButtonPolymorphic component={Menu.Item} icon={IconDiamond} position="right">
+          {children}
+        </SupportButtonPolymorphic>
       </RequireMembership>
     </Tooltip>
   ) : (
@@ -860,7 +893,7 @@ const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
   Bestiality: 'Bestiality detected.',
   'Child Sexual - Anime': 'Inappropriate minor content detected.',
   'Child Sexual - Realistic': 'Inappropriate minor content detected.',
-  NSFWLevel: 'Mature content restriction.',
+  NsfwLevel: 'Mature content restriction.',
   NSFWLevelSourceImageRestricted: () => (
     <div className="flex flex-col gap-1">
       <Text align="center" size="sm">
@@ -892,5 +925,5 @@ function getImageBlockedReason(reason?: string | null) {
 //   "Bestiality": "Detected bestiality in the image.",
 //   "Child Sexual - Anime": "An inappropriate child reference was detected.",
 //   "Child Sexual - Realistic": "An inappropriate child reference was detected.",
-//   "NSFWLevel": "Mature content restriction"
+//   "NsfwLevel": "Mature content restriction"
 // }

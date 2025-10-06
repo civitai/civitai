@@ -1,12 +1,16 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import { templateHandler } from '~/server/db/db-helpers';
+import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-helpers';
 import type { JobContext } from '~/server/jobs/job';
-import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 
-export function getAffected(ctx: MetricProcessorRunContext) {
-  return templateHandler(async (sql) => {
-    const affectedQuery = await ctx.pg.cancellableQuery<{ id: number }>(sql);
+export function getAffected(ctx: {
+  pg: AugmentedPool;
+  jobContext: JobContext;
+  queue: number[];
+  addAffected: (id: number | number[]) => void;
+}) {
+  return parameterizedTemplateHandler(async (sql, params) => {
+    const affectedQuery = await ctx.pg.cancellableQuery<{ id: number }>(sql, params);
     ctx.jobContext.on('cancel', affectedQuery.cancel);
     const affected = await affectedQuery.result();
     const idsSet = new Set(ctx.queue);
@@ -19,10 +23,29 @@ export function getAffected(ctx: MetricProcessorRunContext) {
 }
 
 export function executeRefresh(ctx: { pg: AugmentedPool; jobContext: JobContext }) {
-  return templateHandler(async (sql) => {
-    const query = await ctx.pg.cancellableQuery(sql);
+  return parameterizedTemplateHandler(async (sql, params) => {
+    const query = await ctx.pg.cancellableQuery(sql, params);
     ctx.jobContext.on('cancel', query.cancel);
     await query.result();
+  });
+}
+
+export async function executeRefreshWithParams(
+  ctx: { pg: AugmentedPool; jobContext: JobContext },
+  sql: string,
+  params: any[]
+) {
+  const query = await ctx.pg.cancellableQuery(sql, params);
+  ctx.jobContext.on('cancel', query.cancel);
+  await query.result();
+}
+
+export function getMetricJson(ctx: { pg: AugmentedPool; jobContext: JobContext }) {
+  return parameterizedTemplateHandler(async (sql, params) => {
+    const query = await ctx.pg.cancellableQuery<{ data: any }>(sql, params);
+    ctx.jobContext.on('cancel', query.cancel);
+    const [results] = await query.result();
+    return results?.data;
   });
 }
 

@@ -39,3 +39,6 @@ export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()
   lastUpvote: true,
   source: true,
 });
+export type ImageTagComposite = Prisma.ImageTagGetPayload<{
+  select: typeof imageTagCompositeSelect;
+}>;

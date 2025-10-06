@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -12,7 +12,7 @@ import type {
 } from '~/server/schema/clubMembership.schema';
 import { ClubMembershipSort } from '~/server/common/enums';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import {
   throwAuthorizationError,
@@ -172,17 +172,17 @@ export const createClubMembership = async ({
         });
 
     if (clubTier.unitAmount > 0) {
-      await createBuzzTransaction({
-        toAccountType: 'club',
-        toAccountId: clubTier.clubId,
-        fromAccountId: userId,
-        type: TransactionType.ClubMembership,
-        amount: clubTier.unitAmount,
-        description: `Membership fee for ${clubTier.club.name} - ${clubTier.name}`,
-        details: {
-          clubMembershipId: membership.id,
-        },
-      });
+      // await createBuzzTransaction({
+      //   toAccountType: 'club',
+      //   toAccountId: clubTier.clubId,
+      //   fromAccountId: userId,
+      //   type: TransactionType.ClubMembership,
+      //   amount: clubTier.unitAmount,
+      //   description: `Membership fee for ${clubTier.club.name} - ${clubTier.name}`,
+      //   details: {
+      //     clubMembershipId: membership.id,
+      //   },
+      // });
     }
 
     return membership;
@@ -289,19 +289,19 @@ export const updateClubMembership = async ({
       },
     });
 
-    if (isUpgrade) {
-      await createBuzzTransaction({
-        toAccountType: 'club',
-        toAccountId: clubTier.clubId,
-        fromAccountId: userId,
-        type: TransactionType.ClubMembership,
-        amount: clubTier.unitAmount,
-        description: `Membership fee for ${clubTier.club.name} - ${clubTier.name}`,
-        details: {
-          clubMembershipId: membership.id,
-        },
-      });
-    }
+    // if (isUpgrade) {
+    //   await createBuzzTransaction({
+    //     toAccountType: 'club',
+    //     toAccountId: clubTier.clubId,
+    //     fromAccountId: userId,
+    //     type: TransactionType.ClubMembership,
+    //     amount: clubTier.unitAmount,
+    //     description: `Membership fee for ${clubTier.club.name} - ${clubTier.name}`,
+    //     details: {
+    //       clubMembershipId: membership.id,
+    //     },
+    //   });
+    // }
 
     return membership;
   });
@@ -366,21 +366,21 @@ export const completeClubMembershipCharge = async ({
     });
 
     // Now move money from the user's account to the club's account:
-    await createBuzzTransaction({
-      fromAccountId: clubMembershipCharge.userId,
-      toAccountId: clubMembershipCharge.clubId,
-      toAccountType: 'club',
-      amount: clubMembershipCharge.unitAmount,
-      type: TransactionType.ClubMembership,
-      details: {
-        userId: clubMembershipCharge.userId,
-        clubTierId: clubMembershipCharge.clubTierId,
-        clubId: clubMembershipCharge.clubId,
-        clubMembershipChargeId: clubMembershipCharge.id,
-        stripePaymentIntentId: clubMembershipCharge.invoiceId,
-      },
-      externalTransactionId: `club-membership-charge-${clubMembershipCharge.id}`,
-    });
+    // await createBuzzTransaction({
+    //   fromAccountId: clubMembershipCharge.userId,
+    //   toAccountId: clubMembershipCharge.clubId,
+    //   toAccountType: 'club',
+    //   amount: clubMembershipCharge.unitAmount,
+    //   type: TransactionType.ClubMembership,
+    //   details: {
+    //     userId: clubMembershipCharge.userId,
+    //     clubTierId: clubMembershipCharge.clubTierId,
+    //     clubId: clubMembershipCharge.clubId,
+    //     clubMembershipChargeId: clubMembershipCharge.id,
+    //     stripePaymentIntentId: clubMembershipCharge.invoiceId,
+    //   },
+    //   externalTransactionId: `club-membership-charge-${clubMembershipCharge.id}`,
+    // });
   });
 };
 
@@ -431,10 +431,10 @@ export const clubOwnerRemoveMember = async ({
 
   const clubBuzzAccount = await getUserBuzzAccount({
     accountId: membership.clubId,
-    accountType: 'club',
+    // accountType: 'club',
   });
 
-  if ((clubBuzzAccount?.balance ?? 0) < membership.unitAmount) {
+  if ((clubBuzzAccount[0]?.balance ?? 0) < membership.unitAmount) {
     throw throwInsufficientFundsError(
       'Club does not have enough funds to refund this user as such, they cannot be removed'
     );
@@ -452,22 +452,22 @@ export const clubOwnerRemoveMember = async ({
     if (membership.unitAmount === 0) return;
 
     // Refund the user:
-    await createBuzzTransaction({
-      fromAccountType: 'club',
-      fromAccountId: membership.clubId,
-      toAccountId: membership.userId,
-      toAccountType: 'user',
-      amount: membership.unitAmount,
-      type: TransactionType.ClubMembershipRefund,
-      details: {
-        userId: membership.userId,
-        clubTierId: membership.clubTierId,
-        clubId: membership.clubId,
-        clubMembershipId: membership.id,
-      },
-      description: `Refund for Club Membership: ${membership.club.name} - ${membership.clubTier.name}`,
-      externalTransactionId: `club-membership-refund-${membership.id}`,
-    });
+    // await createBuzzTransaction({
+    //   fromAccountType: 'club',
+    //   fromAccountId: membership.clubId,
+    //   toAccountId: membership.userId,
+    //   toAccountType: 'user',
+    //   amount: membership.unitAmount,
+    //   type: TransactionType.ClubMembershipRefund,
+    //   details: {
+    //     userId: membership.userId,
+    //     clubTierId: membership.clubTierId,
+    //     clubId: membership.clubId,
+    //     clubMembershipId: membership.id,
+    //   },
+    //   description: `Refund for Club Membership: ${membership.club.name} - ${membership.clubTier.name}`,
+    //   externalTransactionId: `club-membership-refund-${membership.id}`,
+    // });
   });
 };
 

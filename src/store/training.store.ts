@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
@@ -112,6 +112,7 @@ export type TrainingRun = {
   baseType: TrainingBaseModelType;
   customModel?: GenerationResource;
   samplePrompts: string[];
+  negativePrompt?: string;
   params: TrainingDetailsParams;
   highPriority: boolean;
   staging: boolean;
@@ -258,6 +259,9 @@ export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine:
 const defaultRunBase = {
   id: 1,
   samplePrompts: ['', '', ''],
+  negativePrompt:
+    // Add default query.
+    'bad quality, low quality, worst quality, jpeg artifacts, blurry, pixelated, out of focus, watermark, text, signature',
   staging: false,
   highPriority: false,
   buzzCost: 0,
@@ -517,6 +521,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               ? data.customModel
               : run.customModel;
           run.samplePrompts = data.samplePrompts ?? run.samplePrompts;
+          run.negativePrompt = data.negativePrompt ?? run.negativePrompt;
           run.highPriority = data.highPriority ?? run.highPriority;
           run.staging = data.staging ?? run.staging;
           run.buzzCost = data.buzzCost ?? run.buzzCost;

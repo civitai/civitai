@@ -1,29 +1,27 @@
-import type { DeepPartial } from 'react-hook-form';
 import { showNotification } from '@mantine/notifications';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import type { BaseModelSetType } from '~/server/common/constants';
 import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   GenerationData,
   GenerationResource,
 } from '~/server/services/generation/generation.service';
-import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
+  fluxKreaAir,
   fluxModeOptions,
   fluxModelId,
   fluxStandardAir,
   generationSamplers,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
-  getBaseModelSetTypes,
   getClosestAspectRatio,
   getIsFluxUltra,
   getSizeFromAspectRatio,
@@ -45,12 +43,15 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
 
 // #region [schemas]
 
-type PartialFormData = Partial<z.input<typeof formSchema>>;
-// type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
-export type GenerationFormOutput = z.infer<typeof formSchema>;
+// We'll define these types after createFormSchema
+type PartialFormData = Partial<z.input<ReturnType<typeof createFormSchema>>>;
+// type DeepPartialFormData = DeepPartial<z.input<ReturnType<typeof createFormSchema>>>;
+export type GenerationFormOutput = z.infer<ReturnType<typeof createFormSchema>>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
@@ -67,69 +68,92 @@ const baseSchema = textToImageParamsSchema
     fluxUltraRaw: z.boolean().default(false).catch(false),
   });
 const partialSchema = baseSchema.partial();
-const formSchema = baseSchema
-  .transform(({ ...data }) => {
-    const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
-    const { height, width } = isFluxUltra
-      ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
-      : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
-    if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
+function createFormSchema(domainColor: string) {
+  return baseSchema
+    .transform(({ ...data }) => {
+      const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
+      const { height, width } = isFluxUltra
+        ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
+        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
-    return removeEmpty({
-      ...data,
-      height,
-      width,
-    });
-  })
-  .superRefine((data, ctx) => {
-    if (data.workflow.startsWith('txt2img')) {
-      if (!data.prompt || data.prompt.length === 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Prompt cannot be empty',
-          path: ['prompt'],
-        });
-      }
-    }
-
-    if (data.prompt.length > 1500) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Prompt cannot be longer than 1500 characters',
-        path: ['prompt'],
+      return removeEmpty({
+        ...data,
+        height,
+        width,
       });
-    }
-
-    if (data.prompt.length > 0) {
-      const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
-      if (!success) {
-        let message = `Blocked for: ${blockedFor.join(', ')}`;
-        const count = blockedRequest.increment();
-        const status = blockedRequest.status();
-        if (status === 'warned') {
-          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-        } else if (status === 'notified') {
-          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+    })
+    .superRefine((data, ctx) => {
+      if (data.workflow.startsWith('txt2img')) {
+        if (!data.prompt || data.prompt.length === 0) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Prompt cannot be empty',
+            path: ['prompt'],
+          });
         }
+      }
 
+      if ((data.baseModel === 'Imagen4' || data.baseModel === 'NanoBanana') && data.quantity > 4) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message,
-          params: { count },
+          code: 'custom',
+          message: `${data.baseModel} generation currently only supports a maximum quantity of 4`,
+          path: ['model'],
+        });
+      }
+
+      if (data.prompt.length > 1500) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Prompt cannot be longer than 1500 characters',
           path: ['prompt'],
         });
       }
-    }
 
-    if (data.workflow.startsWith('img2img') && !data.sourceImage) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Image is required',
-        path: ['sourceImage'],
-      });
-    }
-  });
+      if (data.negativePrompt && data.negativePrompt.length > 1000) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Prompt cannot be longer than 1000 characters',
+          path: ['negativePrompt'],
+        });
+      }
+
+      // Audit prompt validation with domain-aware profanity checking
+      if (data.prompt.length > 0) {
+        const checkProfanity = domainColor === 'green';
+        const { blockedFor, success } = auditPrompt(
+          data.prompt,
+          data.negativePrompt,
+          checkProfanity
+        );
+        if (!success) {
+          let message = `Blocked for: ${blockedFor.join(', ')}`;
+          const count = blockedRequest.increment();
+          const status = blockedRequest.status();
+          if (status === 'warned') {
+            message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+          } else if (status === 'notified') {
+            message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+          }
+
+          ctx.addIssue({
+            code: 'custom',
+            message,
+            params: { count },
+            path: ['prompt'],
+          });
+        }
+      }
+
+      if (data.workflow.startsWith('img2img') && !data.sourceImage) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Image is required',
+          path: ['sourceImage'],
+        });
+      }
+    });
+}
 export const blockedRequest = (() => {
   let instances: number[] = [];
   const updateStorage = () => {
@@ -188,9 +212,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
   // if current vae doesn't match baseModel, set vae to undefined
   if (
     !vae ||
-    !getBaseModelSetTypes({ modelType: vae.model.type, baseModel: vae.baseModel }).includes(
-      baseModel as SupportedBaseModel
-    ) ||
+    !getGenerationBaseModelAssociatedGroups(vae.baseModel, vae.model.type).includes(baseModel) ||
     !vae.canGenerate
   )
     vae = null;
@@ -210,12 +232,11 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
       !resource.canGenerate
     )
       return false;
-    const baseModelSetKeys = getBaseModelSetTypes({
-      modelType: resource.model.type,
-      baseModel: resource.baseModel,
-      defaultType: baseModel as SupportedBaseModel,
-    });
-    return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
+    const baseModelSetKeys = getGenerationBaseModelAssociatedGroups(
+      resource.baseModel,
+      resource.model.type
+    );
+    return baseModelSetKeys.includes(baseModel);
   });
 
   if (checkpoint?.id && getModelVersionUsesImageGen(checkpoint.id)) {
@@ -242,7 +263,10 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 // #endregion
 
 // #region [Provider]
-type GenerationFormProps = Omit<UsePersistFormReturn<typeof formSchema>, 'reset'> & {
+type GenerationFormProps = Omit<
+  UsePersistFormReturn<ReturnType<typeof createFormSchema>>,
+  'reset'
+> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
 };
@@ -259,6 +283,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
+  const domainColor = useDomainColor();
   // const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
@@ -273,8 +298,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     [currentUser, status] // eslint-disable-line
   );
 
-  const prevBaseModelRef = useRef<BaseModelSetType | null>();
+  const prevBaseModelRef = useRef<BaseModelGroup | null>();
   const debouncer = useDebouncer(1000);
+
+  const formSchema = createFormSchema(domainColor);
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
@@ -379,6 +406,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     const subscription = form.watch((watchedValues, { name }) => {
       const baseModel = watchedValues.baseModel;
       const prevBaseModel = prevBaseModelRef.current;
+      const fluxMode = watchedValues.fluxMode;
+
+      if (name === 'fluxMode') {
+        if (fluxMode === fluxKreaAir && baseModel !== 'FluxKrea') {
+          form.setValue('model', getGenerationConfig('FluxKrea').checkpoint);
+        } else if (fluxMode !== fluxKreaAir && baseModel === 'FluxKrea') {
+          form.setValue('model', getGenerationConfig('Flux1').checkpoint);
+        }
+      }
+
       // handle model change to update baseModel value
       if (name !== 'baseModel') {
         if (
@@ -396,7 +433,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ) {
           form.setValue('workflow', 'txt2img');
         }
-        const fluxBaseModels: BaseModelSetType[] = ['Flux1', 'Flux1Kontext'];
+        const fluxBaseModels: BaseModelGroup[] = ['Flux1', 'Flux1Kontext'];
         if (!!baseModel && !!prevBaseModel) {
           if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel))
             form.setValue('cfgScale', 3.5);
@@ -427,7 +464,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (
         watchedValues.baseModel === 'Flux1' &&
         !!watchedValues.resources?.length &&
-        watchedValues.fluxMode !== fluxStandardAir
+        fluxMode !== fluxStandardAir &&
+        fluxMode !== fluxKreaAir
       ) {
         form.setValue('fluxMode', fluxStandardAir);
       }
@@ -477,6 +515,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function getDefaultValues(overrides: PartialFormData): PartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
+    const isMember = currentUser?.isPaidMember ?? false;
     const sanitized = sanitizeTextToImageParams(
       {
         ...defaultValues,
@@ -485,6 +524,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         quantity: overrides.quantity ?? defaultValues.quantity,
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
+        // Set default priority to 'normal' (High) for members
+        priority: isMember ? 'normal' : defaultValues.priority,
       },
       status.limits
     );

@@ -1,0 +1,10 @@
+export declare const featureIcon: string;
+export declare const featureItem: string;
+export declare const featureList: string;
+export declare const featuresCard: string;
+export declare const featureText: string;
+export declare const header: string;
+export declare const headerIcon: string;
+export declare const listWrapper: string;
+export declare const subtitle: string;
+export declare const title: string;

@@ -25,7 +25,7 @@ import {
 import clsx from 'clsx';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import {
@@ -36,6 +36,7 @@ import {
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { Burger } from '~/components/Burger/Burger';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   type CivitaiAccount,
   useAccountContext,
@@ -98,27 +99,27 @@ export function UserMenu() {
   );
 }
 
-function useOutsideClick<T extends HTMLElement>(callback: (event: Event) => void) {
-  const ref = useRef<T | null>(null);
-  const callbackRef = useRef<((event: Event) => void) | null>(null);
-  callbackRef.current = callback;
+// function useOutsideClick<T extends HTMLElement>(callback: (event: Event) => void) {
+//   const ref = useRef<T | null>(null);
+//   const callbackRef = useRef<((event: Event) => void) | null>(null);
+//   callbackRef.current = callback;
 
-  useEffect(() => {
-    const handleClick = (event: Event) => {
-      if (ref.current && !ref.current.contains(event.target as any)) {
-        callbackRef.current?.(event);
-      }
-    };
+//   useEffect(() => {
+//     const handleClick = (event: Event) => {
+//       if (ref.current && !ref.current.contains(event.target as any)) {
+//         callbackRef.current?.(event);
+//       }
+//     };
 
-    document.addEventListener('click', handleClick);
+//     document.addEventListener('click', handleClick);
 
-    return () => {
-      document.removeEventListener('click', handleClick);
-    };
-  }, [ref]);
+//     return () => {
+//       document.removeEventListener('click', handleClick);
+//     };
+//   }, [ref]);
 
-  return ref;
-}
+//   return ref;
+// }
 
 function PopoverContent() {
   const { handleClose } = useUserMenuContext();
@@ -444,6 +445,7 @@ function BuzzMenuItem() {
   const isMobile = useIsMobile({ breakpoint: 'md' });
   const onBuyBuzz = useBuyBuzz();
   const { handleClose } = useUserMenuContext();
+  const [mainBuzzColor] = useAvailableBuzz();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
@@ -459,14 +461,14 @@ function BuzzMenuItem() {
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountType="user"
+          accountTypes={['blue']}
         />
         <UserBuzz
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountType="generation"
+          accountTypes={[mainBuzzColor]}
         />
       </div>
       <Button

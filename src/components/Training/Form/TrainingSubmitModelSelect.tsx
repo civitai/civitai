@@ -17,7 +17,6 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
-import { baseModelSets } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -25,6 +24,7 @@ import type {
 import {
   trainingDetailsBaseModels15,
   trainingDetailsBaseModels35,
+  trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsWan,
@@ -42,8 +42,9 @@ import {
   getDefaultTrainingParams,
   trainingStore,
 } from '~/store/training.store';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
+import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
 
 const ModelSelector = ({
   selectedRun,
@@ -148,16 +149,16 @@ const ModelSelector = ({
 
                 const castBase = (
                   [
-                    ...baseModelSets.SDXL.baseModels,
-                    ...baseModelSets.SDXLDistilled.baseModels,
-                    ...baseModelSets.Pony.baseModels,
-                    ...baseModelSets.Illustrious.baseModels,
+                    ...getBaseModelsByGroup('SDXL'),
+                    ...getBaseModelsByGroup('SDXLDistilled'),
+                    ...getBaseModelsByGroup('Pony'),
+                    ...getBaseModelsByGroup('Illustrious'),
                   ] as string[]
                 ).includes(baseModel)
                   ? 'sdxl'
-                  : ([...baseModelSets.Flux1.baseModels] as string[]).includes(baseModel)
+                  : ([...getBaseModelsByGroup('Flux1')] as string[]).includes(baseModel)
                   ? 'flux'
-                  : ([...baseModelSets.SD3.baseModels] as string[]).includes(baseModel)
+                  : ([...getBaseModelsByGroup('SD3')] as string[]).includes(baseModel)
                   ? 'sd35'
                   : 'sd15';
 
@@ -248,6 +249,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsWan as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelChroma =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsChroma as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -309,6 +315,15 @@ export const ModelSelect = ({
                     baseType="flux"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-09-01')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="teal"
+                    name="Chroma"
+                    value={baseModelChroma}
+                    baseType="chroma"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={new Date() < new Date('2025-10-01')}
                   />
                 </>
               )}

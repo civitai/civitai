@@ -1,31 +1,30 @@
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
 import { env } from '~/env/server';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL, constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { pgDbRead } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
+import { populateEntityMetrics } from '~/server/redis/entity-metric-populate';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { stringifyAIR } from '~/shared/utils/air';
+import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import {
-  CollectionReadConfiguration,
-  CosmeticEntity,
-  ModelStatus,
-  TagSource,
-  TagType,
-} from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
@@ -257,18 +256,50 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   lookupFn: async (ids) => {
     if (ids.length === 0) return {};
 
+    // Get the highest tier subscription for each user
+    // Tier priority: founder > gold > silver > bronze > free
     const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
+      WITH ranked_subscriptions AS (
+        SELECT
+          cs."userId",
+          cs.status,
+          p.metadata,
+          CASE (p.metadata->>'tier')::text
+            WHEN 'gold' THEN 4
+            WHEN 'silver' THEN 3
+            WHEN 'bronze' THEN 2
+            WHEN 'founder' THEN 2
+            ELSE 1
+          END as tier_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY cs."userId"
+            ORDER BY
+              CASE (p.metadata->>'tier')::text
+                WHEN 'gold' THEN 4
+                WHEN 'silver' THEN 3
+                WHEN 'bronze' THEN 2
+                WHEN 'founder' THEN 2
+                ELSE 1
+              END DESC
+          ) as rn
+        FROM "CustomerSubscription" cs
+        JOIN "Product" p ON p.id = cs."productId"
+        WHERE cs."userId" IN (${Prisma.join(ids)})
+          AND cs.status NOT IN ('canceled')
+      )
       SELECT
         u.id as "userId",
         CASE
           WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
-          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
+          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
+          ELSE COALESCE((rs.metadata->>'rewardsMultiplier')::float, 1)
         END as "rewardsMultiplier",
-        COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
+        CASE
+          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
+          ELSE COALESCE((rs.metadata->>'purchasesMultiplier')::float, 1)
+        END as "purchasesMultiplier"
       FROM "User" u
-      LEFT JOIN "CustomerSubscription" cs ON u.id = cs."userId"
-      LEFT JOIN "Product" p ON p.id = cs."productId"
+      LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
       WHERE u.id IN (${Prisma.join(ids)});
     `;
 
@@ -394,6 +425,7 @@ type ModelVersionDetails = {
   status: ModelStatus;
   covered: boolean;
   availability: Availability;
+  nsfwLevel: NsfwLevel;
 };
 type ModelDataCache = {
   modelId: number;
@@ -492,22 +524,30 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
         u.id,
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published' AND m.availability != 'Private') as "modelCount",
         (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL AND p.availability != 'Private') as "postCount",
-        (SELECT COUNT(*)::INT FROM "Image" i
-          INNER JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" IS NOT NULL AND p.availability != 'Private'
-          WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL AND i."type" = 'image'::"MediaType"
-        ) as "imageCount",
-        (SELECT COUNT(*)::INT FROM "Image" i
-          INNER JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" IS NOT NULL AND p.availability != 'Private'
-          WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL AND i."type" = 'video'::"MediaType"
-        ) as "videoCount",
+        COALESCE(im."imageCount"::INT, 0) as "imageCount",
+        COALESCE(im."videoCount"::INT, 0) as "videoCount",
         (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" IS NOT NULL AND a."publishedAt" <= NOW() AND a.availability != 'Private' AND a.status = 'Published'::"ArticleStatus") as "articleCount",
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() AND b.availability != 'Private') as "bountyCount",
         (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
         (SELECT EXISTS (SELECT 1 FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id)) as "hasReceivedReviews",
-        (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = ${
-          CollectionReadConfiguration.Public
-        }::"CollectionReadConfiguration" AND c.availability != 'Private') as "collectionCount"
+        (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = 'Public' AND c.availability != 'Private') as "collectionCount"
     FROM "User" u
+    CROSS JOIN LATERAL (
+        SELECT
+            SUM(IIF(i."type" =  'image', 1, 0)) as "imageCount",
+            SUM(IIF(i."type" =  'video', 1, 0)) as "videoCount"
+        FROM "Image" i
+        WHERE i."userId" = u.id
+        AND i."postId" NOT IN
+        (
+            SELECT p."id"
+            FROM "Post" p
+            WHERE p."userId" = u.id
+            AND (p."publishedAt" IS NULL OR p."availability" = 'Private')
+        )
+        AND i."ingestion" = 'Scanned'
+        AND i."needsReview" IS NULL
+    ) im
     WHERE u.id IN (${Prisma.join(goodIds)})
   `;
 
@@ -608,28 +648,65 @@ type ImageMetricLookup = {
   collection: number | null;
   buzz: number | null;
 };
-export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
-  key: REDIS_KEYS.CACHES.IMAGE_METRICS,
-  idKey: 'imageId',
-  lookupFn: async (ids) => {
-    const imageMetric = await dbRead.entityMetricImage.findMany({
-      where: { imageId: { in: ids } },
-      select: {
-        imageId: true,
-        reactionLike: true,
-        reactionHeart: true,
-        reactionLaugh: true,
-        reactionCry: true,
-        // reactionTotal: true,
-        comment: true,
-        collection: true,
-        buzz: true,
-      },
-    });
-    return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
+// Direct Redis entity metrics fetch with ClickHouse population
+// Implements the same interface as CachedObject for compatibility
+export const imageMetricsCache: Pick<
+  CachedObject<ImageMetricLookup>,
+  'fetch' | 'bust' | 'refresh' | 'flush'
+> = {
+  fetch: async (ids: number | number[]): Promise<Record<string, ImageMetricLookup>> => {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (ids.length === 0) return {};
+
+    // Use imported modules
+
+    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
+    await populateEntityMetrics('Image', ids);
+
+    // Fetch from Redis
+    const metricsMap = await entityMetricRedis.getBulkMetrics('Image', ids);
+
+    const results: Record<string, ImageMetricLookup> = {};
+    for (const id of ids) {
+      const metrics = metricsMap.get(id);
+      results[id] = {
+        imageId: id,
+        reactionLike: metrics?.ReactionLike || null,
+        reactionHeart: metrics?.ReactionHeart || null,
+        reactionLaugh: metrics?.ReactionLaugh || null,
+        reactionCry: metrics?.ReactionCry || null,
+        comment: metrics?.Comment || null,
+        collection: metrics?.Collection || null,
+        buzz: metrics?.Buzz || null,
+      };
+    }
+    return results;
   },
-  ttl: CacheTTL.sm,
-});
+
+  bust: async (ids: number | number[]) => {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (ids.length === 0) return;
+
+    // Use imported module
+
+    // Delete from Redis to force re-fetch from ClickHouse
+    await Promise.all(ids.map((id) => entityMetricRedis.delete('Image', id)));
+  },
+
+  refresh: async (ids: number | number[], skipCache?: boolean) => {
+    if (!Array.isArray(ids)) ids = [ids];
+    if (ids.length === 0) return;
+
+    // Use imported module
+
+    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
+    await populateEntityMetrics('Image', ids, true);
+  },
+
+  flush: async () => {
+    // Clear all image metrics from Redis - Not Supported
+  },
+};
 
 type UserFollowsCacheItem = {
   userId: number;
@@ -657,6 +734,40 @@ export async function getUserFollows(userId: number) {
   const userFollows = await userFollowsCache.fetch(userId);
   return userFollows[userId]?.follows ?? [];
 }
+
+type ImageTagsCacheItem = {
+  imageId: number;
+  tags: ImageTagComposite[];
+};
+
+export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
+  key: REDIS_KEYS.CACHES.IMAGE_TAGS,
+  idKey: 'imageId',
+  ttl: CacheTTL.day,
+  staleWhileRevalidate: false,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+
+    const imageTags = await db.imageTag.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        ...imageTagCompositeSelect,
+      },
+      orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
+      take: 100,
+    });
+
+    const result = imageTags.reduce((acc, tag) => {
+      const { imageId, ...tagData } = tag;
+      acc[imageId] ??= { imageId, tags: [] };
+      acc[imageId].tags.push(tagData);
+      return acc;
+    }, {} as Record<number, ImageTagsCacheItem>);
+
+    return result;
+  },
+});
 
 type ModelTagCacheItem = {
   modelId: number;

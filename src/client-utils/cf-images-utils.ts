@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
@@ -81,8 +82,8 @@ export function getEdgeUrl(
     skip,
   };
   const params = Object.entries(modifiedParams)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${value}`)
+    .map(([key, value]) => (value !== undefined ? `${key}=${value}` : undefined))
+    .filter(isDefined)
     .join(',');
 
   const extension = typeExtensions[type ?? MediaType.image];
@@ -126,8 +127,11 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
   }
 
   if (!anim) type = 'image';
-
-  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
+  const shouldOptimize = options?.width && options.width <= 450;
+  const optimized =
+    options?.optimized ||
+    shouldOptimize ||
+    currentUser?.filePreferences?.imageFormat === 'optimized';
 
   return {
     url: getEdgeUrl(src, {

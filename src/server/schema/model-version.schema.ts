@@ -1,10 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
@@ -28,11 +28,12 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
+import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
-  trainingStatus: z.nativeEnum(TrainingStatus).optional(),
-  // uploadType: z.nativeEnum(ModelUploadType).optional(),
+  trainingStatus: z.enum(TrainingStatus).optional(),
+  // uploadType: z.enum(ModelUploadType).optional(),
 });
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
@@ -63,12 +64,14 @@ export const trainingDetailsBaseModels35 = ['sd3_medium', 'sd3_large'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
 export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2v_14b'] as const;
+export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
   ...trainingDetailsBaseModelsXL,
   ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
+  ...trainingDetailsBaseModelsChroma,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -137,6 +140,7 @@ export const trainingDetailsObj = z.object({
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),
+  negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
 });
@@ -144,7 +148,7 @@ export const trainingDetailsObj = z.object({
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(constants.baseModels),
+  baseModel: z.enum(baseModels),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -157,7 +161,7 @@ export const modelVersionUpsertSchema = z.object({
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
-  trainingStatus: z.nativeEnum(TrainingStatus).optional(),
+  trainingStatus: z.enum(TrainingStatus).optional(),
   trainingDetails: trainingDetailsObj.optional(),
   files: z.array(modelFileSchema),
   // recipe: z.array(recipeSchema).optional(),
@@ -203,7 +207,7 @@ export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(constants.baseModels),
+  baseModel: z.enum(baseModels),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -214,18 +218,18 @@ export const modelVersionUpsertSchema2 = z.object({
   clipSkip: z.number().min(1).max(12).nullish(),
   vaeId: z.number().nullish(),
   trainedWords: z.array(z.string()).optional(),
-  trainingStatus: z.nativeEnum(TrainingStatus).nullish(),
+  trainingStatus: z.enum(TrainingStatus).nullish(),
   trainingDetails: trainingDetailsObj.nullish(),
-  status: z.nativeEnum(ModelStatus).optional(),
+  status: z.enum(ModelStatus).optional(),
   requireAuth: z.boolean().optional(),
   monetization: z
     .object({
       id: z.number().nullish(),
-      type: z.nativeEnum(ModelVersionMonetizationType).nullish(),
+      type: z.enum(ModelVersionMonetizationType).nullish(),
       unitAmount: z.number().nullish(),
       sponsorshipSettings: z
         .object({
-          type: z.nativeEnum(ModelVersionSponsorshipSettingsType),
+          type: z.enum(ModelVersionSponsorshipSettingsType),
           unitAmount: z.number().min(0),
         })
         .nullish(),
@@ -241,8 +245,8 @@ export const modelVersionUpsertSchema2 = z.object({
       unitAmount: z.number(),
     })
     .nullish(),
-  uploadType: z.nativeEnum(ModelUploadType).optional(),
-  usageControl: z.nativeEnum(ModelUsageControl).optional(),
+  uploadType: z.enum(ModelUploadType).optional(),
+  usageControl: z.enum(ModelUsageControl).optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
@@ -285,7 +289,7 @@ export const publishVersionSchema = z.object({
 
 export type GetModelVersionByModelTypeProps = z.infer<typeof getModelVersionByModelTypeSchema>;
 export const getModelVersionByModelTypeSchema = z.object({
-  type: z.nativeEnum(ModelType),
+  type: z.enum(ModelType),
   query: z.string().optional(),
   baseModel: z.string().optional(),
   take: z.number().default(100),

@@ -1,5 +1,4 @@
-import type { VideoGenInput } from '@civitai/client';
-import * as z from 'zod/v4';
+import type * as z from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 
 type VideoGenProcesses = 'txt2vid' | 'img2vid' | 'ref2vid';
@@ -28,13 +27,15 @@ export function VideoGenerationConfig2<
   superRefine?: (arg: RefinementOutput, ctx: z.RefinementCtx) => void;
   transformFn: (args: SchemaOutput) => RefinementOutput;
   inputFn: (args: RefinementOutput & { seed: number }) => TOutput;
+  /** map from transformed data back to the input schema */
+  legacyMapFn?: (args: Record<string, any>) => z.input<TSchema>;
 }) {
   const validationSchema = (
     superRefine ? schema.superRefine(superRefine as any) : schema
   ).superRefine((data, ctx) => {
     if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.length > 1500) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt cannot be longer than 1500 characters',
         path: ['prompt'],
       });
@@ -46,7 +47,7 @@ export function VideoGenerationConfig2<
       data.negativePrompt.length > 1500
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Negative prompt cannot be longer than 1000 characters',
         path: ['negativePrompt'],
       });
@@ -87,6 +88,12 @@ export function VideoGenerationConfig2<
     return { ...result, seed };
   }
 
+  function legacyMapFn(data: Record<string, any>) {
+    if (data.type === 'txt2vid' || data.type === 'img2vid') data.process = data.type;
+    const mapped = args.legacyMapFn?.(data) ?? data;
+    return mapped as z.input<TSchema>;
+  }
+
   return {
     ...args,
     schema,
@@ -98,5 +105,6 @@ export function VideoGenerationConfig2<
     metadataFn,
     inputFn,
     transformFn,
+    legacyMapFn,
   };
 }

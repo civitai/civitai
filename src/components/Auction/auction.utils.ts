@@ -1,6 +1,8 @@
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import { getBaseModelResourceTypes, miscModelTypes } from '~/shared/constants/generation.constants';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import { miscModelTypes } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import nsfwWords from '~/utils/metadata/lists/words-nsfw-soft.json';
 
@@ -30,8 +32,7 @@ export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'
     })) as ResourceOptions;
   }
 
-  //  as BaseModelResourceTypes[keyof BaseModelResourceTypes]
-  return (getBaseModelResourceTypes(ab.ecosystem) ?? []).filter(
+  return (getGenerationBaseModelResourceOptions(ab.ecosystem as BaseModelGroup) ?? []).filter(
     (t) => t.type !== 'Checkpoint'
   ) as ResourceOptions;
 };

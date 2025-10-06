@@ -1,5 +1,8 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
+import { DomainColor } from '~/shared/utils/prisma/enums';
+
+export const domainColorEnum = z.enum(DomainColor);
 
 export type AnnouncementMetaSchema = z.infer<typeof announcementMetaSchema>;
 
@@ -29,6 +32,7 @@ export const upsertAnnouncementSchema = z.object({
   title: z.string(),
   content: z.string(),
   color: z.string(),
+  domain: z.array(domainColorEnum).nonempty().default([DomainColor.all]),
   startsAt: z.date().nullish(),
   endsAt: z.date().nullish(),
   disabled: z.boolean().optional(),
@@ -36,4 +40,11 @@ export const upsertAnnouncementSchema = z.object({
 });
 
 export type GetAnnouncementsPagedSchema = z.infer<typeof getAnnouncementsPagedSchema>;
-export const getAnnouncementsPagedSchema = paginationSchema.extend({});
+export const getAnnouncementsPagedSchema = paginationSchema.extend({
+  domain: domainColorEnum.optional(),
+});
+
+export type GetCurrentAnnouncementsSchema = z.infer<typeof getCurrentAnnouncementsSchema>;
+export const getCurrentAnnouncementsSchema = z.object({
+  domain: domainColorEnum.optional(),
+});

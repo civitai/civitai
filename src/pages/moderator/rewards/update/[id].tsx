@@ -7,7 +7,7 @@ import { PurchasableRewardUpsertForm } from '~/components/PurchasableRewards/Pur
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
 import { trpc } from '~/utils/trpc';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Meta } from '~/components/Meta/Meta';
 import { NotFound } from '~/components/AppLayout/NotFound';
 

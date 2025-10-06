@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
@@ -9,7 +9,7 @@ import {
   getMonthAccount,
 } from '~/server/services/creator-program.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -57,37 +57,41 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     if (userId) {
       // Get user's current balance
-      const userBanked = await getBanked(userId);
+      await Promise.all(
+        ['yellow', 'green'].map(async (buzzType) => {
+          const userBanked = await getBanked(userId, buzzType as 'yellow' | 'green');
 
-      if (userBanked.total > 0) {
-        // Reset the banked amount by performing an extraction:
+          if (userBanked.total > 0) {
+            // Reset the banked amount by performing an extraction:
 
-        if (userBanked.total > currentValue) {
-          await createBuzzTransaction({
-            amount: userBanked.total - currentValue,
-            fromAccountId: 0,
-            fromAccountType: 'user',
-            toAccountId: monthAccount,
-            toAccountType: 'creatorprogrambank',
-            type: TransactionType.Bank,
-            description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-          });
+            if (userBanked.total > currentValue) {
+              await createBuzzTransaction({
+                amount: userBanked.total - currentValue,
+                fromAccountId: 0,
+                fromAccountType: 'yellow',
+                toAccountId: monthAccount,
+                toAccountType: 'creatorprogrambank',
+                type: TransactionType.Bank,
+                description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+              });
 
-          change += userBanked.total - currentValue;
-        }
+              change += userBanked.total - currentValue;
+            }
 
-        await createBuzzTransaction({
-          amount: userBanked.total,
-          fromAccountId: monthAccount,
-          fromAccountType: 'creatorprogrambank',
-          toAccountId: userId,
-          toAccountType: 'user',
-          type: TransactionType.Extract,
-          description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-        });
+            await createBuzzTransaction({
+              amount: userBanked.total,
+              fromAccountId: monthAccount,
+              fromAccountType: 'creatorprogrambank',
+              toAccountId: userId,
+              toAccountType: 'yellow',
+              type: TransactionType.Extract,
+              description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+            });
 
-        change -= userBanked.total;
-      }
+            change -= userBanked.total;
+          }
+        })
+      );
     }
 
     if (change !== 0) {
@@ -95,9 +99,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       await createBuzzTransaction({
         amount: shouldTakeMoneyFromBank ? Math.min(Math.abs(change), currentValue) : change,
         fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
-        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
+        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'yellow',
         toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
-        toAccountType: shouldTakeMoneyFromBank ? 'user' : 'creatorprogrambank',
+        toAccountType: shouldTakeMoneyFromBank ? 'yellow' : 'creatorprogrambank',
         type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
         description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
       });

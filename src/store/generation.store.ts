@@ -7,18 +7,23 @@ import type {
   GenerationResource,
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
-import { getSourceImageFromUrl } from '~/shared/constants/generation.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { getSourceImageFromUrl } from '~/utils/image-utils';
 
-export type RunType = 'run' | 'remix' | 'replay';
+export type RunType = 'run' | 'remix' | 'replay' | 'patch';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
+type SetDataArgs = GenerationData & {
+  type: MediaType;
+  workflow?: string;
+  engine?: string;
+  runType?: RunType;
+};
 type GenerationState = {
   counter: number;
   loading: boolean;
-  opened: boolean;
-  view: GenerationPanelView;
   type: MediaType;
   remixOf?: RemixOfProps;
   data?: GenerationData & { runType: RunType };
@@ -28,13 +33,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (
-    args: GenerationData & {
-      type: MediaType;
-      workflow?: string;
-      engine?: string;
-    }
-  ) => void;
+  setData: (args: SetDataArgs) => void;
   clearData: () => void;
 };
 
@@ -43,23 +42,19 @@ export const useGenerationStore = create<GenerationState>()(
     immer((set) => ({
       counter: 0,
       loading: false,
-      opened: false,
-      view: 'generate',
       type: 'image',
       open: async (input) => {
+        useGenerationPanelStore.setState({ opened: true });
         set((state) => {
-          state.opened = true;
           if (input) {
-            state.view = 'generate';
+            useGenerationPanelStore.setState({ view: 'generate' });
             state.loading = true;
           }
         });
 
         if (input) {
           const isMedia = ['audio', 'image', 'video'].includes(input.type);
-          // if (isMedia) {
-          //   generationFormStore.setType(input.type as MediaType);
-          // }
+
           try {
             const result = await fetchGenerationData(input);
             const { remixOf, ...data } = result;
@@ -83,7 +78,7 @@ export const useGenerationStore = create<GenerationState>()(
                 ...data,
                 params,
                 resources: withSubstitute(data.resources),
-                runType: input.type === 'image' ? 'remix' : 'run',
+                runType: input.type === 'image' || input.type === 'video' ? 'remix' : 'run',
               };
               state.loading = false;
               state.counter++;
@@ -96,20 +91,14 @@ export const useGenerationStore = create<GenerationState>()(
           }
         }
       },
-      close: () =>
-        set((state) => {
-          state.opened = false;
-        }),
-      setView: (view) =>
-        set((state) => {
-          state.view = view;
-        }),
+      close: () => useGenerationPanelStore.setState({ opened: false }),
+      setView: (view) => useGenerationPanelStore.setState({ view }),
       setType: (type) => {
         set((state) => {
           state.type = type;
         });
       },
-      setData: async ({ type, remixOf, workflow, engine, ...data }) => {
+      setData: async ({ type, remixOf, workflow, engine, runType = 'replay', ...data }) => {
         // TODO.Briant - cleanup at a later point in time
         useGenerationFormStore.setState({ type, workflow });
         // if (sourceImage) generationFormStore.setsourceImage(sourceImage);
@@ -117,13 +106,13 @@ export const useGenerationStore = create<GenerationState>()(
         const { params } = await transformParams(data.params);
         if (type === 'video' && !params.process) {
           params.process = params.sourceImage ? 'img2vid' : 'txt2vid';
-        } else if (type === 'image') {
+        } else if (type === 'image' && !params.process) {
           params.process = params.sourceImage ? 'img2img' : 'txt2img';
         }
 
         set((state) => {
           if (isMobileDevice()) {
-            state.view = 'generate';
+            useGenerationPanelStore.setState({ view: 'generate' });
           }
 
           state.remixOf = remixOf;
@@ -132,10 +121,11 @@ export const useGenerationStore = create<GenerationState>()(
             type,
             params,
             resources: withSubstitute(data.resources),
-            runType: 'replay',
+            runType,
           };
           state.counter++;
-          if (!location.pathname.includes('generate')) state.view = 'generate';
+          if (!location.pathname.includes('generate'))
+            useGenerationPanelStore.setState({ view: 'generate' });
         });
       },
       clearData: () =>
@@ -208,7 +198,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
       key = `${input.type}_${input.id}${input.epoch ? `_${input.epoch}` : ''}`;
       break;
     default:
-      key = `${input.type}_${input.id}`;
+      key = `media_${input.id}`;
       break;
   }
 
@@ -237,14 +227,6 @@ export const useGenerationFormStore = create<{
 export const generationFormStore = {
   setType: (type: MediaType) => useGenerationFormStore.setState({ type }),
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
-  // setsourceImage: async (sourceImage?: SourceImageProps | string | null) => {
-  //   useGenerationFormStore.setState({
-  //     sourceImage:
-  //       typeof sourceImage === 'string'
-  //         ? await getSourceImageFromUrl({ url: sourceImage })
-  //         : sourceImage,
-  //   });
-  // },
   reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
 

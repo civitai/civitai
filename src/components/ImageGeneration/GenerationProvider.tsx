@@ -7,15 +7,11 @@ import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { UserTier } from '~/server/schema/user.schema';
-import type {
-  NormalizedGeneratedImage,
-  NormalizedGeneratedImageResponse,
-} from '~/server/services/orchestrator';
+import type { NormalizedGeneratedImageResponse } from '~/server/services/orchestrator';
 import type { WorkflowStatus } from '@civitai/client';
-import { isDefined } from '~/utils/type-guards';
-import { useGenerationStore } from '~/store/generation.store';
-
-const POLLABLE_STATUSES: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled', 'processing'];
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
+import { usePollableWorkflowIdsStore } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 
 type GenerationState = {
   queued: {
@@ -25,7 +21,6 @@ type GenerationState = {
     quantity: number;
     status: WorkflowStatus;
   }[]; // Snackbar
-  latestImage?: NormalizedGeneratedImage; // Snackbar
   queueStatus?: WorkflowStatus; // Snackbar
   requestLimit: number; // Snackbar
   requestsRemaining: number; // Snackbar
@@ -68,7 +63,7 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
-  const opened = useGenerationStore((state) => state.opened);
+  const opened = useGenerationPanelStore((state) => state.opened);
   const {
     data: requests,
     steps,
@@ -102,6 +97,10 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     });
     if (!POLLABLE_STATUSES.includes(request.status)) {
       setTimeout(() => deleteQueueItem(request.id), 3000);
+    } else {
+      usePollableWorkflowIdsStore.setState(({ ids }) => ({
+        ids: [...new Set([...ids, request.id])],
+      }));
     }
   };
 
@@ -138,22 +137,11 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       : queuedRequests[0]?.status;
 
     const requestsRemaining = limits.queue - queuedRequests.length;
-    const images = steps
-      .flatMap((x) =>
-        x.images.map((image) => (image.completed ? { ...image, completed: image.completed } : null))
-      )
-      .filter(isDefined)
-      .sort((a, b) => b.completed.getTime() - a.completed.getTime());
 
     store.setState((state) => {
-      const latestImage = images.find(
-        (x) => x.completed.getTime() > (state.latestImage?.completed?.getTime() ?? 0)
-      );
-
       return {
         queued: queuedRequests,
         queueStatus,
-        latestImage: latestImage ?? state.latestImage,
         requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
         canGenerate: requestsRemaining > 0 && available,
       };

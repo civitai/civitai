@@ -1,12 +1,52 @@
-import type {
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
-} from '~/shared/utils/prisma/enums';
+import { EntityMetric_MetricType_Type } from '~/shared/utils/prisma/enums';
+import type { EntityMetric_EntityType_Type } from '~/shared/utils/prisma/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
-import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/caches';
+import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
+
+const logError = (name: string, details: Record<string, unknown>) => {
+  logToAxiom({ type: 'error', name, details }, 'clickhouse').catch(() => {
+    // Ignore logging failures
+  });
+};
+
+const getAllMetricsFromClickHouse = async (
+  entityType: EntityMetric_EntityType_Type,
+  entityId: number
+): Promise<Record<EntityMetric_MetricType_Type, number>> => {
+  if (!clickhouse) {
+    return {} as Record<EntityMetric_MetricType_Type, number>;
+  }
+
+  const cData = await clickhouse.$query<{ metricType: string; total: number }>`
+    SELECT metricType, sum(metricValue) as total
+    FROM entityMetricEvents
+    WHERE entityType = '${entityType}' AND entityId = ${entityId}
+    GROUP BY metricType
+  `;
+
+  // Initialize all possible metrics to 0
+  const metrics: Record<string, number> = {};
+  const allMetricTypes: EntityMetric_MetricType_Type[] = Object.values(
+    EntityMetric_MetricType_Type
+  );
+  allMetricTypes.forEach((metricType) => {
+    metrics[metricType] = 0;
+  });
+
+  // Update with actual values from ClickHouse
+  cData?.forEach((row) => {
+    if (row.metricType && typeof row.total === 'number') {
+      metrics[row.metricType] = row.total;
+    }
+  });
+
+  return metrics as Record<EntityMetric_MetricType_Type, number>;
+};
 
 export const updateEntityMetric = async ({
   ctx,
@@ -29,55 +69,76 @@ export const updateEntityMetric = async ({
     metricValue: amount,
   });
 
-  // Inc postgres EntityMetric
+  // Update Redis EntityMetric
   try {
-    const dbData = await dbWrite.$executeRaw`
-      UPDATE "EntityMetric"
-      SET "metricValue" = "metricValue" + ${amount}
-      WHERE "entityType" = ${entityType}::"EntityMetric_EntityType_Type" AND "entityId" = ${entityId} AND "metricType" = ${metricType}::"EntityMetric_MetricType_Type"
-    `;
-    if (dbData === 0) {
-      if (clickhouse) {
-        const cData = await clickhouse.$query<{ total: number }>(`
-          SELECT sum(metricValue) as total
-          FROM entityMetricEvents
-          WHERE entityType = '${entityType}' AND entityId = ${entityId} AND metricType = '${metricType}'
-        `);
-        const existingVal = cData?.[0]?.total ?? 0;
-        const newVal = existingVal + amount;
+    // Use existing helper method for consistent key generation
+    const key =
+      `${REDIS_KEYS.ENTITY_METRICS.BASE}:${entityType}:${entityId}` as RedisKeyTemplateCache;
 
-        await dbWrite.$executeRaw`
-          INSERT INTO "EntityMetric" ("entityType", "entityId", "metricType", "metricValue")
-          VALUES (${entityType}::"EntityMetric_EntityType_Type", ${entityId}, ${metricType}::"EntityMetric_MetricType_Type", ${newVal})
-          ON CONFLICT ("entityType", "entityId", "metricType") DO UPDATE
-          SET "metricValue" = "EntityMetric"."metricValue" + ${amount}
-        `;
-      } else {
-        logToAxiom(
-          {
-            type: 'error',
-            name: 'No clickhouse client - update',
-            details: { data: logData },
-          },
-          'clickhouse'
-        ).catch();
+    // Check if specific metric exists and sync from ClickHouse if missing
+    if (clickhouse) {
+      const metricExists = await redis.hExists(key, metricType);
+
+      if (!metricExists) {
+        const lockKey = `${key}:lock:${metricType}` as RedisKeyTemplateCache;
+        const lockAcquired = await redis.setNX(lockKey, '1');
+
+        if (lockAcquired) {
+          await redis.expire(lockKey, 5);
+          try {
+            const allMetrics = await getAllMetricsFromClickHouse(entityType, entityId);
+            await entityMetricRedis.setMultipleMetrics(entityType, entityId, allMetrics);
+          } catch (error) {
+            // Simple error logging - don't block the operation
+            logToAxiom(
+              {
+                type: 'warning',
+                name: 'ClickHouse metric sync failed',
+                details: { entityType, entityId, metricType },
+              },
+              'clickhouse'
+            ).catch(() => {
+              // Ignore logging failures
+            });
+          } finally {
+            await redis.unlink(lockKey);
+          }
+        }
       }
     }
-    if (entityType === 'Image') await imageMetricsCache.bust(entityId);
+
+    // Now perform the atomic increment
+    const newValue = await entityMetricRedis.increment(entityType, entityId, metricType, amount);
+
+    // Prevent negative values by checking and correcting if needed
+    if (newValue < 0) {
+      await entityMetricRedis.setMetric(entityType, entityId, metricType, 0);
+    }
+
+    if (entityType === 'Image') {
+      let shouldBustCache = true;
+      const fliptClient = await FliptSingleton.getInstance();
+      if (fliptClient) {
+        const flag = fliptClient.evaluateBoolean({
+          flagKey: FLIPT_FEATURE_FLAGS.ENTITY_METRIC_NO_CACHE_BUST,
+          entityId: ctx.user?.id.toString() || 'anonymous',
+          context: {},
+        });
+        shouldBustCache = !flag.enabled;
+      }
+
+      if (shouldBustCache) {
+        await imageMetricsCache.bust(entityId);
+      }
+    }
   } catch (e) {
     const error = e as Error;
-    // putting this into the clickhouse dataset for now
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'Failed to increment metric',
-        details: { data: logData },
-        message: error.message,
-        stack: error.stack,
-        cause: error.cause,
-      },
-      'clickhouse'
-    ).catch();
+    logError('Failed to increment metric', {
+      data: logData,
+      error: error.message,
+      cause: error.cause,
+      stack: error.stack,
+    });
   }
 
   // Queue with clickhouse tracker
@@ -85,17 +146,12 @@ export const updateEntityMetric = async ({
     await ctx.track.entityMetric({ entityType, entityId, metricType, metricValue: amount });
   } catch (e) {
     const error = e as Error;
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'Failed to queue metric into CH',
-        details: { data: logData },
-        message: error.message,
-        stack: error.stack,
-        cause: error.cause,
-      },
-      'clickhouse'
-    ).catch();
+    logError('Failed to queue metric into CH', {
+      data: logData,
+      error: error.message,
+      cause: error.cause,
+      stack: error.stack,
+    });
   }
 };
 

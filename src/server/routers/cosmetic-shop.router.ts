@@ -1,4 +1,5 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
@@ -92,14 +93,19 @@ export const cosmeticShopRouter = router({
   purchaseShopItem: verifiedProcedure
     .input(purchaseCosmeticShopItemInput)
     .mutation(({ input, ctx }) => {
+      // Calculate domain-allowed account types at router level
+      const allowedAccountTypes = getAllowedAccountTypes(ctx.features);
+
       return purchaseCosmeticShopItem({
         ...input,
         userId: ctx.user.id,
+        buzzTypes: allowedAccountTypes,
       });
     }),
   getPreviewImages: protectedProcedure.input(getPreviewImagesInput).query(({ input, ctx }) => {
     return getUserPreviewImagesForCosmetics({
       userId: ctx.user.id,
+      features: ctx.features,
       ...input,
     });
   }),

@@ -1,8 +1,9 @@
 import { chunk } from 'lodash-es';
+import dayjs from '~/shared/utils/dayjs';
+import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import dayjs from 'dayjs';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
 import type {
@@ -10,15 +11,26 @@ import type {
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
 
+const schema = z.object({
+  date: z.coerce.date().optional(),
+});
+
 export const deliverPrepaidMembershipBuzz = createJob(
   'deliver-civitai-membership-buzz',
   '0 1 * * *', // We should run this after the expire not before.
-  async () => {
+  async (ctx) => {
     const now = dayjs();
     const date = now.format('YYYY-MM');
 
     // Get the current day of the month
-    const currentDay = now.date();
+    let currentDay = now.date();
+    const parseResult = schema.safeParse(ctx.req?.query);
+    const dateOverride =
+      parseResult.success && parseResult.data.date ? parseResult.data.date : undefined;
+    if (dateOverride) {
+      // Override currentDay with the parsed date's day
+      currentDay = dateOverride.getDate();
+    }
 
     const data = await dbWrite.$queryRaw<
       {
@@ -29,6 +41,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
         priceId: string;
         interval: string;
         tier: string;
+        buzzType: string | null;
       }[]
     >`
       SELECT
@@ -38,7 +51,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
         pr.id as "productId",
         p.id as "priceId",
         p.interval as "interval",
-        pr.metadata->>'tier' as "tier"
+        pr.metadata->>'tier' as "tier",
+        pr.metadata->>'buzzType' as "buzzType"
       FROM "CustomerSubscription" cs
       JOIN "Product" pr ON pr.id = cs."productId"
       JOIN "Price" p ON p.id = cs."priceId"
@@ -77,6 +91,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
         return {
           fromAccountId: 0,
           toAccountId: d.userId,
+          toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
           type: TransactionType.Purchase,
           externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}`,
           amount: amount,
@@ -102,8 +117,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
       console.log(`Decrementing prepaid counts for ${data.length} users`);
 
       await dbWrite.$executeRaw`
-        UPDATE "CustomerSubscription" 
-        SET 
+        UPDATE "CustomerSubscription"
+        SET
           "metadata" = jsonb_set(
             "metadata",
             ARRAY['prepaids', (updates.data ->> 'tier')],
@@ -111,8 +126,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
           ),
           "updatedAt" = NOW()
         FROM (
-          SELECT 
-            (value ->> 'id')::string AS "id",
+          SELECT
+            (value ->> 'id')::text AS "id",
             value AS data
           FROM json_array_elements(${JSON.stringify(
             data.map((d) => ({
@@ -126,7 +141,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
     }
 
     // Grant cosmetics for Civitai membership holders
-    await deliverMonthlyCosmetics({});
+    await deliverMonthlyCosmetics({ dateOverride });
 
     console.log(`Delivered buzz to ${data.length} Civitai membership holders`);
   }
@@ -313,51 +328,51 @@ export const processPrepaidMembershipTransitions = createJob(
       console.log(`Applying ${membershipUpdates.length} membership updates`);
 
       await dbWrite.$executeRaw`
-        UPDATE "CustomerSubscription" 
-        SET 
-          "productId" = CASE 
-            WHEN (updates.data ->> 'productId') IS NOT NULL 
-            THEN (updates.data ->> 'productId') 
+        UPDATE "CustomerSubscription"
+        SET
+          "productId" = CASE
+            WHEN (updates.data ->> 'productId') IS NOT NULL
+            THEN (updates.data ->> 'productId')
             ELSE "CustomerSubscription"."productId"
           END,
-          "priceId" = CASE 
-            WHEN (updates.data ->> 'priceId') IS NOT NULL 
-            THEN (updates.data ->> 'priceId') 
+          "priceId" = CASE
+            WHEN (updates.data ->> 'priceId') IS NOT NULL
+            THEN (updates.data ->> 'priceId')
             ELSE "CustomerSubscription"."priceId"
           END,
-          "currentPeriodStart" = CASE 
-            WHEN (updates.data ->> 'currentPeriodStart') IS NOT NULL 
-            THEN (updates.data ->> 'currentPeriodStart')::timestamp 
+          "currentPeriodStart" = CASE
+            WHEN (updates.data ->> 'currentPeriodStart') IS NOT NULL
+            THEN (updates.data ->> 'currentPeriodStart')::timestamp
             ELSE "CustomerSubscription"."currentPeriodStart"
           END,
-          "currentPeriodEnd" = CASE 
-            WHEN (updates.data ->> 'currentPeriodEnd') IS NOT NULL 
-            THEN (updates.data ->> 'currentPeriodEnd')::timestamp 
+          "currentPeriodEnd" = CASE
+            WHEN (updates.data ->> 'currentPeriodEnd') IS NOT NULL
+            THEN (updates.data ->> 'currentPeriodEnd')::timestamp
             ELSE "CustomerSubscription"."currentPeriodEnd"
           END,
-          "metadata" = CASE 
-            WHEN (updates.data ->> 'metadata') IS NOT NULL 
-            THEN (updates.data ->> 'metadata')::jsonb 
+          "metadata" = CASE
+            WHEN (updates.data ->> 'metadata') IS NOT NULL
+            THEN (updates.data ->> 'metadata')::jsonb
             ELSE "CustomerSubscription"."metadata"
           END,
-          "status" = CASE 
-            WHEN (updates.data ->> 'status') IS NOT NULL 
-            THEN (updates.data ->> 'status') 
+          "status" = CASE
+            WHEN (updates.data ->> 'status') IS NOT NULL
+            THEN (updates.data ->> 'status')
             ELSE "CustomerSubscription"."status"
           END,
-          "canceledAt" = CASE 
-            WHEN (updates.data ->> 'canceledAt') IS NOT NULL 
-            THEN (updates.data ->> 'canceledAt')::timestamp 
+          "canceledAt" = CASE
+            WHEN (updates.data ->> 'canceledAt') IS NOT NULL
+            THEN (updates.data ->> 'canceledAt')::timestamp
             ELSE "CustomerSubscription"."canceledAt"
           END,
-          "endedAt" = CASE 
-            WHEN (updates.data ->> 'endedAt') IS NOT NULL 
-            THEN (updates.data ->> 'endedAt')::timestamp 
+          "endedAt" = CASE
+            WHEN (updates.data ->> 'endedAt') IS NOT NULL
+            THEN (updates.data ->> 'endedAt')::timestamp
             ELSE "CustomerSubscription"."endedAt"
           END,
           "updatedAt" = NOW()
         FROM (
-          SELECT 
+          SELECT
             (value ->> 'id') AS id,
             value AS data
           FROM json_array_elements(${JSON.stringify(

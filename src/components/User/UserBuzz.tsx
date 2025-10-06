@@ -1,9 +1,20 @@
 import type { MantineSize, TextProps } from '@mantine/core';
-import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
-import { useBuzz } from '~/components/Buzz/useBuzz';
-import { CurrencyConfig } from '~/server/common/constants';
-import type { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { Group, Loader, Text, Tooltip } from '@mantine/core';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import {
+  createBuzzDistributionGradient,
+  createBuzzDistributionLabel,
+  getBuzzTypeDistribution,
+} from '~/utils/buzz';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import classes from './UserBuzz.module.scss';
+import clsx from 'clsx';
+import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 type Props = TextProps & {
   iconSize?: number;
@@ -11,7 +22,7 @@ type Props = TextProps & {
   withTooltip?: boolean;
   withAbbreviation?: boolean;
   accountId?: number;
-  accountType?: BuzzAccountType | null;
+  accountTypes?: BuzzSpendType[];
   theme?: string;
 };
 
@@ -21,26 +32,70 @@ export function UserBuzz({
   withTooltip,
   withAbbreviation = true,
   accountId,
-  accountType,
+  accountTypes,
   ...textProps
 }: Props) {
-  const { balance, balanceLoading } = useBuzz(accountId, accountType);
-  const config = CurrencyConfig.BUZZ.themes?.[accountType ?? ''] ?? CurrencyConfig.BUZZ;
-  const Icon = config.icon;
-  const theme = useMantineTheme();
+  const availableTypes = useAvailableBuzz(['blue']);
+  accountTypes ??= availableTypes;
+  const {
+    data: { accounts, total },
+    isLoading,
+  } = useQueryBuzz(accountTypes);
 
-  const content = balanceLoading ? (
+  const balance = total;
+  const baseAccountType = accounts[0]?.type;
+  const config = getCurrencyConfig({ currency: Currency.BUZZ, type: baseAccountType });
+  const Icon = config.icon;
+  const typeDistribution = getBuzzTypeDistribution({
+    accounts,
+    buzzAmount: balance,
+  });
+  const gradient = createBuzzDistributionGradient({
+    typeDistribution,
+    direction: 'bottom',
+  });
+  const label = createBuzzDistributionLabel({
+    typeDistribution,
+  });
+
+  const content = isLoading ? (
     <Group gap={4} wrap="nowrap">
-      <Icon size={iconSize} color={config.color(theme)} fill={config.color(theme)} />
-      <Loader color={config.color(theme)} type="dots" size="xs" />
+      <Icon size={iconSize} color={config.color} fill={config.color} />
+      <Loader color={config.color} type="dots" size="xs" />
     </Group>
   ) : (
-    <Text component="div" c={config.color(theme)} tt="uppercase" {...textProps}>
+    <Text
+      component="div"
+      c={config.color}
+      tt="uppercase"
+      style={{
+        '--buzz-gradient': gradient || config.color,
+        ...textProps.style,
+      }}
+      className={clsx(classes.userBuzz, gradient && classes.withGradient, textProps.className)}
+      {...textProps}
+    >
       <Group gap={4} wrap="nowrap">
-        <Icon size={iconSize} color="currentColor" fill="currentColor" />
-        <Text size={textSize} fw={600} lh={0} style={{ fontVariantNumeric: 'tabular-nums' }} span>
+        <BuzzBoltSvg
+          size={iconSize}
+          color={gradient ? undefined : config.color}
+          fill={gradient ? undefined : config.color}
+          gradient={gradient}
+        />
+        <Text
+          size={textSize}
+          fw={600}
+          lh={0}
+          className={clsx(classes.buzzText, gradient && classes.withGradient)}
+          span
+        >
           {balance === null ? (
-            <Loader size="sm" type="dots" color={config.color(theme)} />
+            <Loader
+              size="sm"
+              type="dots"
+              color={gradient ? undefined : config.color}
+              className={clsx(classes.buzzLoader, gradient && classes.withGradient)}
+            />
           ) : withAbbreviation ? (
             abbreviateNumber(balance, { floor: true })
           ) : (
@@ -51,13 +106,5 @@ export function UserBuzz({
     </Text>
   );
 
-  return withTooltip ? (
-    <Tooltip
-      label={`Total balance: ${balance === null ? '(Loading...)' : balance.toLocaleString()}`}
-    >
-      {content}
-    </Tooltip>
-  ) : (
-    content
-  );
+  return withTooltip ? <Tooltip label={label}>{content}</Tooltip> : content;
 }

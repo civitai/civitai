@@ -1,8 +1,8 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,
@@ -12,17 +12,12 @@ import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
-import {
-  createBuzzTransaction,
-  getMultipliersForUser,
-  grantBuzzPurchase,
-} from '~/server/services/buzz.service';
+import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
-import { Prisma } from '@prisma/client';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 
@@ -262,7 +257,6 @@ export async function consumeRedeemableCode({
               });
             } else if (consumedTierOrder > membershipTierOrder) {
               const now = dayjs();
-              console.log({ x: dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') });
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
                 Number(
@@ -360,6 +354,7 @@ export async function consumeRedeemableCode({
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: userId,
+            toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
             type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id
@@ -375,6 +370,7 @@ export async function consumeRedeemableCode({
 
           await deliverMonthlyCosmetics({
             userIds: [userId],
+            tx,
           });
         });
       }
@@ -387,20 +383,22 @@ export async function consumeRedeemableCode({
     }
   );
 
-  await invalidateSession(userId);
-  await getMultipliersForUser(userId, true);
-  await setVaultFromSubscription({
-    userId,
-  });
-
-  const consumedProductMetadata = consumedCode.price?.product
-    .metadata as SubscriptionProductMetadata;
-
-  if (consumedProductMetadata) {
-    await updateServiceTier({
+  if (consumedCode.type === RedeemableCodeType.Membership) {
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
+    await setVaultFromSubscription({
       userId,
-      serviceTier: consumedProductMetadata.tier ?? null,
     });
+
+    const consumedProductMetadata = consumedCode.price?.product
+      .metadata as SubscriptionProductMetadata;
+
+    if (consumedProductMetadata) {
+      await updateServiceTier({
+        userId,
+        serviceTier: consumedProductMetadata.tier ?? null,
+      });
+    }
   }
 
   return consumedCode;

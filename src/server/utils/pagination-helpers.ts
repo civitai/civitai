@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
 import type { PaginationInput } from '~/server/schema/base.schema';
@@ -38,7 +38,7 @@ export function getPaginationLinks({
 }) {
   const baseUrl = new URL(
     req.url ?? '/',
-    isProd ? `https://${req.headers.host}` : 'http://localhost:3000'
+    isProd ? `https://${req.headers.host as string}` : 'http://localhost:3000'
   );
   const hasNextPage = currentPage < totalPages;
   const hasPrevPage = totalPages > 1 && currentPage > 1;
@@ -158,7 +158,7 @@ export function getNextPage({
 }) {
   const baseUrl = new URL(
     req.url ?? '/',
-    isProd ? `https://${req.headers.host}` : 'http://localhost:3000'
+    isProd ? `https://${req.headers.host as string}` : 'http://localhost:3000'
   );
 
   const hasNextPage = !!nextCursor;

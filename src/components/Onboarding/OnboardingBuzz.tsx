@@ -30,7 +30,7 @@ import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortBu
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,
@@ -38,13 +38,14 @@ import {
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import { showErrorNotification } from '~/utils/notifications';
 import { env } from '~/env/client';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 const referralSchema = z.object({
   code: z
     .string()
     .trim()
     .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
-      message: `Referral codes must be at least ${
+      error: `Referral codes must be at least ${
         constants.referrals.referralCodeMinLength + 1
       } characters long`,
     })
@@ -219,7 +220,7 @@ export function OnboardingBuzz() {
                   <Text span>
                     <CurrencyBadge
                       currency={Currency.BUZZ}
-                      unitAmount={constants.buzz.referralBonusAmount}
+                      unitAmount={buzzConstants.referralBonusAmount}
                     />
                   </Text>{' '}
                   bonus with a valid referral code.

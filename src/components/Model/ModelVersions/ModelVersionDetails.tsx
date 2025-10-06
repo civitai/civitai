@@ -35,7 +35,7 @@ import {
 } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
-import dayjs from 'dayjs';
+import clsx from 'clsx';
 import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useCallback, useRef } from 'react';
@@ -82,6 +82,7 @@ import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersio
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import {
   EditUserResourceReviewLight,
@@ -122,8 +123,6 @@ import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
-import clsx from 'clsx';
-import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 
 export function ModelVersionDetails({
   model,
@@ -191,9 +190,11 @@ export function ModelVersionDetails({
 
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = version?.earlyAccessConfig;
+  const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
   const couldGenerate =
+    !isDraft && // We don't wanna show the action for drafts.
     isSelectableInGenerator &&
     features.imageGeneration &&
     // !shouldOmit &&
@@ -421,7 +422,8 @@ export function ModelVersionDetails({
           listenForUpdates
         />
       ),
-      visible: canGenerate && features.auctions && model.type === ModelType.Checkpoint,
+      visible:
+        canGenerate && features.modelVersionPopularity && model.type === ModelType.Checkpoint,
     },
     {
       label: 'Reviews',
@@ -652,7 +654,7 @@ export function ModelVersionDetails({
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${version.meta?.customMessage}.`;
+      : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
@@ -739,7 +741,7 @@ export function ModelVersionDetails({
                       <IconClock size={20} />
                     </ThemeIcon>
                     <Text size="xs" c="dimmed">
-                      Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
+                      Scheduled for {formatDate(scheduledPublishDate, 'MMMM D, h:mma')}
                     </Text>
                   </Group>
                 </Stack>
@@ -748,7 +750,7 @@ export function ModelVersionDetails({
           ) : (
             <Stack gap={4}>
               <Group gap="xs" className={classes.ctaContainer}>
-                <Group gap="xs" className="flex-1 *:grow" wrap="nowrap">
+                <Group gap="xs" className="flex-1" wrap="nowrap">
                   {couldGenerate && (
                     <GenerateButton
                       model={model}

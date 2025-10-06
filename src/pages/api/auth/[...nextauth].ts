@@ -1,6 +1,6 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import type { Prisma, PrismaClient, User } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import NextAuth, { type NextAuthOptions } from 'next-auth';
@@ -17,7 +17,7 @@ import { env } from '~/env/server';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL, getRequestDomainColor } from '~/server/common/constants';
+import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
@@ -36,6 +36,7 @@ import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 
@@ -107,9 +108,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           while (!username) username = await setUserName(Number(user.id), startingUsername);
         }
       },
-      signOut: async ({ token }) => {
-        await invalidateToken(token);
-      },
     },
     callbacks: {
       async signIn({ account, email, user }) {
@@ -153,6 +151,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           token.user = { ...restUser };
         }
         if (!token.id) token.id = uuid();
+        if (!token.signedAt) token.signedAt = Date.now(); // Initialize signedAt on token creation
 
         return token;
       },
@@ -160,8 +159,23 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         // console.log(new Date().toISOString() + ' ::', 'session', session.user?.email);
         const newToken = await refreshToken(token);
         // console.log(new Date().toISOString() + ' ::', newToken?.name);
-        if (!newToken?.user) return {} as Session;
-        session.user = (newToken.user ? newToken.user : session.user) as Session['user'];
+
+        // Token was explicitly invalidated (clearedAt, invalid token hash)
+        if (!newToken) return {} as Session;
+
+        if (!newToken.user && token.user) {
+          // Transient failure during refresh - keep existing session
+          if (token.sub)
+            console.warn(`Session refresh failed for token ${token.sub}, using cached session`);
+          session.user = token.user as Session['user'];
+
+          return session;
+        }
+
+        // No user data available at all
+        if (!newToken.user) return {} as Session;
+
+        session.user = newToken.user as Session['user'];
         return session;
       },
       async redirect({ url, baseUrl }) {
@@ -326,7 +340,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
   // Handle request hostname
   const protocol = getProtocol(req);
-  req.headers.origin = `${protocol}://${req.headers.host}`;
+  req.headers.origin = `${protocol}://${req.headers.host as string}`;
   const { hostname: reqHostname } = new URL(req.headers.origin);
 
   // Handle domain-specific cookie
@@ -374,17 +388,15 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   }
 
   customAuthOptions.events ??= {};
-  // customAuthOptions.events.session = async (message) => {
-  //   console.log('session event', message.session?.user?.email, message.token?.email);
-  // };
 
-  customAuthOptions.events.signOut = async (context) => {
-    // console.log('signout event', context.user?.email, context.account?.userId);
+  customAuthOptions.events.signOut = async ({ token }) => {
+    // Invalidate the token
+    await invalidateToken(token);
+    // Delete encrypted cookies
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
   };
 
   customAuthOptions.events.signIn = async (context) => {
-    // console.log('signin event', context.user?.email, context.account?.userId);
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
 
     const source = req.cookies['ref_source'] as string;
@@ -449,6 +461,7 @@ async function sendVerificationRequest({
   try {
     await verificationEmail.send({ to, url, theme });
     await emailLimiter.increment(to).catch(() => null);
+    
   } catch (error) {
     logToAxiom({
       name: 'verification-email',

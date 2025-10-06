@@ -1,4 +1,4 @@
-import { KlingMode } from '@civitai/client';
+import { KlingMode, KlingModel } from '@civitai/client';
 import { Anchor, Input, Radio } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
@@ -22,6 +22,7 @@ export function KlingFormInput() {
   const form = useFormContext();
   const process = form.watch('process');
   const isTxt2Vid = process === 'txt2vid';
+  const model = form.watch('model');
 
   return (
     <>
@@ -62,38 +63,31 @@ export function KlingFormInput() {
           }))}
         />
       </div>
-      {/* <div className="flex flex-col gap-0.5">
-        <div className="flex items-center gap-1">
-          <Input.Label>Mode</Input.Label>
-          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-            Standard mode is faster to generate and more cost-effective. Pro takes longer to
-            generate and has higher quality video output.
-          </InfoPopover>
+      {model === KlingModel.V1_6 && (
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-1">
+            <Input.Label>Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Standard mode is faster to generate and more cost-effective. Pro takes longer to
+              generate and has higher quality video output.
+            </InfoPopover>
+          </div>
+          <InputSegmentedControl
+            name="mode"
+            data={[
+              { label: 'Standard', value: KlingMode.STANDARD },
+              { label: 'Professional', value: KlingMode.PROFESSIONAL },
+            ]}
+          />
         </div>
-        <InputSegmentedControl
-          name="mode"
-          data={[
-            { label: 'Standard', value: KlingMode.STANDARD },
-            { label: 'Professional', value: KlingMode.PROFESSIONAL },
-          ]}
-        />
-      </div> */}
+      )}
       <InputNumberSlider
         name="cfgScale"
         label={
           <div className="flex items-center gap-1">
             <Input.Label>CFG Scale</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              Controls how closely the video generation follows the text prompt.
             </InfoPopover>
           </div>
         }

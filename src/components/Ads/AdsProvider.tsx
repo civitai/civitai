@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -20,11 +20,13 @@ declare global {
 
 const AdsContext = createContext<{
   ready: boolean;
+  consent: boolean;
   adsBlocked?: boolean;
   adsEnabled: boolean;
   username?: string;
   isMember: boolean;
   kontextReady: boolean;
+  kontextAvailable: boolean;
 } | null>(null);
 
 export function useAdsContext() {
@@ -33,13 +35,19 @@ export function useAdsContext() {
   return context;
 }
 
-const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean; kontextReady: boolean }>(
-  () => ({
-    ready: false,
-    adsBlocked: true,
-    kontextReady: false,
-  })
-);
+const useAdProviderStore = create<{
+  ready: boolean;
+  adsBlocked: boolean;
+  consent: boolean;
+  kontextReady: boolean;
+  kontextAvailable: boolean;
+}>(() => ({
+  ready: false,
+  adsBlocked: true,
+  consent: true,
+  kontextReady: false,
+  kontextAvailable: false,
+}));
 
 const blockedUrls: string[] = [
   '/collections/6503138',
@@ -53,6 +61,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const kontextReady = useAdProviderStore((state) => state.kontextReady);
+  const kontextAvailable = useAdProviderStore((state) => state.kontextAvailable);
+  const consent = useAdProviderStore((state) => state.consent);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -81,7 +91,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
           window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
           // AdConsent finished asking for consent, do something that is dependend on user consent ...
-          if (!success) useAdProviderStore.setState({ adsBlocked: true });
+          if (!success) useAdProviderStore.setState({ consent: false });
           else useAdProviderStore.setState({ ready: true });
         }
       });
@@ -114,15 +124,27 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const kontextAvailableCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!kontextAvailableCheckedRef.current) {
+      kontextAvailableCheckedRef.current = true;
+      kontextPrecheck().then((kontextAvailable) =>
+        useAdProviderStore.setState({ kontextAvailable })
+      );
+    }
+  }, []);
+
   return (
     <AdsContext.Provider
       value={{
         ready,
         adsBlocked,
+        consent,
         adsEnabled,
         username: currentUser?.username,
         isMember,
         kontextReady,
+        kontextAvailable,
       }}
     >
       {children}
@@ -165,7 +187,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       )}
       {adsEnabled && (
         <Script
-          async
+          defer
           src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
           onError={handleLoadedError}
           onLoad={handleLoaded}
@@ -239,4 +261,19 @@ function ImpressionTracker() {
   }, [fingerprint, worker, currentUser]);
 
   return null;
+}
+
+type KontextPrecheckResponse = {
+  canShowAds: boolean;
+};
+async function kontextPrecheck() {
+  if (isDev) return true;
+  const response = await fetch('https://server.megabrain.co/api/v1/precheck', {
+    method: 'POST',
+    body: JSON.stringify({ publisherToken: isDev ? 'civitai-dev' : 'civitai-b9c3s0xx6u' }),
+  });
+
+  if (!response.ok) return false;
+  const json: KontextPrecheckResponse = await response.json();
+  return json.canShowAds;
 }

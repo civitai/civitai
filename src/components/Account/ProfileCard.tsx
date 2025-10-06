@@ -9,9 +9,11 @@ import {
   Text,
   TextInput,
   Popover,
+  Modal,
 } from '@mantine/core';
-import { IconPencilMinus, IconInfoSquareRounded } from '@tabler/icons-react';
-import * as z from 'zod/v4';
+import { IconPencilMinus, IconInfoSquareRounded, IconMail } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
+import * as z from 'zod';
 
 import { useSession } from 'next-auth/react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,21 +22,21 @@ import { usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { CryptoTransactions } from '~/components/Account/CryptoTransactions';
-import { features } from 'process';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = z.object({
   id: z.number(),
   username: usernameInputSchema,
 });
 
+const emailChangeSchema = z.object({
+  newEmail: z.string().email('Please enter a valid email address'),
+});
+
 export function ProfileCard() {
   const queryUtils = trpc.useUtils();
   const session = useCurrentUser();
   const { data } = useSession();
-  const features = useFeatureFlags();
+  const [emailModalOpened, { open: openEmailModal, close: closeEmailModal }] = useDisclosure();
 
   const currentUser = data?.user;
 
@@ -47,6 +49,21 @@ export function ProfileCard() {
     },
   });
 
+  const {
+    mutate: requestEmailChange,
+    isLoading: isEmailChangeLoading,
+    error: emailChangeError,
+  } = trpc.user.requestEmailChange.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        message:
+          'Verification email sent! Please check your inbox and click the verification link.',
+      });
+      closeEmailModal();
+      emailForm.reset();
+    },
+  });
+
   const form = useForm({
     schema,
     mode: 'onChange',
@@ -54,6 +71,11 @@ export function ProfileCard() {
       ...data?.user,
     },
     shouldUnregister: false,
+  });
+
+  const emailForm = useForm({
+    schema: emailChangeSchema,
+    mode: 'onChange',
   });
 
   return (
@@ -92,71 +114,87 @@ export function ProfileCard() {
               <InputText name="username" label="Name" required />
             </Grid.Col>
             <Grid.Col span={12}>
-              <TextInput
-                value={currentUser?.email ?? ''}
-                label={
-                  <Group gap="sm">
-                    <Text className="font-medium" size="sm">
-                      Account Email
-                    </Text>
-                    <Popover width={300} withArrow withinPortal shadow="sm">
-                      <Popover.Target>
-                        <IconInfoSquareRounded
-                          size={16}
-                          style={{ cursor: 'pointer', opacity: 0.7 }}
-                        />
-                      </Popover.Target>
-                      <Popover.Dropdown>
-                        <Stack gap="xs">
-                          <Text size="sm" fw={500}>
-                            What is this email?
-                          </Text>
-                          <Text size="xs" lh={1.3}>
-                            This is the email address associated with your account. You cannot edit
-                            it here.
-                          </Text>
-                          <Text size="xs" lh={1.3} c="dimmed">
-                            If you need to update this address, please contact support@civitai.com
-                          </Text>
-                        </Stack>
-                      </Popover.Dropdown>
-                    </Popover>
-                  </Group>
-                }
-                disabled
-                styles={{
-                  root: { flex: 1 },
-                }}
-              />
+              <Stack gap="xs">
+                <Group gap="sm">
+                  <Text className="font-medium" size="sm">
+                    Account Email
+                  </Text>
+                  <Button
+                    variant="subtle"
+                    size="compact-xs"
+                    leftSection={<IconMail size={14} />}
+                    onClick={openEmailModal}
+                  >
+                    Change Email
+                  </Button>
+                </Group>
+                <TextInput
+                  value={currentUser?.email ?? ''}
+                  disabled
+                  styles={{
+                    root: { flex: 1 },
+                  }}
+                />
+              </Stack>
             </Grid.Col>
             <Grid.Col span={12}>
-              <Stack>
-                <Button
-                  type="submit"
-                  loading={isLoading}
-                  disabled={!form.formState.isDirty}
-                  fullWidth
-                >
-                  Save
-                </Button>
-                {features.coinbaseOnramp && (
-                  <Button
-                    color="teal"
-                    compact
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: CryptoTransactions,
-                      });
-                    }}
-                  >
-                    View Debit Card Transactions
-                  </Button>
-                )}
-              </Stack>
+              <Button
+                type="submit"
+                loading={isLoading}
+                disabled={!form.formState.isDirty}
+                fullWidth
+              >
+                Save
+              </Button>
             </Grid.Col>
           </Grid>
         </Stack>
       </Form>
+
+      {/* Email Change Modal */}
+      <Modal
+        opened={emailModalOpened}
+        onClose={closeEmailModal}
+        title="Change Email Address"
+        size="md"
+      >
+        <Form
+          form={emailForm}
+          onSubmit={(data) => {
+            requestEmailChange({ newEmail: data.newEmail });
+          }}
+        >
+          <Stack>
+            {emailChangeError && (
+              <Alert color="red" variant="light">
+                {emailChangeError.message}
+              </Alert>
+            )}
+            <Text size="sm" c="dimmed">
+              Enter your new email address. We&rsquo;ll send you a verification link to confirm the
+              change. Verification codes expire in 15 minutes.
+            </Text>
+            <InputText
+              name="newEmail"
+              label="New Email Address"
+              placeholder="Enter your new email"
+              required
+            />
+            <Group justify="flex-end" gap="sm">
+              <Button variant="outline" onClick={closeEmailModal}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                loading={isEmailChangeLoading}
+                disabled={!emailForm.formState.isValid}
+              >
+                Send Verification Email
+              </Button>
+            </Group>
+          </Stack>
+        </Form>
+      </Modal>
     </Card>
   );
 }

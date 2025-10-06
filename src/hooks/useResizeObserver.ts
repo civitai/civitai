@@ -50,8 +50,10 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
     const observeElements = (elems: Element[]) => {
       for (const elem of elems) {
         const callbacks = callbackMap.get(elem as Element) ?? [];
-        observer.observe(elem);
-        observedElements.push(elem);
+        if (!callbackMap.has(elem)) {
+          observer.observe(elem);
+          observedElements.push(elem);
+        }
         callbackMap.set(elem, callbacks.concat(cbRef));
       }
     };
@@ -77,6 +79,7 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
       observeElements([...node.children] as Element[]);
 
       // set up observation on child mutations
+      mutationObserver?.disconnect();
       mutationObserver = new MutationObserver((entries) => {
         for (const entry of entries) {
           unobserveElements(entry.removedNodes as any);

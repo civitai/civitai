@@ -3,14 +3,12 @@ import {
   Anchor,
   Badge,
   Box,
-  Button,
   Center,
   Container,
   Divider,
   Group,
   Loader,
   Menu,
-  Paper,
   Stack,
   Text,
   ThemeIcon,
@@ -37,8 +35,6 @@ import {
   IconInfoCircle,
   IconLock,
   IconLockOff,
-  IconMessage,
-  IconMessageCircleOff,
   IconPlus,
   IconRadar2,
   IconRecycle,
@@ -56,7 +52,10 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
+import {
+  BidModelButton,
+  getEntityDataForBidModelButton,
+} from '~/components/Auction/BidModelButton';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -70,16 +69,13 @@ import {
   openReportModal,
   openUnpublishModal,
 } from '~/components/Dialog/dialog-registry';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
-import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
@@ -89,7 +85,6 @@ import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -117,29 +112,22 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import {
-  Availability,
-  CollectionType,
-  ModelModifier,
-  ModelStatus,
-  ModelType,
-} from '~/shared/utils/prisma/enums';
+import { ModelModifier } from '~/shared/utils/prisma/enums';
+import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import {
-  getBaseModelEcosystemName,
-  getDisplayName,
-  removeTags,
-  slugit,
-  splitUppercase,
-} from '~/utils/string-helpers';
+import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
+import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
+import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
+import { AdUnitTop } from '~/components/Ads/AdUnit';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -317,7 +305,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
-  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
+  const selectedEcosystemName = getBaseModelSeoName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
   const buzzEarned =
     tippedAmount +
@@ -668,7 +656,7 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
-        <Container size="xl" data-tour="model:start">
+        <Container size="xl" data-tour="model:start" className="pb-8">
           <Stack gap="xl">
             <Stack gap="xs">
               <Stack gap={4}>
@@ -1150,6 +1138,23 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
+              {isOwner && model.meta?.cannotPublish && (
+                <Alert color="red">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="sm" mt={-3}>
+                      Due to the nature of the training data used to create this model, it cannot be
+                      Published. If you believe this to be an error, please{' '}
+                      <Text component="a" c="blue.4" href="/contact" target="_blank">
+                        contact our support team
+                      </Text>
+                      .
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -1225,98 +1230,77 @@ export default function ModelDetailsV2({
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}
         </Container>
-        {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-          <AssociatedModels
-            fromId={model.id}
-            type="Suggested"
-            versionId={selectedVersion?.id}
-            label={
-              <Group gap={8} wrap="nowrap">
-                Suggested Resources{' '}
-                <InfoPopover>
-                  <Text size="sm" fw={400}>
-                    These are resources suggested by the creator of this model. They may be related
-                    to this model or created by the same user.
-                  </Text>
-                </InfoPopover>
-              </Group>
-            }
-            ownerId={model.user.id}
-          />
-        )}
-        {canLoadBelowTheFold &&
-          (!model.locked && !model.meta?.commentsLocked ? (
+        {canLoadBelowTheFold && (
+          <>
+            {(isOwner || model.hasSuggestedResources) && (
+              <>
+                {model.hasSuggestedResources && <AdUnitTopSection />}
+                <AssociatedModels
+                  fromId={model.id}
+                  type="Suggested"
+                  versionId={selectedVersion?.id}
+                  label={
+                    <Group gap={8} wrap="nowrap">
+                      Suggested Resources{' '}
+                      <InfoPopover>
+                        <Text size="sm" fw={400}>
+                          These are resources suggested by the creator of this model. They may be
+                          related to this model or created by the same user.
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                  ownerId={model.user.id}
+                />
+              </>
+            )}
+            <AdUnitTopSection />
             <Container size="xl" my="xl">
-              <Stack gap="md">
-                <Group ref={discussionSectionRef} justify="space-between">
-                  <Group gap="xs">
-                    <Title order={2} data-tour="model:discussion">
-                      Discussion
-                    </Title>
-                    {canDiscuss ? (
-                      <>
-                        <LoginRedirect reason="create-comment">
-                          <Button
-                            leftSection={<IconMessage size={16} />}
-                            variant="outline"
-                            onClick={() => triggerRoutedDialog({ name: 'commentEdit', state: {} })}
-                            size="xs"
-                          >
-                            Add Comment
-                          </Button>
-                        </LoginRedirect>
-                      </>
-                    ) : (
-                      !isMuted &&
-                      onlyEarlyAccess && (
-                        <JoinPopover message="You must be a Civitai Member to join this discussion">
-                          <Button
-                            leftSection={<IconClock size={16} />}
-                            variant="outline"
-                            size="xs"
-                            color="green"
-                          >
-                            Early Access
-                          </Button>
-                        </JoinPopover>
-                      )
-                    )}
-                  </Group>
-                </Group>
-                <ModelDiscussionV2 modelId={model.id} />
-              </Stack>
+              <ModelDiscussion
+                canDiscuss={canDiscuss}
+                onlyEarlyAccess={onlyEarlyAccess}
+                modelId={model.id}
+                locked={model.locked || model.meta?.commentsLocked}
+              />
             </Container>
-          ) : (
-            <Paper p="lg" withBorder bg={`rgba(0, 0, 0, 0.1)`}>
-              <Center>
-                <Group gap="xs">
-                  <ThemeIcon color="gray" size="xl" radius="xl">
-                    <IconMessageCircleOff />
-                  </ThemeIcon>
-                  <Text size="lg" c="dimmed">
-                    Discussion is turned off for this model.
-                  </Text>
-                </Group>
-              </Center>
-            </Paper>
-          ))}
-        {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
-          <Box ref={gallerySectionRef} id="gallery" mt="md">
-            <ImagesAsPostsInfinite
-              model={model}
-              selectedVersionId={selectedVersion?.id}
-              modelVersions={model.modelVersions}
-              showModerationOptions={isOwner}
-              showPOIWarning={model.poi}
-              generationOptions={{
-                generationModelId: selectedVersion?.meta.picFinderModelId,
-                includeEditingActions: isOwner,
-              }}
-              canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
-            />
-          </Box>
+            {!model.locked && model.mode !== ModelModifier.TakenDown && (
+              <Box ref={gallerySectionRef} id="gallery" mt="md">
+                <ModelGallery
+                  model={model}
+                  selectedVersionId={selectedVersion?.id}
+                  modelVersions={model.modelVersions}
+                  showModerationOptions={isOwner}
+                  showPOIWarning={model.poi}
+                  canReview={
+                    !versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator
+                  }
+                />
+              </Box>
+            )}
+          </>
         )}
       </SensitiveShield>
     </>
   );
+
+  // return (
+  //   <Box ref={gallerySectionRef} id="gallery" mt="md">
+  //     <ImagesAsPostsInfinite
+  //       model={model}
+  //       selectedVersionId={selectedVersion?.id}
+  //       modelVersions={model.modelVersions}
+  //       showModerationOptions={isOwner}
+  //       showPOIWarning={model.poi}
+  //       generationOptions={{
+  //         generationModelId: selectedVersion?.meta.picFinderModelId,
+  //         includeEditingActions: isOwner,
+  //       }}
+  //       canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
+  //     />
+  //   </Box>
+  // );
+}
+
+function AdUnitTopSection() {
+  return <AdUnitTop className="bg-gray-1 py-3 dark:bg-dark-6" preserveLayout />;
 }

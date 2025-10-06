@@ -11,7 +11,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
@@ -20,12 +20,12 @@ import Link from 'next/link';
 import { env } from '~/env/client';
 import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
-import { Configure, InstantSearch } from 'react-instantsearch';
+import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -34,6 +34,8 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
 import { includesInappropriate } from '~/utils/metadata/audit';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -63,16 +65,28 @@ export const useSearchLayout = () => {
   return context;
 };
 
+// Component to monitor InstantSearch state changes for profanity/illegal detection
+function SearchStateMonitor({ onQueryChange }: { onQueryChange: (query: string) => void }) {
+  const { uiState } = useInstantSearch();
+
+  useEffect(() => {
+    // Get the current query from InstantSearch state
+    const indexName = Object.keys(uiState)?.[0];
+    const currentQuery = indexName ? uiState[indexName]?.query || '' : '';
+    onQueryChange(currentQuery);
+  }, [uiState, onQueryChange]);
+
+  return null;
+}
+
 function renderSearchComponent(props: RenderSearchComponentProps) {
   return <CustomSearchBox {...props} />;
 }
 
-const searchQuerySchema = z
-  .object({
-    query: z.string().trim().optional(),
-    sortBy: z.string().optional(),
-  })
-  .passthrough();
+const searchQuerySchema = z.looseObject({
+  query: z.string().trim().optional(),
+  sortBy: z.string().optional(),
+});
 
 export function SearchLayout({
   children,
@@ -100,30 +114,85 @@ export function SearchLayout({
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   const router = useRouter();
-  const { trackSearch } = useTrackEvent();
+  const { trackSearch, trackAction } = useTrackEvent();
+  const domainColor = useDomainColor();
+
+  // State to track the current InstantSearch query
+  const [instantSearchQuery, setInstantSearchQuery] = useState('');
+
+  // Cache the parsed search query result to avoid multiple parsing
+  const parsedQuery = useMemo(() => {
+    const result = searchQuerySchema.safeParse(router.query);
+    if (!result.success) return null;
+    return result.data;
+  }, [router.query]);
+
+  // Use both URL query and InstantSearch query for comprehensive detection
+  const urlQuery = parsedQuery?.query || '';
+  const searchQuery = instantSearchQuery || urlQuery;
 
   useEffect(() => {
-    const result = searchQuerySchema.safeParse(router.query);
-    if (!result.success) return;
+    if (!parsedQuery) return;
 
-    const { query, sortBy: index, ...filters } = result.data;
+    const { query, sortBy: index, ...filters } = parsedQuery;
 
     if (query && index) trackSearch({ query, index, filters });
-  }, [router.query]);
+  }, [parsedQuery]);
+
+  // Callback for InstantSearch state changes
+  const handleQueryChange = useCallback((query: string) => {
+    setInstantSearchQuery(query);
+  }, []);
 
   const isIllegalSearch = useMemo(() => {
-    const result = searchQuerySchema.safeParse(router.query);
-    if (!result.success) return;
+    if (!searchQuery) return false;
 
-    const { query, sortBy: index, ...filters } = result.data;
+    const illegalSearch = includesInappropriate({ prompt: searchQuery });
+    return illegalSearch === 'minor';
+  }, [searchQuery]);
 
-    if (query) {
-      const illegalSearch = includesInappropriate({ prompt: query });
-      return illegalSearch === 'minor';
-    }
+  // Track illegal search separately to avoid side effects in useMemo
+  useEffect(() => {
+    if (!searchQuery || !isIllegalSearch) return;
 
-    return false;
-  }, [router.query]);
+    const { sortBy: index } = parsedQuery || {};
+    trackAction({
+      type: 'CSAM_Help_Triggered',
+      details: {
+        query: searchQuery,
+        index,
+      },
+    }).catch(() => undefined);
+  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy]);
+
+  // Check profanity in search query
+  const profanityAnalysis = useCheckProfanity(searchQuery, {
+    enabled: domainColor === 'green' && !isIllegalSearch && !!searchQuery,
+  });
+
+  // Track profanity search separately to avoid side effects in useMemo
+  useEffect(() => {
+    if (!searchQuery || !profanityAnalysis.hasProfanity || domainColor !== 'green') return;
+
+    const { sortBy: index } = parsedQuery || {};
+
+    trackAction({
+      type: 'ProfanitySearch',
+      details: {
+        query: searchQuery,
+        index,
+        matches: profanityAnalysis.matches,
+      },
+    }).catch(() => undefined);
+  }, [
+    searchQuery,
+    domainColor,
+    profanityAnalysis.hasProfanity,
+    profanityAnalysis.matches.length,
+    parsedQuery?.sortBy,
+  ]);
+
+  const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   return (
     <SearchLayoutCtx.Provider value={ctx}>
@@ -137,6 +206,7 @@ export function SearchLayout({
         initialUiState={initialUiState}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
+        <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
           renderSearchComponent={renderSearchComponent}
           scrollable={isMobile ? !sidebarOpen : true}
@@ -190,7 +260,7 @@ export function SearchLayout({
                           Online Support (global)
                         </Text>{' '}
                         <Anchor
-                          href="https://get-help.stopitnow.org.uk"
+                          href="https://www.stopitnow.org.uk/self-help/concerned-about-your-own-thoughts-or-behaviour/?utm_source=civitai&utm_medium=warning_message&utm_campaign=civitai_warning"
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -213,6 +283,59 @@ export function SearchLayout({
                     <Anchor component={Link} href="/" mt="md">
                       <Text size="md">Go Back ↩︎</Text>
                     </Anchor>
+                  </Stack>
+                </Center>
+              </SearchLayout.Content>
+            </SearchLayout.Root>
+          ) : isProfaneSearch ? (
+            <SearchLayout.Root>
+              <SearchLayout.Content>
+                <Center>
+                  <Stack maw={750} align="center" justify="center" className="h-full">
+                    <Stack align="center" gap={0}>
+                      <IconAlertTriangle size={42} color="orange" />
+                      <Text weight={700} size="xl" c="orange">
+                        Content Policy Violation
+                      </Text>
+                    </Stack>
+                    <Text align="center">
+                      Your search contains{' '}
+                      <Text span weight={700} c="orange">
+                        inappropriate content
+                      </Text>{' '}
+                      that violates our community guidelines.
+                    </Text>
+                    {profanityAnalysis.matches.length > 0 && (
+                      <Text align="center" c="dimmed" size="sm">
+                        Flagged terms: {profanityAnalysis.matches.join(', ')}
+                      </Text>
+                    )}
+                    <Text align="center">
+                      Our family-friendly environment requires all searches to comply with our{' '}
+                      <Text span weight={700}>
+                        content policies
+                      </Text>
+                      . Please refine your search terms to find appropriate content.
+                    </Text>
+                    <Text align="center" c="dimmed" size="sm" mt="md">
+                      We maintain strict{' '}
+                      <Anchor href="/content/tos#content-policies" target="_blank">
+                        community standards
+                      </Anchor>{' '}
+                      to ensure a safe environment for all users. Visit our{' '}
+                      <Anchor href="/safety" target="_blank">
+                        Safety Center
+                      </Anchor>{' '}
+                      for more information about our policies.
+                    </Text>
+                    <Stack mt="lg" align="center" gap={4}>
+                      <Anchor component={Link} href="/" variant="subtle">
+                        <Text size="md">Go Home ↩︎</Text>
+                      </Anchor>
+                      <Text c="dimmed" size="sm">
+                        or modify your search above
+                      </Text>
+                    </Stack>
                   </Stack>
                 </Center>
               </SearchLayout.Content>

@@ -1,10 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL, constants } from '~/server/common/constants';
+import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -20,7 +20,8 @@ import {
 } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   DeleteExplorationPromptInput,
@@ -45,7 +46,10 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 import { uploadImageFromUrl } from '~/server/services/image.service';
@@ -58,11 +62,17 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import type {
+  ModelType,
+  ModelVersionEngagementType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -184,7 +194,36 @@ export const upsertModelVersion = async ({
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
-  // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
+
+  // Get model information to check NSFW + restricted base model combination
+  const model = await dbWrite.model.findUniqueOrThrow({
+    where: { id: data.modelId },
+    select: { nsfw: true, meta: true },
+  });
+
+  // Validate NSFW + restricted base model combination
+  if (
+    model.nsfw &&
+    data.baseModel &&
+    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
+  ) {
+    throw throwBadRequestError(
+      `NSFW models cannot use base models with license restrictions. The base model "${
+        data.baseModel
+      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+        ', '
+      )}`
+    );
+  }
+
+  // Check if trying to publish a model version when model is marked as cannotPublish
+  const modelMeta = model.meta as ModelMeta | null;
+  if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
+    throw throwBadRequestError(
+      'This model version cannot be published due to moderation restrictions.'
+    );
+  }
+
   if (
     updatedEarlyAccessConfig?.timeframe &&
     !updatedEarlyAccessConfig?.chargeForDownload &&
@@ -274,9 +313,12 @@ export const upsertModelVersion = async ({
         dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
       ),
     ]);
-    await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id, version.modelId);
-    await dataForModelsCache.bust(version.modelId);
+
+    await Promise.all([
+      preventReplicationLag('modelVersion', version.id),
+      bustMvCache(version.id, version.modelId),
+      dataForModelsCache.bust(version.modelId),
+    ]);
 
     return version;
   } else {
@@ -294,6 +336,7 @@ export const upsertModelVersion = async ({
           select: {
             id: true,
             availability: true,
+            meta: true,
           },
         },
         monetization: {
@@ -363,6 +406,14 @@ export const upsertModelVersion = async ({
       ? // Ensures we keep relevant data such as buzzTransactionId even if the user changes something.
         { ...earlyAccessConfig, ...updatedEarlyAccessConfig }
       : updatedEarlyAccessConfig;
+
+    // Check if trying to publish a model version when model is marked as cannotPublish
+    const existingModelMeta = existingVersion.model.meta as ModelMeta | null;
+    if (existingModelMeta?.cannotPublish && data.status === ModelStatus.Published) {
+      throw throwBadRequestError(
+        'This model version cannot be published due to moderation restrictions.'
+      );
+    }
 
     const version = await dbWrite.modelVersion.update({
       where: { id },
@@ -449,9 +500,11 @@ export const upsertModelVersion = async ({
       },
     });
 
-    await preventReplicationLag('modelVersion', version.id);
-    await bustMvCache(version.id, version.modelId);
-    await dataForModelsCache.bust(version.modelId);
+    await Promise.all([
+      preventReplicationLag('modelVersion', version.id),
+      bustMvCache(version.id, version.modelId),
+      dataForModelsCache.bust(version.modelId),
+    ]);
 
     // Run it in the background to avoid blocking the request.
     ingestModelById({ id: version.modelId }).catch((error) =>
@@ -498,6 +551,25 @@ export const updateModelVersionById = async ({
   id,
   data,
 }: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
+  // Check if trying to publish a model version when model is marked as cannotPublish
+  if (data.status === ModelStatus.Published) {
+    const modelVersion = await dbWrite.modelVersion.findUniqueOrThrow({
+      where: { id },
+      select: {
+        model: {
+          select: { meta: true },
+        },
+      },
+    });
+
+    const modelMeta = modelVersion.model.meta as ModelMeta | null;
+    if (modelMeta?.cannotPublish) {
+      throw throwBadRequestError(
+        'This model version cannot be published due to moderation restrictions.'
+      );
+    }
+  }
+
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
   await preventReplicationLag('model', result.modelId);
   await preventReplicationLag('modelVersion', id);
@@ -525,10 +597,38 @@ export const publishModelVersionsWithEarlyAccess = async ({
     select: {
       id: true,
       name: true,
+      baseModel: true,
       earlyAccessConfig: true,
-      model: { select: { id: true, userId: true, name: true } },
+      model: { select: { id: true, userId: true, name: true, nsfw: true, meta: true } },
     },
   });
+
+  // Validate NSFW + restricted base model combination for all versions
+  for (const version of versions) {
+    if (
+      version.model.nsfw &&
+      version.baseModel &&
+      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+    ) {
+      throw throwBadRequestError(
+        `Cannot publish NSFW model version "${
+          version.name
+        }" with restricted base model. The base model "${
+          version.baseModel
+        }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+          ', '
+        )}`
+      );
+    }
+
+    // Check if model is marked as cannotPublish
+    const modelMeta = version.model.meta as ModelMeta | null;
+    if (modelMeta?.cannotPublish) {
+      throw throwBadRequestError(
+        `Model version "${version.name}" cannot be published due to moderation restrictions.`
+      );
+    }
+  }
 
   const updatedVersions = await Promise.all(
     versions.map(async (currentVersion) => {
@@ -638,10 +738,43 @@ export const publishModelVersionById = async ({
     select: {
       id: true,
       name: true,
+      baseModel: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true, availability: true, publishedAt: true } },
+      model: {
+        select: {
+          userId: true,
+          name: true,
+          availability: true,
+          publishedAt: true,
+          nsfw: true,
+          meta: true,
+        },
+      },
     },
   });
+
+  // Validate NSFW + restricted base model combination
+  if (
+    currentVersion.model.nsfw &&
+    currentVersion.baseModel &&
+    nsfwRestrictedBaseModels.includes(currentVersion.baseModel as BaseModel)
+  ) {
+    throw throwBadRequestError(
+      `Cannot publish NSFW model version with restricted base model. The base model "${
+        currentVersion.baseModel
+      }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
+        ', '
+      )}`
+    );
+  }
+
+  // Check if model is marked as cannotPublish
+  const modelMeta = currentVersion.model.meta as ModelMeta | null;
+  if (modelMeta?.cannotPublish) {
+    throw throwBadRequestError(
+      'This model version cannot be published due to moderation restrictions.'
+    );
+  }
 
   const version = await dbWrite.$transaction(
     async (tx) => {
@@ -883,9 +1016,9 @@ export const getModelVersionsByModelType = async ({
 }: GetModelVersionByModelTypeProps) => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
-    const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.baseModels.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
+    const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
+    if (baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';
@@ -1101,11 +1234,17 @@ export const earlyAccessPurchase = async ({
   userId,
   modelVersionId,
   type = 'download',
+  buzzType,
 }: {
   userId: number;
   modelVersionId: number;
   type: 'generation' | 'download';
+  buzzType: BuzzSpendType;
 }) => {
+  if (buzzType === 'blue') {
+    throw throwBadRequestError('You cannot use Blue Buzz for early access purchases.');
+  }
+
   const permission =
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
@@ -1125,6 +1264,7 @@ export const earlyAccessPurchase = async ({
           id: true,
           name: true,
           userId: true,
+          nsfw: true,
         },
       },
     },
@@ -1191,18 +1331,22 @@ export const earlyAccessPurchase = async ({
       : (earlyAccesConfig.generationPrice as number);
 
   try {
-    const buzzTransaction = await createBuzzTransaction({
+    const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
+    const data = await createMultiAccountBuzzTransaction({
       fromAccountId: userId,
       toAccountId: modelVersion.model.userId,
       amount,
       type: TransactionType.Purchase,
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
+      externalTransactionIdPrefix: externalTransactionIdPrefix,
+      fromAccountTypes: [buzzType],
     });
-    if (!buzzTransaction.transactionId)
+
+    if (data?.transactionCount === 0)
       throw throwBadRequestError('Failed to create Buzz transaction.');
 
-    buzzTransactionId = buzzTransaction.transactionId;
+    buzzTransactionId = externalTransactionIdPrefix;
     const accessRecord = await dbWrite.entityAccess.findFirst({
       where: {
         accessorId: userId,
@@ -1287,12 +1431,8 @@ export const earlyAccessPurchase = async ({
     return true;
   } catch (error) {
     if (buzzTransactionId) {
-      // Refund:
-      await createBuzzTransaction({
-        fromAccountId: modelVersion.model.userId,
-        toAccountId: userId,
-        amount,
-        type: TransactionType.Refund,
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: buzzTransactionId,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
     }
@@ -1502,6 +1642,7 @@ export type GenerationResourceDataModel = {
   covered: boolean | null;
   status: ModelStatus;
   hasAccess: boolean;
+  epochNumber?: number;
   model: {
     id: number;
     name: string;
@@ -1599,3 +1740,45 @@ export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularit
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
   return await modelVersionResourceCache.fetch(ids);
 };
+
+export async function updateModelVersionTrainingStatus({
+  id,
+  trainingStatus,
+  modelFileId,
+}: {
+  id: number;
+  trainingStatus: TrainingStatus;
+  modelFileId: number;
+}) {
+  const modelFile = await dbRead.modelFile.findUnique({
+    where: { id: modelFileId },
+    select: { id: true, modelVersionId: true, metadata: true },
+  });
+  if (!modelFile || modelFile.modelVersionId !== id)
+    throw throwBadRequestError('No model file associated with this model version');
+
+  const currentFileMetadata = (modelFile.metadata ?? {}) as FileMetadata;
+  const trainingResults = (currentFileMetadata.trainingResults ?? {}) as TrainingResultsV2;
+  const history = trainingResults.history ?? [];
+
+  const newFileMetadata: FileMetadata = {
+    ...currentFileMetadata,
+    trainingResults: {
+      ...trainingResults,
+      history: [...history, { time: new Date().toISOString(), status: trainingStatus }],
+    },
+  };
+
+  const [updatedVersion] = await dbWrite.$transaction([
+    dbWrite.modelVersion.update({
+      where: { id },
+      data: { trainingStatus },
+    }),
+    dbWrite.modelFile.update({
+      where: { id: modelFile.id },
+      data: { metadata: newFileMetadata },
+    }),
+  ]);
+
+  return updatedVersion;
+}

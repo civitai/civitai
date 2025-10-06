@@ -1,6 +1,5 @@
-import { useMergedRef } from '@mantine/hooks';
 import type { ComponentType } from 'react';
-import { forwardRef, useRef } from 'react';
+import { forwardRef } from 'react';
 import type {
   ControllerFieldState,
   ControllerRenderProps,
@@ -33,8 +32,6 @@ export function withController<
 ) {
   const ControlledInput = forwardRef<HTMLElement, TComponentProps & { name: TName }>(
     ({ name, ...props }, ref) => {
-      const scopedRef = useRef<HTMLElement | null>(null);
-      const mergedRef = useMergedRef(ref, scopedRef);
       const { control, ...form } = useFormContext<TFieldValues>();
       return (
         <Controller
@@ -69,10 +66,13 @@ export function withController<
             };
 
             // TODO - instead of passing reset prop, find a way to pass an onReset handler
+
             return (
               <BaseComponent
                 id={`input_${name}`}
-                ref={mergedRef}
+                ref={
+                  (BaseComponent as any).$$typeof === Symbol('react.forward_ref') ? ref : undefined
+                }
                 {...(props as TComponentProps & { name: TName })}
                 {...mapped}
                 reset={(form as any).resetCount}

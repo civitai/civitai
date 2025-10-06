@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 export const getVaultState = (
   updatedAt: string | Date,

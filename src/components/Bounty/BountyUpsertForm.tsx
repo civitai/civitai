@@ -22,10 +22,10 @@ import {
   IconInfoCircle,
   IconTrash,
 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
@@ -55,7 +55,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
@@ -83,6 +83,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './BountyUpsertForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { stringToDate } from '~/utils/zod-helpers';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -100,9 +102,9 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
   .extend({
-    startsAt: z.coerce
-      .date()
-      .min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
+    startsAt: stringToDate(
+      z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future')
+    ),
     expiresAt: stringToDate(
       z
         .date()
@@ -110,20 +112,24 @@ const formSchema = upsertBountyInputSchema
     ),
   })
   .refine((data) => data.poi !== true, {
-    message: 'The creation of bounties intended to depict an actual person is prohibited',
+    error: 'The creation of bounties intended to depict an actual person is prohibited',
     path: ['poi'],
   })
   .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
     path: ['nsfw'],
   })
   .refine((data) => data.startsAt < data.expiresAt, {
-    message: 'Start date must be before expiration date',
+    error: 'Start date must be before expiration date',
     path: ['startsAt'],
   })
   .refine((data) => data.expiresAt > data.startsAt, {
-    message: 'Expiration date must be after start date',
+    error: 'Expiration date must be after start date',
     path: ['expiresAt'],
+  })
+  .refine((data) => data.nsfw && data.buzzType === 'green', {
+    error: 'When using Green Buzz, you are not allowed to create NSFW content',
+    path: ['nsfw']
   });
 
 const lockableProperties = ['nsfw', 'poi'];
@@ -132,6 +138,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
+  const [mainBuzzType] = useAvailableBuzz();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [bountyImages, setBountyImages] = useState<BountyGetById['images']>(bounty?.images ?? []);
@@ -807,12 +814,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputSwitch
-                disabled={isLocked('nsfw')}
-                description={isLockedDescription('nsfw')}
-                name="nsfw"
-                label="Is intended to produce sexual themes"
-              />
+              {mainBuzzType !== 'green' && (
+                <InputSwitch
+                  disabled={isLocked('nsfw')}
+                  description={isLockedDescription('nsfw')}
+                  name="nsfw"
+                  label="Is intended to produce sexual themes"
+                />
+              )}
 
               {currentUser?.isModerator && (
                 <Paper radius="md" p="lg" withBorder>
@@ -873,7 +882,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               disabled={poi || hasPoiInNsfw || !features.canWrite}
               label="Save"
               buzzAmount={unitAmount}
-              color="yellow.7"
             />
           ) : (
             <Button

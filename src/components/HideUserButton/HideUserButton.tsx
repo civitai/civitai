@@ -15,7 +15,7 @@ export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }
   const alreadyHiding = users.some((x) => x.id === userId);
   const toggleHiddenMutation = useToggleHiddenPreferences();
 
-  const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
+  const handleHideClick: MouseEventHandler<HTMLElement> = (e) => {
     e.preventDefault();
     e.stopPropagation();
 

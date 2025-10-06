@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import React, { useEffect, useState } from 'react';
-import type { IntersectionOptions } from 'react-intersection-observer';
-import { useInView } from '~/hooks/useInView';
+import { useInView, type IntersectionOptions } from 'react-intersection-observer';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 export function InViewLoader({
   children,
@@ -20,7 +20,8 @@ export function InViewLoader({
   style?: CSSProperties;
   inViewOptions?: IntersectionOptions;
 }) {
-  const { ref, inView } = useInView({ rootMargin: '1200px 0px', ...inViewOptions });
+  const scrollAreaRef = useScrollAreaRef();
+  const { ref, inView } = useInView({ root: scrollAreaRef?.current, rootMargin: '400px 0px' });
   const [initialCanLoad, setInitialCanLoad] = useState(false);
   const [canLoad, setCanLoad] = useState(true);
 
@@ -43,8 +44,8 @@ export function InViewLoader({
   }, [inView, loadCondition, initialCanLoad, canLoad]); // eslint-disable-line
 
   return (
-    <div ref={ref} className={className} style={style}>
-      {children}
+    <div ref={ref} className={className} style={{ minHeight: 36, ...style }}>
+      {inView && children}
     </div>
   );
 }

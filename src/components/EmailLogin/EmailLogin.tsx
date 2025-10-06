@@ -4,7 +4,7 @@ import { IconMail } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,
@@ -54,12 +54,15 @@ export const EmailLogin = ({
 
     onStatusChange('loading');
     try {
+      console.log('Signing in with email:', email);
       const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
+      console.log('Sign in result:', result);
       if (result?.error === 'AccessDenied') {
         router.replace({ query: { error: 'NoExtraEmails' } }, undefined, { shallow: true });
         onStatusChange('idle');
         return;
       } else if (result?.error) {
+        console.log(result?.error)
         router.replace({ query: { error: 'TooManyRequests' } }, undefined, { shallow: true });
         onStatusChange('idle');
         return;

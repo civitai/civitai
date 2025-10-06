@@ -66,7 +66,7 @@ export function ToolCard({ data }: Props) {
             {data.type}
           </Badge>
           {data.description && (
-            <Text lineClamp={3}>
+            <Text component="div" lineClamp={3}>
               <CustomMarkdown allowedElements={[]} unwrapDisallowed>
                 {data.description}
               </CustomMarkdown>

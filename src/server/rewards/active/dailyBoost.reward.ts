@@ -1,9 +1,9 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { createBuzzEvent } from '../base.reward';
 
 export const dailyBoostReward = createBuzzEvent({
   type: 'dailyBoost',
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   description: 'For claiming daily boost rewards',
   triggerDescription: 'By claiming it daily in the Image generator',
   awardAmount: 25,

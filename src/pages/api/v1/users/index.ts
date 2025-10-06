@@ -1,9 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { env } from '~/env/server';
-import { publicApiContext } from '~/server/createContext';
+import { publicApiContext2 } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { getAllUsersInput } from '~/server/schema/user.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -13,7 +13,7 @@ const schema = getAllUsersInput.extend({
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller(await publicApiContext(req, res));
+  const apiCaller = await publicApiContext2(req, res);
   const isSystemRequest = req.query.token === env.WEBHOOK_TOKEN;
   const result = schema.safeParse(req.query);
   if (!result.success) return res.status(400).json(result.error);

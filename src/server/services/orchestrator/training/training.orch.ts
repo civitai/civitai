@@ -74,6 +74,7 @@ const createTrainingStep_Run = (
     trainingData,
     trainingDataImagesCount,
     samplePrompts,
+    negativePrompt,
   } = input;
 
   const base = {
@@ -93,6 +94,7 @@ const createTrainingStep_Run = (
     trainingData,
     trainingDataImagesCount,
     samplePrompts,
+    negativePrompt,
   };
 
   if (engine === 'kohya') {
@@ -133,6 +135,7 @@ export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
   user,
+  currencies,
 }: ImageTrainingWorkflowSchema) => {
   const { id: userId, isModerator } = user;
 
@@ -173,6 +176,7 @@ export const createTrainingWorkflow = async ({
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
+  const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
   const isPriority = modelVersion.trainingDetails.highPriority ?? false;
   const fileMetadata = modelVersion.fileMetadata ?? {};
   const trainingDataImagesCount = fileMetadata.numImages ?? 1;
@@ -208,6 +212,7 @@ export const createTrainingWorkflow = async ({
     engine,
     loraName,
     samplePrompts,
+    negativePrompt,
     modelFileId,
     params,
   };
@@ -225,6 +230,8 @@ export const createTrainingWorkflow = async ({
           type: ['workflow:*'],
         },
       ],
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
   });
 
@@ -235,6 +242,7 @@ export const createTrainingWorkflow = async ({
 
 export const createTrainingWhatIfWorkflow = async ({
   token,
+  currencies,
   ...input
 }: ImageTraininWhatIfWorkflowSchema) => {
   const { model, priority, engine, trainingDataImagesCount, ...trainingParams } = input;
@@ -254,6 +262,7 @@ export const createTrainingWhatIfWorkflow = async ({
     loraName: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,
+    negativePrompt: '',
   };
 
   const stepRun = createTrainingStep_Run(runArgs);
@@ -262,6 +271,8 @@ export const createTrainingWhatIfWorkflow = async ({
     token,
     body: {
       steps: [stepRun],
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
     query: { whatif: true },
   });

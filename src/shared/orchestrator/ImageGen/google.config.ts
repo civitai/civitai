@@ -1,5 +1,5 @@
 import type { Imagen4ImageGenInput } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const;
@@ -17,7 +17,7 @@ export function getIsImagen4FromResources(resources: { id: number }[]) {
   return resources.some((x) => !!googleModelVersionToModelMap.get(x.id));
 }
 
-const schema = z.object({
+const schema = z.looseObject({
   engine: z.literal('google').catch('google'),
   model: z.enum(googleModels),
   prompt: z.string(),
@@ -51,6 +51,7 @@ export const googleConfig = ImageGenConfig({
       negativePrompt: params.negativePrompt,
       aspectRatio: params.aspectRatio,
       numImages: params.quantity,
+      quantity: params.quantity,
       seed: params.seed,
       model,
     });

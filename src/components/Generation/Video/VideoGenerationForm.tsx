@@ -22,7 +22,7 @@ import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationFo
 import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
-import { WanFormInput } from '~/components/Generation/Video/WanFormInput';
+import { WanFormInput } from '~/components/Generation/Video/WanFormInput/WanFormInput';
 import { HunyuanFormInput } from '~/components/Generation/Video/HunyuanFormInput';
 import { KlingFormInput } from '~/components/Generation/Video/KlingFormInput';
 import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput';
@@ -32,7 +32,10 @@ import { LightricksFormInput } from '~/components/Generation/Video/LightricksFor
 import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
+import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -49,7 +52,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   const [error, setError] = useState<string>();
   const [isLoadingDebounced, setIsLoadingDebounced] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    type: 'Generation',
+    accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
@@ -107,62 +110,72 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   useEffect(() => {
     if (storeData && config) {
       // const registered = Object.keys(form.getValues());
-      const { params, resources } = storeData;
-      const validated = config.softValidate({ ...params, resources });
-      form.reset(validated, { keepDefaultValues: true });
+      const { params, resources, runType } = storeData;
+      let data = params;
+      if (runType === 'patch') {
+        const formData = form.getValues();
+        data = { ...formData, ...params };
+      }
+      const validated = config.softValidate(data);
+      form.reset({ ...validated, resources }, { keepDefaultValues: true });
 
       generationStore.clearData();
     }
   }, [storeData, config]);
+
+  const baseModel = form.watch('baseModel');
+  const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
 
   const InputsComponent = inputDictionary[engine];
   if (!InputsComponent)
     return <div className="flex items-center justify-center p-3">Form not implemented</div>;
 
   return (
-    <GenForm
-      form={form}
-      onSubmit={handleSubmit}
-      className="relative flex h-full flex-1 flex-col justify-between gap-2"
-    >
-      <div className="flex flex-col gap-3 px-2">
-        <InputsComponent />
-      </div>
-      <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
-        <DailyBoostRewardClaim />
-        {!error ? (
-          <QueueSnackbar />
-        ) : (
-          <Notification
-            icon={<IconX size={18} />}
-            color="red"
-            onClose={() => setError(undefined)}
-            className="rounded-md bg-red-8/20"
-          >
-            {error}
-          </Notification>
-        )}
-        <div className="flex gap-2">
-          <SubmitButton2 loading={isLoading || isLoadingDebounced} engine={engine} />
-          <Button onClick={handleReset} variant="default" className="h-auto px-3">
-            Reset
-          </Button>
+    <StepProvider value={stepProviderValue}>
+      <GenForm
+        form={form}
+        onSubmit={handleSubmit}
+        className="relative flex h-full flex-1 flex-col justify-between gap-2"
+      >
+        <div className="flex flex-col gap-3 px-2">
+          <InputsComponent />
         </div>
-        {status.message && !status.isLoading && (
-          <DismissibleAlert
-            color="yellow"
-            title="Generation Status Alert"
-            id={messageHash}
-            storage="sessionStorage"
-            getInitialValueInEffect={false}
-          >
-            <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
-              {status.message}
-            </CustomMarkdown>
-          </DismissibleAlert>
-        )}
-      </div>
-    </GenForm>
+        <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+          <DailyBoostRewardClaim />
+          {!error ? (
+            <QueueSnackbar />
+          ) : (
+            <Notification
+              icon={<IconX size={18} />}
+              color="red"
+              onClose={() => setError(undefined)}
+              className="rounded-md bg-red-8/20"
+            >
+              {error}
+            </Notification>
+          )}
+          <div className="flex gap-2">
+            <SubmitButton2 loading={isLoading || isLoadingDebounced} engine={engine} />
+            <Button onClick={handleReset} variant="default" className="h-auto px-3">
+              Reset
+            </Button>
+          </div>
+          {status.message && !status.isLoading && (
+            <DismissibleAlert
+              color="yellow"
+              title="Generation Status Alert"
+              id={messageHash}
+              storage="sessionStorage"
+              getInitialValueInEffect={false}
+            >
+              <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+                {status.message}
+              </CustomMarkdown>
+            </DismissibleAlert>
+          )}
+        </div>
+      </GenForm>
+    </StepProvider>
   );
 }
 
@@ -177,7 +190,8 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const isUploadingImageValue = useIsMutating({
     mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
   });
-  const isUploadingImage = isUploadingImageValue === 1;
+  const isUploadingMultiple = useImagesUploadingStore((state) => state.uploading.length > 0);
+  const isUploadingImage = isUploadingImageValue === 1 || isUploadingMultiple;
   const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
     { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage && canQuery }
@@ -198,6 +212,10 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 
         try {
           const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
+          if ('resources' in result && !!result.resources)
+            result.resources = (result.resources! as Record<string, any>[]).map(
+              ({ image, ...resource }) => resource
+            ) as any;
           setQuery(result);
         } catch (e: any) {
           console.log({ e });

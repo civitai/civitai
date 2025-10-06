@@ -42,7 +42,19 @@ export function DownloadImage({
       const a = document.createElement('a');
       const href = URL.createObjectURL(blob);
       a.href = href;
-      a.download = options.name ?? (url.split('/').pop() as string);
+
+      // Clean the filename by removing query parameters and fragments
+      let cleanFilename = options.name ?? (url.split('/').pop() as string);
+      cleanFilename = cleanFilename.split('?')[0].split('#')[0];
+
+      // Handle cases where the extension appears multiple times due to token appending
+      // Extract just the first part with the original extension
+      const extensionMatch = cleanFilename.match(/^([^.]+\.[a-zA-Z0-9]{2,5})/);
+      if (extensionMatch) {
+        cleanFilename = extensionMatch[1];
+      }
+
+      a.download = cleanFilename;
       a.target = '_blank ';
       document.body.appendChild(a);
       a.click();

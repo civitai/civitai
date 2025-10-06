@@ -6,8 +6,8 @@ import { InputResourceSelectMultipleStandalone } from '~/components/ImageGenerat
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
 import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
-import { baseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 
 export function HunyuanFormInput() {
   const form = useFormContext();
@@ -17,7 +17,7 @@ export function HunyuanFormInput() {
     <>
       <InputResourceSelectMultipleStandalone
         name="resources"
-        options={{ resources: baseModelResourceTypes.HyV1, canGenerate: true }}
+        options={{ resources: getGenerationBaseModelResourceOptions('HyV1'), canGenerate: true }}
         buttonLabel="Add additional resource"
       />
       <InputTextArea
@@ -47,16 +47,7 @@ export function HunyuanFormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>CFG Scale</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt.{' '}
-              <Anchor
-                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                target="_blank"
-                rel="nofollow noreferrer"
-                span
-              >
-                Learn more
-              </Anchor>
-              .
+              Controls how closely the video generation follows the text prompt.
             </InfoPopover>
           </div>
         }

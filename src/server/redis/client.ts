@@ -185,7 +185,7 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
     pingInterval: 4 * 60 * 1000,
     disableClientInfo: true, // this is for twemproxy, DONT REMOVE
   });
-  baseClient.on('error', (err) => log(`Redis Error: ${err}`));
+  baseClient.on('error', (err: Error) => log(`Redis Error`, err));
   baseClient.on('connect', () => log('Redis connected'));
   baseClient.on('reconnecting', () => log('Redis reconnecting'));
   baseClient.on('ready', () => log('Redis ready!'));
@@ -456,6 +456,17 @@ export const REDIS_SYS_KEYS = {
       URLS: 'packed:system:entity-moderation:urls',
     },
   },
+  CONTENT: {
+    /*
+      Use: Store markdown content for region restrictions and other warnings
+      Structure: hset with content keys and markdown string values
+      Example: 'region-warning:GB' -> markdown content
+     */
+    REGION_WARNING: 'system:content:region-warning',
+  },
+  CACHES: {
+    IMAGE_EXISTS: 'feed:image:exists',
+  },
 } as const;
 
 // Cached data
@@ -469,6 +480,7 @@ export const REDIS_KEYS = {
     CACHE: 'packed:user',
     SETTINGS: 'user:settings',
   },
+  EMAIL_VERIFICATION: 'email:verification',
   SESSION: {
     BASE: 'session',
   },
@@ -509,7 +521,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models3',
+    FEATURED_MODELS: 'packed:featured-models',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
@@ -517,6 +529,7 @@ export const REDIS_KEYS = {
     IMAGE_METRICS: 'packed:caches:image-metrics',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
+    IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',
@@ -525,6 +538,10 @@ export const REDIS_KEYS = {
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
     NEW_ORDER: {
       RANKS: 'new-order:ranks',
+      RATE_LIMIT: {
+        MINUTE: 'new-order:rate-limit:minute',
+        HOUR: 'new-order:rate-limit:hour',
+      },
     },
     TOP_EARNERS: 'packed:caches:top-earners',
   },
@@ -594,6 +611,9 @@ export const REDIS_KEYS = {
   },
   NEW_ORDER: {
     RATED: 'new-order:rated',
+  },
+  ENTITY_METRICS: {
+    BASE: 'entitymetric',
   },
 } as const;
 

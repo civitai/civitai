@@ -3,50 +3,42 @@ import {
   Anchor,
   Center,
   Container,
-  Divider,
   Group,
   Loader,
   Paper,
-  RingProgress,
+  SegmentedControl,
   Stack,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
-import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
+import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
 import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
-import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
+import { EarningBuzz, RewardsList } from '~/components/Buzz/FeatureCards/FeatureCards';
+import { GetPaid } from '~/components/Buzz/GetPaid/GetPaid';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
-import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
-import { OwnedBuzzWithdrawalRequestsPaged } from '~/components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
+import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
+import { getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
-
-const RedeemCodeModal = dynamic(() =>
-  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
-);
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -66,21 +58,33 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function UserBuzzDashboard() {
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const { isFreeTier, meta } = useActiveSubscription();
-  const { query } = useRouter();
   const features = useFeatureFlags();
+  const [mainBuzztype] = useAvailableBuzz();
 
-  // Handle direct redemption
-  useEffect(() => {
-    if (!query?.redeem || typeof window === 'undefined') return;
-    dialogStore.trigger({
-      id: 'redeem-code',
-      component: RedeemCodeModal,
-      props: { code: query.redeem as string },
-    });
-  }, [query.redeem]);
+  // Account type selection state
+  const buzzTypeFromQuery = router.query.buzzType as BuzzSpendType | undefined;
+  const initialBuzzType =
+    buzzTypeFromQuery && buzzSpendTypes.includes(buzzTypeFromQuery)
+      ? buzzTypeFromQuery
+      : mainBuzztype;
+  const [selectedAccountType, setSelectedAccountType] =
+    React.useState<BuzzSpendType>(initialBuzzType);
+
+  const selectedBuzzConfig = useBuzzCurrencyConfig(selectedAccountType);
+
+  // Account type options for SegmentedControl
+  const accountTypeOptions = React.useMemo(
+    () =>
+      buzzSpendTypes.map((type) => ({
+        label: getAccountTypeLabel(type),
+        value: type,
+      })),
+    []
+  );
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -89,12 +93,6 @@ export default function UserBuzzDashboard() {
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
-  const showMismatchAlert =
-    isMember &&
-    !multipliersLoading &&
-    rewardsMultiplier !== Number(meta?.rewardsMultiplier ?? 1) &&
-    features.membershipsV2 &&
-    !isFreeTier;
 
   return (
     <>
@@ -109,35 +107,64 @@ export default function UserBuzzDashboard() {
       />
       <Container size="lg">
         <Stack gap="xl">
-          <Title order={1}>My Buzz Dashboard</Title>
+          <Stack gap="md">
+            <Group justify="space-between" align="center">
+              <Title order={1}>My Buzz Dashboard</Title>
 
-          <BuzzDashboardOverview accountId={currentUser?.id as number} />
+              {/* Account Type Selector */}
+              <SegmentedControl
+                size="sm"
+                value={selectedAccountType}
+                onChange={(value) => setSelectedAccountType(value as BuzzSpendType)}
+                data={accountTypeOptions}
+              />
+            </Group>
+          </Stack>
 
-          <EarningBuzz withCTA />
+          <BuzzDashboardOverview
+            accountId={currentUser?.id as number}
+            selectedAccountType={selectedAccountType}
+          />
+
+          {/* Redeem Buzz Code Section */}
+          {selectedAccountType === 'yellow' && <RedeemCodeCard />}
+
+          <EarningBuzz withCTA accountType={selectedAccountType} />
 
           <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
-              {showMismatchAlert && (
-                <Alert color="red" title="Looks like we have an issue!">
-                  <Text>
-                    Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz.
-                    Try to <RefreshSessionButton />, if that doesn&rsquo;t work please contact
-                    support <Anchor href="https://civitai.com/support">here</Anchor>
-                  </Text>
-                </Alert>
-              )}
               <Group justify="space-between">
                 <Title order={3} id="rewards">
-                  Other ways you can earn Buzz
+                  Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
                 </Title>
-                {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
+                {isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
                   <Tooltip multiline label="Your membership makes rewards worth more!">
                     <Stack gap={0}>
-                      <Text size="md" style={{ fontSize: 20 }} className={classes.goldText}>
+                      <Text
+                        size="md"
+                        style={{ fontSize: 20 }}
+                        fw={700}
+                        className={selectedBuzzConfig.classNames?.gradientText}
+                      >
                         Rewards Multiplier: {rewardsMultiplier}x
                       </Text>
                     </Stack>
                   </Tooltip>
+                ) : (
+                  isMember &&
+                  features.membershipsV2 && (
+                    <Text size="sm" c="dimmed">
+                      Check out the{' '}
+                      <Anchor
+                        component="button"
+                        onClick={() => setSelectedAccountType('blue')}
+                        c="blue.4"
+                      >
+                        Blue Buzz rewards
+                      </Anchor>{' '}
+                      available.
+                    </Text>
+                  )
                 )}
               </Group>
               {loadingRewards || multipliersLoading ? (
@@ -145,78 +172,11 @@ export default function UserBuzzDashboard() {
                   <Loader />
                 </Center>
               ) : (
-                rewards.map((reward, i) => {
-                  const hasAwarded = reward.awarded !== -1;
-                  const last = i === rewards.length - 1;
-                  const awardedAmountPercent =
-                    reward.cap && hasAwarded ? reward.awarded / reward.cap : 0;
-
-                  return (
-                    <Stack key={reward.type} gap={4}>
-                      <Group justify="space-between" mih={30}>
-                        <Group wrap="nowrap" gap="xs">
-                          <Stack gap={4} align="center">
-                            <CurrencyBadge
-                              w={100}
-                              currency={Currency.BUZZ}
-                              unitAmount={reward.awardAmount}
-                              type={reward.accountType}
-                            />
-                            {rewardsMultiplier > 1 && (
-                              <Text
-                                size="xs"
-                                style={{ fontSize: 10 }}
-                                color={reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'}
-                              >
-                                Originally {Math.floor(reward.awardAmount / rewardsMultiplier)} Buzz
-                              </Text>
-                            )}
-                          </Stack>
-                          <Text>{reward.triggerDescription ?? reward.description}</Text>
-                          {reward.tooltip && (
-                            <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
-                              <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
-                            </Tooltip>
-                          )}
-                          {reward.type === 'adWatched' && (
-                            <WatchAdButton size="compact-xs" disabled={awardedAmountPercent >= 1} />
-                          )}
-                        </Group>
-                        {reward.cap && (
-                          <Group gap={4}>
-                            <CurrencyIcon size={14} type={reward.accountType} />
-                            <Text c="dimmed" size="xs">
-                              {hasAwarded
-                                ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
-                                : `${reward.cap.toLocaleString()} `}
-                              {' ('}
-                              {reward.interval ?? 'day'}
-                              {')'}
-                            </Text>
-                            {hasAwarded && (
-                              <RingProgress
-                                size={30}
-                                thickness={9}
-                                sections={[
-                                  {
-                                    value: awardedAmountPercent * 100,
-                                    color:
-                                      awardedAmountPercent === 1
-                                        ? 'green'
-                                        : reward.accountType === 'generation'
-                                        ? 'blue.4'
-                                        : 'yellow.7',
-                                  },
-                                ]}
-                              />
-                            )}
-                          </Group>
-                        )}
-                      </Group>
-                      {!last && <Divider mt="xs" />}
-                    </Stack>
-                  );
-                })
+                <RewardsList
+                  rewards={rewards.filter((reward) => reward.accountType === selectedAccountType)}
+                  accountType={selectedAccountType}
+                  onAccountTypeChange={setSelectedAccountType}
+                />
               )}
             </Stack>
           </Paper>
@@ -228,8 +188,18 @@ export default function UserBuzzDashboard() {
             .
           </Text>
           <GeneratedImagesReward />
-          {features.creatorComp && <DailyCreatorCompReward />}
-          <CreatorProgramV2 />
+          {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
+          {selectedAccountType === 'green' && (
+            <Alert color="yellow" title="Green Creator Program Temporarily Disabled">
+              <Text>
+                The Green Creator Program is temporarily disabled and will return in November. In
+                the meantime, you can still earn and use Green Buzz for other activities on the
+                platform.
+              </Text>
+            </Alert>
+          )}
+          {selectedAccountType === 'yellow' && <CreatorProgramV2 />}
+          {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>
     </>

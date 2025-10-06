@@ -1,0 +1,14 @@
+export declare const subtleBounce: string;
+export declare const subtlePulse: string;
+export declare const supportBadge: string;
+export declare const supportButton: string;
+export declare const supportButtonGift: string;
+export declare const supportButtonHeart: string;
+export declare const supportButtonIcon: string;
+export declare const supportButtonPremium: string;
+export declare const supportButtonPrimary: string;
+export declare const supportButtonRoyal: string;
+export declare const supportButtonSparkle: string;
+export declare const supportButtonText: string;
+export declare const supportHoverCard: string;
+export declare const supportButtonMediaQuery: string;

@@ -1,5 +1,11 @@
+export declare const badge: string;
+export declare const benefitText: string;
 export declare const card: string;
+export declare const imageWrapper: string;
 export declare const listItem: string;
-export declare const mantineTextRoot: string;
+export declare const membershipCard: string;
+export declare const price: string;
 export declare const subtitle: string;
+export declare const tierIcon: string;
 export declare const title: string;
+export declare const upgradeButton: string;

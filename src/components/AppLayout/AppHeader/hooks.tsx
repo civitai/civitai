@@ -7,7 +7,7 @@ import {
   IconBookmarkEdit,
   IconBrush,
   IconCloudLock,
-  IconClubs,
+  // IconClubs,
   IconCrown,
   IconGavel,
   IconHistory,
@@ -27,12 +27,13 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
+import type { CollectionType } from '~/shared/utils/prisma/enums';
+import { useMemo } from 'react';
 
 export type UserMenuItem = {
   label: string;
@@ -76,13 +77,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       visible: !!currentUser,
       items: [
         {
-          href: `/user/${currentUser?.username}`,
+          href: `/user/${currentUser?.username as string}`,
           icon: IconUser,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
         {
-          href: `/user/${currentUser?.username}/models?section=training`,
+          href: `/user/${currentUser?.username as string}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
@@ -115,14 +116,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Bounties',
         },
-        {
-          href: '/clubs?engagement=engaged',
-          as: '/clubs',
-          visible: features.clubs,
-          icon: IconClubs,
-          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Clubs',
-        },
+        // {
+        //   href: '/clubs?engagement=engaged',
+        //   as: '/clubs',
+        //   visible: features.clubs,
+        //   icon: IconClubs,
+        //   color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+        //   label: 'My Clubs',
+        // },
         {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
@@ -170,7 +171,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Download Link App',
         },
         {
-          href: `/user/${currentUser?.username}/following`,
+          href: `/user/${currentUser?.username as string}/following`,
           icon: IconUsers,
           label: 'Creators You Follow',
         },
@@ -300,15 +301,15 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Bounty',
       currency: true,
     },
-    {
-      href: '/clubs/create',
-      visible: !isMuted && canCreate && features.clubs,
-      redirectReason: 'create-club',
-      rel: 'nofollow',
-      icon: IconClubs,
-      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-      label: 'Create a Club',
-    },
+    // {
+    //   href: '/clubs/create',
+    //   visible: !isMuted && canCreate && features.clubs,
+    //   redirectReason: 'create-club',
+    //   rel: 'nofollow',
+    //   icon: IconClubs,
+    //   color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+    //   label: 'Create a Club',
+    // },
   ];
 }
 
@@ -319,4 +320,27 @@ export function useGetCreator() {
     { enabled: !!currentUser }
   );
   return creator;
+}
+
+function useSystemCollections() {
+  const currentUser = useCurrentUser();
+  const { data: systemCollections = [], ...other } = trpc.user.getBookmarkCollections.useQuery(
+    undefined,
+    { enabled: !!currentUser }
+  );
+
+  const groupedCollections = useMemo(() => {
+    const grouped = systemCollections.reduce((acc, collection) => {
+      if (collection.type) acc[collection.type] = collection;
+      return acc;
+    }, {} as Record<CollectionType, (typeof systemCollections)[number]>);
+
+    return grouped;
+  }, [systemCollections]);
+
+  return {
+    ...other,
+    systemCollections,
+    groupedCollections,
+  };
 }

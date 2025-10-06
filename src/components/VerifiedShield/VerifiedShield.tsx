@@ -3,7 +3,7 @@ import { Button, Popover, Text, Group } from '@mantine/core';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
 type VerifiedFile = {
   virusScanResult: ScanResultCode;

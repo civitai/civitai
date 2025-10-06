@@ -2,7 +2,7 @@ import { Stack, Button, Modal, Group } from '@mantine/core';
 import { LinkType } from '~/shared/utils/prisma/enums';
 import { useSession } from 'next-auth/react';
 import { useEffect } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { useForm, Form, InputText } from '~/libs/form';
 import { showErrorNotification } from '~/utils/notifications';
 import { zc } from '~/utils/schema-helpers';
@@ -42,7 +42,7 @@ export function SocialLinkModal({
 
   useEffect(() => {
     form.reset(selected);
-  }, [selected]) //eslint-disable-line
+  }, [selected]); //eslint-disable-line
 
   return (
     <Modal opened={!!selected} onClose={onClose} centered withCloseButton={false}>

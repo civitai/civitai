@@ -42,7 +42,7 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
-import { BidModelButton } from '~/components/Auction/AuctionUtils';
+import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -93,10 +93,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { type BaseModel, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
@@ -267,7 +268,7 @@ function ResourceSelectModalContent() {
 
   const meiliFilters: string[] = [
     // Default filter for visibility:
-    selectSource === 'auction'
+    selectSource === 'auction' || !currentUser?.id
       ? `availability != ${Availability.Private}`
       : `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
   ];
@@ -315,13 +316,24 @@ function ResourceSelectModalContent() {
 
   if (selectedTab === 'featured') {
     if (!!featuredModels) {
-      meiliFilters.push(`id IN [${featuredModels.map((fm) => fm.modelId).join(',')}]`);
+      // Filter featured models by selected base models
+      const selectedBaseModels = filters.baseModels.length > 0 ? filters.baseModels : [];
+      const filteredFeatured =
+        selectedBaseModels.length > 0
+          ? featuredModels.filter((fm) =>
+              fm.baseModel ? selectedBaseModels.includes(fm.baseModel as BaseModel) : true
+            )
+          : featuredModels;
+
+      if (filteredFeatured.length > 0) {
+        meiliFilters.push(`id IN [${filteredFeatured.map((fm) => fm.modelId).join(',')}]`);
+      }
     }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources?.map((r: any) => r.model.id))
+          steps.flatMap(({ resources }) => resources?.map((r) => r.model.id))
         );
         meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }
@@ -502,6 +514,18 @@ function ResourceHitList({
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
+  // Filter featured models by selected base models
+  const filteredFeaturedModels = useMemo(() => {
+    if (!featured || selectedTab !== 'featured') return featured;
+
+    const selectedBaseModels = resources.flatMap((r) => r.baseModels);
+    if (selectedBaseModels.length === 0) return featured;
+
+    return featured.filter((fm) =>
+      fm.baseModel ? selectedBaseModels.includes(fm.baseModel) : true
+    );
+  }, [featured, selectedTab, resources]);
+
   const filtered = useMemo(() => {
     if (!canGenerate && !resources.length) return models;
 
@@ -526,8 +550,8 @@ function ResourceHitList({
 
     if (selectedTab === 'featured') {
       ret.sort((a, b) => {
-        const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
-        const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+        const aPos = filteredFeaturedModels?.find((fm) => fm.modelId === a.id)?.position;
+        const bPos = filteredFeaturedModels?.find((fm) => fm.modelId === b.id)?.position;
         if (!aPos) return 1;
         if (!bPos) return -1;
         return aPos - bPos;
@@ -535,7 +559,7 @@ function ResourceHitList({
     }
 
     return ret;
-  }, [canGenerate, excludedIds, featured, models, resources, selectedTab]);
+  }, [canGenerate, excludedIds, filteredFeaturedModels, models, resources, selectedTab]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
@@ -575,9 +599,9 @@ function ResourceHitList({
 
   const filteredSorted =
     selectedTab === 'featured'
-      ? filtered.sort((a, b) => {
-          const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
-          const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+      ? [...filtered].sort((a, b) => {
+          const aPos = filteredFeaturedModels?.find((fm) => fm.modelId === a.id)?.position;
+          const bPos = filteredFeaturedModels?.find((fm) => fm.modelId === b.id)?.position;
           if (!aPos) return 1;
           if (!bPos) return -1;
           return aPos - bPos;
@@ -597,7 +621,7 @@ function ResourceHitList({
         <div
           className={clsx(
             searchLayoutClasses.grid,
-            'grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
+            '!grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
           )}
         >
           <div className={cardClasses.winnerFirst}>
@@ -713,12 +737,13 @@ const TopRightIcons = ({
         component="a"
         key="lookup-model"
         target="_blank"
+        rel="nofollow noreferrer"
         leftSection={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
         onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`, '_blank');
+          window.open(`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL as string}${data.id}`, '_blank');
         }}
       >
         Lookup Model
@@ -900,7 +925,10 @@ function ResourceSelectCard({
           listenForUpdates={false}
         />
       ),
-      visible: selectSource === 'generation' && data.type === ModelType.Checkpoint,
+      visible:
+        selectSource === 'generation' &&
+        data.type === ModelType.Checkpoint &&
+        features.modelVersionPopularity,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },
     {

@@ -1,9 +1,6 @@
 import { Air } from '@civitai/client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
-import type { BaseModel } from '~/server/common/constants';
-import { baseModelSets, getEcosystemFromBaseModel } from '~/server/common/constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -240,60 +237,6 @@ export function getAirModelLink(identifier: string) {
   return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
 }
 
-const typeUrnMap: Partial<Record<ModelType, string>> = {
-  [ModelType.AestheticGradient]: 'ag',
-  [ModelType.Checkpoint]: 'checkpoint',
-  [ModelType.Hypernetwork]: 'hypernet',
-  [ModelType.TextualInversion]: 'embedding',
-  [ModelType.MotionModule]: 'motion',
-  [ModelType.Upscaler]: 'upscaler',
-  [ModelType.VAE]: 'vae',
-  [ModelType.LORA]: 'lora',
-  [ModelType.DoRA]: 'dora',
-  [ModelType.LoCon]: 'lycoris',
-  [ModelType.Controlnet]: 'controlnet',
-};
-
-export function stringifyAIR({
-  baseModel,
-  type,
-  modelId,
-  id,
-  source = 'civitai',
-}: {
-  baseModel: BaseModel | string;
-  type: ModelType;
-  modelId: number | string;
-  id?: number | string;
-  source?: string;
-}) {
-  const ecosystem = getEcosystemFromBaseModel(baseModel);
-
-  const urnType = typeUrnMap[type] ?? 'unknown';
-
-  return Air.stringify({
-    ecosystem: ecosystem,
-    type: urnType,
-    source,
-    id: String(modelId),
-    version: String(id),
-  });
-}
-
-export function getBaseModelEcosystemName(baseModel: BaseModel | undefined) {
-  if (!baseModel) return 'Stable Diffusion';
-
-  return (
-    Object.values(baseModelSets).find((baseModelSet) =>
-      (baseModelSet.baseModels as string[]).includes(baseModel)
-    )?.name ?? 'Stable Diffusion'
-  );
-}
-
-export function toBase64(str: string) {
-  return Buffer.from(str).toString('base64');
-}
-
 export function safeDecodeURIComponent(str: string) {
   try {
     return decodeURIComponent(str);
@@ -325,4 +268,15 @@ export function toPascalCase(str: string) {
 
 export function capitalize(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+export function toKebabCase(str: string) {
+  return str
+    .split('')
+    .map((letter, idx) => {
+      return letter.toUpperCase() === letter
+        ? `${idx !== 0 ? '-' : ''}${letter.toLowerCase()}`
+        : letter;
+    })
+    .join('');
 }

@@ -40,6 +40,7 @@ import {
 } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isDefined } from '~/utils/type-guards';
+import type { SearchIndexKey } from '~/components/Search/search.types';
 import { searchIndexMap } from '~/components/Search/search.types';
 
 export const SearchHeader = () => {
@@ -56,11 +57,11 @@ export const SearchHeader = () => {
 
   const onChangeIndex = (value: string) => {
     setSearchParamsByUiState(uiState);
-    const keyPath = Object.keys(searchIndexMap).find(
-      (key) => searchIndexMap[key as keyof typeof searchIndexMap] === value
-    );
+    const keyPath =
+      Object.keys(searchIndexMap).find((key) => searchIndexMap[key as SearchIndexKey] === value) ??
+      'models';
 
-    if (keyPath && states.hasOwnProperty(keyPath)) {
+    if (states.hasOwnProperty(keyPath)) {
       // Redirect to the route with the relevant state:
       router.replace(
         {
@@ -116,22 +117,24 @@ export const SearchHeader = () => {
           value: IMAGES_SEARCH_INDEX,
         }
       : undefined,
-    {
-      label: (
-        <Group align="center" gap={8} wrap="nowrap">
-          <ThemeIcon
-            size={30}
-            color={index === ARTICLES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
-            p={6}
-            radius="xl"
-          >
-            <IconFileText />
-          </ThemeIcon>
-          Articles
-        </Group>
-      ),
-      value: ARTICLES_SEARCH_INDEX,
-    },
+    features.articles
+      ? {
+          label: (
+            <Group align="center" gap={8} wrap="nowrap">
+              <ThemeIcon
+                size={30}
+                color={index === ARTICLES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                p={6}
+                radius="xl"
+              >
+                <IconFileText />
+              </ThemeIcon>
+              Articles
+            </Group>
+          ),
+          value: ARTICLES_SEARCH_INDEX,
+        }
+      : undefined,
     {
       label: (
         <Group align="center" gap={8} wrap="nowrap">

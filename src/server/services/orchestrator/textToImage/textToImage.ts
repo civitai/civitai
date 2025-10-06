@@ -1,10 +1,11 @@
 import type { Scheduler, TextToImageStepTemplate } from '@civitai/client';
-import { TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
+import { NsfwLevel, TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
@@ -13,6 +14,7 @@ import {
 } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -80,6 +82,10 @@ export async function createTextToImageStep(
     batchSize = params.quantity;
   }
 
+  const isPrivateGeneration = resources.some(
+    (r) => r.availability === Availability.Private || !!r.epochDetails
+  );
+
   return {
     $type: 'textToImage',
     priority,
@@ -97,11 +103,8 @@ export async function createTextToImageStep(
       resources: input.resources,
       params: removeEmpty(inputParams),
       remixOfId: input.remixOfId,
-      maxNsfwLevel: resources.some(
-        (r) => r.availability === Availability.Private || !!r.epochDetails
-      )
-        ? 'pG13'
-        : undefined,
+      maxNsfwLevel: isPrivateGeneration ? 'pG13' : undefined,
+      isPrivateGeneration,
     },
   } as TextToImageStepTemplate;
 }
@@ -112,10 +115,13 @@ export async function createTextToImage(
     token: string;
     experimental?: boolean;
     batchAll?: boolean;
+    isGreen?: boolean;
+    allowMatureContent: boolean;
+    currencies: BuzzSpendType[];
   }
 ) {
   const step = await createTextToImageStep(args);
-  const { params, tips, user, experimental } = args;
+  const { params, tips, user, experimental, isGreen, allowMatureContent, currencies } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
   const workflow = (await submitWorkflow({
@@ -132,12 +138,12 @@ export async function createTextToImage(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
+      // Ensures private generation does not allow mature content
+      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
+      allowMatureContent: allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
   })) as TextToImageResponse;
 

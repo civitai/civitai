@@ -1,13 +1,13 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
+import { NsfwLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
-import type * as z from 'zod/v4';
-import { env } from '~/env/server';
-import { SignalMessages } from '~/server/common/enums';
+import type * as z from 'zod';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { imageGenConfig } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
@@ -48,9 +48,12 @@ export async function createImageGen(
     user: SessionUser;
     token: string;
     experimental?: boolean;
+    isGreen?: boolean;
+    allowMatureContent: boolean;
+    currencies: BuzzSpendType[];
   }
 ) {
-  const { tips, user, experimental } = args;
+  const { tips, user, experimental, isGreen, allowMatureContent, currencies } = args;
   if (!args.params.engine)
     throw new Error(`cannot generate with $type:'imageGen' without specifying an engine`);
   const config = imageGenConfig[args.params.engine as keyof typeof imageGenConfig];
@@ -66,12 +69,11 @@ export async function createImageGen(
       steps: [step],
       tips,
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
+      allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
   })) as TextToImageResponse;
 

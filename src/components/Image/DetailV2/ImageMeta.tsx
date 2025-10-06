@@ -1,13 +1,13 @@
 import { Divider, Text, Badge, UnstyledButton } from '@mantine/core';
+import clsx from 'clsx';
+import React, { useMemo } from 'react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
-import React, { useMemo } from 'react';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
-import type { BaseModelSetType } from '~/server/common/constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import clsx from 'clsx';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 
 const simpleMetaProps = {
   comfy: 'Workflow',
@@ -36,8 +36,9 @@ export function ImageMeta({ imageId }: { imageId: number }) {
     const keys: string[] = [];
     if (data.type === 'image') {
       const metaRemoved = baseModel ? removeUnrelated(baseModel, restMeta) : restMeta;
+      const filteredKeys = Object.keys(simpleMetaProps).filter((key) => metaRemoved[key]);
 
-      for (const key of Object.keys(simpleMetaProps).filter((key) => metaRemoved[key])) {
+      for (const key of filteredKeys) {
         if (meta[key]) keys.push(key);
       }
     } else if (data.type === 'video') {
@@ -54,7 +55,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
       switch (key) {
         case 'comfy':
           const comfy = meta['comfy'];
-          const nodeCount = comfy?.workflow?.nodes?.length ?? 0;
+          const nodeCount: number = comfy?.workflow?.nodes?.length ?? 0;
           const nodeText =
             nodeCount === 1 ? `${nodeCount} Node` : `${nodeCount > 0 ? nodeCount : ''} Nodes`;
 
@@ -85,9 +86,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   if (!meta || !simpleMeta) return null;
 
   const software = meta.software ?? (onSite ? 'Civitai Generator' : 'External Generator');
-
   const { prompt, negativePrompt } = meta;
-
   const hasSimpleMeta = !!simpleMeta.length;
 
   return (
@@ -165,7 +164,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   );
 }
 
-function removeUnrelated<T extends Record<string, unknown>>(baseModel: BaseModelSetType, data: T) {
+function removeUnrelated<T extends Record<string, unknown>>(baseModel: BaseModelGroup, data: T) {
   let keys: string[] = [];
   switch (baseModel) {
     case 'Flux1':

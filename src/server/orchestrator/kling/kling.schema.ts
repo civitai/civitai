@@ -1,6 +1,6 @@
 import type { KlingVideoGenInput } from '@civitai/client';
 import { KlingMode, KlingModel } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   baseVideoGenerationSchema,
@@ -12,7 +12,7 @@ import {
 
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
-export const klingModels = [KlingModel.V1_6, KlingModel.V2] as const;
+export const klingModels = [KlingModel.V1_6, KlingModel.V2, KlingModel.V2_5_TURBO] as const;
 
 const schema = baseVideoGenerationSchema.extend({
   engine: z.literal('kling').default('kling').catch('kling'),
@@ -36,7 +36,9 @@ export const klingGenerationConfig = VideoGenerationConfig2({
   defaultValues: { aspectRatio: '1:1' },
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
-    data.mode = 'professional';
+    if (data.model !== KlingModel.V1_6) {
+      data.mode = 'professional';
+    }
     delete data.priority;
     if (!data.sourceImage) {
       data.process = 'txt2vid';
@@ -51,7 +53,7 @@ export const klingGenerationConfig = VideoGenerationConfig2({
   superRefine: (data, ctx) => {
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Prompt is required',
         path: ['prompt'],
       });

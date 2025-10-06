@@ -11,10 +11,12 @@ export function UserAvatarProfilePicture({
   id,
   image,
   username,
+  width = 96,
 }: {
   id: number;
   image: ProfileImage;
   username?: string | null;
+  width?: number;
 }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
@@ -55,7 +57,6 @@ export function UserAvatarProfilePicture({
           ) : (
             <EdgeMedia
               src={image.url}
-              width={450}
               name={image.name ?? image.id.toString()}
               alt={username ? `${username}'s Avatar` : undefined}
               type={image.type}
@@ -66,6 +67,9 @@ export function UserAvatarProfilePicture({
                 objectFit: 'cover',
                 minHeight: '100%',
               }}
+              optimized
+              width={width}
+              original={false}
             />
           )}
         </>

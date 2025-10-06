@@ -162,10 +162,9 @@ export const HiddenModels = createUserCache({
 export const HiddenUsers = createUserCache({
   key: 'hidden-users-3',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT
-          ue."targetUserId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."targetUserId") "username"
+          ue."targetUserId" "id"
         FROM "UserEngagement" ue
         WHERE "userId" = ${userId} AND type = ${UserEngagementType.Hide}::"UserEngagementType"
       `,
@@ -174,10 +173,9 @@ export const HiddenUsers = createUserCache({
 export const BlockedUsers = createUserCache({
   key: 'blocked-users',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT
-          ue."targetUserId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."targetUserId") "username"
+          ue."targetUserId" "id"
         FROM "UserEngagement" ue
         WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
       `,
@@ -186,10 +184,9 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users',
   callback: async ({ userId }) =>
-    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT
-          ue."userId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."userId") "username"
+          ue."userId" "id"
         FROM "UserEngagement" ue
         WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
       `,
@@ -400,10 +397,10 @@ export async function getAllHiddenForUser({
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
     hiddenModels: models.map((id) => ({ id, hidden: true })),
-    hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
+    hiddenUsers: users.map((user) => ({ id: user.id, hidden: true })),
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
-    blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
-    blockedByUsers: blockedByUsers.map((user) => ({ ...user, hidden: true })),
+    blockedUsers: blockedUsers.map((user) => ({ id: user.id, hidden: true })),
+    blockedByUsers: blockedByUsers.map((user) => ({ id: user.id, hidden: true })),
   } as HiddenPreferenceTypes;
 
   return result;

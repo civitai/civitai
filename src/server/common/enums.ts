@@ -94,6 +94,7 @@ export enum ImageScanType {
   MinorDetection = 6,
   HiveDemographics = 7,
   Clavata = 8,
+  SpineRating = 9,
 }
 
 // export enum CommentV2Sort {
@@ -393,4 +394,12 @@ export enum ModReviewType {
   NewUsers = 'newUser',
   Appeals = 'appeal',
   RuleViolations = 'modRule',
+}
+
+export enum MarketplacePaymentMethod {
+  CashApp = 'CashApp',
+  Revolut = 'Revolut',
+  Venmo = 'Venmo',
+  Wise = 'Wise',
+  Zelle = 'Zelle',
 }

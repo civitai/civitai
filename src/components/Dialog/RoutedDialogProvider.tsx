@@ -81,6 +81,7 @@ export function RoutedDialogProvider() {
     const toOpen = keyNamePairs.filter((x) => !openDialogs.includes(x.name));
 
     for (const { key, name } of toOpen) {
+      if (!dialogs[name]) continue;
       if (dialogs[name].requireAuth && !currentUser) continue;
       const state = history.state.state;
       const Dialog = createBrowserRouterSync(dialogs[name].component);

@@ -1,16 +1,12 @@
-import dayjs from 'dayjs';
-import minMax from 'dayjs/plugin/minMax';
-import utc from 'dayjs/plugin/utc';
+import type { ConfigType, ManipulateType } from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 
-dayjs.extend(minMax);
-dayjs.extend(utc);
-
-export function formatDate(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc = false) {
+export function formatDate(value: ConfigType, format = 'MMM D, YYYY', utc = false) {
   if (utc) return dayjs.utc(value).format(format);
   return dayjs(value).format(format);
 }
 
-export function formatDateNullable(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc = false) {
+export function formatDateNullable(value: ConfigType, format = 'MMM D, YYYY', utc = false) {
   if (!value) return;
   else return formatDate(value, format, utc);
 }
@@ -34,11 +30,11 @@ export function daysFromNow(
   return dayjs(value).fromNow(withoutSuffix);
 }
 
-export function increaseDate(value: Date, duration: number, unit: dayjs.ManipulateType) {
+export function increaseDate(value: Date, duration: number, unit: ManipulateType) {
   return dayjs(value).add(duration, unit).toDate();
 }
 
-export function decreaseDate(value: Date, duration: number, unit: dayjs.ManipulateType) {
+export function decreaseDate(value: Date, duration: number, unit: ManipulateType) {
   return dayjs(value).subtract(duration, unit).toDate();
 }
 
@@ -73,21 +69,21 @@ export function isValidDate(d: unknown) {
   return d instanceof Date && !isNaN(d as unknown as number);
 }
 
-export function toUtc(value: dayjs.ConfigType) {
+export function toUtc(value: ConfigType) {
   return dayjs.utc(value).toDate();
 }
 
-export function startOfDay(value: dayjs.ConfigType, opts?: { utc?: boolean }) {
+export function startOfDay(value: ConfigType, opts?: { utc?: boolean }) {
   const date = opts?.utc ? dayjs.utc(value) : dayjs(value);
   return date.startOf('day').toDate();
 }
 
-export function endOfDay(value: dayjs.ConfigType, opts?: { utc?: boolean }) {
+export function endOfDay(value: ConfigType, opts?: { utc?: boolean }) {
   const date = opts?.utc ? dayjs.utc(value) : dayjs(value);
   return date.endOf('day').toDate();
 }
 
-export function getDatesAsList(startDate: Date, endDate: Date, unit: dayjs.ManipulateType = 'day') {
+export function getDatesAsList(startDate: Date, endDate: Date, unit: ManipulateType = 'day') {
   const dates = [];
   let currentDate = startDate;
 

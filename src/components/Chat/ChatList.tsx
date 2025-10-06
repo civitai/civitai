@@ -25,6 +25,7 @@ import {
   IconEar,
   IconEarOff,
   IconEye,
+  IconMessageExclamation,
   IconPlugConnected,
   IconSearch,
   IconTool,
@@ -36,7 +37,7 @@ import produce from 'immer';
 import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -50,6 +51,8 @@ import { trpc } from '~/utils/trpc';
 import styles from './ChatList.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { BlurText } from '~/components/BlurText/BlurText';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
@@ -80,7 +83,7 @@ type StatusKeys = keyof typeof statusMap;
 type StatusValues = (typeof statusMap)[StatusKeys];
 
 export function ChatList() {
-  const { state, setState } = useChatContext();
+  const existingChatId = useChatStore((state) => state.existingChatId);
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
@@ -88,10 +91,12 @@ export function ChatList() {
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const { connected } = useSignalContext();
   const isMobile = useContainerSmallerThan(700);
+  const domainColor = useDomainColor();
   const userSettings = queryUtils.chat.getUserSettings.getData();
   // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
 
   const muteSounds = userSettings?.muteSounds ?? false;
+  const replaceBadWords = userSettings?.replaceBadWords ?? false;
 
   const { data, isLoading } = trpc.chat.getAllByUser.useQuery();
   const chatCounts = queryUtils.chat.getUnreadCount.getData();
@@ -179,12 +184,12 @@ export function ChatList() {
   useEffect(() => {
     if (!data) return;
     const activeStatus = data
-      .find((d) => d.id === state.existingChatId)
+      .find((d) => d.id === existingChatId)
       ?.chatMembers?.find((cm) => cm.userId === currentUser?.id)?.status;
     if (!activeStatus) return;
     const defaultActiveTab = statusMap[activeStatus];
     setActiveTab(defaultActiveTab);
-  }, [currentUser?.id, data, state.existingChatId]);
+  }, [currentUser?.id, data, existingChatId]);
 
   useEffect(() => {
     if (!data) return;
@@ -219,9 +224,11 @@ export function ChatList() {
   }, [currentUser?.id, data, searchInput, activeTab]);
 
   const handleMute = () => {
-    modifySettings({
-      muteSounds: !muteSounds,
-    });
+    modifySettings({ muteSounds: !muteSounds });
+  };
+
+  const handleReplaceBadWords = () => {
+    modifySettings({ replaceBadWords: !replaceBadWords });
   };
 
   return (
@@ -252,6 +259,21 @@ export function ChatList() {
               >
                 {`Mark all as read${activeCount > 0 ? ` (${activeCount})` : ''}`}
               </Menu.Item>
+              {domainColor !== 'green' && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Label>Moderation</Menu.Label>
+                  <Menu.Item
+                    color="yellow"
+                    leftSection={<IconMessageExclamation size={18} />}
+                    onClick={handleReplaceBadWords}
+                  >
+                    {replaceBadWords
+                      ? 'Disable conversation moderation'
+                      : 'Enable conversation moderation'}
+                  </Menu.Item>
+                </>
+              )}
             </Menu.Dropdown>
           </Menu>
           {!connected && (
@@ -267,14 +289,14 @@ export function ChatList() {
             styles={{ section: { marginRight: 6 } }}
             leftSection={<IconCirclePlus size={18} />}
             onClick={() => {
-              setState((prev) => ({ ...prev, isCreating: true, existingChatId: undefined }));
+              useChatStore.setState({ isCreating: true, existingChatId: undefined });
             }}
           >
             New
           </Button>
 
           {isMobile && (
-            <LegacyActionIcon onClick={() => setState((prev) => ({ ...prev, open: false }))}>
+            <LegacyActionIcon onClick={() => useChatStore.setState({ open: false })}>
               <IconX />
             </LegacyActionIcon>
           )}
@@ -354,13 +376,13 @@ export function ChatList() {
                     component={div}
                     wrap="nowrap"
                     className={clsx(styles.selectChat, {
-                      [styles.selectedChat]: d.id === state.existingChatId,
+                      [styles.selectedChat]: d.id === existingChatId,
                     })}
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ type: 'spring', duration: 0.4 }}
                     onClick={() => {
-                      setState((prev) => ({ ...prev, existingChatId: d.id }));
+                      useChatStore.setState({ existingChatId: d.id });
                     }}
                   >
                     <Indicator
@@ -398,7 +420,7 @@ export function ChatList() {
                       </Highlight>
                       {/* TODO this is kind of a hack, we should be returning only valid latest message */}
                       {!!d.messages[0]?.content && myMember?.status === ChatMemberStatus.Joined && (
-                        <Text
+                        <BlurText
                           size="xs"
                           style={{
                             whiteSpace: 'nowrap',
@@ -406,9 +428,10 @@ export function ChatList() {
                             textOverflow: 'ellipsis',
                             minWidth: 0,
                           }}
+                          blur={replaceBadWords || domainColor === 'green'}
                         >
                           {d.messages[0].content}
-                        </Text>
+                        </BlurText>
                       )}
                     </Stack>
                     {isModSender && (

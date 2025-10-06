@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import type { BaseModel, BaseModelType, ModelFileType } from '~/server/common/constants';
+import type { BaseModelType, ModelFileType } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -433,7 +434,7 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi, minor, sfwOnly } = input;
+    const { nsfw, poi, minor, sfwOnly, availability } = input;
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
@@ -443,6 +444,9 @@ export const upsertModelHandler = async ({
 
     if (nsfw && sfwOnly)
       throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+
+    if (availability === Availability.Private && !sfwOnly)
+      throw throwBadRequestError('Private models must be set to SFW only.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
@@ -470,7 +474,7 @@ export const upsertModelHandler = async ({
         level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model) throw throwNotFoundError(`No model with id ${input.id as number}`);
 
     await ctx.track.modelEvent({
       type: input.id ? 'Update' : 'Create',
@@ -1217,7 +1221,7 @@ export const changeModelModifierHandler = async ({
 
     const model = await getModel({ id, select: { id: true, meta: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
-    if (model.mode === mode) throw throwBadRequestError(`Model is already ${mode}`);
+    if (model.mode === mode) throw throwBadRequestError(`Model is already ${String(mode)}`);
     // If removing mode, but model is taken down, only moderators can do it
     if (model.mode === ModelModifier.TakenDown && mode === null && !ctx.user.isModerator)
       throw throwAuthorizationError();
@@ -1626,7 +1630,7 @@ export const updateGallerySettingsHandler = async ({
 
     const updatedSettings = gallerySettings
       ? {
-          images: gallerySettings.hiddenImages,
+          hiddenImages: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
           level: gallerySettings.level,
@@ -1777,6 +1781,8 @@ export const privateModelFromTrainingHandler = async ({
 
     if (nsfw && sfwOnly)
       throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+
+    if (!sfwOnly) throw throwBadRequestError('Private models must be set to SFW only.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;

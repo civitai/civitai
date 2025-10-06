@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { dbRead, dbWrite } from '~/server/db/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 
 const schema = z.object({
@@ -15,7 +15,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   if (!results.success)
     return res
       .status(400)
-      .json({ error: `Invalid id: ${results.error.flatten().fieldErrors.modelVersionId}` });
+      .json({ error: z.prettifyError(results.error) ?? 'Invalid modelVersionId' });
 
   const { modelVersionId, strategyId, partnerId } = results.data;
   if (!modelVersionId) return res.status(420).json({ error: 'Missing modelVersionId' });

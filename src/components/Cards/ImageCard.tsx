@@ -12,13 +12,16 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {
-  const context = useImagesContext();
+  const { getImages, ...context } = useImagesContext();
 
   return (
     <AspectRatioImageCard
       image={data}
       cosmetic={data.cosmetic?.data}
-      routedDialog={{ name: 'imageDetail', state: { imageId: data.id, ...context } }}
+      routedDialog={{
+        name: 'imageDetail',
+        state: { imageId: data.id, images: getImages(), ...context },
+      }}
       header={
         <div className="flex w-full items-start justify-between">
           {data.type === 'video' && data.metadata && 'duration' in data.metadata && (

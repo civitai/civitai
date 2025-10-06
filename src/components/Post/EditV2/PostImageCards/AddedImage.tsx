@@ -1,7 +1,6 @@
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
-  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -40,8 +39,8 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
+import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import {
   isMadeOnSite,
   useGenerationStatus,
@@ -49,6 +48,7 @@ import {
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
@@ -63,28 +63,28 @@ import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageTools
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedReason } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
 import {
-  getBaseModelResourceTypes,
-  getBaseModelSetType,
-  getBaseModelSetTypes,
-} from '~/shared/constants/generation.constants';
+  getBaseModelGroup,
+  getGenerationBaseModelAssociatedGroups,
+  getGenerationBaseModelResourceOptions,
+} from '~/shared/constants/base-model.constants';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
-import { isValidAIGeneration } from '~/utils/image-utils';
+import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
-import { VotableTagModel } from '~/libs/tags';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -115,6 +115,7 @@ type State = {
   isAddingResource: boolean;
   toggleHidePrompt: () => void;
   addResource: (modelVersionId: number) => void;
+  nsfwLicenseViolation: ReturnType<typeof hasImageLicenseViolation>;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -129,23 +130,23 @@ const getAllowedResources = (resources: ResourceHelper[]) => {
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
       const baseModel = !!resource.modelVersionBaseModel
-        ? getBaseModelSetType(resource.modelVersionBaseModel)
+        ? getBaseModelGroup(resource.modelVersionBaseModel)
         : null;
       if (isDefined(baseModel)) {
         return (
-          (getBaseModelResourceTypes(baseModel)?.filter(
+          (getGenerationBaseModelResourceOptions(baseModel)?.filter(
             (t) => t.type !== 'Checkpoint'
           ) as AllowedResource[]) ?? []
         );
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
-        const baseTypes = getBaseModelSetTypes({
-          modelType: resource.modelType,
-          baseModel: resource.modelVersionBaseModel,
-        });
+        const baseTypes = getGenerationBaseModelAssociatedGroups(
+          resource.modelVersionBaseModel,
+          resource.modelType
+        );
         const allTypes = baseTypes.flatMap(
-          (b) => (getBaseModelResourceTypes(b) as AllowedResource[]) ?? []
+          (b) => (getGenerationBaseModelResourceOptions(b) as AllowedResource[]) ?? []
         );
         return Object.values(
           allTypes.reduce<Record<string, AllowedResource>>((acc, { type, baseModels }) => {
@@ -189,6 +190,10 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const allowedResources = useMemo(() => {
     return getAllowedResources(image.resourceHelper);
   }, [image.resourceHelper]);
+
+  const nsfwLicenseViolation = useMemo(() => {
+    return hasImageLicenseViolation(storedImage);
+  }, [storedImage.nsfwLevel, storedImage.resourceHelper]);
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
@@ -298,6 +303,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         toggleHidePrompt,
         addResource,
         isPendingManualAssignment,
+        nsfwLicenseViolation,
       }}
     >
       <div className="overflow-hidden rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
@@ -710,6 +716,7 @@ function EditDetail() {
                 </Text>
               </Alert>
             )}
+            <NsfwLicenseViolationAlert />
             {/* #endregion */}
 
             {/*
@@ -818,24 +825,12 @@ function EditDetail() {
             {!resources?.length && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {image.type === 'image' ? (
-                  <Alert className="rounded-lg" color="yellow">
-                    <Text>
-                      Install the{' '}
-                      <Text
-                        component="a"
-                        href="https://github.com/civitai/sd_civitai_extension"
-                        target="_blank"
-                        rel="nofollow"
-                      >
-                        Civitai Extension for Automatic 1111 Stable Diffusion Web UI
-                      </Text>{' '}
-                      to automatically detect all the resources used in your images.
-                    </Text>
-                  </Alert>
-                ) : (
-                  <Center>No resources found.</Center>
-                )}
+                <Center>
+                  <Text>
+                    We weren&apos;t able to detect any resources used in the creation of this image.
+                    You can add them manually using the + Resource button.
+                  </Text>
+                </Center>
               </CustomCard>
             )}
             {/* #endregion */}
@@ -1160,6 +1155,61 @@ function PostImage() {
         </Menu>
       </div>
     </div>
+  );
+}
+
+// Get human-readable NSFW level name
+const getNsfwLevelName = (level: NsfwLevel) => {
+  return browsingLevelLabels[level] || 'Unknown';
+};
+
+function NsfwLicenseViolationAlert() {
+  const { nsfwLicenseViolation } = useAddedImageContext();
+  const { showPreview } = usePostPreviewContext();
+
+  if (!nsfwLicenseViolation.violation) return null;
+
+  const { restrictedResources, nsfwLevel } = nsfwLicenseViolation;
+  const currentLevelName = getNsfwLevelName(nsfwLevel ?? 0);
+
+  return (
+    <Alert
+      color="orange"
+      className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
+      classNames={{ message: 'flex flex-col gap-2' }}
+    >
+      <Text c="orange" className="font-bold">
+        NSFW License Restriction Notice
+      </Text>
+      <Text size="sm">
+        This {currentLevelName} image uses models with licenses that restrict this content level:
+      </Text>
+      <ul className="ml-4 list-disc">
+        {restrictedResources?.map((resource, index) => (
+          <li key={index} className="text-sm">
+            <Text span className="font-medium">
+              {resource.modelName}
+            </Text>
+            {resource.baseModel && (
+              <Text span c="dimmed">
+                {' '}
+                ({resource.baseModel})
+              </Text>
+            )}
+            {resource.restrictedLevels && resource.restrictedLevels.length > 0 && (
+              <Text span size="xs" c="dimmed">
+                {' '}
+                - Restricts: {resource.restrictedLevels.map(getNsfwLevelName).join(', ')}
+              </Text>
+            )}
+          </li>
+        ))}
+      </ul>
+      <Text size="sm">
+        Consider using alternative models or adjusting the content rating to comply with license
+        terms.
+      </Text>
+    </Alert>
   );
 }
 

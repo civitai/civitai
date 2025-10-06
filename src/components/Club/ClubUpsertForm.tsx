@@ -49,7 +49,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { upsertClubInput } from '~/server/schema/club.schema';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { constants } from '~/server/common/constants';

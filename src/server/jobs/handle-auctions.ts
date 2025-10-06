@@ -1,7 +1,6 @@
 import type { Dayjs } from 'dayjs';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import * as z from 'zod/v4';
+import dayjs from '~/shared/utils/dayjs';
+import * as z from 'zod';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -13,15 +12,22 @@ import type {
   DetailsWonAuction,
 } from '~/server/notifications/auction.notifications';
 import { modelVersionResourceCache } from '~/server/redis/caches';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   auctionBaseSelect,
   auctionSelect,
+  getAuctionTransactionPrefix,
+  isAuctionTransactionPrefix,
   prepareBids,
   type PrepareBidsReturn,
 } from '~/server/services/auction.service';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { resourceDataCache } from '~/server/services/model-version.service';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
@@ -37,8 +43,6 @@ import {
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
-
-dayjs.extend(utc);
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;
@@ -430,7 +434,20 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
         try {
           return withRetries(async () => {
             try {
-              return await refundTransaction(tid, 'Lost bid.');
+              let transactionId: string | null = null;
+              if (isAuctionTransactionPrefix(tid)) {
+                const res = await refundMultiAccountTransaction({
+                  externalTransactionIdPrefix: tid,
+                  description: 'Refund for lost bid',
+                });
+
+                transactionId = res.refundedTransactions[0]?.originalTransactionId ?? null;
+              } else {
+                const res = await refundTransaction(tid, 'Lost bid.');
+                transactionId = res.transactionId;
+              }
+
+              return { transactionId };
             } catch (e) {
               const err = e as Error;
               logToAxiom({
@@ -554,10 +571,11 @@ const createRecurringBids = async (now: Dayjs) => {
         }
 
         // Charge the user the relevant bid amount
-        const { transactionId } = await withRetries(() =>
-          createBuzzTransaction({
+        const prefix = getAuctionTransactionPrefix(recurringBid.id, recurringBid.userId);
+        const data = await withRetries(() =>
+          createMultiAccountBuzzTransaction({
             type: TransactionType.Bid,
-            fromAccountType: BuzzAccountType.user,
+            fromAccountTypes: ['green', 'yellow', 'red'],
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,
@@ -567,12 +585,10 @@ const createRecurringBids = async (now: Dayjs) => {
               entityId: recurringBid.entityId,
               entityType: recurringBid.auctionBase.type,
             },
-            externalTransactionId: `recurring-bid-${recurringBid.userId}-${
-              recurringBid.entityId
-            }-${now.startOf('day').format()}`,
+            externalTransactionIdPrefix: prefix,
           })
         );
-        if (!transactionId) {
+        if ((data.transactionIds?.length ?? 0) === 0) {
           logToAxiom({
             name: 'handle-auctions',
             type: 'warning',
@@ -600,7 +616,7 @@ const createRecurringBids = async (now: Dayjs) => {
             userId: recurringBid.userId,
             entityId: recurringBid.entityId,
             amount: recurringBid.amount,
-            transactionIds: [transactionId],
+            transactionIds: [prefix],
             fromRecurring: true,
           },
         });

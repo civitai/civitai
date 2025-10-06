@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -33,6 +34,7 @@ import {
   getModelVersionRunStrategies,
   getUserEarlyAccessModelVersions,
   getVersionById,
+  getWorkflowIdFromModelVersion,
   modelVersionDonationGoals,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
@@ -40,6 +42,7 @@ import {
   toggleNotifyModelVersion,
   unpublishModelVersionById,
   updateModelVersionById,
+  updateModelVersionTrainingStatus,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
@@ -55,13 +58,22 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { Availability, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  ModelStatus,
+  ModelUsageControl,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getResourceData } from './../services/generation/generation.service';
+import { env } from '~/env/server';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { WorkflowStatus } from '@civitai/client';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -269,8 +281,7 @@ export const upsertModelVersionHandler = async ({
       ...input,
       trainingDetails: input.trainingDetails,
     });
-
-    if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
+    if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 
     // Just update early access deadline if updating the model version
     if (input.id)
@@ -378,7 +389,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         earlyAccessConfig: true,
-        model: { select: { userId: true } },
+        model: { select: { userId: true, nsfw: true } },
       },
     });
 
@@ -656,6 +667,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
     return earlyAccessPurchase({
       ...input,
       userId: ctx.user.id,
+      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
     });
   } catch (error) {
     if (error instanceof TRPCError) error;
@@ -729,12 +741,8 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
     select: {
       model: { select: { id: true, user: { select: userWithCosmeticsSelect } } },
       files: {
-        select: {
-          metadata: true,
-        },
-        where: {
-          type: 'Training Data',
-        },
+        select: { metadata: true },
+        where: { type: 'Training Data' },
       },
     },
   });
@@ -751,6 +759,57 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
     jobId: trainingResults?.jobId as string | null,
     trainingResults,
   };
+}
+
+export async function recheckModelVersionTrainingStatusHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const { id: userId, isModerator } = ctx.user;
+
+  const version = await getVersionById({
+    ...input,
+    select: {
+      id: true,
+      name: true,
+      baseModel: true,
+      model: { select: { id: true, userId: true } },
+    },
+  });
+  if (!version) throw throwNotFoundError();
+  if (version.model.userId !== userId && !isModerator) throw throwAuthorizationError();
+
+  const workflowId = await getWorkflowIdFromModelVersion({ id: version.id });
+  if (!workflowId) throw throwBadRequestError('No workflowId found for this model version');
+
+  const workflow = await getWorkflow({
+    token: env.ORCHESTRATOR_ACCESS_TOKEN,
+    path: { workflowId },
+  });
+
+  // Check last job step status
+  const [latestStep] = workflow.steps ?? [];
+  if (!latestStep) throw throwBadRequestError('No steps found for this workflow');
+
+  const [lastJob] = (latestStep.jobs ?? []).slice(-1);
+  if (!lastJob) throw throwBadRequestError('No jobs found for last step of this workflow');
+  if (lastJob.status !== WorkflowStatus.SUCCEEDED)
+    throw throwBadRequestError('Last job not completed');
+
+  // update training history
+  const { modelFileId } = latestStep.metadata as { modelFileId?: number };
+  if (!modelFileId) throw throwBadRequestError('No modelFileId found');
+
+  const updatedVersion = await updateModelVersionTrainingStatus({
+    id: version.id,
+    trainingStatus: TrainingStatus.InReview,
+    modelFileId,
+  });
+
+  return updatedVersion;
 }
 
 export async function publishPrivateModelVersionHandler({

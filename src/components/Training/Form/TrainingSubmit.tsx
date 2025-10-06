@@ -19,7 +19,7 @@ import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tab
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -44,7 +44,8 @@ import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvan
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { BaseModel } from '~/server/common/constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
   ModelVersionUpsertInput,
@@ -74,10 +75,11 @@ import {
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
 
-const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
+const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan', 'chroma'];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -86,6 +88,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
   const thisNumImages = thisMetadata?.numImages;
   const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs } = useTrainingImageStore(
@@ -126,7 +129,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
-    type: 'Generation',
+    accountTypes: availableBuzzTypes,
   });
 
   const thisStep = 3;
@@ -300,6 +303,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (r.baseType === 'chroma' && (!r.negativePrompt || !r.negativePrompt.trim())) {
+        showErrorNotification({
+          error: new Error('A negative prompt is required for Chroma training.'),
+          autoClose: false,
+        });
+        return;
+      }
+
       if (r.params.targetSteps > maxSteps) {
         showErrorNotification({
           error: new Error(
@@ -368,7 +379,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     finishedRuns = 0;
 
     runs.forEach(async (run, idx) => {
-      const { base, baseType, params, customModel, samplePrompts, staging, highPriority } = run;
+      const {
+        base,
+        baseType,
+        params,
+        customModel,
+        samplePrompts,
+        negativePrompt,
+        staging,
+        highPriority,
+      } = run;
       const { optimizerArgs, ...paramData } = params;
 
       if (isInvalidRapid(baseType, paramData.engine)) {
@@ -408,6 +428,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           baseModelType: baseType,
           params: paramData,
           samplePrompts,
+          ...(negativePrompt && { negativePrompt }),
           staging,
           highPriority,
         },
@@ -830,7 +851,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={totalBuzzCost}
-          transactionType="Generation"
+          accountTypes={availableBuzzTypes}
           onPerformTransaction={handleSubmit}
           error={hasIssue ? 'Error computing cost' : undefined}
           showTypePct

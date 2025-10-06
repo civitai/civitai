@@ -1,9 +1,10 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import type { Dayjs } from 'dayjs';
 
 const log = createLogger('count-reviews', 'green');
 
@@ -94,7 +95,7 @@ export const countReviewImages = createJob('count-review-images', '0 22 * * *', 
 });
 
 // Function to split date range into single-day intervals
-const splitIntoDays = (startDate: dayjs.Dayjs, endDate: dayjs.Dayjs): dayjs.Dayjs[] => {
+const splitIntoDays = (startDate: Dayjs, endDate: Dayjs): Dayjs[] => {
   const days = [];
   let currentDay = startDate.startOf('day');
   while (currentDay.isBefore(endDate)) {

@@ -7,7 +7,6 @@ import { useGetAnnouncements } from '~/components/Announcements/announcements.ut
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
-import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import type { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
 import type { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -162,28 +161,6 @@ export const useMarkReadNotification = () => {
   });
 
   return mutation;
-};
-
-export const useNotificationSettings = (enabled = true) => {
-  const { data: userNotificationSettings = [], isLoading } =
-    trpc.user.getNotificationSettings.useQuery(undefined, { enabled });
-  const { hasNotifications, hasCategory, notificationSettings } = useMemo(() => {
-    let hasNotifications = false;
-    const notificationSettings: Record<string, boolean> = {};
-    const hasCategory: Record<string, boolean> = {};
-    for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
-      hasCategory[category] = false;
-      for (const { type } of settings) {
-        const isEnabled = !userNotificationSettings.some((setting) => setting.type === type);
-        notificationSettings[type] = isEnabled;
-        if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
-        if (!hasNotifications && isEnabled) hasNotifications = true;
-      }
-    }
-    return { hasNotifications, hasCategory, notificationSettings };
-  }, [userNotificationSettings]);
-
-  return { hasNotifications, hasCategory, notificationSettings, isLoading };
 };
 
 export const useNotificationSignal = () => {

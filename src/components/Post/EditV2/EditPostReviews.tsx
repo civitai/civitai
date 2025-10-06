@@ -1,16 +1,15 @@
-import { Alert, Text, Divider } from '@mantine/core';
+import { Alert, Divider, Text } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
-
-import { trpc } from '~/utils/trpc';
-import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
-import { useEffect, useMemo } from 'react';
-import { isDefined } from '~/utils/type-guards';
 import { isEqual, uniqWith } from 'lodash-es';
+import { useEffect, useMemo } from 'react';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PostDetailEditable } from '~/server/services/post.service';
+import { ModelType } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export function EditPostReviews({ post }: { post: PostDetailEditable }) {
   const currentUser = useCurrentUser();
@@ -26,9 +25,12 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
       .filter(isDefined);
     return uniqWith(resources, isEqual);
   }, [images]);
-  const missingResources = images.some((x) => !x.resourceHelper.length);
 
-  const { data = [], refetch } = trpc.post.getResources.useQuery({ id }, { enabled: false });
+  const {
+    data = [],
+    refetch,
+    isRefetching,
+  } = trpc.post.getResources.useQuery({ id }, { enabled: false });
   const isMuted = currentUser?.muted ?? false;
 
   const reviews = useMemo(() => {
@@ -67,8 +69,8 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
 
   useEffect(() => {
     const shouldRefetch = imageResources.length !== data.length && !isMuted;
-    if (shouldRefetch) refetch();
-  }, [imageResources, isMuted, refetch]); //eslint-disable-line
+    if (shouldRefetch && !isRefetching) refetch();
+  }, [imageResources, isMuted, refetch, isRefetching]); //eslint-disable-line
 
   if (!reviews.pending.length && !reviews.previous.length) return null;
 
@@ -130,23 +132,6 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
               </>
             )}
           </div>
-
-          {missingResources && (
-            <Alert color="yellow">
-              <Text size="xs">
-                Some of your images are missing resources. For automatic image resource detection,
-                try installing{' '}
-                <Text
-                  component="a"
-                  href="https://github.com/civitai/sd_civitai_extension"
-                  target="_blank"
-                  rel="nofollow"
-                >
-                  Civitai Extension for Automatic 1111 Stable Diffusion Web UI
-                </Text>
-              </Text>
-            </Alert>
-          )}
         </>
       )}
     </div>

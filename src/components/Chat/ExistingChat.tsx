@@ -40,7 +40,7 @@ import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -61,6 +61,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
+import { BlurText } from '~/components/BlurText/BlurText';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -71,7 +73,7 @@ const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 export function ExistingChat() {
   const currentUser = useCurrentUser();
   const { worker } = useSignalContext();
-  const { state, setState } = useChatContext();
+  const existingChatId = useChatStore((state) => state.existingChatId);
   const queryUtils = trpc.useUtils();
   const isMobile = useContainerSmallerThan(700);
   const colorScheme = useComputedColorScheme('dark');
@@ -86,7 +88,7 @@ export function ExistingChat() {
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
       {
-        chatId: state.existingChatId!,
+        chatId: existingChatId!,
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -100,8 +102,8 @@ export function ExistingChat() {
   const { data: allChatData, isLoading: allChatLoading } = trpc.chat.getAllByUser.useQuery();
 
   const thisChat = useMemo(
-    () => allChatData?.find((c) => c.id === state.existingChatId),
-    [allChatData, state.existingChatId]
+    () => allChatData?.find((c) => c.id === existingChatId),
+    [allChatData, existingChatId]
   );
   const myMember = useMemo(
     () => thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id),
@@ -124,7 +126,7 @@ export function ExistingChat() {
         produce((old) => {
           if (!old) return old;
 
-          const tChat = old.find((c) => c.id === state.existingChatId);
+          const tChat = old.find((c) => c.id === existingChatId);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === currentUser?.id);
           if (!tMember) return old;
 
@@ -136,7 +138,7 @@ export function ExistingChat() {
         produce((old) => {
           if (!old) return old;
 
-          const tChat = old.find((c) => c.chatId === state.existingChatId);
+          const tChat = old.find((c) => c.chatId === existingChatId);
           if (!tChat) return old;
 
           tChat.cnt = 0;
@@ -152,7 +154,7 @@ export function ExistingChat() {
         produce((old) => {
           if (!old) return old;
 
-          const tChat = old.find((c) => c.id === state.existingChatId);
+          const tChat = old.find((c) => c.id === existingChatId);
           const tMember = tChat?.chatMembers?.find((cm) => cm.userId === data.userId);
           if (!tMember) return old;
 
@@ -254,7 +256,7 @@ export function ExistingChat() {
     setTypingStatus({});
     setTypingText(null);
     setReplyId(undefined);
-  }, [state.existingChatId]);
+  }, [existingChatId]);
 
   function getTypingStatus(newEntry: { [p: string]: boolean }) {
     const newTotalStatus = { ...typingStatus, ...newEntry };
@@ -280,7 +282,7 @@ export function ExistingChat() {
       const data = d as isTypingOutput;
 
       if (data.userId === currentUser?.id) return;
-      if (data.chatId !== state.existingChatId) return;
+      if (data.chatId !== existingChatId) return;
 
       const newEntry = {
         [data.username]: data.isTyping,
@@ -292,7 +294,7 @@ export function ExistingChat() {
       setTypingText(isTypingText);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.existingChatId]
+    [existingChatId]
   );
 
   useEffect(() => {
@@ -303,7 +305,7 @@ export function ExistingChat() {
   }, [worker, handleIsTyping]);
 
   const goBack = () => {
-    setState((prev) => ({ ...prev, existingChatId: undefined }));
+    useChatStore.setState({ existingChatId: undefined });
   };
 
   return (
@@ -534,7 +536,7 @@ function ChatInputBox({
   setTypingText: React.Dispatch<React.SetStateAction<string | null>>;
 }) {
   const currentUser = useCurrentUser();
-  const { state } = useChatContext();
+  const existingChatId = useChatStore((state) => state.existingChatId);
   const queryUtils = trpc.useUtils();
 
   const [isSending, setIsSending] = useState(false);
@@ -553,7 +555,7 @@ function ChatInputBox({
           if (!currentUser || isMuted) return;
 
           doIsTyping({
-            chatId: state.existingChatId!,
+            chatId: existingChatId!,
             userId: currentUser.id,
             isTyping: true,
           }).catch();
@@ -561,7 +563,7 @@ function ChatInputBox({
         2000,
         { leading: true, trailing: true }
       ),
-    [currentUser, doIsTyping, isMuted, state.existingChatId]
+    [currentUser, doIsTyping, isMuted, existingChatId]
   );
 
   const { mutate } = trpc.chat.createMessage.useMutation({
@@ -623,7 +625,7 @@ function ChatInputBox({
       if (!currentUser || isMuted) return;
 
       doIsTyping({
-        chatId: state.existingChatId!,
+        chatId: existingChatId!,
         userId: currentUser.id,
         isTyping: false,
       }).catch();
@@ -652,7 +654,7 @@ function ChatInputBox({
 
     setIsSending(true);
     mutate({
-      chatId: state.existingChatId!,
+      chatId: existingChatId!,
       content: strippedMessage,
       referenceMessageId: replyId,
     });
@@ -662,7 +664,7 @@ function ChatInputBox({
     if (!currentUser || isMuted) return;
 
     doIsTyping({
-      chatId: state.existingChatId!,
+      chatId: existingChatId!,
       userId: currentUser.id,
       isTyping: false,
     }).catch();
@@ -671,7 +673,7 @@ function ChatInputBox({
 
   useEffect(() => {
     setChatMsg('');
-  }, [state.existingChatId]);
+  }, [existingChatId]);
 
   return (
     <Group gap={0}>
@@ -780,10 +782,13 @@ function DisplayMessages({
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
 }) {
   const currentUser = useCurrentUser();
-  const { state } = useChatContext();
+  const existingChatId = useChatStore((state) => state.existingChatId);
+  const { data: userSettings } = trpc.chat.getUserSettings.useQuery();
+  const domainColor = useDomainColor();
+  const replaceBadWords = userSettings?.replaceBadWords ?? false;
 
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
-  const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
+  const tChat = allChatData?.find((chat) => chat.id === existingChatId);
 
   // TODO we should be checking first if this exists in `chats`
   //      then, grab the content
@@ -838,6 +843,7 @@ function DisplayMessages({
               // </Group>
               <Text
                 className={clsx(classes.chatMessage)}
+                component="div"
                 size="xs"
                 py={0}
                 style={{
@@ -925,7 +931,11 @@ function DisplayMessages({
                         [classes.myMessage]: isMe,
                       })}
                     >
-                      <Linkify options={linkifyOptions}>{c.content}</Linkify>
+                      <Linkify options={linkifyOptions}>
+                        <BlurText blur={replaceBadWords || domainColor === 'green'}>
+                          {c.content}
+                        </BlurText>
+                      </Linkify>
                     </div>
                   </Tooltip>
                 </Group>

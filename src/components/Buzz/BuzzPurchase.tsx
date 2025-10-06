@@ -27,7 +27,6 @@ import {
   IconMoodDollar,
 } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BuzzNowPaymentsButton } from '~/components/Buzz/BuzzNowPaymentsButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
@@ -54,9 +53,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzCoinbaseButton';
+import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
-import { BuzzCoinbaseOnrampButton } from '~/components/Buzz/BuzzCoinbaseOnrampButton';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -338,22 +336,7 @@ export const BuzzPurchase = ({
                         Now selling Buzz Gift Cards
                       </Text>
                       <Group>
-                        <Anchor
-                          href="https://education.civitai.com/civitais-guide-to-buybuzz-io/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          size="xs"
-                          c="blue.3"
-                        >
-                          Learn More
-                        </Anchor>
-                        <Anchor
-                          href="https://buybuzz.io/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          size="xs"
-                          c="blue.3"
-                        >
+                        <Anchor component={Link} href="/gift-cards?type=buzz" size="xs" c="blue.3">
                           Buy Now
                         </Anchor>
                       </Group>
@@ -589,38 +572,7 @@ export const BuzzPurchase = ({
             />
             <div className="flex flex-col gap-3 md:flex-row">
               {features.coinbasePayments && (
-                <>
-                  {features.coinbaseOnramp && (
-                    <>
-                      <BuzzCoinbaseOnrampButton
-                        unitAmount={unitAmount}
-                        buzzAmount={buzzAmount}
-                        onPurchaseSuccess={onPurchaseSuccess}
-                        disabled={!ctaEnabled}
-                        purchaseSuccessMessage={purchaseSuccessMessage}
-                      />
-
-                      <BuzzCoinbaseOnrampButton
-                        unitAmount={unitAmount}
-                        buzzAmount={buzzAmount}
-                        onPurchaseSuccess={onPurchaseSuccess}
-                        disabled={!ctaEnabled}
-                        purchaseSuccessMessage={purchaseSuccessMessage}
-                        type="international"
-                      />
-                    </>
-                  )}
-                  <BuzzCoinbaseButton
-                    unitAmount={unitAmount}
-                    buzzAmount={buzzAmount}
-                    onPurchaseSuccess={onPurchaseSuccess}
-                    disabled={!ctaEnabled}
-                    purchaseSuccessMessage={purchaseSuccessMessage}
-                  />
-                </>
-              )}
-              {features.nowpaymentPayments && (
-                <BuzzNowPaymentsButton
+                <BuzzCoinbaseButton
                   unitAmount={unitAmount}
                   buzzAmount={buzzAmount}
                   onPurchaseSuccess={onPurchaseSuccess}
@@ -649,12 +601,7 @@ export const BuzzPurchase = ({
             {liveFeatures.buzzGiftCards && (
               <Text align="center" size="xs" c="dimmed" mt="xs">
                 Don&rsquo;t see a supported payment method?{' '}
-                <Anchor
-                  href="https://buybuzz.io/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  size="xs"
-                >
+                <Anchor component={Link} href="/gift-cards?type=buzz" size="xs">
                   Buy a gift card!
                 </Anchor>
               </Text>

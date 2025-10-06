@@ -260,8 +260,7 @@ model User {
   isModerator             Boolean?              @default(false)
   createdAt               DateTime              @default(now())
   deletedAt               DateTime?
-  subscriptionId          String?
-  subscription            CustomerSubscription?
+  subscriptions           CustomerSubscription[]
   mutedAt                 DateTime? /// Updated via trigger
   muted                   Boolean               @default(false)
   muteConfirmedAt         DateTime?
@@ -387,8 +386,9 @@ model User {
 
 model CustomerSubscription {
   id                 String    @id
-  userId             Int       @unique
+  userId             Int
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buzzType           String    @default("yellow")
   metadata           Json
   status             String
   priceId            String
@@ -403,6 +403,8 @@ model CustomerSubscription {
   createdAt          DateTime
   endedAt            DateTime?
   updatedAt          DateTime?
+
+  @@unique([userId, buzzType])
 }
 
 enum PaymentProvider {
@@ -1700,6 +1702,7 @@ enum TagSource {
   MinorDetection
   HiveDemographics
   Clavata
+  SpineRating
 }
 
 model TagsOnImageNew {
@@ -2187,18 +2190,26 @@ model TagEngagement {
   @@id([userId, tagId])
 }
 
+enum DomainColor {
+  red
+  green
+  blue
+  all
+}
+
 model Announcement {
-  id        Int       @id @default(autoincrement())
+  id        Int           @id @default(autoincrement())
   title     String
   content   String
   emoji     String?
-  color     String    @default("blue")
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  color     String        @default("blue")
+  domain    DomainColor[] @default([all])
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
   startsAt  DateTime?
   endsAt    DateTime?
   metadata  Json?
-  disabled  Boolean   @default(false)
+  disabled  Boolean       @default(false)
 }
 
 enum CosmeticType {
@@ -2325,6 +2336,8 @@ enum BuzzAccountType {
   user
   generation
   club
+  green
+  fakered
 }
 
 model BuzzClaim {
@@ -2775,17 +2788,18 @@ model BountyEntryReaction {
 }
 
 model BountyBenefactor {
-  userId      Int
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bountyId    Int
-  bounty      Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  unitAmount  Int
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  awardedAt   DateTime?
-  awardedToId Int?
-  awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
-  currency    Currency     @default(BUZZ)
+  userId            Int
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId          Int
+  bounty            Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  unitAmount        Int
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  awardedAt         DateTime?
+  awardedToId       Int?
+  awartedTo         BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
+  currency          Currency     @default(BUZZ)
+  buzzTransactionId String?
 
   @@id([bountyId, userId])
   @@index([bountyId], type: Hash)
@@ -2853,6 +2867,7 @@ model BountyEntryMetric {
 enum CsamReportType {
   Image
   TrainingData
+  GeneratedImage
 }
 
 model CsamReport {
@@ -3557,7 +3572,7 @@ model CoveredCheckpoint {
   model        Model        @relation(fields: [model_id], references: [id], onDelete: Cascade)
   modelVersion ModelVersion @relation(fields: [version_id], references: [id], onDelete: Cascade)
 
-  @@unique([model_id, version_id])
+  @@id([model_id, version_id])
 }
 
 enum ModerationRuleAction {
@@ -3603,6 +3618,7 @@ model Changelog {
   disabled    Boolean       @default(false)
   titleColor  String?
   sticky      Boolean       @default(false)
+  domain      DomainColor[] @default([all])
 }
 
 model NewOrderPlayer {
@@ -3653,6 +3669,10 @@ model ReportAutomated {
   report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   metadata  Json     @default("{}")
   createdAt DateTime @default(now())
+}
+
+model RestrictedBaseModels {
+  baseModel String @id
 }
 
 /// @view

@@ -12,7 +12,8 @@ import { ClubCard } from '~/components/Club/ClubCard';
 import type { GetInfiniteClubSchema } from '~/server/schema/club.schema';
 
 export function ClubsInfinite({ filters: filterOverrides, showEof = true }: Props) {
-  const clubsFilters = useClubFilters();
+  // const clubsFilters = useClubFilters();
+  const clubsFilters = {};
 
   const filters = removeEmpty({ ...clubsFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);

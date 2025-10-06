@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getSessionUser } from '~/server/services/user.service';

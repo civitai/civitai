@@ -18,7 +18,6 @@ const fontFamilies = [
 module.exports = {
   content: ['./src/**/*.{ts,tsx}'],
   darkMode: ['selector', '[data-mantine-color-scheme="dark"]'],
-  important: 'body',
   experimental: {
     optimizeUniversalDefaults: true,
   },
@@ -34,7 +33,7 @@ module.exports = {
       },
       // for container queries
       containers: breakpoints,
-    width: breakpoints,
+      width: breakpoints,
       maxWidth: breakpoints,
       minWidth: breakpoints,
       container: {
@@ -42,6 +41,7 @@ module.exports = {
         center: true,
       },
       colors: {
+        buzz: 'rgb(var(--buzz-color))',
         white: '#fefefe',
         black: '#222222',
         dark: {

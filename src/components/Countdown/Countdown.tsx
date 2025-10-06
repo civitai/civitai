@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type plugin from 'dayjs/plugin/duration';
 import { useEffect, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';

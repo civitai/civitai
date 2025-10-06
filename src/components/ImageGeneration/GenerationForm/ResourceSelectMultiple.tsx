@@ -1,14 +1,14 @@
 import type { ButtonProps, InputWrapperProps } from '@mantine/core';
-import { Button, Divider, Input, Stack, Text } from '@mantine/core';
+import { Button, Divider, Input, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo, useRef } from 'react';
-import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { ResourceSelectHandler } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import clsx from 'clsx';
 
 export type ResourceSelectMultipleProps = {
   limit?: number;
@@ -76,7 +76,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     // removes resources that have unsupported types
     useEffect(() => {
-      if (_values.length > 0 && _values.length !== value?.length)
+      if (_values.length > 0 && !value?.every((v) => _values.some((x) => x.id === v.id)))
         onChange?.(_values.length ? _values : null);
       else {
         setTimeout(() => {
@@ -84,7 +84,11 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
           if (updated.length !== value?.length) onChange?.(updated.length ? updated : null);
         }, 0);
       }
-    }, [_values, stringDependency]); //eslint-disable-line
+    }, [_values]); //eslint-disable-line
+
+    // useEffect(() => {
+    //   if (value?.every((v) => !_values.some((x) => x.id === v.id))) onChange?.(_values);
+    // }, [value]);
 
     const handleOpenModal = () => {
       select({
@@ -110,51 +114,52 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     });
 
     return (
-      <Input.Wrapper {...inputWrapperProps} descriptionProps={{ mb: 8 }} ref={ref}>
-        <Stack gap="md" mb={inputWrapperProps.error ? 5 : undefined}>
-          {sortedGroups.map((group, index) => {
-            return (
-              <React.Fragment key={group.type}>
-                {index !== 0 && <Divider />}
-                <Input.Wrapper
-                  label={
-                    <Text c="dark.2" fw={590} inherit>
-                      {group.label}
-                    </Text>
-                  }
-                  labelProps={{ mb: 8 }}
-                >
-                  <Stack gap={8}>
-                    {group.resources.map((resource) => (
-                      <ResourceSelectCard
-                        key={resource.id}
-                        resource={resource}
-                        selectSource={selectSource}
-                        onUpdate={handleUpdate}
-                        onRemove={handleRemove}
-                      />
-                    ))}
-                  </Stack>
-                </Input.Wrapper>
-              </React.Fragment>
-            );
-          })}
-          {canAdd && !hideButton && (
-            <Button
-              variant="light"
-              leftSection={<IconPlus size={18} />}
-              onClick={handleOpenModal}
-              {...buttonProps}
-            >
-              {buttonLabel}
-            </Button>
-          )}
-          {hideButton && !_values.length && (
-            <Text c="dimmed" size="sm">
-              No resources selected
-            </Text>
-          )}
-        </Stack>
+      <Input.Wrapper
+        {...inputWrapperProps}
+        descriptionProps={{ mb: 8 }}
+        ref={ref}
+        className={clsx(inputWrapperProps.className, 'flex flex-col gap-2 py-2', {
+          ['mb-1.5']: inputWrapperProps.error,
+        })}
+      >
+        {sortedGroups.map((group, index) => {
+          return (
+            <React.Fragment key={group.type}>
+              {index !== 0 && <Divider />}
+              <div>
+                <Input.Label c="dark.2" fw={590} className="px-3">
+                  <u>{group.label}</u>
+                </Input.Label>
+                <div className="flex flex-col">
+                  {group.resources.map((resource) => (
+                    <ResourceSelectCard
+                      key={resource.id}
+                      resource={resource}
+                      selectSource={selectSource}
+                      onUpdate={handleUpdate}
+                      onRemove={handleRemove}
+                    />
+                  ))}
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+        {canAdd && !hideButton && (
+          <Button
+            variant="light"
+            leftSection={<IconPlus size={18} />}
+            onClick={handleOpenModal}
+            {...buttonProps}
+          >
+            {buttonLabel}
+          </Button>
+        )}
+        {hideButton && !_values.length && (
+          <Text c="dimmed" size="sm" className="px-3">
+            No resources selected
+          </Text>
+        )}
       </Input.Wrapper>
     );
   }

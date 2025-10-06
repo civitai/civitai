@@ -1,15 +1,20 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export type GetPlansSchema = z.infer<typeof getPlansSchema>;
 export const getPlansSchema = z.object({
-  paymentProvider: z.nativeEnum(PaymentProvider).optional(),
+  paymentProvider: z.enum(PaymentProvider).optional(),
   interval: z.enum(['month', 'year']).optional(),
+  buzzType: z.string().optional(),
 });
 
 export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
-export const getUserSubscriptionSchema = z.object({ userId: z.number() });
+export const getUserSubscriptionSchema = z.object({
+  userId: z.number(),
+  buzzType: z.string().optional(),
+});
 
 export type SubscriptionProductMetadata = z.infer<typeof subscriptionProductMetadataSchema>;
 export const subscriptionProductMetadataSchema = z
@@ -25,6 +30,7 @@ export const subscriptionProductMetadataSchema = z
     queueLimit: z.coerce.number().positive().optional(),
     rewardsMultiplier: z.coerce.number().positive().default(1),
     purchasesMultiplier: z.coerce.number().positive().default(1),
+    buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
 
     // Makes it so that we include it when creating a paddle transaction.
     // Used for Save Details only.
@@ -40,7 +46,11 @@ export const subscriptionMetadata = z
   .object({
     renewalEmailSent: z.boolean().optional(),
     renewalBonus: z.number().optional(),
-    prepaids: z.partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number()).optional(),
-    proratedDays: z.partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number()).optional(),
+    prepaids: z
+      .partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number())
+      .optional(),
+    proratedDays: z
+      .partialRecord(z.enum(['free', 'founder', 'bronze', 'silver', 'gold']), z.number())
+      .optional(),
   })
   .passthrough();

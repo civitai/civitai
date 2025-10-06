@@ -1,5 +1,4 @@
 import type { ButtonProps } from '@mantine/core';
-import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -10,7 +9,7 @@ import {
   ArticleSort,
   BountySort,
   BuzzWithdrawalRequestSort,
-  ClubSort,
+  // ClubSort,
   CollectionSort,
   GenerationSort,
   ImageSort,
@@ -40,7 +39,7 @@ const sortOptions = {
   articles: Object.values(ArticleSort),
   collections: Object.values(CollectionSort),
   bounties: Object.values(BountySort),
-  clubs: Object.values(ClubSort),
+  // clubs: Object.values(ClubSort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   threads: Object.values(ThreadSort),
   generation: Object.values(GenerationSort),
@@ -61,7 +60,7 @@ type SortOption =
   | ArticleSort
   | CollectionSort
   | BountySort
-  | ClubSort
+  // | ClubSort
   | GenerationSort
   | ThreadSort
   | ToolSort
@@ -114,18 +113,4 @@ function StatefulSortFilter({ type, ...props }: StatefulProps) {
 
   const sort = querySort ? querySort : globalSort;
   return <DumbSortFilter type={type} value={sort} onChange={setSort} {...props} />;
-}
-
-export function HeaderSortFilter(props: SortFilterProps) {
-  return (
-    <SortFilter
-      {...props}
-      className={clsx(
-        'h-8 bg-transparent',
-        'text-gray-8 hover:bg-gray-3',
-        'dark:text-white dark:hover:bg-dark-5',
-        props.className
-      )}
-    />
-  );
 }

@@ -2,7 +2,7 @@ import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isArray } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session, SessionUser } from 'next-auth';
@@ -183,8 +183,10 @@ export function ModEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!req.method || !allowedMethods.includes(req.method))
+    if (!req.method || !allowedMethods.includes(req.method)) {
+      res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
+    }
 
     const session = await getServerAuthSession({ req, res });
     if (!session || !session.user?.isModerator || !!session.user.bannedAt)

@@ -11,6 +11,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
   throwBadRequestError,
   throwDbError,
+  throwInternalServerError,
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
@@ -129,6 +130,8 @@ const moderateTrainingData = async ({
   gateJobId: string;
   approve: boolean;
 }) => {
+  if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
+
   try {
     const gateResp = await fetch(
       `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/ambientjobs/${gateJobId}`,

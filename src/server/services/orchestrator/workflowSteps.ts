@@ -1,5 +1,5 @@
 import { deepOmit } from '~/utils/object-helpers';
-import type { $OpenApiTs } from '@civitai/client';
+import type { GetWorkflowStepData, Options } from '@civitai/client';
 import {
   getWorkflowStep as clientGetWorkflowStep,
   patchWorkflowStep,
@@ -13,7 +13,7 @@ import type { PatchWorkflowStepParams } from '~/server/schema/orchestrator/workf
 export async function getWorkflowStep({
   token,
   path,
-}: $OpenApiTs['/v2/consumer/workflows/{workflowId}/steps/{stepName}']['get']['req'] & {
+}: Options<GetWorkflowStepData> & {
   token: string;
 }) {
   const client = createOrchestratorClient(token);

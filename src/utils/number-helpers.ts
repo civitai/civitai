@@ -1,4 +1,3 @@
-import { constants } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 /**
@@ -168,21 +167,6 @@ export const formatCurrencyForDisplay = (
   return `${numberWithCommas(intPart)}.${decimalPart}`;
 };
 
-export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: number) => {
-  if (!platformFeeRate) {
-    platformFeeRate = constants.buzz.platformFeeRate;
-  }
-  const dollarAmount = Math.round((buzzAmount / constants.buzz.buzzDollarRatio) * 100);
-  const platformFee = Math.round(dollarAmount * (platformFeeRate / 10000));
-  const payoutAmount = dollarAmount - platformFee;
-
-  return {
-    dollarAmount,
-    platformFee,
-    payoutAmount,
-  };
-};
-
 const ONE_MINUTE = 60;
 const ONE_HOUR = 60 * ONE_MINUTE;
 export const formatDuration = (seconds: number) => {
@@ -226,4 +210,8 @@ const lcm = (a: number, b: number): number => (a * b) / gcd(a, b);
 export function getRatio(a: number, b: number) {
   const c = gcd(a, b);
   return [a / c, b / c].join(':');
+}
+
+export function almostEqual(a: number, b: number, tolerance: number) {
+  return Math.abs(a - b) <= tolerance;
 }

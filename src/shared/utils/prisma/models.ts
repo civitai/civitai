@@ -84,7 +84,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata" | "SpineRating";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -94,13 +94,15 @@ export type KeyScope = "Read" | "Write" | "Generate";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
+export type DomainColor = "red" | "green" | "blue" | "all";
+
 export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
 export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
-export type BuzzAccountType = "user" | "generation" | "club";
+export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
 export type ArticleStatus = "Draft" | "Published" | "Unpublished";
 
@@ -132,7 +134,7 @@ export type BountyEntryMode = "Open" | "BenefactorsOnly";
 
 export type BountyEngagementType = "Favorite" | "Track";
 
-export type CsamReportType = "Image" | "TrainingData";
+export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage";
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
@@ -320,8 +322,7 @@ export interface User {
   isModerator: boolean | null;
   createdAt: Date;
   deletedAt: Date | null;
-  subscriptionId: string | null;
-  subscription?: CustomerSubscription | null;
+  subscriptions?: CustomerSubscription[];
   mutedAt: Date | null;
   muted: boolean;
   muteConfirmedAt: Date | null;
@@ -443,6 +444,7 @@ export interface CustomerSubscription {
   id: string;
   userId: number;
   user?: User;
+  buzzType: string;
   metadata: JsonValue;
   status: string;
   priceId: string;
@@ -1712,6 +1714,7 @@ export interface Announcement {
   content: string;
   emoji: string | null;
   color: string;
+  domain: DomainColor[];
   createdAt: Date;
   updatedAt: Date;
   startsAt: Date | null;
@@ -2117,6 +2120,7 @@ export interface BountyBenefactor {
   awardedToId: number | null;
   awartedTo?: BountyEntry | null;
   currency: Currency;
+  buzzTransactionId: string | null;
 }
 
 export interface BountyEngagement {
@@ -2712,6 +2716,7 @@ export interface Changelog {
   disabled: boolean;
   titleColor: string | null;
   sticky: boolean;
+  domain: DomainColor[];
 }
 
 export interface NewOrderPlayer {
@@ -2756,6 +2761,10 @@ export interface ReportAutomated {
   report?: Report;
   metadata: JsonValue;
   createdAt: Date;
+}
+
+export interface RestrictedBaseModels {
+  baseModel: string;
 }
 
 export interface QuestionRank {

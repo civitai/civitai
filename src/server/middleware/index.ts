@@ -4,12 +4,22 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
+import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
 import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
+import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
+import { regionRestrictionMiddleware } from '~/server/middleware/region-restriction.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
-// NOTE: order matters!
-const middlewares: Middleware[] = [routeGuardsMiddleware, apiCacheMiddleware, redirectsMiddleware];
+// NOTE: order matters! Region blocking should come first, then restriction redirect
+const middlewares: Middleware[] = [
+  regionBlockMiddleware,
+  regionRestrictionMiddleware,
+  apiRegionBlockMiddleware,
+  routeGuardsMiddleware,
+  apiCacheMiddleware,
+  redirectsMiddleware,
+];
 
 export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
 

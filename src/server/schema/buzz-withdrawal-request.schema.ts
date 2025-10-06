@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
 import {
@@ -6,13 +6,14 @@ import {
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
 import { paginationSchema } from './base.schema';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export type CreateBuzzWithdrawalRequestSchema = z.infer<typeof createBuzzWithdrawalRequestSchema>;
 export const createBuzzWithdrawalRequestSchema = z.object({
   amount: z
     .number()
-    .min(constants.buzz.minBuzzWithdrawal)
-    .default(constants.buzz.minBuzzWithdrawal),
+    .min(buzzConstants.minBuzzWithdrawal)
+    .default(buzzConstants.minBuzzWithdrawal),
   provider: z
     .nativeEnum(UserPaymentConfigurationProvider)
     .default(UserPaymentConfigurationProvider.Tipalti),
@@ -24,7 +25,7 @@ export type GetPaginatedOwnedBuzzWithdrawalRequestSchema = z.infer<
 export const getPaginatedOwnedBuzzWithdrawalRequestSchema = paginationSchema.merge(
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
-    status: z.nativeEnum(BuzzWithdrawalRequestStatus).optional(),
+    status: z.enum(BuzzWithdrawalRequestStatus).optional(),
   })
 );
 export type GetPaginatedBuzzWithdrawalRequestSchema = z.infer<
@@ -36,8 +37,8 @@ export const getPaginatedBuzzWithdrawalRequestSchema =
       username: z.string().optional(),
       userId: z.number().optional(),
       requestId: z.string().optional(),
-      status: z.array(z.nativeEnum(BuzzWithdrawalRequestStatus)).optional(),
-      sort: z.nativeEnum(BuzzWithdrawalRequestSort).default(BuzzWithdrawalRequestSort.Newest),
+      status: z.array(z.enum(BuzzWithdrawalRequestStatus)).optional(),
+      sort: z.enum(BuzzWithdrawalRequestSort).default(BuzzWithdrawalRequestSort.Newest),
       from: z.date().optional(),
       to: z.date().optional(),
     })
@@ -59,7 +60,7 @@ export const buzzWithdrawalRequestHistoryMetadataSchema = z
 export type UpdateBuzzWithdrawalRequestSchema = z.infer<typeof updateBuzzWithdrawalRequestSchema>;
 export const updateBuzzWithdrawalRequestSchema = z.object({
   requestIds: z.array(z.string()),
-  status: z.nativeEnum(BuzzWithdrawalRequestStatus),
+  status: z.enum(BuzzWithdrawalRequestStatus),
   note: z.string().optional(),
   metadata: buzzWithdrawalRequestHistoryMetadataSchema.optional(),
   refundFees: z.number().optional(),

@@ -1,23 +1,23 @@
-import dayjs from 'dayjs';
-import { env } from '~/env/server';
+import { NsfwLevel } from '@civitai/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants, maxRandomSeed } from '~/server/common/constants';
-import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { getGenerationTags } from '~/server/orchestrator/generation/generation.schema';
+import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type Ctx = { token: string; userId: number; experimental?: boolean };
+type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent: boolean , currencies?: BuzzSpendType[]};
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
@@ -42,14 +42,16 @@ export async function generate({
   creatorTip = 0,
   tags = [],
   experimental,
+  allowMatureContent,
+  isGreen,
   ...args
-}: GenerationSchema & Ctx) {
+}: GenerationSchema & Ctx & { isGreen?: boolean }) {
   // throw throwBadRequestError(`Your prompt was flagged for: `);
   if ('prompt' in args.data) {
     try {
       const negativePrompt =
         'negativePrompt' in args.data ? (args.data.negativePrompt as string) : undefined;
-      const { blockedFor, success } = auditPrompt(args.data.prompt, negativePrompt);
+      const { blockedFor, success } = auditPrompt(args.data.prompt, negativePrompt, isGreen);
       if (!success) throw { blockedFor, type: 'regex' };
 
       const { flagged, categories } = await extModeration
@@ -94,12 +96,9 @@ export async function generate({
         creators: creatorTip,
       },
       experimental,
-      callbacks: [
-        {
-          url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TextToImageUpdate}`,
-          type: ['job:*', 'workflow:*'],
-        },
-      ],
+      callbacks: getOrchestratorCallbacks(userId),
+      // nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      allowMatureContent,
     },
   });
 
@@ -112,7 +111,13 @@ export async function whatIf(args: GenerationSchema & Ctx) {
 
   const workflow = await submitWorkflow({
     token: args.token,
-    body: { steps: [step], experimental: args.experimental },
+    body: {
+      steps: [step],
+      experimental: args.experimental,
+      allowMatureContent: args.allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies: args.currencies,
+    },
     query: { whatif: true },
   });
 

@@ -1,16 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-import { getGenerationConfig } from '~/server/common/constants';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
-  baseModelEngineMap,
-  isVideoGenerationEngine,
-  modelIdEngineMap,
-} from '~/server/orchestrator/generation/generation.config';
-import { veo3ModelVersionId } from '~/server/orchestrator/veo3/veo3.schema';
-import { wanBaseModelMap } from '~/server/orchestrator/wan/wan.schema';
+  getWanVersion,
+  wan21BaseModelMap,
+  wanGeneralBaseModelMap,
+} from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -25,7 +22,6 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
-import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
@@ -39,24 +35,31 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
-import type { SupportedBaseModel } from '~/shared/constants/generation.constants';
 import {
-  baseModelResourceTypes,
+  fluxKreaAir,
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
-  getBaseModelSet,
   getBaseModelSetType,
   getClosestAspectRatio,
   getResourceGenerationType,
+  ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { cleanPrompt } from '~/utils/metadata/audit';
 import { removeNulls } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
+import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
+import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import {
+  getBaseModelEngine,
+  getBaseModelMediaType,
+  getBaseModelsByGroup,
+  getGenerationBaseModelGroup,
+} from '~/shared/constants/base-model.constants';
+import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
 
 type GenerationResourceSimple = {
   id: number;
@@ -140,9 +143,9 @@ export const getGenerationResources = async (
       }
       if (baseModel) {
         // const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-        const baseModelSet = getBaseModelSet(baseModel);
-        if (baseModelSet.baseModels.length)
-          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
+        const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
+        if (baseModels.length)
+          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
       }
 
       let orderBy = 'mv.index';
@@ -299,31 +302,57 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  const { prompt, negativePrompt } = cleanPrompt(media.meta as ImageMetaProps);
-  const common = {
-    prompt,
-    negativePrompt,
-  };
+  // const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
+  const initialMeta = media.meta as ImageMetaProps;
+  const imageResources = getMetaResources(initialMeta);
 
-  const imageResources = await dbRead.imageResourceNew.findMany({
-    where: { imageId: id },
-    select: { imageId: true, modelVersionId: true, strength: true },
-  });
+  await dbRead.imageResourceNew
+    .findMany({
+      where: { imageId: id },
+      select: { modelVersionId: true, strength: true },
+    })
+    .then((res) => {
+      for (const { modelVersionId, strength } of res) {
+        const exists = imageResources.some((x) => x.modelVersionId === modelVersionId);
+        if (!exists)
+          imageResources.push({
+            modelVersionId,
+            strength: strength ? strength / 100 : undefined,
+          });
+      }
+    });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const resources = await getResourceData(versionIds, user, generation).then((data) =>
+  const allResources = await getResourceData(versionIds, user, generation).then((data) =>
     data.map((item) => {
       const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
       return {
         ...item,
-        strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
+        strength: imageResource?.strength ?? item.strength,
       };
     })
   );
-  let baseModel = getBaseModelFromResources(
-    resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+  const baseModel = getBaseModelFromResources(
+    allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
-  switch (media.type) {
+  const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
+  const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
+  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
+  const supportedResources = normalized.baseModel
+    ? getGenerationBaseModelGroup(normalized.baseModel)
+    : undefined;
+  const resources = !supportedResources
+    ? allResources
+    : allResources.filter((x) =>
+        supportedResources.supportMap.get(x.model.type)?.some((m) => m.baseModel === x.baseModel)
+      );
+
+  const common = {
+    prompt: normalized.prompt,
+    negativePrompt: normalized.negativePrompt,
+  };
+
+  switch (type) {
     case 'image':
       let aspectRatio = '0';
       try {
@@ -344,23 +373,6 @@ async function getMediaGenerationData({
         // ...meta
       } = imageGenerationSchema.parse(media.meta);
 
-      // if (meta.hashes && meta.prompt) {
-      //   for (const [key, hash] of Object.entries(meta.hashes)) {
-      //     if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
-
-      //     // get the resource that matches the hash
-      //     const uHash = hash.toUpperCase();
-      //     const resource = resources.find((x) => x.hash === uHash);
-      //     if (!resource || resource.strength) continue;
-
-      //     // get everything that matches <key:{number}>
-      //     const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
-      //     if (!matches) continue;
-
-      //     resource.strength = parseFloat(matches[1]);
-      //   }
-      // }
-
       return {
         type: 'image',
         remixOfId: media.id, // TODO - remove
@@ -377,33 +389,21 @@ async function getMediaGenerationData({
           aspectRatio,
           baseModel,
           clipSkip,
+          engine,
         },
       };
     case 'video':
-      const meta = media.meta as ImageMetaProps;
-      meta.engine = meta.engine ?? (baseModel ? baseModelEngineMap[baseModel] : undefined);
-      if (meta.type === 'txt2vid' || meta.type === 'img2vid') meta.process = meta.type;
-
-      if (!meta.process && baseModel) {
-        const wanProcess = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
-        if (wanProcess) meta.process = wanProcess;
-      }
-
-      if (baseModel === 'WanVideo') {
-        if (meta.process === 'txt2vid') baseModel = 'WanVideo14B_T2V';
-        else baseModel = 'WanVideo14B_I2V_720p';
-      }
       return {
         type: 'video',
         remixOfId: media.id, // TODO - remove,
         remixOf,
         resources,
         params: {
-          ...meta,
+          ...normalized,
           ...common,
-          baseModel,
           width,
           height,
+          engine,
         },
       };
     case 'audio':
@@ -433,33 +433,35 @@ const getModelVersionGenerationData = async ({
     deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
 
-  const engine =
-    baseModelEngineMap[baseModel] ??
-    (resources.length ? modelIdEngineMap.get(resources[0].model.id) : undefined);
+  const engine = getBaseModelEngine(baseModel);
 
+  let version: string | undefined;
   let process: string | undefined;
-  if (isVideoGenerationEngine(engine)) {
-    switch (engine) {
-      case 'wan':
-        process = wanBaseModelMap[baseModel as keyof typeof wanBaseModelMap]?.process;
-        break;
-      case 'hunyuan':
-        process = 'txt2vid';
-      case 'veo3':
-        process = 'txt2vid';
-    }
+  switch (engine) {
+    case 'wan':
+      version = getWanVersion(baseModel);
+      process = wanGeneralBaseModelMap.find((x) => x.baseModel === baseModel)?.process;
+      break;
+    case 'hunyuan':
+      process = 'txt2vid';
+      break;
+    case 'veo3':
+      process = getVeo3ProcessFromAir(resources[0].air);
+      break;
   }
 
   // TODO - refactor this elsewhere
 
   return {
-    type: getResourceGenerationType(baseModel, deduped),
+    type: getResourceGenerationType(baseModel),
     resources: deduped,
     params: {
       baseModel,
       clipSkip: checkpoint?.clipSkip ?? undefined,
       engine,
       process,
+      version,
+      fluxMode: baseModel === 'FluxKrea' ? fluxKreaAir : undefined,
     },
   };
 };
@@ -579,7 +581,7 @@ export type GenerationResource = GenerationResourceBase & {
   substitute?: GenerationResourceBase;
 };
 
-const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
 export async function getResourceData(
@@ -676,10 +678,9 @@ export async function getResourceData(
 
   function getEpochDetails(
     resource: ReturnType<typeof transformGenerationData>,
-    modelFiles: ModelFileCached[],
-    hasSelectedEpoch: boolean
+    modelFiles: ModelFileCached[]
   ) {
-    if (resource.status !== 'Published' && !hasSelectedEpoch) {
+    if (resource.status !== 'Published') {
       const trainingFile = modelFiles.find((f) => f.type === 'Training Data');
       if (trainingFile) {
         const epoch = args.find((x) => x.id === resource.id)?.epoch;
@@ -690,6 +691,7 @@ export async function getResourceData(
       }
     }
     delete resource.epochNumber;
+
     return null;
   }
 
@@ -709,8 +711,7 @@ export async function getResourceData(
       additionalResourceCost = false;
     }
 
-    const hasSelectedEpoch = !!primaryFile?.metadata.selectedEpochUrl;
-    const epochDetails = getEpochDetails(resource, modelFiles, hasSelectedEpoch);
+    const epochDetails = getEpochDetails(resource, modelFiles);
 
     return {
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
@@ -780,8 +781,8 @@ export async function getResourceData(
   // TODO - check if resource id is in "EcosystemCheckpoint" table
   return generation
     ? resources.filter((resource) => {
-        const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
-        return !!baseModelResourceTypes[baseModel] || !!modelIdEngineMap.get(resource.model.id);
+        const baseModel = getBaseModelSetType(resource.baseModel);
+        return !!getGenerationBaseModelGroup(baseModel)?.supportMap.size;
       })
     : resources;
 }

@@ -2,18 +2,29 @@ import dynamic from 'next/dynamic';
 import type { ComponentProps, ComponentType } from 'react';
 import type { UrlObject } from 'url';
 
-const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'));
-const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
-const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/HiddenCommentsModal'));
+const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'), {
+  ssr: false,
+});
+const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'), {
+  ssr: false,
+});
+const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/HiddenCommentsModal'), {
+  ssr: false,
+});
 const ResourceReviewModal = dynamic(
-  () => import('~/components/ResourceReview/ResourceReviewModal')
+  () => import('~/components/ResourceReview/ResourceReviewModal'),
+  { ssr: false }
 );
-const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModal'));
+const FilesEditModal = dynamic(() => import('~/components/Resource/FilesEditModal'), {
+  ssr: false,
+});
 const CommentEditModal = dynamic(
-  () => import('~/components/Model/ModelDiscussion/CommentEditModal')
+  () => import('~/components/Model/ModelDiscussion/CommentEditModal'),
+  { ssr: false }
 );
 const CommentThreadModal = dynamic(
-  () => import('~/components/Model/Discussion/CommentThreadModal')
+  () => import('~/components/Model/Discussion/CommentThreadModal'),
+  { ssr: false }
 );
 const SupportModal = dynamic(() => import('~/components/Support/SupportModal'), { ssr: false });
 

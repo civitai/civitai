@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
   NotificationCategory,
@@ -10,7 +10,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
@@ -25,7 +25,12 @@ import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
 import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -43,6 +48,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
+import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -137,9 +143,9 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
 export const createReport = async ({
   userId,
-  type,
   id,
   isModerator,
+  type,
   ...data
 }: CreateReportProps) => {
   // Add report type to details for notifications
@@ -176,18 +182,56 @@ export const createReport = async ({
     });
 
     // handle NSFW
+
     if (data.reason === ReportReason.NSFW) {
       switch (type) {
         case ReportEntity.Model:
         case ReportEntity.Image:
-          await addTagVotes({
-            userId,
-            type,
-            id,
-            tags: data.details.tags ?? [],
-            isModerator,
-            vote: 1,
-          });
+          //.creates an ImageRatingRequest if the tags included in the report have a higher nsfwLevel than the current image nsfwLevel
+          async function createImageRatingRequest() {
+            const tagNames = 'tags' in data.details ? data.details.tags : undefined;
+            if (!!tagNames?.length) {
+              const image = await dbWrite.image.findFirst({
+                where: { id },
+                select: { nsfwLevel: true, nsfwLevelLocked: true },
+              });
+              if (image) {
+                const moderated = await getModeratedTags();
+                const ratings = moderated
+                  .filter((x) => tagNames.includes(x.name))
+                  .map((x) => x.nsfwLevel);
+                const maxRating = Math.max(...ratings);
+                if (maxRating > image.nsfwLevel) {
+                  await Promise.all([
+                    dbWrite.imageRatingRequest.upsert({
+                      where: { imageId_userId: { imageId: id, userId: userId } },
+                      create: {
+                        nsfwLevel: maxRating,
+                        imageId: id,
+                        userId: userId,
+                        weight: 3,
+                      },
+                      update: { nsfwLevel: maxRating },
+                    }),
+                    dbWrite.image.update({ where: { id }, data: { nsfwLevelLocked: false } }),
+                  ]);
+                }
+              }
+            }
+          }
+
+          await Promise.all([
+            createImageRatingRequest(),
+            addTagVotes({
+              userId,
+              type: type,
+              id,
+              tags: data.details.tags ?? [],
+              isModerator,
+              vote: 1,
+            }),
+          ]);
+
           break;
         case ReportEntity.Collection:
           await tx.collection.update({ where: { id }, data: { nsfw: true } });
@@ -420,13 +464,18 @@ export async function getAppealDetails({ id }: GetByIdInput) {
   return { ...appeal, entityDetails };
 }
 
+const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
+const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
+
 export async function createEntityAppeal({
   entityId,
   entityType,
   message,
   userId,
-}: CreateEntityAppealInput & { userId: number }) {
+  buzzType,
+}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType }) {
   let buzzTransactionId: string | null = null;
+
   // check if user has more than 3 pending or rejected appeal in the last 30 days
   const appealsCount = await getAppealCount({
     userId,
@@ -435,17 +484,24 @@ export async function createEntityAppeal({
   });
 
   if (appealsCount >= 3) {
-    const transaction = await withRetries(() =>
-      createBuzzTransaction({
+    const prefix = getAppealPrefix(userId);
+    const data = await withRetries(() =>
+      createMultiAccountBuzzTransaction({
         amount: 100,
         fromAccountId: userId,
         toAccountId: 0,
         type: TransactionType.Appeal,
-        fromAccountType: BuzzAccountType.user,
+        fromAccountTypes: [buzzType],
         description: `Appeal fee for ${entityType} ${entityId}`,
+        externalTransactionIdPrefix: prefix,
       })
     );
-    buzzTransactionId = transaction.transactionId;
+
+    if (data.transactionCount === 0) {
+      throw new Error('There was an error creating the appeal transaction.');
+    }
+
+    buzzTransactionId = prefix;
   }
 
   try {
@@ -470,7 +526,12 @@ export async function createEntityAppeal({
 
     return appeal;
   } catch (error) {
-    await refundTransaction(buzzTransactionId as string, 'Refund appeal fee');
+    if (buzzTransactionId) {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: buzzTransactionId ?? '',
+        description: 'Refund appeal fee',
+      });
+    }
     throw error;
   }
 }
@@ -534,12 +595,21 @@ export async function resolveEntityAppeal({
     }
 
     if (approved && appeal.buzzTransactionId) {
-      await withRetries(() =>
-        refundTransaction(
-          appeal.buzzTransactionId as string,
-          `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-        )
-      );
+      await withRetries(async () => {
+        if (isAppealPrefix(appeal.buzzTransactionId as string)) {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: appeal.buzzTransactionId as string,
+            description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
+          });
+        } else {
+          await refundTransaction(
+            appeal.buzzTransactionId as string,
+            `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+          );
+        }
+
+        return;
+      });
     }
 
     // Notify the user that their appeal has been resolved

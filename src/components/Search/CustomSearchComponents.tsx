@@ -6,7 +6,6 @@ import type {
   SortByProps,
 } from 'react-instantsearch';
 import {
-  Configure,
   useClearRefinements,
   useConfigure,
   useRange,
@@ -42,13 +41,13 @@ import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks'
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
-import { filter, uniqBy } from 'lodash-es';
+import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import { Flags } from '~/shared/utils';
-import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
+import { Flags } from '~/shared/utils/flags';
+import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import styles from './CustomSearchComponents.module.scss';
@@ -282,10 +281,10 @@ export const BrowsingLevelFilter = ({
   return <ApplyCustomFilter filters={filters} {...props} />;
 };
 
-function getBlockedPromptFilters(search: string) {
-  const matches = getPossibleBlockedNsfwWords(search);
-  return { filters: matches.map((w) => `NOT prompt CONTAINS ${w}`).join(' AND ') };
-}
+// function getBlockedPromptFilters(search: string) {
+//   const matches = getPossibleBlockedNsfwWords(search);
+//   return { filters: matches.map((w) => `NOT prompt CONTAINS ${w}`).join(' AND ') };
+// }
 
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
@@ -453,7 +452,7 @@ export const ApplyCustomFilter = ({
   ...props
 }: { filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const filters = useMemo(() => {
-    const filterList = Array.isArray(_filters) ? _filters : [_filters];
+    const filterList = Array.isArray(_filters) ? _filters : _filters ? [_filters] : [];
     return filterList.map((f) => `(${f})`).join(' AND ');
   }, [_filters]);
 

@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Checkbox, Tooltip } from '@mantine/core';
+import { Button, Checkbox, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
@@ -14,7 +14,6 @@ import {
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
@@ -26,6 +25,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -87,7 +87,7 @@ export function GeneratedImageActions({
           )
         );
       },
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      zIndex: imageGenerationDrawerZIndex + 2,
       centered: true,
     });
   };
@@ -106,21 +106,31 @@ export function GeneratedImageActions({
         }
       })
       .filter(isDefined);
+
     try {
       const key = 'generator';
       orchestratorMediaTransmitter.setUrls(key, imageData);
-      const post = await createPostMutation.mutateAsync({});
-      // updateImages({}) // tODO - show that this image has been posted?
-      if (running) helpers?.next();
-      await router.push({
-        pathname: '/posts/[postId]/edit',
-        query: removeEmpty({
-          postId: post.id,
-          src: key,
-          returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
-        }),
-      });
-      generationPanel.close();
+
+      if (router.pathname === '/posts/[postId]/edit') {
+        await router.replace(
+          { pathname: '/posts/[postId]/edit', query: { postId: router.query.postId, src: key } },
+          undefined,
+          { shallow: true }
+        );
+      } else {
+        const post = await createPostMutation.mutateAsync({});
+        // updateImages({}) // tODO - show that this image has been posted?
+        if (running) helpers?.next();
+        await router.push({
+          pathname: '/posts/[postId]/edit',
+          query: removeEmpty({
+            postId: post.id,
+            src: key,
+            returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
+          }),
+        });
+        generationPanel.close();
+      }
       deselect();
     } catch (e) {
       const error = e as Error;

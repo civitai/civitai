@@ -1,16 +1,24 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React, { useEffect, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
-import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import { AdUnitRenderable, useAdunitRenderableContext } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
-import styles from './ads.module.scss';
+import {
+  useContainerContext,
+  useContainerProviderStore,
+} from '~/components/ContainerProvider/ContainerProvider';
+import { useInView as useInViewStandalone } from 'react-intersection-observer';
+import { env } from '~/env/client';
+import { v4 as uuidv4 } from 'uuid';
+import { isDev } from '~/env/other';
+import { usePausableInterval } from '~/utils/timer.utils';
+import { getMatchingPathname } from '~/shared/constants/pathname.constants';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -36,7 +44,7 @@ function AdUnitContent({
   useEffect(() => {
     // if (loadedRef.current) return;
     // loadedRef.current = true;
-    const id = initialId ?? getRandomId();
+    const id = initialId ?? uuidv4();
     setId(id);
 
     if (!adUnitDictionary[adUnit]) adUnitDictionary[adUnit] = id;
@@ -101,11 +109,11 @@ function AdWrapper({
   onDismount,
 }: {
   adUnit: string;
-  sizes?: AdSize[] | null;
-  lutSizes?: AdSizeLUT[];
   withFeedback?: boolean;
   className?: string;
   id?: string;
+  sizes?: AdSize[] | null;
+  lutSizes?: AdSizeLUT[];
   maxHeight?: number;
   maxWidth?: number;
   preserveLayout?: boolean;
@@ -113,55 +121,120 @@ function AdWrapper({
 }) {
   // const router = useRouter();
   // const key = router.asPath.split('?')[0];
-  const { adsBlocked, ready, isMember } = useAdsContext();
+  const { adsBlocked, ready, isMember, consent } = useAdsContext();
+  const { nsfw } = useAdunitRenderableContext();
 
-  const adWrapperStyles = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
 
   if (adSizes && !adSizes.length) return null;
 
-  return (
-    <div
-      ref={ref}
-      style={preserveLayout !== false ? adWrapperStyles : undefined}
-      className={clsx({
-        [styles.adWrapper]: preserveLayout !== false,
-        ['relative box-content flex flex-col items-center justify-center gap-2']: true,
-        [className ?? '']: !!className,
-      })}
-    >
-      {inView && (
-        <>
-          {adsBlocked ? (
-            <SupportUsImage sizes={adSizes ?? undefined} />
-          ) : ready && adSizes !== undefined ? (
-            <AdUnitContent
-              // key={key}
-              adUnit={adUnit}
-              sizes={adSizes ?? undefined}
-              id={id}
-              onDismount={onDismount}
-            />
-          ) : null}
-          {withFeedback && !isMember && (
-            <div className="flex w-full justify-end">
-              <Text
-                component={NextLink}
-                td="underline"
-                href="/pricing"
-                c="dimmed"
-                size="xs"
-                align="center"
-              >
-                Remove ads
-              </Text>
-            </div>
-          )}
-        </>
+  const content = (
+    <>
+      {adsBlocked || !consent ? (
+        <SupportUsImage sizes={adSizes ?? undefined} />
+      ) : nsfw ? (
+        <CivitaiAdUnit adUnit={adUnit} id={id} />
+      ) : inView && ready && adSizes !== undefined ? (
+        <AdUnitContent
+          // key={key}
+          adUnit={adUnit}
+          sizes={adSizes ?? undefined}
+          id={id}
+          onDismount={onDismount}
+        />
+      ) : null}
+      {withFeedback && !isMember && (
+        <div className="flex w-full justify-end">
+          <Text
+            component={NextLink}
+            td="underline"
+            href="/pricing"
+            c="dimmed"
+            size="xs"
+            align="center"
+          >
+            Remove ads
+          </Text>
+        </div>
       )}
-    </div>
+    </>
   );
+
+  const className2 = clsx(
+    'relative box-content flex flex-col items-center justify-center gap-2',
+    className
+  );
+
+  if (lutSizes) {
+    return (
+      <AdunitLutStyles
+        ref={ref}
+        lutSizes={lutSizes}
+        maxHeight={maxHeight}
+        maxWidth={maxWidth}
+        className={className2}
+        preserveLayout={preserveLayout}
+      >
+        {content}
+      </AdunitLutStyles>
+    );
+  } else if (sizes) {
+    return (
+      <AdunitSizesStyles
+        ref={ref}
+        sizes={sizes}
+        maxHeight={maxHeight}
+        maxWidth={maxWidth}
+        className={className2}
+        preserveLayout={preserveLayout}
+      >
+        {content}
+      </AdunitSizesStyles>
+    );
+  } else return null;
+
+  // return (
+  //   <div
+  //     ref={ref}
+  //     style={preserveLayout !== false ? adWrapperStyles : undefined}
+  //     className={clsx({
+  //       [styles.adWrapper]: preserveLayout !== false,
+  //       ['relative box-content flex flex-col items-center justify-center gap-2']: true,
+  //       className,
+  //     })}
+  //   >
+  //     {inView && (
+  //       <>
+  //         {adsBlocked ? (
+  //           <SupportUsImage sizes={adSizes ?? undefined} />
+  //         ) : ready && adSizes !== undefined ? (
+  //           <AdUnitContent
+  //             // key={key}
+  //             adUnit={adUnit}
+  //             sizes={adSizes ?? undefined}
+  //             id={id}
+  //             onDismount={onDismount}
+  //           />
+  //         ) : null}
+  //         {withFeedback && !isMember && (
+  //           <div className="flex w-full justify-end">
+  //             <Text
+  //               component={NextLink}
+  //               td="underline"
+  //               href="/pricing"
+  //               c="dimmed"
+  //               size="xs"
+  //               align="center"
+  //             >
+  //               Remove ads
+  //             </Text>
+  //           </div>
+  //         )}
+  //       </>
+  //     )}
+  //   </div>
+  // );
 }
 
 export function adUnitFactory(factoryArgs: {
@@ -214,35 +287,6 @@ function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: n
   return maxHeight ? Math.min(maxHeight, height) : height;
 }
 
-const useAdWrapperStyles = ({
-  sizes,
-  lutSizes,
-  maxHeight,
-  maxWidth: maxOuterWidth,
-}: {
-  sizes?: AdSize[] | null;
-  lutSizes?: AdSizeLUT[];
-  maxHeight?: number;
-  maxWidth?: number;
-}) => {
-  const vars: Record<string, string> = {};
-
-  lutSizes?.forEach(([[minWidth, maxWidth], sizes], index) => {
-    if (minWidth) vars[`--min-width-${index + 1}`] = `${minWidth}px`;
-    if (maxWidth) vars[`--max-width-${index + 1}`] = `${maxWidth}px`;
-
-    vars[`--min-width-${index + 1}`] = `${getMaxHeight(sizes, {
-      maxHeight,
-      maxWidth: maxOuterWidth,
-    })}px`;
-  });
-
-  return {
-    minHeight: sizes ? getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }) : undefined,
-    ...vars,
-  };
-};
-
 function useAdSizes({
   sizes,
   lutSizes,
@@ -286,3 +330,219 @@ function useAdSizes({
 
   return adSizes;
 }
+
+const AdunitLutStyles = forwardRef<
+  HTMLDivElement,
+  {
+    lutSizes: AdSizeLUT[];
+    maxHeight?: number;
+    maxWidth?: number;
+    className?: string;
+    children: React.ReactNode;
+    preserveLayout?: boolean;
+  }
+>(({ className, children, lutSizes, maxHeight, maxWidth, preserveLayout = true }, ref) => {
+  const { nodeRef, containerName } = useContainerContext();
+  const sizes = useContainerProviderStore(
+    useCallback((state) => {
+      const inlineSize = state[containerName]?.inlineSize ?? nodeRef.current?.offsetWidth ?? 0;
+      return lutSizes.find(([[minWidth, maxWidth]]) => {
+        if (minWidth && inlineSize < minWidth) return false;
+        if (maxWidth && inlineSize > maxWidth) return false;
+        return true;
+      })?.[1];
+    }, [])
+  );
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={
+        preserveLayout && sizes
+          ? {
+              minHeight: getMaxHeight(sizes, {
+                maxHeight,
+                maxWidth,
+              }),
+            }
+          : undefined
+      }
+    >
+      {children}
+    </div>
+  );
+});
+
+AdunitLutStyles.displayName = 'AdunitLutStyles';
+
+const AdunitSizesStyles = forwardRef<
+  HTMLDivElement,
+  {
+    sizes: AdSize[];
+    maxHeight?: number;
+    maxWidth?: number;
+    className?: string;
+    children: React.ReactNode;
+    preserveLayout?: boolean;
+  }
+>(({ className, children, sizes, maxHeight, maxWidth, preserveLayout = true }, ref) => {
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={
+        preserveLayout
+          ? {
+              minHeight: getMaxHeight(sizes, {
+                maxHeight,
+                maxWidth,
+              }),
+            }
+          : undefined
+      }
+    >
+      {children}
+    </div>
+  );
+});
+
+AdunitSizesStyles.displayName = 'AdunitSizesStyles';
+
+const civitaiAdvertisingUrl = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
+function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
+  const [id, setId] = useState(props.id);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const { nodeRef } = useContainerContext();
+  const node = useScrollAreaRef();
+  const { browsingLevel } = useAdunitRenderableContext();
+  const fetchingRef = React.useRef(false);
+  const impressionRef = React.useRef(false);
+  const [data, setData] = useState<{
+    url: string;
+    trace: string;
+    cta?: string;
+    nsfwLevel?: number;
+    next?: boolean;
+  } | null>(null);
+
+  const { ref, inView } = useInViewStandalone({
+    root: node?.current ?? nodeRef?.current ?? undefined,
+    threshold: 0.5,
+  });
+
+  const traceRef = useRef<string>();
+  const handleServe = useCallback(() => {
+    const id = props.id ?? uuidv4();
+    if (!props.id) setId(id);
+    if (fetchingRef.current || document.visibilityState !== 'visible') return;
+    fetchingRef.current = true;
+    const type = adunitToCivitaiMap[props.adUnit];
+    const searchParams = new URLSearchParams(
+      `placement=${id}&name=${type}&container=${
+        nodeRef.current?.clientWidth ?? 0
+      }&browsingLevel=${browsingLevel}`
+    );
+    if (traceRef.current) searchParams.append('trace', traceRef.current);
+    fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
+      credentials: 'include',
+    }).then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        setData(data);
+        traceRef.current = data.trace;
+        fetchingRef.current = !data?.next;
+      } else {
+        fetchingRef.current = false;
+      }
+      impressionRef.current = false;
+    });
+  }, [browsingLevel, props.adUnit, props.id]);
+
+  const interval = usePausableInterval(handleServe, 30 * 1000);
+
+  useEffect(() => {
+    if (inView && !data) handleServe();
+  }, [inView, data, handleServe]);
+
+  useEffect(() => {
+    if (inView) interval.start();
+    else interval.pause();
+  }, [inView, handleServe, interval.start, interval.pause]);
+
+  useEffect(() => {
+    return () => {
+      interval.stop();
+    };
+  }, [interval.stop]);
+
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible' && inView) {
+        interval.start();
+      } else {
+        interval.pause();
+      }
+    }
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [interval.start, interval.pause, inView]);
+
+  useEffect(() => {
+    function handleImpression() {
+      if (impressionRef.current) return;
+      if (imgLoaded && inView && data && document.visibilityState === 'visible') {
+        impressionRef.current = true;
+        fetch(`${civitaiAdvertisingUrl}/api/v1/view?trace=${data.trace}`, {
+          method: 'POST',
+          credentials: 'include',
+          body: JSON.stringify({ pathname: getMatchingPathname(window.location.pathname) }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }).then(() => {
+          window.dispatchEvent(
+            new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
+          );
+        });
+      }
+    }
+
+    const timeout = setTimeout(handleImpression, 1000);
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [imgLoaded, inView, data, props.adUnit]);
+
+  return (
+    <div id={id} ref={ref}>
+      {data ? (
+        <a
+          target="_blank"
+          href={`${civitaiAdvertisingUrl}/api/v1/engagement?trace=${data.trace}`}
+          aria-label="visit advertiser"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`${env.NEXT_PUBLIC_IMAGE_LOCATION}/${data.url}/optimized=true/media.webp`}
+            alt="advertisement"
+            loading="lazy"
+            onLoad={() => setImgLoaded(true)}
+          />
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+const adunitToCivitaiMap: Record<string, string> = {
+  incontent_1: 'feed',
+  side_1: 'side_sky',
+  side_2: 'side',
+  side_3: 'side',
+  top: 'banner',
+  adhesive: 'footer',
+};

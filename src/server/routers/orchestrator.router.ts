@@ -4,7 +4,7 @@ import type {
   TextToImageStepTemplate,
 } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
@@ -50,15 +50,38 @@ import {
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
-import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  middleware,
+  moderatorProcedure,
+  protectedProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import {
+  getFlagged,
+  getReasons,
+  getConsumerStrikes,
+  reviewConsumerStrikes,
+} from '../http/orchestrator/flagged-consumers';
+import {
+  getFlaggedConsumersSchema,
+  getFlaggedReasonsSchema,
+  getFlaggedConsumerStrikesSchema,
+} from '~/server/schema/orchestrator/flagged-consumers.schema';
+import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  return next({ ctx: { ...ctx, user, token } });
+  const allowMatureContent = user.showNsfw;
+  // const allowMatureContent = ctx.domain === 'blue' && user.showNsfw;
+  return next({ ctx: { ...ctx, user, token, allowMatureContent } });
+  // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 
 const experimentalMiddleware = middleware(async ({ ctx, next }) => {
@@ -146,21 +169,32 @@ export const orchestratorRouter = router({
   // #endregion
 
   // #region [generated images]
-  queryGeneratedImages: orchestratorProcedure
-    .input(workflowQuerySchema)
-    .query(({ ctx, input }) =>
-      queryGeneratedImageWorkflows({ ...input, token: ctx.token, user: ctx.user })
-    ),
+  queryGeneratedImages: orchestratorProcedure.input(workflowQuerySchema).query(({ ctx, input }) =>
+    queryGeneratedImageWorkflows({
+      ...input,
+      token: ctx.token,
+      user: ctx.user,
+      allowMatureContent: ctx.allowMatureContent,
+    })
+  ),
   generateImage: orchestratorGuardedProcedure
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
+        const group = getBaseModelGroup(input.params.baseModel);
+        const experimental = EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group)
+          ? input.params.experimental
+          : ctx.experimental;
+
         const args = {
           ...input,
           user: ctx.user,
           token: ctx.token,
-          experimental: ctx.experimental,
+          experimental,
           batchAll: ctx.batchAll,
+          // isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
@@ -201,6 +235,8 @@ export const orchestratorRouter = router({
           user: ctx.user,
           token: ctx.token,
           batchAll: ctx.batchAll,
+          allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
@@ -218,6 +254,8 @@ export const orchestratorRouter = router({
             steps: [step],
             tips: args.tips,
             experimental: ctx.experimental,
+            // @ts-ignore - BuzzSpendType is properly supported.
+            currencies: args.currencies,
           },
           query: {
             whatif: true,
@@ -261,32 +299,56 @@ export const orchestratorRouter = router({
     .input(generationSchema)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) =>
-      whatIf({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
+      whatIf({
+        ...input,
+        userId: ctx.user.id,
+        token: ctx.token,
+        experimental: ctx.experimental,
+        allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      })
     ),
-  generate: orchestratorGuardedProcedure
-    .input(z.any())
-    .mutation(({ ctx, input }) =>
-      generate({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
-    ),
+  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
+    generate({
+      ...input,
+      userId: ctx.user.id,
+      token: ctx.token,
+      experimental: ctx.experimental,
+      isGreen: ctx.features.isGreen,
+      allowMatureContent: ctx.allowMatureContent,
+      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+    })
+  ),
   // #endregion
 
   // #region [Image upload]
   imageUpload: orchestratorGuardedProcedure
     .input(z.object({ sourceImage: z.string() }))
-    .mutation(({ ctx, input }) => imageUpload({ token: ctx.token, ...input })),
+    .mutation(({ ctx, input }) =>
+      imageUpload({ token: ctx.token, allowMatureContent: ctx.allowMatureContent, ...input })
+    ),
   // #endregion
 
   // #region [image training]
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token, user: ctx.user };
+      const args = {
+        ...input,
+        token: ctx.token,
+        user: ctx.user,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWorkflow(args);
     }),
   createTrainingWhatif: orchestratorProcedure
     .input(imageTrainingRouterWhatIfSchema)
     .query(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token };
+      const args = {
+        ...input,
+        token: ctx.token,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion
@@ -297,4 +359,19 @@ export const orchestratorRouter = router({
       if (ctx.testing) return false;
       return await reportProhibitedRequestHandler({ ctx, input });
     }),
+
+  getFlaggedConsumers: moderatorProcedure
+    .input(getFlaggedConsumersSchema)
+    .query(({ input }) => getFlagged(input)),
+  getFlaggedReasons: moderatorProcedure
+    .input(getFlaggedReasonsSchema)
+    .query(({ input }) => getReasons(input)),
+  getFlaggedConsumerStrikes: moderatorProcedure
+    .input(getFlaggedConsumerStrikesSchema)
+    .query(({ input }) => getConsumerStrikes(input)),
+  reviewConsumerStrikes: moderatorProcedure
+    .input(z.object({ userId: z.number() }))
+    .mutation(({ input, ctx }) =>
+      reviewConsumerStrikes({ consumerId: `civitai-${input.userId}`, moderatorId: ctx.user.id })
+    ),
 });

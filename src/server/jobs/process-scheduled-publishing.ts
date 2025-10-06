@@ -28,7 +28,9 @@ export const processScheduledPublishing = createJob(
         id,
         "userId"
       FROM "Model"
-      WHERE status = 'Scheduled' AND "publishedAt" <= ${now};
+      WHERE status = 'Scheduled' 
+        AND "publishedAt" <= ${now}
+        AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
     `;
     const scheduledModelVersions = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
@@ -43,6 +45,7 @@ export const processScheduledPublishing = createJob(
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE mv.status = 'Scheduled'
         AND mv."publishedAt" <= ${now}
+        AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
         AND EXISTS (
           SELECT 1
           FROM "ModelFile" mf
@@ -58,7 +61,8 @@ export const processScheduledPublishing = createJob(
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE
         (p."publishedAt" IS NULL)
-      AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
+      AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now}
+      AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
     `;
 
     await dbWrite.$transaction(
@@ -67,10 +71,13 @@ export const processScheduledPublishing = createJob(
       -- Update last version of scheduled models
       UPDATE "Model" SET "lastVersionAt" = ${now}
       WHERE id IN (
-        SELECT
+        SELECT DISTINCT
           mv."modelId"
         FROM "ModelVersion" mv
+        JOIN "Post" p ON p."modelVersionId" = mv.id
+        JOIN "Model" m ON m.id = mv."modelId"
         WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+          AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
       );`;
 
         if (scheduledModels.length) {
@@ -80,7 +87,8 @@ export const processScheduledPublishing = createJob(
           UPDATE "Model" SET status = 'Published'
           WHERE id IN (${Prisma.join(scheduledModelIds)})
             AND status = 'Scheduled'
-            AND "publishedAt" <= ${now};
+            AND "publishedAt" <= ${now}
+            AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
         `;
         }
 
@@ -95,6 +103,7 @@ export const processScheduledPublishing = createJob(
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
           RETURNING p.id;
         `;
 
@@ -115,9 +124,12 @@ export const processScheduledPublishing = createJob(
 
           await tx.$executeRaw`
             -- Update scheduled versions published
-            UPDATE "ModelVersion" SET status = 'Published', availability = 'Public'
-            WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
-              AND status = 'Scheduled' AND "publishedAt" <= ${now};
+            UPDATE "ModelVersion" mv SET status = 'Published', availability = 'Public'
+            FROM "Model" m
+            WHERE mv.id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
+              AND mv."modelId" = m.id
+              AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
           `;
 
           if (earlyAccess.length) {
@@ -138,6 +150,7 @@ export const processScheduledPublishing = createJob(
                 FROM "ModelVersion" mv
                 JOIN "Model" m on m.id = mv."modelId"
                 WHERE mv.id IN (${Prisma.join(earlyAccess)})
+                  AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
               ) as mea
               WHERE mo."id" = mea."id"
             `;

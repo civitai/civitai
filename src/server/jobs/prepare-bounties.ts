@@ -1,10 +1,17 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import {
+  createBuzzTransaction,
+  createBuzzTransactionMany,
+  getMultiAccountTransactionsByPrefix,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Tracker } from '../clickhouse/client';
 import { handleLogError } from '../utils/errorHandling';
 import {
@@ -16,6 +23,7 @@ import {
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { isBountyTransactionPrefix } from '~/server/services/bounty.service';
 
 const log = createLogger('prepare-bounties', 'blue');
 
@@ -217,10 +225,12 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
         {
           userId: number;
           unitAmount: number;
+          transactionId?: string | null;
         }[]
       >`SELECT
             bf."userId",
-            bf."unitAmount"
+            bf."unitAmount",
+            bf."transactionId"
         FROM "BountyBenefactor" bf
         WHERE bf."bountyId" = ${id}
           AND bf.currency = ${currency}::"Currency"
@@ -228,17 +238,33 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       `;
 
       // Now refund each of them:
-      for (const { userId, unitAmount } of benefactors) {
+      for (const { userId, unitAmount, transactionId } of benefactors) {
         if (unitAmount > 0) {
           switch (currency) {
             case Currency.BUZZ:
-              await createBuzzTransaction({
-                fromAccountId: 0,
-                toAccountId: userId,
-                amount: unitAmount,
-                type: TransactionType.Refund,
-                description: 'Reason: Bounty refund, no entries found on bounty',
-              });
+              {
+                if (transactionId) {
+                  if (isBountyTransactionPrefix(transactionId)) {
+                    await refundMultiAccountTransaction({
+                      externalTransactionIdPrefix: transactionId,
+                      description: 'Reason: Bounty refund, no entries found on bounty',
+                    });
+                  } else {
+                    await refundTransaction(
+                      transactionId,
+                      'Reason: Bounty refund, no entries found on bounty'
+                    );
+                  }
+                } else {
+                  await createBuzzTransaction({
+                    fromAccountId: 0,
+                    toAccountId: userId,
+                    amount: unitAmount,
+                    type: TransactionType.Refund,
+                    description: 'Reason: Bounty refund, no entries found on bounty',
+                  });
+                }
+              }
 
               break;
             default: // Do no checks
@@ -282,17 +308,39 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       {
         userId: number;
         unitAmount: number;
+        transactionId?: string | null;
       }[]
     >`SELECT
           bf."userId",
-          bf."unitAmount"
+          bf."unitAmount",
+          bf."transactionId"
       FROM "BountyBenefactor" bf
       WHERE bf."bountyId" = ${id}
         AND bf.currency = ${currency}::"Currency"
         AND bf."awardedToId" IS NULL;
     `;
 
-    const awardedAmount = benefactors.reduce((acc, { unitAmount }) => acc + unitAmount, 0);
+    const awardedAmounts: Partial<Record<BuzzSpendType, number>> = {};
+    await Promise.all(
+      benefactors.map(async ({ unitAmount, transactionId }) => {
+        if (transactionId && isBountyTransactionPrefix(transactionId)) {
+          // If transactionId is a prefix, we need to refund all transactions with this prefix
+          const data = await getMultiAccountTransactionsByPrefix(transactionId);
+          data.forEach((d) => {
+            const accountType = d.accountType as BuzzSpendType;
+            // Makes it so we can pay exact amounts.
+            awardedAmounts[accountType] = (awardedAmounts[accountType] || 0) + d.amount;
+          });
+        } else {
+          awardedAmounts['yellow'] = (awardedAmounts['yellow'] || 0) + unitAmount;
+        }
+      })
+    );
+
+    const awardedAmount = Object.values(awardedAmounts).reduce(
+      (sum, amount) => sum + (amount || 0),
+      0
+    );
 
     log(
       ` A total of ${awardedAmount} ${currency} will be awarded in this bounty to the entry ${winnerEntryId}`
@@ -313,17 +361,39 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
     if (awardedAmount > 0) {
       switch (currency) {
         case Currency.BUZZ:
-          await createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: winnerUserId,
-            amount: awardedAmount,
-            type: TransactionType.Bounty,
-            description: 'Reason: Bounty entry has been awarded!',
-            details: {
-              entityId: id,
-              entityType: 'Bounty',
-            },
-          });
+          {
+            if (Object.keys(awardedAmounts).length > 0) {
+              const transactions = Object.keys(awardedAmounts).map((accountType) => {
+                return {
+                  fromAccountId: 0,
+                  toAccountId: winnerUserId,
+                  toAccountType: accountType as BuzzAccountType,
+                  amount: awardedAmounts[accountType as BuzzSpendType] || 0,
+                  type: TransactionType.Bounty,
+                  description: 'Reason: Bounty entry has been awarded!',
+                  details: {
+                    entityId: id,
+                    entityType: 'Bounty',
+                  },
+                  externalTransactionId: `bounty-award-${id}-${accountType}`,
+                };
+              });
+
+              await createBuzzTransactionMany(transactions);
+            } else {
+              await createBuzzTransaction({
+                fromAccountId: 0,
+                toAccountId: winnerUserId,
+                amount: awardedAmount,
+                type: TransactionType.Bounty,
+                description: 'Reason: Bounty entry has been awarded!',
+                details: {
+                  entityId: id,
+                  entityType: 'Bounty',
+                },
+              });
+            }
+          }
 
           break;
         default: // Do no checks

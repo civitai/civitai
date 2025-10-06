@@ -1,5 +1,5 @@
 import { CollectionReadConfiguration, Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -22,7 +22,8 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
+import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { randomizeCollectionItems } from '~/server/services/collection.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
@@ -528,7 +529,7 @@ async function reviewEntries() {
               amount: currentChallenge.entryPrize.buzz,
               description: `Challenge Entry Prize: ${dateStr}`,
               externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
-              toAccountType: 'generation',
+              toAccountType: 'blue',
             }))
           )
         );
@@ -686,7 +687,7 @@ ${outcome}
         amount: currentChallenge.prizes[i].buzz,
         description: `Challenge Winner Prize ${i + 1}: ${dateStr}`,
         externalTransactionId: `challenge-winner-prize-${dateStr}-${i + 1}`,
-        toAccountType: 'user',
+        toAccountType: 'yellow',
       }))
     )
   );
@@ -761,21 +762,12 @@ export async function getCoverOfModel(modelId: number) {
 }
 
 export async function getJudgedEntries(collectionId: number, config: ChallengeConfig) {
-  const judgedEntriesRaw = await dbRead.$queryRaw<JudgedEntry[]>`
+  const judgedEntriesRaw = await dbRead.$queryRaw<Omit<JudgedEntry, 'engagement'>[]>`
     SELECT
       ci."imageId",
       i."userId",
       u."username",
-      ci.note,
-      (
-        SELECT
-        CAST(COALESCE(SUM("metricValue"), 0) as int)
-        FROM "EntityMetric"
-        WHERE
-          "entityType" = 'Image'
-          AND "entityId" = ci."imageId"
-          AND "metricType" != 'Buzz'
-      ) as engagement
+      ci.note
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -789,10 +781,22 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     return [];
   }
 
+  // Fetch engagement metrics from Redis
+  const imageIds = judgedEntriesRaw.map((entry) => entry.imageId);
+  const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
+
+  // Calculate engagement (sum of all metrics except Buzz)
+  const judgedEntriesWithEngagement = judgedEntriesRaw.map((entry) => {
+    const metrics = metricsMap.get(entry.imageId);
+    // @ai: Using static helper to avoid object creation overhead
+    const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
+    return { ...entry, engagement };
+  });
+
   // Sort judged entries by (rating * 0.75) and (engagement * 0.25)
-  const maxEngagement = Math.max(...judgedEntriesRaw.map((entry) => entry.engagement));
-  const minEngagement = Math.min(...judgedEntriesRaw.map((entry) => entry.engagement));
-  const judgedEntries = judgedEntriesRaw.map(({ note, engagement, ...entry }) => {
+  const maxEngagement = Math.max(...judgedEntriesWithEngagement.map((entry) => entry.engagement));
+  const minEngagement = Math.min(...judgedEntriesWithEngagement.map((entry) => entry.engagement));
+  const judgedEntries = judgedEntriesWithEngagement.map(({ note, engagement, ...entry }) => {
     const { score, summary } = JSON.parse(note);
     // Calculate average rating
     const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;

@@ -30,7 +30,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
-import { impersonateEndpoint } from '~/server/schema/civToken.schema';
+import { impersonateEndpoint } from '~/shared/constants/auth.constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
@@ -191,7 +191,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       loading: true,
       autoClose: false,
       title: 'Switching accounts...',
-      message: `-> ${user.username} (${user.id})`,
+      message: `-> ${user.username as string} (${user.id})`,
     });
 
     const tokenResp = await fetch(`${impersonateEndpoint}?${QS.stringify({ userId: user.id })}`);
@@ -312,7 +312,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           )}
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
-            <Menu.Item component={Link} href={`/user/${user.username}/manage-categories`}>
+            <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>
               Manage model categories
             </Menu.Item>
           )}

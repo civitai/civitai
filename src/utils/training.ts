@@ -1,5 +1,5 @@
 import type JSZip from 'jszip';
-import type { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
@@ -9,7 +9,7 @@ import type {
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export const trainingBaseModelTypesImage = ['sd15', 'sdxl', 'sd35', 'flux'] as const;
+export const trainingBaseModelTypesImage = ['sd15', 'sdxl', 'sd35', 'flux', 'chroma'] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
@@ -161,6 +161,16 @@ export const trainingModelInfo: {
     isNew: true,
     disabled: true, // TODO remove
   },
+  //
+  chroma: {
+    label: '1.0 HD',
+    pretty: 'Chroma',
+    type: 'chroma',
+    description: 'Open-Source, Uncensored, and Built for the Community',
+    air: 'urn:air:chroma:checkpoint:civitai:1330309@2164239',
+    baseModel: 'Chroma',
+    isNew: false,
+  },
 };
 
 export const rapidEta = 5;
@@ -200,7 +210,7 @@ export const getTrainingFields = {
       : model;
   },
   getPriority: (isPriority: boolean) => {
-    return isPriority ? OrchPriorityTypes.High : OrchPriorityTypes.Normal;
+    return isPriority ? OrchPriorityTypes.Normal : OrchPriorityTypes.Low;
   },
   getEngine: (engine: TrainingDetailsParams['engine']) => {
     return engine === 'rapid'

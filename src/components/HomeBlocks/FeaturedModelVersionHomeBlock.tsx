@@ -94,7 +94,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
                   {title}
                 </Text>
                 {metadata.description && (
-                  <Text size="sm" mb="xs">
+                  <Text component="div" size="sm" mb="xs">
                     <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                       {metadata.description}
                     </CustomMarkdown>
@@ -136,7 +136,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         </Link>
       </Group>
       {useGrid && (
-        <Text>
+        <Text component="div">
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>
@@ -156,7 +156,7 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata }: Props) 
         </Title>
       </Group>
       {metadata.description && (
-        <Text maw={520}>
+        <Text component="div" maw={520}>
           <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
           </CustomMarkdown>

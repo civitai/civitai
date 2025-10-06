@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 export type VideoEnhancementSchema = z.infer<typeof videoEnhancementSchema>;
 export const videoEnhancementSchema = z.object({

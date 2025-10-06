@@ -10,7 +10,7 @@ import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ColorDomain } from '~/server/common/constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
@@ -55,18 +55,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Status',
   },
   {
-    key: 'wiki',
-    href: '/wiki',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
-    children: 'Wiki',
-  },
-  {
     key: 'education',
     href: '/education',
     target: '_blank',
     rel: 'nofollow noreferrer',
-    children: '💡Education',
+    children: '💡 Education',
   },
   {
     key: 'creator-program',
@@ -74,15 +67,16 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     color: 'blue',
     children: 'Creators',
   },
-  {
-    key: 'careers',
-    href: '/content/careers',
-    children: 'Careers',
-  },
+  // {
+  //   key: 'careers',
+  //   href: '/content/careers',
+  //   children: 'Careers',
+  // },
   {
     key: '2257',
     href: '/content/2257',
     children: '18 U.S.C. §2257',
+    features: (features) => !features.isGreen,
   },
 ];
 

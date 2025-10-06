@@ -7,7 +7,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
@@ -86,7 +86,7 @@ export const publicProcedure = t.procedure
  * users are logged in
  */
 const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
-  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!user || user.deletedAt) throw new TRPCError({ code: 'UNAUTHORIZED' });
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',

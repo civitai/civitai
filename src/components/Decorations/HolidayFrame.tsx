@@ -3,6 +3,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import clsx from 'clsx';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import classes from './HolidayFrame.module.scss';
+import type { CSSProperties } from 'react';
 
 const cosmeticTypeImage = {
   'holiday-lights': '/images/holiday/wreath.png',
@@ -21,7 +22,7 @@ export function HolidayFrame({ cosmetic, data, force, children, animated }: Prop
   const { lights = 0, upgradedLights = 0 } = data ?? {};
   const style = {
     '--light-size': `${Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE)}px`,
-  };
+  } as CSSProperties;
   const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
 
   if ((!force && !showDecorations) || !cosmetic) return <>{children}</>;
@@ -29,7 +30,7 @@ export function HolidayFrame({ cosmetic, data, force, children, animated }: Prop
   const { color, type, brightness } = cosmetic.data as HolidayGarlandData;
 
   const decoration = (
-    <div className={classes.decoration} {...style}>
+    <div className={classes.decoration} style={{ ...style }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={cosmeticTypeImage[type as keyof typeof cosmeticTypeImage]}
@@ -58,7 +59,7 @@ export function HolidayFrame({ cosmetic, data, force, children, animated }: Prop
   if (!children) return decoration;
 
   return (
-    <div className={clsx('frame-decor', classes.root)} {...style}>
+    <div className={clsx('frame-decor', classes.root)} style={{ ...style }}>
       {children}
       {/* Fixed className to reference it in other components easily */}
       <a href="/events/holiday2023" target="_blank" className={clsx(classes.wrapper)}>

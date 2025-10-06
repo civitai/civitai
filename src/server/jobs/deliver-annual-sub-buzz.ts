@@ -1,8 +1,8 @@
 import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import dayjs from 'dayjs';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import dayjs from '~/shared/utils/dayjs';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 
 export const deliverAnnualSubscriptionBuzz = createJob(
@@ -13,14 +13,14 @@ export const deliverAnnualSubscriptionBuzz = createJob(
     const data = await dbWrite.$queryRaw<
       { userId: number; buzzAmount: number | string; productId: string; priceId: string }[]
     >`
-      SELECT 
+      SELECT
         "userId",
         pr.metadata->>'monthlyBuzz' as "buzzAmount",
         pr.id as "productId",
         p.id as "priceId"
       FROM "CustomerSubscription" cs
       JOIN "Product" pr ON pr.id = cs."productId"
-      JOIN "Price" p ON p.id =  cs."priceId" 
+      JOIN "Price" p ON p.id =  cs."priceId"
       WHERE EXTRACT(day from NOW()) = EXTRACT(day from "currentPeriodStart")
         AND "createdAt" <= NOW() - INTERVAL '1 month'
         AND status = 'active'
@@ -57,18 +57,19 @@ export const deliverAnnualSubscriptionBuzz = createJob(
     // Mark this as purchases to ensure these guys receive their cosmetics.
     await dbWrite.$executeRaw`
       with users_affected AS (
-        SELECT 
+        SELECT
           "userId",
           COALESCE(pdl.id, pr.id) "productId",
           NOW() as "createdAt"
         FROM "CustomerSubscription" cs
         JOIN "Product" pr ON pr.id = cs."productId"
-        JOIN "Price" p ON p.id =  cs."priceId" 
+        JOIN "Price" p ON p.id =  cs."priceId"
         LEFT JOIN "Product" pdl
           ON pdl.active
             AND jsonb_typeof(pr.metadata->'level') != 'undefined'
             AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
             AND (pdl.metadata->>'level')::int <= (pr.metadata->>'level')::int
+            AND pdl.provider = pr.provider
         WHERE EXTRACT(day from NOW()) = EXTRACT(day from "currentPeriodStart")
           AND "createdAt" <= NOW() - INTERVAL '1 month'
           AND status = 'active'

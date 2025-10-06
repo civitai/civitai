@@ -1,11 +1,14 @@
 import { Priority } from '@civitai/client';
-import { Input, Tooltip } from '@mantine/core';
-import { IconBolt, IconLock } from '@tabler/icons-react';
+import { Input } from '@mantine/core';
+import { useEffect } from 'react';
+import { IconBolt, IconDiamond } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
 import { IconCheck, IconSelector } from '@tabler/icons-react';
 import { withController } from '~/libs/form/hoc/withController';
+import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
+import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 
 const priorityOptionsMap: Record<
   Priority,
@@ -33,7 +36,15 @@ export function RequestPriority({
     onChange?.(value);
   };
   const currentUser = useCurrentUser();
+  const isMember = currentUser?.isPaidMember ?? false;
   const selected = value ? priorityOptionsMap[value] : undefined;
+
+  // Auto-select High priority for members if Standard is selected or no value
+  useEffect(() => {
+    if (isMember && (!value || value === 'low')) {
+      onChange?.('normal' as Priority);
+    }
+  }, [value, isMember]);
 
   return (
     <Input.Wrapper label={label}>
@@ -48,7 +59,15 @@ export function RequestPriority({
           >
             <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
               {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
-              {!selected ? placeholder : <PriorityLabel {...selected} modifier={modifier} />}
+              {!selected ? (
+                placeholder
+              ) : (
+                <PriorityLabel
+                  {...selected}
+                  modifier={modifier}
+                  isFreeForMember={isMember && value === 'normal'}
+                />
+              )}
             </span>
             <IconSelector
               aria-hidden="true"
@@ -71,24 +90,49 @@ export function RequestPriority({
           >
             {Object.values(Priority)
               .reverse()
+              .filter((priority) => {
+                // Hide Standard option for members
+                if (isMember && priority === 'low') return false;
+                return true;
+              })
               .map((priority) => {
                 const options = priorityOptionsMap[priority];
                 const disabled = options.memberOnly && !currentUser?.isPaidMember;
+
+                if (disabled)
+                  return (
+                    <div key={priority} className="px-1 pt-1">
+                      <RequireMembership>
+                        <SupportButtonPolymorphic
+                          icon={IconDiamond}
+                          position="right"
+                          className="w-full !py-2 !pl-5 !pr-3"
+                        >
+                          <PriorityLabel {...options} modifier={modifier} />
+                        </SupportButtonPolymorphic>
+                      </RequireMembership>
+                    </div>
+                  );
+
                 return (
                   <ListboxOption
                     key={priority}
                     value={priority}
                     disabled={disabled}
                     className={clsx(
-                      'group relative cursor-default select-none justify-between py-2 pl-3 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
+                      'group relative cursor-default select-none justify-between py-2 pl-6 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
                       'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
                       'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
                     )}
                   >
                     <div className="flex items-center">
                       {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
-                      <span className="ml-3 block truncate font-normal group-data-[selected]:font-semibold">
-                        <PriorityLabel {...options} disabled={disabled} modifier={modifier} />
+                      <span className="block truncate group-data-[selected]:font-semibold">
+                        <PriorityLabel
+                          {...options}
+                          modifier={modifier}
+                          isFreeForMember={isMember && priority === 'normal'}
+                        />
                       </span>
                     </div>
 
@@ -114,33 +158,35 @@ export function RequestPriority({
 function PriorityLabel({
   label,
   offset,
-  disabled,
   modifier,
+  isFreeForMember = false,
 }: {
   label: string;
   offset: number;
-  disabled?: boolean;
   modifier: 'fixed' | 'multiplier';
+  isFreeForMember?: boolean;
 }) {
   return (
-    <Tooltip withinPortal label="Member only" disabled={!disabled} withArrow offset={2}>
-      <div className="flex items-center gap-3">
-        <span>{label}</span>
-        {offset > 0 && (
+    <div className="flex items-center gap-3">
+      <span>{label}</span>
+      {offset > 0 && (
+        <span className={clsx('flex items-center', isFreeForMember && 'line-through opacity-50')}>
+          <span>+</span>
           <span className="flex items-center">
-            <span>+</span>
-            <span className="flex items-center">
-              <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
-              <span>
-                {offset}
-                {modifier === 'multiplier' ? '%' : ''}
-              </span>
+            <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
+            <span>
+              {offset}
+              {modifier === 'multiplier' ? '%' : ''}
             </span>
           </span>
-        )}
-        {disabled && <IconLock className="size-5" />}
-      </div>
-    </Tooltip>
+        </span>
+      )}
+      {isFreeForMember && (
+        <span className="text-xs text-green-6 dark:text-green-5">
+          Members get High Priority Free
+        </span>
+      )}
+    </div>
   );
 }
 

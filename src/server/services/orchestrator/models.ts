@@ -1,6 +1,6 @@
 import { getResource, invalidateResource } from '@civitai/client';
 import { chunk } from 'lodash-es';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
 import { resourceDataCache } from '~/server/services/model-version.service';
@@ -9,7 +9,7 @@ import {
   internalOrchestratorClient,
 } from '~/server/services/orchestrator/common';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/shared/utils/air';
 
 export async function getModelClient({
   token,

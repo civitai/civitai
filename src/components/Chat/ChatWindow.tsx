@@ -1,11 +1,14 @@
 import { Grid, useComputedColorScheme } from '@mantine/core';
+import { registerCustomProtocol } from 'linkifyjs';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
-import { useChatContext } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+
+registerCustomProtocol('civitai', true);
 
 export function ChatWindow() {
   return (
@@ -16,14 +19,15 @@ export function ChatWindow() {
 }
 
 function ChatWindowContent() {
-  const { state } = useChatContext();
+  const existingChatId = useChatStore((state) => state.existingChatId);
+  const isCreating = useChatStore((state) => state.isCreating);
   const colorScheme = useComputedColorScheme('dark');
 
   const isMobile = useContainerSmallerThan(700);
 
   if (isMobile) {
-    if (!!state.existingChatId) return <ExistingChat />;
-    if (state.isCreating) return <NewChat />;
+    if (!!existingChatId) return <ExistingChat />;
+    if (isCreating) return <NewChat />;
     return <ChatList />;
   }
 
@@ -41,7 +45,7 @@ function ChatWindowContent() {
       </Grid.Col>
       {/* Chat Panel */}
       <Grid.Col span={{ base: 12, xs: 8 }} h="100%">
-        {!state.existingChatId ? <NewChat /> : <ExistingChat />}
+        {!existingChatId ? <NewChat /> : <ExistingChat />}
       </Grid.Col>
     </Grid>
   );

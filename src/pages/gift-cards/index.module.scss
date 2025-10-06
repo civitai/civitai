@@ -1,0 +1,158 @@
+.headerSection {
+  position: relative;
+}
+
+.promoNotification {
+  // Full width layout with proper spacing
+  width: 100%;
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  
+  // Center the notification content
+  display: flex;
+  justify-content: center;
+  
+  // On desktop: slightly less top margin
+  @media (min-width: 769px) {
+    margin-top: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  // Enhanced styling for the notification content
+  & > div {
+    width: 100%;
+    max-width: none;
+    position: relative;
+    overflow: hidden;
+    
+    // Subtle gradient background
+    background: linear-gradient(135deg, 
+      var(--mantine-color-blue-6) 0%, 
+      var(--mantine-color-cyan-6) 100%);
+    
+    // Enhanced shadow and border
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1), 
+                0 2px 8px rgba(59, 130, 246, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--mantine-radius-md);
+    
+    // Subtle animation
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    
+    // Subtle hover effect
+    &:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 25px rgba(0, 0, 0, 0.12),
+                  0 3px 12px rgba(59, 130, 246, 0.2),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+    
+    // Animated gradient overlay
+    &::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.1),
+        transparent
+      );
+      transition: left 0.6s ease;
+      z-index: 1;
+    }
+    
+    // Shine effect on hover
+    &:hover::before {
+      left: 100%;
+    }
+    
+    // Ensure content is above the shine effect
+    & > * {
+      position: relative;
+      z-index: 2;
+    }
+    
+    // Override text colors for better contrast on gradient
+    color: white;
+    
+    // Keep badges and text clean for readability - no glassmorphism
+  }
+}
+
+.card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--mantine-shadow-lg);
+  }
+}
+
+.membershipCard {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--mantine-shadow-lg);
+  }
+}
+
+.giftCardEnhanced {
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6)) !important;
+  border-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-4)) !important;
+}
+
+.buzzButton {
+  background: linear-gradient(135deg, var(--mantine-color-yellow-5), var(--mantine-color-orange-6));
+  border: none;
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: linear-gradient(135deg, var(--mantine-color-yellow-6), var(--mantine-color-orange-7));
+    box-shadow: 0 4px 12px rgba(255, 193, 7, 0.4);
+    transform: translateY(-1px);
+  }
+}
+
+.membershipButton {
+  background: linear-gradient(135deg, var(--mantine-color-violet-6), var(--mantine-color-indigo-6));
+  border: none;
+  box-shadow: 0 2px 8px rgba(139, 69, 219, 0.3);
+  transition: all 0.2s ease;
+  font-size: var(--mantine-font-size-xs);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  min-width: 0; // Allow buttons to shrink below content width
+  
+  // Mobile optimizations
+  @media (max-width: 768px) {
+    font-size: 10px;
+    padding: 4px 8px;
+    min-height: 32px;
+    
+    // Make text more compact on very small screens
+    @media (max-width: 480px) {
+      font-size: 10px;
+      padding: 4px 6px;
+      min-height: 28px;
+      line-height: 1.2;
+    }
+  }
+  
+  &:hover {
+    background: linear-gradient(135deg, var(--mantine-color-violet-7), var(--mantine-color-indigo-7));
+    box-shadow: 0 4px 12px rgba(139, 69, 219, 0.4);
+    transform: translateY(-1px);
+  }
+}

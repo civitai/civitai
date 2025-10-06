@@ -1,7 +1,7 @@
 import { createBuzzEvent } from '../base.reward';
 
 export const imagePostedToModelReward = createBuzzEvent({
-  toAccountType: 'generation',
+  toAccountType: 'blue',
   type: 'imagePostedToModel',
   description: 'Image posted to a model you own',
   triggerDescription: 'For each user that posts an image to your model',

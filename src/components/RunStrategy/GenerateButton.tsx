@@ -2,11 +2,15 @@ import type { ButtonProps } from '@mantine/core';
 import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
-import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
+import {
+  BidModelButton,
+  getEntityDataForBidModelButton,
+} from '~/components/Auction/BidModelButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
-import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { generationPanel } from '~/store/generation.store';
 import type { ModelById } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -30,7 +34,7 @@ export function GenerateButton({
 
   const vId = versionId ?? version?.id;
 
-  const opened = useGenerationStore((state) => state.opened);
+  const opened = useGenerationPanelStore((state) => state.opened);
   const onClickHandler = () => {
     if (generationPrice) {
       onPurchase?.();
@@ -71,9 +75,11 @@ export function GenerateButton({
         paddingRight: '6px',
       }}
     >
-      <Group gap={0}>
-        <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />{' '}
-        <Text c="dark.9">{abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}</Text>
+      <Group gap={0} wrap="nowrap">
+        <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
+        <Text size="xs" fz={11} c="dark.9">
+          {abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}
+        </Text>
       </Group>
     </Badge>
   );

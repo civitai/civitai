@@ -2,39 +2,24 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
-import blocked from './lists/blocklist.json';
 import promptTags from './lists/prompt-tags.json';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
 import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
 import poiWords from './lists/words-poi.json';
 import youngWords from './lists/words-young.json';
+import { harmfulCombinations } from './lists/harmful-combinations';
+import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
 // #region [audit]
-const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const blockedBoth = '\\%|\\~|\\\\$|\\.|-|\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
-const tokenRegex = (word: string) =>
-  new RegExp(`(^|\\s|,|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'mi');
-const blockedRegex = blocked.map((word) => ({
-  word,
-  regex: tokenRegex(word),
-}));
-const blockedNSFWRegex = blockedNSFW.map((word) => ({
-  word,
-  regex: tokenRegex(word),
-}));
 
 export function getPossibleBlockedNsfwWords(value?: string | null) {
   if (!value) return [];
   const regex = new RegExp(value, 'i');
   return blockedNSFW.filter((word) => regex.test(word));
-}
-
-export function getBlockedNsfwWords(value?: string | null) {
-  if (!value) return [];
-  return blockedNSFWRegex.filter(({ regex }) => regex.test(value)).map((x) => x.word);
 }
 
 export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
@@ -47,14 +32,14 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
     if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
   }
 
-  const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
+  const blockList = nsfw ? blockedNSFWRegexLazy() : blockedRegexLazy();
   const blockedFor = blockList
     .filter(({ regex }) => meta?.prompt && regex.test(prompt))
     .map((x) => x.word);
   return { blockedFor, success: !blockedFor.length };
 };
 
-export const auditPrompt = (prompt: string, negativePrompt?: string) => {
+export const auditPrompt = (prompt: string, negativePrompt?: string, checkProfanity?: boolean) => {
   if (!prompt.trim().length) return { blockedFor: [], success: true };
   prompt = normalizeText(prompt); // Parse HTML Entities
   negativePrompt = normalizeText(negativePrompt);
@@ -73,8 +58,16 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
   else if (inappropriate === 'poi')
     return { blockedFor: ['Inappropriate real person content'], success: false };
 
-  for (const { word, regex } of blockedNSFWRegex) {
+  for (const { word, regex } of blockedNSFWRegexLazy()) {
     if (regex.test(prompt)) return { blockedFor: [word], success: false };
+  }
+
+  if (checkProfanity) {
+    const profanityFilter = createProfanityFilter();
+    const profanityResults = profanityFilter.analyze(prompt);
+    if (profanityResults.isProfane) {
+      return { blockedFor: profanityResults.matches, success: false };
+    }
   }
 
   return { blockedFor: [], success: true };
@@ -87,20 +80,6 @@ export function hasNsfwPrompt(text?: string | null) {
   if (!text) return false;
   const str = normalizeText(text);
   for (const expression of [...nsfwPromptExpressions, ...paddleNsfwExpressions]) {
-    if (expression.test(str)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-const expressions = [...new Set([...nsfwPromptWords, ...nsfwWordsPaddle])].map((word) =>
-  prepareWordRegex(word)
-);
-export function hasNsfwWords(text?: string | null) {
-  if (!text) return false;
-  const str = normalizeText(text);
-  for (const expression of expressions) {
     if (expression.test(str)) {
       return true;
     }
@@ -385,13 +364,40 @@ export function includesMinor(prompt: string | undefined, negativePrompt?: strin
   );
 }
 
+function includesHarmfulCombinations(prompt: string): 'minor' | 'poi' | false {
+  if (!prompt) return false;
+
+  const normalizedPrompt = normalizeText(prompt);
+
+  for (const combination of harmfulCombinations) {
+    if (combination.pattern.test(normalizedPrompt)) {
+      return combination.type;
+    }
+  }
+
+  return false;
+}
+
 export function includesInappropriate(
   input: { prompt?: string; negativePrompt?: string },
   nsfw?: boolean
 ) {
   if (!input.prompt) return false;
   input.prompt = input.prompt.replace(/'|\.|\-/g, '');
+
+  const harmfulCombo = includesHarmfulCombinations(input.prompt);
+  if (harmfulCombo) return harmfulCombo;
+
   if (!nsfw && !includesNsfw(input.prompt)) return false;
+
+  // Check for harmful combinations first
+
+  // Also check negative prompt for harmful combinations
+  if (input.negativePrompt) {
+    const negativeHarmfulCombo = includesHarmfulCombinations(input.negativePrompt);
+    if (negativeHarmfulCombo) return negativeHarmfulCombo;
+  }
+
   if (includesPoi(input.prompt)) return 'poi';
   if (includesMinor(input.prompt, input.negativePrompt)) return 'minor';
   return false;
@@ -444,7 +450,7 @@ function highlightReplacement(
 }
 
 function highlightBlocked(prompt: string, replaceFn: (word: string) => string) {
-  for (const { regex } of blockedNSFWRegex) {
+  for (const { regex } of blockedNSFWRegexLazy()) {
     if (regex.test(prompt)) {
       const match = regex.exec(prompt);
       const word = trimNonAlphanumeric(match?.[0]);
@@ -505,7 +511,7 @@ export function cleanPrompt({
   negativePrompt = normalizeText(negativePrompt);
 
   // Remove blocked nsfw words
-  for (const { word } of blockedNSFWRegex) {
+  for (const { word } of blockedNSFWRegexLazy()) {
     prompt = promptWordReplace(prompt, word);
   }
 

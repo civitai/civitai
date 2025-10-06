@@ -1,5 +1,5 @@
 import { trpc } from '~/utils/trpc';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import type {
   GetInfiniteClubPostsSchema,
   GetInfiniteClubSchema,
@@ -12,17 +12,11 @@ import type {
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
-import { getPaginatedClubResourcesSchema } from '~/server/schema/club.schema';
-import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useMemo } from 'react';
-import {
-  applyUserPreferencesClub,
-  applyUserPreferencesClubPost,
-} from '~/components/Search/search.utils';
+import { applyUserPreferencesClubPost } from '~/components/Search/search.utils';
 import type { ClubPostGetAll } from '~/types/router';
-import { ClubGetAll, ClubTier, UserClub } from '~/types/router';
 import type {
   CreateClubMembershipInput,
   GetInfiniteClubMembershipsSchema,
@@ -33,7 +27,6 @@ import type {
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 import type {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
@@ -44,6 +37,7 @@ import type {
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
 import { isDefined, isNumber } from '../../utils/type-guards';
+import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -417,10 +411,7 @@ export const useMutateClub = () => {
 
   const withdrawClubFundsMutation = trpc.buzz.withdrawClubFunds.useMutation({
     async onSuccess(_, { clubId }) {
-      await queryUtils.buzz.getBuzzAccount.invalidate({
-        accountId: clubId,
-        accountType: 'club',
-      });
+      await queryUtils.buzz.getBuzzAccount.invalidate();
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
     onError(error) {
@@ -443,10 +434,7 @@ export const useMutateClub = () => {
 
   const depositClubFundsMutation = trpc.buzz.depositClubFunds.useMutation({
     async onSuccess(_, { clubId }) {
-      await queryUtils.buzz.getBuzzAccount.invalidate({
-        accountId: clubId,
-        accountType: 'club',
-      });
+      await queryUtils.buzz.getBuzzAccount.invalidate();
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
     onError(error) {
@@ -749,8 +737,8 @@ export const useQueryClubResources = (
 };
 
 export const useClubFilters = () => {
-  const storeFilters = useFiltersContext((state) => state.clubs);
-  return removeEmpty(storeFilters);
+  // const storeFilters = useFiltersContext((state) => state.clubs);
+  // return removeEmpty(storeFilters);
 };
 
 export const useQueryClubs = (

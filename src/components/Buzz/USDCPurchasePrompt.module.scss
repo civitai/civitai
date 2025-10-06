@@ -1,0 +1,46 @@
+.usdcCard {
+  background: light-dark(
+    var(--mantine-color-teal-0),
+    var(--mantine-color-dark-6)
+  );
+  border: 1px solid light-dark(var(--mantine-color-teal-2), var(--mantine-color-teal-9));
+  border-left: 4px solid var(--mantine-color-teal-5);
+  transition: all 0.2s ease;
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-sm);
+  }
+}
+
+.loadingCard {
+  background: light-dark(
+    var(--mantine-color-teal-0),
+    var(--mantine-color-dark-6)
+  );
+  border: 1px solid light-dark(var(--mantine-color-teal-2), var(--mantine-color-teal-9));
+  border-left: 4px solid var(--mantine-color-teal-5);
+  transition: all 0.2s ease;
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-sm);
+  }
+}
+
+.usdcIcon {
+  box-shadow: var(--mantine-shadow-sm);
+}
+
+.usdcTitle {
+  color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .usdcCard {
+    padding: var(--mantine-spacing-sm);
+  }
+
+  .loadingCard {
+    padding: var(--mantine-spacing-sm);
+  }
+}

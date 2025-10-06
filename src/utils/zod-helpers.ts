@@ -1,8 +1,5 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { isValidDate } from '~/utils/date-helpers';
-import type { santizeHtmlOptions } from '~/utils/html-helpers';
-import { sanitizeHtml } from '~/utils/html-helpers';
-import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 
 export function coerceStringArray<I extends z.ZodArray<z.ZodString>>(schema?: I) {
   return z.preprocess(
@@ -123,29 +120,32 @@ export function booleanString() {
     .or(z.number().transform((val) => val === 1));
 }
 
-export function sanitizedNullableString(options: santizeHtmlOptions) {
-  return z
-    .string()
-    .transform((val, ctx) => {
-      try {
-        if (!val) return;
-        const result = sanitizeHtml(val, options);
-        if (result.length === 0) return null;
-        return result;
-      } catch (e) {
-        ctx.addIssue({
-          code: 'custom',
-          message: (e as any).message,
-        });
-      }
-    })
-    .nullish();
-}
-
 export function zodEnumFromObjKeys<K extends string>(obj: Record<K, unknown>) {
   const [firstKey, ...otherKeys] = Object.keys(obj) as K[];
   return z.enum([firstKey, ...otherKeys]);
 }
+
+// export function stripChecksAndEffects<TSchema extends ZodTypeAny>(schema: TSchema): TSchema {
+//   if (schema instanceof ZodEffects) return stripChecksAndEffects(schema._def.schema);
+//   if (schema instanceof ZodArray)
+//     return z.array(stripChecksAndEffects(schema.element)) as unknown as TSchema;
+//   if (schema instanceof ZodObject) {
+//     let dictionary = z.object({});
+//     for (const [key, value] of Object.entries(schema.shape)) {
+//       dictionary = dictionary.extend({ [key]: stripChecksAndEffects(value as any) });
+//     }
+//     return dictionary as unknown as TSchema;
+//   }
+//   if (schema._def.innerType) {
+//     schema._def.innerType = stripChecksAndEffects(schema._def.innerType);
+//   }
+//   if (schema._def.checks) schema._def.checks = [];
+//   return schema;
+// }
+
+// export function getDeepPartialWithoutChecks<TSchema extends AnyZodObject>(schema: TSchema) {
+//   return stripChecksAndEffects(schema).deepPartial();
+// }
 
 export function numberEnum<Num extends number, T extends Readonly<Num[]>>(
   args: T

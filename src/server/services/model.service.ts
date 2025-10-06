@@ -1,23 +1,25 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import type { BaseModel, BaseModelType } from '~/server/common/constants';
+import type { BaseModelType } from '~/server/common/constants';
 import {
   CacheTTL,
   constants,
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
+  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
@@ -29,6 +31,7 @@ import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  GetTrainingModerationFeedSchema,
   IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
@@ -117,7 +120,6 @@ import {
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -125,6 +127,8 @@ import type {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { Flags } from '~/shared/utils/flags';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -263,9 +267,14 @@ export const getModelsRaw = async ({
 
   // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
   let searchModelIds: number[] = [];
-  if (query && searchClient) {
+  if (query && searchClient && (!ids || ids.length === 0)) {
     const request: SearchParams = {
       limit: take ?? 100,
+      filter: [
+        browsingLevel
+          ? `nsfwLevel IN [${Flags.instanceToArray(browsingLevel).join(',')}]`
+          : undefined,
+      ].filter(isDefined),
     };
 
     const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
@@ -706,9 +715,8 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
+    nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
     models.pop(); //Remove excess model
-    // Use final item as cursor to grab next page
-    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
@@ -730,6 +738,18 @@ export const getModelsRaw = async ({
 
         if (!!modelVersionIds?.length) {
           modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
+        }
+
+        // Filter out NSFW versions for license-restricted base models
+        // Models with nsfwLevel > R cannot use base models with restricted licenses
+        if (nsfwRestrictedBaseModels.length > 0) {
+          modelVersions = modelVersions.filter(
+            (mv) =>
+              !(
+                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                nsfwRestrictedBaseModels.includes(mv.baseModel)
+              )
+          );
         }
 
         if (hidePrivateModels) {
@@ -1039,11 +1059,9 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: { id: true, url: true },
   });
 
-  const s3 = getS3Client();
   const tasks = modelFiles.map((file) => async () => {
     await requestScannerTasks({
       file,
-      s3,
       tasks: ['Hash', 'Scan', 'ParseMetadata'],
       lowPriority: true,
     });
@@ -1316,26 +1334,72 @@ export const permaDeleteModelById = async ({
 }: GetByIdInput & {
   userId: number;
 }) => {
-  const deletedModel = await dbWrite.$transaction(async (tx) => {
-    const model = await tx.model.findUnique({
-      where: { id },
-      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
-    });
-    if (!model) return null;
+  const deletionResult = await dbWrite.$transaction(
+    async (tx) => {
+      const model = await tx.model.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          userId: true,
+          nsfwLevel: true,
+          modelVersions: { select: { id: true } },
+        },
+      });
+      if (!model) return { deletedModel: null, imagesToDelete: [] };
 
-    await tx.post.deleteMany({
-      where: {
-        userId: model.userId,
-        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-      },
-    });
+      // Get posts to find associated images
+      const posts = await tx.post.findMany({
+        where: {
+          userId: model.userId,
+          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+        },
+        select: { id: true },
+      });
+      const postIds = posts.map((post) => post.id);
 
-    const deletedModel = await tx.model.delete({ where: { id } });
-    return deletedModel;
-  });
+      // Get images to delete and queue search index updates
+      let imagesToDelete: { id: number }[] = [];
+      if (postIds.length > 0) {
+        imagesToDelete = await tx.image.findMany({
+          where: { postId: { in: postIds } },
+          select: { id: true },
+        });
 
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBidsForModel({ modelId: id });
+        await tx.image.deleteMany({
+          where: { postId: { in: postIds } },
+        });
+      }
+
+      await tx.post.deleteMany({
+        where: {
+          userId: model.userId,
+          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
+        },
+      });
+
+      const deletedModel = await tx.model.delete({ where: { id } });
+      return { deletedModel, imagesToDelete };
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
+
+  const { deletedModel, imagesToDelete } = deletionResult;
+
+  if (deletedModel) {
+    // Delete model bids
+    await deleteBidsForModel({ modelId: deletedModel.id });
+    // Queue model search index updates
+    await modelsSearchIndex.queueUpdate([
+      { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    // Queue image search index updates
+    if (imagesToDelete.length > 0) {
+      await queueImageSearchIndexUpdate({
+        ids: imagesToDelete.map((img) => img.id),
+        action: SearchIndexUpdateQueueAction.Delete,
+      });
+    }
+  }
 
   return deletedModel;
 };
@@ -1382,9 +1446,6 @@ export const upsertModel = async (
   }
 ) => {
   if (input.description) await throwOnBlockedLinkDomain(input.description);
-  if (!input.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
 
   const {
     id,
@@ -1392,12 +1453,12 @@ export const upsertModel = async (
     userId,
     templateId,
     bountyId,
-    meta,
     isModerator,
     status,
     gallerySettings,
     ...data
   } = input;
+  let { meta } = input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1406,7 +1467,39 @@ export const upsertModel = async (
       const key = prop as keyof typeof data;
       if (data[key] !== undefined) delete data[key];
     }
+
+    // Check model name and description for profanity
+    const profanityFilter = createProfanityFilter();
+    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
+    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+
+    // If profanity is detected, mark model as NSFW and add to locked properties
+    if (isProfane && !data.nsfw) {
+      meta = { ...(meta ?? {}), profanityMatches: matchedWords };
+      data.nsfw = true;
+      data.lockedProperties =
+        data.lockedProperties && !data.lockedProperties.includes('nsfw')
+          ? [...data.lockedProperties, 'nsfw']
+          : ['nsfw'];
+    }
   }
+
+  // Validate NSFW + restricted base model combination
+  if (data.nsfw && 'modelVersions' in input && input.modelVersions) {
+    const modelVersions = input.modelVersions as Array<{ baseModel: string }>;
+    const hasRestrictedBaseModel = modelVersions.some((version) =>
+      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+    );
+
+    if (hasRestrictedBaseModel) {
+      throw throwBadRequestError(
+        `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
+          ', '
+        )}`
+      );
+    }
+  }
+
   if (!id || templateId) {
     const result = await dbWrite.model.create({
       select: { id: true, nsfwLevel: true, meta: true, availability: true },
@@ -1477,6 +1570,7 @@ export const upsertModel = async (
     if (!isOwner) return null;
 
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
+    const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
     const result = await dbWrite.model.update({
       select: {
@@ -1496,7 +1590,7 @@ export const upsertModel = async (
       where: { id },
       data: {
         ...data,
-        meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+        meta: { ...prevMeta, ...meta },
         gallerySettings: {
           ...prevGallerySettings,
           level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
@@ -1655,6 +1749,9 @@ export const publishModelById = async ({
   meta?: ModelMeta;
   republishing?: boolean;
 }) => {
+  if (meta?.cannotPublish) {
+    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
+  }
   const includeVersions = versionIds && versionIds.length > 0;
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -1684,6 +1781,21 @@ export const publishModelById = async ({
           status: true,
         },
       });
+
+      // Validate NSFW + restricted base model combination
+      if (model.nsfw) {
+        const hasRestrictedBaseModel = model.modelVersions.some((version) =>
+          nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+        );
+
+        if (hasRestrictedBaseModel) {
+          throw throwBadRequestError(
+            `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
+              ', '
+            )}`
+          );
+        }
+      }
 
       if (includeVersions) {
         if (status === ModelStatus.Published) {
@@ -2317,7 +2429,7 @@ export const getGalleryHiddenPreferences = async ({
 }: {
   settings: ModelGallerySettingsSchema;
 }) => {
-  const { tags, users, images, level, pinnedPosts } = settings;
+  const { tags, users, level, pinnedPosts = {}, hiddenImages = {} } = settings;
   const hiddenTags =
     tags && tags.length
       ? await dbRead.tag.findMany({
@@ -2337,9 +2449,9 @@ export const getGalleryHiddenPreferences = async ({
   return {
     hiddenTags,
     hiddenUsers,
-    hiddenImages: images ?? [],
+    hiddenImages,
     level: level ?? allBrowsingLevelsFlag,
-    pinnedPosts: pinnedPosts ?? {},
+    pinnedPosts,
   };
 };
 
@@ -2869,7 +2981,7 @@ export async function getFeaturedModels() {
           select: {
             position: true,
             modelVersion: {
-              select: { modelId: true },
+              select: { modelId: true, baseModel: true },
             },
           },
           orderBy: { position: 'asc' },
@@ -2877,20 +2989,11 @@ export async function getFeaturedModels() {
         if (data.length === 0) {
           retries++;
         } else {
-          return [
-            ...data
-              .reduce((map, row) => {
-                const current = map.get(row.modelVersion.modelId);
-                if (!current || row.position < current.position) {
-                  map.set(row.modelVersion.modelId, {
-                    modelId: row.modelVersion.modelId,
-                    position: row.position,
-                  });
-                }
-                return map;
-              }, new Map<number, { modelId: number; position: number }>())
-              .values(),
-          ];
+          return data.map((row) => ({
+            modelId: row.modelVersion.modelId,
+            position: row.position,
+            baseModel: row.modelVersion.baseModel as BaseModel,
+          }));
         }
       }
 
@@ -2904,7 +3007,7 @@ export async function getFeaturedModels() {
         ORDER BY "createdAt" desc
         LIMIT 500
       `;
-      return query.map((row) => ({ modelId: row.modelId, position: 0 }));
+      return query.map((row) => ({ modelId: row.modelId, position: 0, baseModel: '' }));
     });
   } catch (e) {
     const error = e as Error;
@@ -3037,29 +3140,35 @@ export const privateModelFromTraining = async ({
       where: { id },
       data: {
         ...data,
+        meta: {
+          ...((meta as ModelMeta) ?? {}),
+          // Makes it so these models cannot go into auctions or be promoted
+          cannotPromote: true,
+        },
         availability: Availability.Private,
         status: ModelStatus.Published,
-      },
-    });
-
-    await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
-      data: {
-        // Ensures things don't break by leaving some versions public.
-        // @luis: TODO: Might be smart to add some DB triggers for this.
-        availability: Availability.Private,
+        sfwOnly: true, // Private models only allow sfw generation
       },
     });
 
     if (result.modelVersions.length > 0) {
       const now = new Date();
+
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { id: { in: result.modelVersions.map((x) => x.id) } },
+        where: { modelId: id },
         data: {
-          availability: Availability.Private,
+          // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
           status: ModelStatus.Published,
+        },
+      });
+
+      // Do this after the fact to avoid some triggers.
+      await dbWrite.modelVersion.updateMany({
+        where: { modelId: id },
+        data: {
+          availability: Availability.Private,
         },
       });
 
@@ -3102,6 +3211,13 @@ export const publishPrivateModel = async ({
   modelId,
   publishVersions,
 }: PublishPrivateModelInput) => {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { id: true, userId: true, availability: true, status: true, meta: true },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found');
+
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
     select: { id: true },
@@ -3140,7 +3256,12 @@ export const publishPrivateModel = async ({
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
         publishedAt: publishVersions ? now : null,
+        meta: {
+          ...((model.meta ?? {}) as ModelMeta),
+          cannotPromote: false,
+        },
       },
+      select: { id: true },
     }),
   ]);
 
@@ -3190,6 +3311,32 @@ export const toggleCannotPromote = async ({
     await deleteBidsForModel({ modelId: id });
   }
 
+  return {
+    id: updated.id,
+    meta: updated.meta as ModelMeta | null,
+  };
+};
+
+export const toggleCannotPublish = async ({
+  id,
+  isModerator,
+}: GetByIdInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+  const model = await getModel({ id, select: { id: true, meta: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+  const modelMeta = model.meta as ModelMeta | null;
+  const currentCannotPublish = modelMeta?.cannotPublish ?? false;
+  const cannotPublish = !currentCannotPublish;
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: {
+      meta: modelMeta ? { ...modelMeta, cannotPublish } : { cannotPublish },
+    },
+    select: { id: true, meta: true },
+  });
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   return {
     id: updated.id,
     meta: updated.meta as ModelMeta | null,
@@ -3249,3 +3396,123 @@ export async function getTopWeeklyEarners(fresh = false) {
 
   return results;
 }
+
+export const getTrainingModelsForModerators = async ({
+  limit = DEFAULT_PAGE_SIZE,
+  cursor,
+  username,
+  dateFrom,
+  dateTo,
+  cannotPublish,
+  workflowId,
+}: GetTrainingModerationFeedSchema) => {
+  const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
+  const cursorWhere = cursor ? { id: { lt: cursor } } : {};
+
+  const where: Prisma.ModelWhereInput = {
+    ...cursorWhere,
+    uploadType: ModelUploadType.Trained,
+    deletedAt: null,
+    ...(username && {
+      user: {
+        username,
+      },
+    }),
+    ...(dateFrom && {
+      createdAt: {
+        gte: dateFrom,
+        ...(dateTo && { lte: dateTo }),
+      },
+    }),
+    ...(dateTo &&
+      !dateFrom && {
+        createdAt: {
+          lte: dateTo,
+        },
+      }),
+    ...(cannotPublish !== undefined && {
+      meta: cannotPublish
+        ? { path: ['cannotPublish'], equals: true }
+        : { not: { path: ['cannotPublish'], equals: true } },
+    }),
+    modelVersions: {
+      some: {
+        files: {
+          some: {
+            type: 'Training Data',
+            dataPurged: false,
+            ...(workflowId && {
+              metadata: {
+                path: ['trainingResults', 'workflowId'],
+                equals: workflowId,
+              },
+            }),
+          },
+        },
+      },
+    },
+  };
+
+  const items = await dbRead.model.findMany({
+    take,
+    skip,
+    where,
+    orderBy: { id: 'desc' },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      nsfw: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+      status: true,
+      createdAt: true,
+      publishedAt: true,
+      meta: true,
+      user: {
+        select: simpleUserSelect,
+      },
+      modelVersions: {
+        where: {
+          files: {
+            some: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          baseModel: true,
+          trainingStatus: true,
+          createdAt: true,
+          files: {
+            where: {
+              type: 'Training Data',
+              dataPurged: false,
+            },
+            select: {
+              id: true,
+              name: true,
+              url: true,
+              sizeKB: true,
+              createdAt: true,
+              metadata: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
+
+  return {
+    items,
+    nextCursor,
+  };
+};

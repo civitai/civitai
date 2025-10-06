@@ -1,12 +1,13 @@
 import { Priority } from '@civitai/client';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 import type { Sampler } from '~/server/common/constants';
-import { baseModelSets, generation } from '~/server/common/constants';
+import { generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { baseModelGroups } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
-import { defaultCatch, zodEnumFromObjKeys } from '~/utils/zod-helpers';
+import { defaultCatch } from '~/utils/zod-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -15,13 +16,13 @@ export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z.string().default(''),
-  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  negativePrompt: z.string().optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
-    message: 'invalid sampler',
+    error: 'Invalid sampler',
   }),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
-  clipSkip: z.coerce.number().max(3).optional(),
+  clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
   quantity: z
     .number()
@@ -32,7 +33,7 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
-  baseModel: zodEnumFromObjKeys(baseModelSets),
+  baseModel: z.enum(baseModelGroups),
   width: z.number(),
   height: z.number(),
   // temp props?
@@ -47,6 +48,7 @@ export const textToImageParamsSchema = z.object({
   engine: z.string().optional(),
   priority: z.enum(Priority).default('low'),
   sourceImage: defaultCatch(sourceImageSchema.nullable(), null),
+  images: defaultCatch(sourceImageSchema.array().nullable(), null),
   disablePoi: z.boolean().default(false),
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),

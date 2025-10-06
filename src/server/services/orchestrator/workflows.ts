@@ -1,4 +1,4 @@
-import type { GetWorkflowData, SubmitWorkflowData } from '@civitai/client';
+import type { GetWorkflowData, Options, SubmitWorkflowData } from '@civitai/client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
@@ -8,9 +8,10 @@ import {
   removeWorkflowTag,
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
+  handleError,
 } from '@civitai/client';
-import type * as z from 'zod/v4';
-import { isProd } from '~/env/other';
+import type * as z from 'zod';
+import { isDev, isProd } from '~/env/other';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -29,10 +30,10 @@ import {
 export async function queryWorkflows({
   token,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string }) {
+}: z.output<typeof workflowQuerySchema> & { token: string; allowMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
-  const { data, error, request } = await clientQueryWorkflows({
+  const { data, error } = await clientQueryWorkflows({
     client,
     query: { ...query, tags: ['civitai', ...(query.tags ?? [])] },
   }).catch((error) => {
@@ -57,7 +58,11 @@ export async function queryWorkflows({
   return { nextCursor: next, items };
 }
 
-export async function getWorkflow({ token, path, query }: GetWorkflowData & { token: string }) {
+export async function getWorkflow({
+  token,
+  path,
+  query,
+}: Options<GetWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
   const { data, error } = await clientGetWorkflow({ client, path, query });
   if (!data) {
@@ -82,7 +87,7 @@ export async function submitWorkflow({
   token,
   body,
   query,
-}: SubmitWorkflowData & { token: string }) {
+}: Options<SubmitWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
@@ -95,19 +100,23 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
-  // console.log('------');
-  // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
-  // console.log('------');
+  if (isDev) {
+    // console.log('------');
+    // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
+    // console.log('------');
+  }
 
-  const { data, error } = await clientSubmitWorkflow({
+  const { data, error, response } = await clientSubmitWorkflow({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
   });
 
   if (!data) {
-    const e = error as any;
-    const message = e.errors?.messages ? e.errors.messages.join('\n') : e.detail;
+    const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
+      messages?: string[];
+    };
+    const message = messages?.length ? messages.join(',\n') : handleError(error);
 
     if (!isProd) {
       console.log('----Workflow Error----');
@@ -117,7 +126,7 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
-    switch (error.status) {
+    switch (response.status) {
       case 400:
         throw throwBadRequestError(message);
       case 401:

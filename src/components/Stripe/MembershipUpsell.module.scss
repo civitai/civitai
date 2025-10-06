@@ -1,29 +1,125 @@
-.card {
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
-  height: 100%;
-  width: 100%;
-  margin: 0;
-  padding: var(--mantine-spacing-md);
-  border-radius: var(--mantine-radius-md);
-  display: flex;
+/* Membership Card - Compact design with grape theme */
+.membershipCard {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-grape-0) 0%, 
+    rgba(var(--mantine-color-grape-1-rgb), 0.6) 25%,
+    rgba(var(--mantine-color-grape-1-rgb), 0.3) 40%,
+    light-dark(rgba(var(--mantine-color-white-rgb), 0.95), rgba(var(--mantine-color-dark-6-rgb), 0.95)) 60%,
+    light-dark(var(--mantine-color-white), var(--mantine-color-dark-6)) 100%
+  );
+  border: 2px solid var(--mantine-color-grape-3);
+  box-shadow: 0 2px 12px rgba(174, 62, 201, 0.15);
+  position: relative;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(174, 62, 201, 0.2);
+  }
+  
+  @media (max-width: theme('screens.xs')) {
+    padding: var(--mantine-spacing-sm) !important;
+  }
 }
 
-.title {
-  font-size: 24px;
+/* Badge styling */
+.badge {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-grape-5) 0%, 
+    var(--mantine-color-grape-7) 100%);
+  color: white;
+  border: none;
   font-weight: 600;
-  color: light-dark(var(--mantine-color-black), var(--mantine-color-white));
+  box-shadow: 0 1px 4px rgba(174, 62, 201, 0.3);
+}
+
+/* Image wrapper */
+.imageWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mantine-radius-md);
+  overflow: hidden;
+}
+
+/* Tier icon */
+.tierIcon {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-grape-6) 0%, 
+    var(--mantine-color-grape-8) 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(174, 62, 201, 0.3);
+}
+
+/* Title styling */
+.title {
+  font-weight: 700;
+  color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-white));
+  background: linear-gradient(135deg, 
+    var(--mantine-color-grape-7) 0%, 
+    var(--mantine-color-grape-9) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  
+  @media (prefers-color-scheme: dark) {
+    background: linear-gradient(135deg, 
+      var(--mantine-color-grape-4) 0%, 
+      var(--mantine-color-grape-3) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
 }
 
 .subtitle {
-  font-size: 18px;
   font-weight: 500;
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-4));
+}
+
+/* Benefit text */
+.benefitText {
+  color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-3));
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+/* Price styling */
+.price {
+  color: var(--mantine-color-grape-6);
+  
+  @media (prefers-color-scheme: dark) {
+    color: var(--mantine-color-grape-4);
+  }
+}
+
+/* Upgrade button */
+.upgradeButton {
+  background: linear-gradient(135deg, 
+    var(--mantine-color-grape-6) 0%, 
+    var(--mantine-color-grape-8) 100%);
+  border: none;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: linear-gradient(135deg, 
+      var(--mantine-color-grape-7) 0%, 
+      var(--mantine-color-grape-9) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(174, 62, 201, 0.3);
+  }
+  
+  &:active {
+    transform: translateY(0);
+  }
+}
+
+/* Legacy compatibility */
+.card {
+  @extend .membershipCard;
 }
 
 .listItem {
-  color: light-dark(var(--mantine-color-black), var(--mantine-color-dark-0));
-  font-size: 16px;
-
-  .mantine-Text-root {
-    color: light-dark(var(--mantine-color-black), var(--mantine-color-dark-0));
-  }
+  @extend .benefitText;
 }

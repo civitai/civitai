@@ -2,7 +2,8 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 type NewOrderRedisKeyString = Values<typeof REDIS_SYS_KEYS.NEW_ORDER>;
@@ -313,3 +314,78 @@ export const getImageRatingsCounter = (imageId: number) => {
 
   return counter;
 };
+
+// Rate limiting configuration for voting
+export const VOTING_RATE_LIMITS = {
+  perMinute: 75, // Max votes per minute
+  perHour: 4500, // Max votes per hour
+  abuseThreshold: 4510, // Auto-reset career threshold per hour
+} as const;
+
+// Simple sliding window rate limiter for voting
+export async function checkVotingRateLimit(userId: number): Promise<{
+  allowed: boolean;
+  remaining: number;
+  resetTime: number;
+  isAbuse: boolean;
+}> {
+  if (!redis) {
+    return {
+      allowed: true,
+      remaining: VOTING_RATE_LIMITS.perMinute,
+      resetTime: Date.now() + 60000,
+      isAbuse: false,
+    };
+  }
+
+  const now = Date.now();
+  const minuteKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.MINUTE}:${userId}` as const;
+  const hourKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.HOUR}:${userId}` as const;
+  const minuteWindow = 60 * 1000; // 1 minute
+  const hourWindow = 60 * 60 * 1000; // 1 hour
+
+  try {
+    // Clean up old entries
+    await redis.zRemRangeByScore(minuteKey, '-inf', now - minuteWindow);
+    await redis.zRemRangeByScore(hourKey, '-inf', now - hourWindow);
+
+    // Count current requests
+    const [minuteCount, hourCount] = await Promise.all([
+      redis.zCard(minuteKey),
+      redis.zCard(hourKey),
+    ]);
+
+    // Check limits
+    const minuteAllowed = minuteCount < VOTING_RATE_LIMITS.perMinute;
+    const hourAllowed = hourCount < VOTING_RATE_LIMITS.perHour;
+    const isAbuse = hourCount >= VOTING_RATE_LIMITS.abuseThreshold;
+    const allowed = minuteAllowed && hourAllowed && !isAbuse;
+
+    if (allowed) {
+      // Add current request
+      const requestId = `${now}-${Math.random()}`;
+      await Promise.all([
+        redis.zAdd(minuteKey, { score: now, value: requestId }),
+        redis.zAdd(hourKey, { score: now, value: requestId }),
+        redis.expire(minuteKey, 60),
+        redis.expire(hourKey, 3600),
+      ]);
+    }
+
+    return {
+      allowed,
+      remaining: Math.max(0, VOTING_RATE_LIMITS.perMinute - minuteCount - (allowed ? 1 : 0)),
+      resetTime: now + minuteWindow,
+      isAbuse,
+    };
+  } catch (error) {
+    handleLogError(error as Error, `Rate limiting failed for user ${userId}`);
+    // Fallback to allow if Redis fails
+    return {
+      allowed: true,
+      remaining: VOTING_RATE_LIMITS.perMinute,
+      resetTime: now + 60000,
+      isAbuse: false,
+    };
+  }
+}

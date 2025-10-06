@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 
 const sharedMetadata = z.object({
   height: z.number(),
@@ -11,6 +11,7 @@ const sharedMetadata = z.object({
   username: z.string().optional(),
   userId: z.number().optional(),
   skipScannedAtReassignment: z.boolean().optional(),
+  nsfwLevelReason: z.string().nullish(),
 });
 
 export type ImageMetadata = z.infer<typeof imageMetadataSchema>;

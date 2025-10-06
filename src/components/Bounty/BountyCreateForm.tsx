@@ -22,10 +22,10 @@ import {
   IconQuestionMark,
   IconTrash,
 } from '@tabler/icons-react';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
-import type * as z from 'zod/v4';
+import type * as z from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
@@ -53,7 +53,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import {
@@ -64,7 +64,6 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -74,13 +73,17 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
+// const tooltipProps: Partial<TooltipProps> = {
+//   maw: 300,
+//   multiline: true,
+//   position: 'bottom',
+//   withArrow: true,
+// };
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -96,23 +99,35 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 };
 
 const formSchema = createBountyInputSchema
+  .extend({
+    description: getSanitizedStringSchema().refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty'),
+  })
   .omit({
     images: true,
   })
   .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => data.startsAt < data.expiresAt, {
-    message: 'Start date must be before expiration date',
+    error: 'Start date must be before expiration date',
     path: ['startsAt'],
   })
   .refine((data) => data.expiresAt > data.startsAt, {
-    message: 'Expiration date must be after start date',
+    error: 'Expiration date must be after start date',
     path: ['expiresAt'],
+  })
+  .refine((data) => data.nsfw && data.buzzType === 'green', {
+    error: 'When using Green Buzz, you are not allowed to create NSFW content',
+    path: ['nsfw']
   });
 
 export function BountyCreateForm() {
   const router = useRouter();
+  const availableBuzzTypes = useAvailableBuzz();
+  const [mainBuzzType] = availableBuzzTypes;
+  const features = useFeatureFlags();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -143,6 +158,7 @@ export function BountyCreateForm() {
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
       nsfw: false,
+      buzzType: mainBuzzType as 'yellow' | 'green',
     },
     shouldUnregister: false,
   });
@@ -205,6 +221,7 @@ export function BountyCreateForm() {
       try {
         const result = await createBounty({
           ...data,
+          buzzType: mainBuzzType as 'green' | 'yellow', // technically, also red by anyways
           images: filteredImages,
         });
         await router.push(`/bounties/${result.id}`);
@@ -552,28 +569,30 @@ export function BountyCreateForm() {
                   </Stack>
                 }
               />
-              <InputSwitch
-                name="nsfw"
-                label={
-                  <Stack gap={4}>
-                    <Group gap={4}>
-                      <Text inline>Mature theme</Text>
-                      <LegacyActionIcon
-                        color="gray"
-                        variant="subtle"
-                        radius="xl"
-                        size="xs"
-                        onClick={openBrowsingLevelGuide}
-                      >
-                        <IconQuestionMark />
-                      </LegacyActionIcon>
-                    </Group>
-                    <Text size="xs" c="dimmed">
-                      This bounty is intended to produce mature content.
-                    </Text>
-                  </Stack>
-                }
-              />
+              {mainBuzzType !== 'green' && (
+                <InputSwitch
+                  name="nsfw"
+                  label={
+                    <Stack gap={4}>
+                      <Group gap={4}>
+                        <Text inline>Mature theme</Text>
+                        <LegacyActionIcon
+                          color="gray"
+                          variant="subtle"
+                          radius="xl"
+                          size="xs"
+                          onClick={openBrowsingLevelGuide}
+                        >
+                          <IconQuestionMark />
+                        </LegacyActionIcon>
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        This bounty is intended to produce mature content.
+                      </Text>
+                    </Stack>
+                  }
+                />
+              )}
               {hasPoiInNsfw && (
                 <>
                   <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
@@ -603,7 +622,7 @@ export function BountyCreateForm() {
               disabled={hasPoiInNsfw}
               label="Save"
               buzzAmount={unitAmount}
-              color="yellow.7"
+              accountTypes={availableBuzzTypes}
             />
           ) : (
             <Button loading={creatingBounty} type="submit" disabled={hasPoiInNsfw}>

@@ -22,7 +22,7 @@ import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-re
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -76,19 +76,23 @@ const schema = modelUpsertSchema
     attestation: z.boolean().refine((data) => !!data, 'Required'),
   })
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
-    message: 'Please select the checkpoint type',
+    error: 'Please select the checkpoint type',
     path: ['checkpointType'],
   })
   .refine((data) => !(data.nsfw && data.poi === 'true'), {
-    message: 'Mature content depicting actual people is not permitted.',
+    error: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => !(data.nsfw && data.sfwOnly), {
-    message:
+    error:
       'This resource is intended to produce mature themes and cannot be used for NSFW generation',
   })
   .refine((data) => !(data.nsfw && data.minor), {
-    message:
+    error:
       'Minor resources cannot be used for NSFW generation. Please revise the content of this listing.',
+  })
+  .refine((data) => !(data.availability === Availability.Private && !data.sfwOnly), {
+    error: 'Private models must be set to SFW only.',
+    path: ['sfwOnly'],
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -162,6 +166,8 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
   const allowCommercialUse = form.watch('allowCommercialUse');
+  const availability = form.watch('availability');
+  const isPrivate = availability === Availability.Private;
   const hasPoiInNsfw = nsfw && poi === 'true';
   const hasSfwOnlyNsfw = nsfw && sfwOnly;
   const { isDirty, errors } = form.formState;
@@ -528,7 +534,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={isLocked('nsfw') || poi === 'true' || minor}
+                  disabled={isLocked('nsfw') || poi === 'true' || minor || isPrivate}
                   description={isLockedDescription('category')}
                   onChange={(event) => {
                     if (event.target.checked) {
@@ -553,7 +559,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 <InputCheckbox
                   name="sfwOnly"
                   label="Cannot be used for NSFW generation"
-                  disabled={isLocked('sfwOnly') || nsfw || minor || poi === 'true'}
+                  disabled={isLocked('sfwOnly') || nsfw || minor || poi === 'true' || isPrivate}
                   description={isLockedDescription('sfwOnly')}
                 />
               </Stack>
@@ -614,9 +620,15 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               <InputChipGroup
                 name="availability"
                 onChange={async (v) => {
-                  // @ts-ignore eslint-disable-next-line
-                  const value = v as Availability;
-                  if (value === Availability.Private) {
+                  const selected = Array.isArray(v) ? v[0] : v;
+                  if (!selected) return;
+
+                  const value = selected as Availability;
+                  const isPrivate = value === Availability.Private;
+                  // Set sfwOnly if private
+                  form.setValue('sfwOnly', isPrivate);
+
+                  if (isPrivate) {
                     // Open automatic configurator modal:
                     // event.preventDefault();
                     // event.stopPropagation();
@@ -719,6 +731,7 @@ export const PrivateModelAutomaticSetup = ({
         poi: form.poi === 'true',
         id: form.id as number,
         availability: Availability.Private,
+        sfwOnly: true,
         modelVersionIds: modelVersionId ? [modelVersionId] : undefined,
       });
 
@@ -727,9 +740,11 @@ export const PrivateModelAutomaticSetup = ({
         utils.modelVersion.getById.invalidate({ id: modelVersionId });
       }
 
-      await router.replace(
-        `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
-      );
+      if (form.id) {
+        await router.replace(
+          `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
+        );
+      }
 
       handleClose();
     } catch (error) {

@@ -1,7 +1,8 @@
 import type { SessionUser } from 'next-auth';
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const imageTrainingBaseSchema = z.object({
   model: z.string(),
@@ -23,9 +24,10 @@ export const imageTrainingRouterWhatIfSchema = imageTrainingBaseSchema.merge(
 export type ImageTrainingRouterWhatIfSchema = z.infer<typeof imageTrainingRouterWhatIfSchema>;
 
 const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
-  trainingData: z.string().url(),
+  trainingData: z.url(),
   loraName: z.string(),
   samplePrompts: z.array(z.string()),
+  negativePrompt: z.string().optional(),
   params: z.union([
     trainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
     whatIfTrainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
@@ -40,6 +42,7 @@ export const imageTrainingRouterInputSchema = z.object({
 
 const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
   token: z.string(),
+  currencies: z.array(z.enum(buzzSpendTypes)).optional(),
 });
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
@@ -47,5 +50,6 @@ export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSc
 
 const imageTraininWhatIfgWorkflowSchema = imageTrainingRouterWhatIfSchema.extend({
   token: z.string(),
+  currencies: z.array(z.enum(buzzSpendTypes)).optional(),
 });
 export type ImageTraininWhatIfWorkflowSchema = z.infer<typeof imageTraininWhatIfgWorkflowSchema>;

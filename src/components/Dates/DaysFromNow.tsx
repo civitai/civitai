@@ -1,5 +1,6 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import useIsClient from '~/hooks/useIsClient';
+import type { ConfigType } from 'dayjs';
 
 export const DaysFromNow = ({ date, withoutSuffix = false, inUtc = false }: Props) => {
   const day = inUtc ? dayjs.utc(date) : dayjs(date);
@@ -17,7 +18,7 @@ export const DaysFromNow = ({ date, withoutSuffix = false, inUtc = false }: Prop
 };
 
 type Props = {
-  date: dayjs.ConfigType;
+  date: ConfigType;
   withoutSuffix?: boolean;
   inUtc?: boolean;
 };

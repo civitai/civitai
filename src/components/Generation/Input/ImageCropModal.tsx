@@ -15,10 +15,17 @@ import type { Area, MediaSize, Point } from 'react-easy-crop';
 import Cropper, { getInitialCropFromCroppedAreaPercentages } from 'react-easy-crop';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import { getCroppedImg } from '~/utils/image-utils';
+import { getCroppedImg } from '~/shared/utils/canvas-utils';
+
+type AspectRatio = `${number}:${number}`;
 
 type ImageProps = { url: string; width: number; height: number; label?: string };
-type ImageCropperProps = { images: ImageProps[]; onCancel?: () => void; onConfirm: OnConfirmFn };
+type ImageCropperProps = {
+  images: ImageProps[];
+  onCancel?: () => void;
+  onConfirm: OnConfirmFn;
+  aspectRatios?: AspectRatio[];
+};
 type CroppedImageProps = ImageProps & {
   zoom: number;
   crop: Point;
@@ -56,9 +63,13 @@ export function ImageCropModal(props: ImageCropperProps) {
   );
 }
 
-export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCropperProps) {
+export function ImageCropperContent({
+  images,
+  onCancel,
+  onConfirm,
+  aspectRatios,
+}: ImageCropperProps) {
   const initialAspect = images[0].width / images[0].height;
-  const [aspect, setAspect] = useState(initialAspect);
   const [selected, setSelected] = useState('0');
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<CroppedImageProps[]>(
@@ -71,15 +82,22 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
     }))
   );
   const selectedIndex = Number(selected);
-
   const availableAspects = useMemo(() => {
-    return [
-      { value: `${initialAspect}`, label: 'Default' },
-      { value: `${3 / 2}`, label: 'Landscape (3:2)' },
-      { value: `${1}`, label: 'Square (1:1)' },
-      { value: `${2 / 3}`, label: 'Portrait (2:3)' },
-    ];
+    if (!aspectRatios?.length)
+      return [
+        { value: `${initialAspect}`, label: 'Default' },
+        { value: `${3 / 2}`, label: 'Landscape (3:2)' },
+        { value: `${1}`, label: 'Square (1:1)' },
+        { value: `${2 / 3}`, label: 'Portrait (2:3)' },
+      ];
+    else
+      return aspectRatios.map((ratio) => {
+        const [w, h] = ratio.split(':').map(Number);
+        return { value: `${w / h}`, label: ratio };
+      });
   }, [initialAspect]);
+
+  const [aspect, setAspect] = useState(Number(availableAspects[0].value));
 
   function handleCropComplete(
     croppedArea: Area,
@@ -125,19 +143,35 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
     setLoading(false);
   }
 
+  const showAllImagesPreview = state.length > 1;
+  const showAspectRatios = aspectRatios && aspectRatios.length > 1;
+  const showSidebar = showAllImagesPreview || showAspectRatios;
+  const buttons = (
+    <div className="flex justify-end gap-2">
+      <Button className="flex-1" onClick={onCancel} variant="default">
+        Cancel
+      </Button>
+      <Button className="flex-1" onClick={handleConfirm} loading={loading}>
+        {!loading ? 'Confirm' : ''}
+      </Button>
+    </div>
+  );
+
   return (
     <div className="flex gap-3 max-sm:flex-col">
       <div className="flex flex-1 flex-col gap-3">
         <div className="flex flex-1 flex-col gap-3 rounded-md bg-[#000] py-3">
-          <SegmentedControl
-            onChange={setSelected}
-            value={selected}
-            data={images.map(({ label }, index) => ({
-              label: label ?? `Image ${index + 1}`,
-              value: `${index}`,
-            }))}
-            className="mx-3"
-          />
+          {images.length > 1 && (
+            <SegmentedControl
+              onChange={setSelected}
+              value={selected}
+              data={images.map(({ label }, index) => ({
+                label: label ?? `Image ${index + 1}`,
+                value: `${index}`,
+              }))}
+              className="mx-3"
+            />
+          )}
           <div className="relative">
             {state.map((image, index) => (
               <div
@@ -155,47 +189,46 @@ export function ImageCropperContent({ images, onCancel, onConfirm }: ImageCroppe
             ))}
           </div>
         </div>
+        {!showSidebar && buttons}
       </div>
-      <div className="flex flex-col justify-between gap-3  sm:w-48">
-        <div className="flex flex-col gap-3">
-          {state.map((image, index) => (
-            <div
-              key={index}
-              className="overflow-hidden rounded-md max-sm:hidden"
-              onClick={() => setSelected(`${index}`)}
-            >
-              <ImageCropper
-                {...image}
-                aspect={aspect}
-                readonly
-                classes={{ containerClassName: 'cursor-pointer' }}
-              />
-            </div>
-          ))}
-          <Card withBorder>
-            <Radio.Group
-              size="xs"
-              label="Aspect Ratio"
-              value={`${aspect}`}
-              onChange={(value) => setAspect(Number(value))}
-            >
-              <Stack gap="sm">
-                {availableAspects.map(({ label, value }, index) => (
-                  <Radio key={index} value={value} label={label} />
-                ))}
-              </Stack>
-            </Radio.Group>
-          </Card>
+      {showSidebar && (
+        <div className="flex flex-col justify-between gap-3  sm:w-48">
+          <div className="flex flex-col gap-3">
+            {state.length > 1 &&
+              state.map((image, index) => (
+                <div
+                  key={index}
+                  className="overflow-hidden rounded-md max-sm:hidden"
+                  onClick={() => setSelected(`${index}`)}
+                >
+                  <ImageCropper
+                    {...image}
+                    aspect={aspect}
+                    readonly
+                    classes={{ containerClassName: 'cursor-pointer' }}
+                  />
+                </div>
+              ))}
+            {aspectRatios && aspectRatios.length > 1 && (
+              <Card withBorder>
+                <Radio.Group
+                  size="xs"
+                  label="Aspect Ratio"
+                  value={`${aspect}`}
+                  onChange={(value) => setAspect(Number(value))}
+                >
+                  <Stack gap="sm">
+                    {availableAspects.map(({ label, value }, index) => (
+                      <Radio key={index} value={value} label={label} />
+                    ))}
+                  </Stack>
+                </Radio.Group>
+              </Card>
+            )}
+          </div>
+          {buttons}
         </div>
-        <div className="flex justify-end gap-2">
-          <Button className="flex-1" onClick={onCancel} variant="default">
-            Cancel
-          </Button>
-          <Button className="flex-1" onClick={handleConfirm} loading={loading}>
-            {!loading ? 'Confirm' : ''}
-          </Button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

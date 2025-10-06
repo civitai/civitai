@@ -76,6 +76,8 @@ import { userRouter } from './user.router';
 import { vaultRouter } from './vault.router';
 import { nowPaymentsRouter } from './nowpayments.router';
 import { coinbaseRouter } from './coinbase.router';
+import { emerchantpayRouter } from './emerchantpay.router';
+import { zkp2pRouter } from './zkp2p.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -155,6 +157,8 @@ export const appRouter = router({
   changelog: changelogRouter,
   nowPayments: nowPaymentsRouter,
   coinbase: coinbaseRouter,
+  emerchantpay: emerchantpayRouter,
+  zkp2p: zkp2pRouter,
 });
 
 // export type definition of API

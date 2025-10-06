@@ -1,0 +1,29 @@
+.userBuzz {
+  --buzz-gradient: var(--buzz-gradient);
+  
+  &.withGradient {
+    background: var(--buzz-gradient);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+} 
+
+.buzzText {
+  font-variant-numeric: tabular-nums;
+  
+  &.withGradient {
+    background: var(--buzz-gradient);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+}
+
+.buzzLoader {
+  &.withGradient {
+    color: var(--buzz-gradient);
+  }
+}

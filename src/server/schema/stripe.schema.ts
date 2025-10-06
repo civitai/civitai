@@ -1,7 +1,7 @@
-import * as z from 'zod/v4';
+import * as z from 'zod';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
-import { booleanString } from '~/utils/zod-helpers';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
@@ -16,7 +16,7 @@ export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
 export const createBuzzSessionSchema = z.object({
   priceId: z.string(),
   returnUrl: z.string(),
-  customAmount: z.number().min(constants.buzz.minChargeAmount).optional(),
+  customAmount: z.number().min(buzzConstants.minChargeAmount).optional(),
 });
 
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
@@ -32,6 +32,7 @@ const buzzPurchaseMetadataSchema = z
     unitAmount: z.coerce.number().positive(),
     userId: z.coerce.number().positive(),
     transactionId: z.string().optional(),
+    buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
   })
   .passthrough();
 
@@ -44,7 +45,7 @@ export const paymentIntentMetadataSchema = z.discriminatedUnion('type', [
 export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSchema>;
 export const paymentIntentCreationSchema = z.object({
   unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
-  currency: z.nativeEnum(Currency),
+  currency: z.enum(Currency),
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
   recaptchaToken: z.string(),
@@ -54,8 +55,8 @@ export const paymentIntentCreationSchema = z.object({
 export type GetPaymentIntentsForBuzzSchema = z.infer<typeof getPaymentIntentsForBuzzSchema>;
 export const getPaymentIntentsForBuzzSchema = z.object({
   userId: z.coerce.number().optional(),
-  startingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
-  endingAt: z.coerce.date().min(constants.buzz.cutoffDate).optional(),
+  startingAt: z.coerce.date().min(buzzConstants.cutoffDate).optional(),
+  endingAt: z.coerce.date().min(buzzConstants.cutoffDate).optional(),
 });
 
 export type SetupIntentCreateSchema = z.infer<typeof setupIntentCreateSchema>;

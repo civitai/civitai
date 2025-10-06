@@ -2,12 +2,16 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { userContentOverviewCache } from '~/server/redis/caches';
-import type { GetInfiniteArticlesSchema, UpsertArticleInput } from '~/server/schema/article.schema';
+import type {
+  ArticleMetadata,
+  GetInfiniteArticlesSchema,
+  UpsertArticleInput,
+} from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -19,6 +23,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { createProfanityFilter } from '~/libs/profanity-simple';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -669,9 +674,36 @@ export const upsertArticle = async ({
   coverImage,
   isModerator,
   ...data
-}: UpsertArticleInput & { userId: number; isModerator?: boolean }) => {
+}: UpsertArticleInput & {
+  userId: number;
+  isModerator?: boolean;
+  nsfw?: boolean;
+  metadata?: ArticleMetadata;
+}) => {
   try {
     await throwOnBlockedLinkDomain(data.content);
+    if (!isModerator) {
+      // don't allow updating of locked properties
+      for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+
+      // Check article title and content for profanity
+      const profanityFilter = createProfanityFilter();
+      const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
+      const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+
+      // If profanity is detected, mark article as NSFW and add to locked properties
+      if (isProfane && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+        data.metadata = { profanityMatches: matchedWords };
+        data.nsfw = true;
+        data.userNsfwLevel =
+          data.userNsfwLevel <= NsfwLevel.PG13 ? NsfwLevel.R : data.userNsfwLevel;
+        data.lockedProperties =
+          data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
+            ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
+            : ['nsfw', 'userNsfwLevel'];
+      }
+    }
+
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;
@@ -739,6 +771,8 @@ export const upsertArticle = async ({
         userId: true,
         publishedAt: true,
         status: true,
+        nsfwLevel: true,
+        metadata: true,
       },
     });
     if (!article) throw throwNotFoundError();
@@ -750,11 +784,14 @@ export const upsertArticle = async ({
       (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
       !!article.publishedAt;
 
+    const prevMetadata = article.metadata as ArticleMetadata | null;
+
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
         where: { id },
         data: {
           ...data,
+          metadata: { ...prevMetadata, ...data.metadata },
           publishedAt: republishing ? article.publishedAt : data.publishedAt,
           coverId,
           tags: tags

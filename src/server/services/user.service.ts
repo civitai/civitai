@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
@@ -11,6 +11,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { withRetries } from '~/utils/errorHandling';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -39,11 +40,13 @@ import type {
   GetAllUsersInput,
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
+  GetUserListSchema,
   ToggleBanUser,
   ToggleUserBountyEngagementsInput,
   UpdateContentSettingsInput,
   UserMeta,
   UserSettingsInput,
+  UserSubscriptionsByBuzzType,
 } from '~/server/schema/user.schema';
 import { userSettingsSchema } from '~/server/schema/user.schema';
 import {
@@ -56,7 +59,7 @@ import {
   usersSearchIndex,
 } from '~/server/search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
@@ -68,7 +71,11 @@ import {
 } from '~/server/services/paddle.service';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
-import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenModels,
+} from '~/server/services/user-preferences.service';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
@@ -77,9 +84,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key-generator';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type {
   BountyEngagementType,
   CosmeticType,
@@ -91,6 +99,7 @@ import {
   CollectionType,
   CosmeticSource,
   ModelStatus,
+  UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -104,6 +113,7 @@ import type {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -582,6 +592,78 @@ export const toggleHideUser = async ({
   return true;
 };
 
+export const getUserList = async ({ username, type, limit, page }: GetUserListSchema) => {
+  const user = await getUserByUsername({ username, select: { id: true } });
+  if (!user) throw throwNotFoundError(`No user with username ${username}`);
+
+  const { take = DEFAULT_PAGE_SIZE, skip = 0 } = getPagination(limit, page);
+  const filteredUsers = [-1, user.id]; // Exclude civitai user and the user themselves
+
+  if (type === 'blocked') {
+    // For blocked users, we need to use the cache since it's stored differently
+    const allBlocked = await BlockedUsers.getCached({ userId: user.id });
+    const paginatedIds = allBlocked.slice(skip, skip + take);
+
+    // Fetch user details for the paginated blocked users
+    const items =
+      paginatedIds.length > 0
+        ? await dbRead.user.findMany({
+            where: { id: { in: paginatedIds.map((u) => u.id) } },
+            select: simpleUserSelect,
+          })
+        : [];
+
+    return getPagingData({ items, count: allBlocked.length }, limit, page);
+  }
+
+  // For all other types, use userEngagement table with transaction
+  const isFollowing = type === 'following';
+  const isHidden = type === 'hidden';
+
+  if (isFollowing || isHidden) {
+    const whereClause = {
+      userId: user.id,
+      type: isHidden ? UserEngagementType.Hide : UserEngagementType.Follow,
+      targetUserId: { notIn: filteredUsers },
+    };
+
+    const [items, count] = await dbRead.$transaction([
+      dbRead.userEngagement.findMany({
+        where: whereClause,
+        select: { targetUser: { select: simpleUserSelect } },
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+      }),
+      dbRead.userEngagement.count({ where: whereClause }),
+    ]);
+
+    const users = items.map((item) => item.targetUser);
+    return getPagingData({ items: users, count }, limit, page);
+  } else {
+    // For followers
+    const whereClause = {
+      targetUserId: user.id,
+      type: UserEngagementType.Follow,
+      userId: { notIn: filteredUsers },
+    };
+
+    const [items, count] = await dbRead.$transaction([
+      dbRead.userEngagement.findMany({
+        where: whereClause,
+        select: { user: { select: simpleUserSelect } },
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+      }),
+      dbRead.userEngagement.count({ where: whereClause }),
+    ]);
+
+    const users = items.map((item) => item.user);
+    return getPagingData({ items: users, count }, limit, page);
+  }
+};
+
 export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { username, id },
@@ -687,123 +769,173 @@ export const updateAccountScope = async ({
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
   if (!userId && !token) return undefined;
 
-  // Get UserId from Token
-  if (!userId && token) {
-    const now = new Date();
-    const result = await dbWrite.apiKey.findFirst({
-      where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
-      select: { userId: true },
-    });
-    if (!result) return undefined;
-    userId = result.userId;
-  }
-  if (!userId) return undefined;
+  return withRetries(
+    async () => {
+      // Get UserId from Token
+      if (!userId && token) {
+        const now = new Date();
+        const result = await dbWrite.apiKey.findFirst({
+          where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
+          select: { userId: true },
+        });
+        if (!result) return undefined;
+        userId = result.userId;
+      }
+      if (!userId) return undefined;
 
-  // Get from cache
-  // ----------------------------------
-  const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}` as const;
-  const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
-  if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
+      // Get from cache
+      // ----------------------------------
+      const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}` as const;
+      const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
+      if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
 
-  // On cache miss get from database
-  // ----------------------------------
-  const where: Prisma.UserWhereInput = { deletedAt: null, id: userId };
+      // On cache miss get from database
+      // ----------------------------------
+      const where: Prisma.UserWhereInput = { deletedAt: null, id: userId };
 
-  // console.log(new Date().toISOString() + ' ::', 'running query');
-  // console.trace();
+      // console.log(new Date().toISOString() + ' ::', 'running query');
+      // console.trace();
 
-  // TODO switch from prisma, or try to make this a direct/raw query
-  const response = await dbWrite.user.findFirst({
-    where,
-    include: {
-      referral: { select: { id: true } },
-      profilePicture: {
-        select: {
-          id: true,
-          url: true,
-          // nsfw: true,
-          hash: true,
-          userId: true,
+      // TODO switch from prisma, or try to make this a direct/raw query
+      const response = await dbWrite.user.findFirst({
+        where,
+        include: {
+          referral: { select: { id: true } },
+          profilePicture: {
+            select: {
+              id: true,
+              url: true,
+              // nsfw: true,
+              hash: true,
+              userId: true,
+            },
+          },
         },
-      },
+      });
+      // Get ALL user subscriptions (one per buzzType)
+      const allSubscriptions = await dbWrite.customerSubscription.findMany({
+        where: {
+          userId,
+          status: { notIn: ['canceled'] },
+        },
+        include: {
+          product: true,
+          price: true,
+        },
+      });
+
+      if (!response) return undefined;
+
+      // nb: doing this because these fields are technically nullable, but prisma
+      // likes returning them as undefined. that messes with the typing.
+      const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
+
+      // Build subscriptions object per buzzType
+      const subscriptionsByBuzzType: UserSubscriptionsByBuzzType = {};
+
+      let highestTier: UserTier | undefined = undefined;
+      let primarySubscriptionId: string | undefined = undefined;
+      let memberInBadState = false;
+
+      const tierOrder: Record<string, number> = {
+        founder: 5,
+        gold: 4,
+        silver: 3,
+        bronze: 2,
+        free: 1,
+      };
+
+      for (const sub of allSubscriptions) {
+        const metadata = sub.product.metadata as any;
+        const tier = metadata?.[env.TIER_METADATA_KEY] as UserTier | undefined;
+        const isActive = ['active', 'trialing'].includes(sub.status);
+        const isBadState = ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
+          sub.status
+        );
+
+        if (isBadState) memberInBadState = true;
+
+        if (tier && tier !== 'free') {
+          subscriptionsByBuzzType[sub.buzzType] = {
+            tier,
+            isMember: isActive,
+            subscriptionId: sub.id,
+            status: sub.status,
+          };
+
+          // Track highest tier for backward compatibility
+          if (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0)) {
+            highestTier = tier;
+            primarySubscriptionId = sub.id;
+          }
+        }
+      }
+
+      const tier = highestTier;
+
+      const user = {
+        ...response,
+        image: response.image ?? undefined,
+        referral: response.referral ?? undefined,
+        name: response.name ?? undefined,
+        username: response.username ?? undefined,
+        email: response.email ?? undefined,
+        emailVerified: response.emailVerified ?? undefined,
+        isModerator: response.isModerator ?? undefined,
+        deletedAt: response.deletedAt ?? undefined,
+        customerId: response.customerId ?? undefined,
+        paddleCustomerId: response.paddleCustomerId ?? undefined,
+        mutedAt: response.mutedAt ?? undefined,
+        bannedAt: response.bannedAt ?? undefined,
+        autoplayGifs: response.autoplayGifs ?? undefined,
+        leaderboardShowcase: response.leaderboardShowcase ?? undefined,
+        filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
+        meta: userMeta,
+        banDetails: getUserBanDetails({ meta: userMeta }),
+        subscriptionId: primarySubscriptionId ?? undefined,
+      };
+
+      const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
+
+      const permissions: string[] = [];
+      const systemPermissions = await getSystemPermissions();
+      for (const [key, value] of Object.entries(systemPermissions)) {
+        if (value.includes(user.id)) permissions.push(key);
+      }
+
+      // let feedbackToken: string | undefined;
+      // if (!!user.username && !!user.email)
+      //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
+
+      const userSettings = userSettingsSchema.safeParse(settings ?? {});
+
+      const sessionUser: SessionUser = {
+        ...rest,
+        image: profilePicture?.url ?? rest.image,
+        tier: !!tier ? tier : undefined,
+        permissions,
+        memberInBadState,
+        allowAds:
+          userSettings.success && userSettings.data.allowAds != null
+            ? userSettings.data.allowAds
+            : tier != null
+            ? false
+            : true,
+        redBrowsingLevel:
+          userSettings.success && userSettings.data.redBrowsingLevel != null
+            ? userSettings.data.redBrowsingLevel
+            : undefined,
+        // feedbackToken,
+      };
+
+      await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
+      await invalidateCivitaiUser({ userId });
+
+      return sessionUser;
     },
-  });
-
-  const subscription = await getUserSubscription({
-    userId,
-  });
-
-  if (!response) return undefined;
-
-  // nb: doing this because these fields are technically nullable, but prisma
-  // likes returning them as undefined. that messes with the typing.
-  const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
-
-  const user = {
-    ...response,
-    image: response.image ?? undefined,
-    referral: response.referral ?? undefined,
-    name: response.name ?? undefined,
-    username: response.username ?? undefined,
-    email: response.email ?? undefined,
-    emailVerified: response.emailVerified ?? undefined,
-    isModerator: response.isModerator ?? undefined,
-    deletedAt: response.deletedAt ?? undefined,
-    customerId: response.customerId ?? undefined,
-    paddleCustomerId: response.paddleCustomerId ?? undefined,
-    subscriptionId: subscription?.id ?? undefined,
-    mutedAt: response.mutedAt ?? undefined,
-    bannedAt: response.bannedAt ?? undefined,
-    autoplayGifs: response.autoplayGifs ?? undefined,
-    leaderboardShowcase: response.leaderboardShowcase ?? undefined,
-    filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
-    meta: userMeta,
-    banDetails: getUserBanDetails({ meta: userMeta }),
-  };
-
-  const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
-  const tier: UserTier | undefined =
-    subscription && ['active', 'trialing'].includes(subscription.status)
-      ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]
-      : undefined;
-  const memberInBadState =
-    (subscription &&
-      ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status)) ??
-    undefined;
-
-  const permissions: string[] = [];
-  const systemPermissions = await getSystemPermissions();
-  for (const [key, value] of Object.entries(systemPermissions)) {
-    if (value.includes(user.id)) permissions.push(key);
-  }
-
-  // let feedbackToken: string | undefined;
-  // if (!!user.username && !!user.email)
-  //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
-
-  const userSettings = userSettingsSchema.safeParse(settings ?? {});
-
-  const sessionUser: SessionUser = {
-    ...rest,
-    image: profilePicture?.url ?? rest.image,
-    tier: tier !== 'free' ? tier : undefined,
-    permissions,
-    memberInBadState,
-    allowAds:
-      userSettings.success && userSettings.data.allowAds != null
-        ? userSettings.data.allowAds
-        : tier != null
-        ? false
-        : true,
-    redBrowsingLevel:
-      userSettings.success && userSettings.data.redBrowsingLevel != null
-        ? userSettings.data.redBrowsingLevel
-        : undefined,
-    // feedbackToken,
-  };
-  await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
-
-  return sessionUser;
+    2, // 2 retries = 3 total attempts
+    100 // 100ms initial retry delay
+  );
 };
 
 export const removeAllContent = async ({ id }: { id: number }) => {
@@ -1639,13 +1771,12 @@ export async function amIBlockedByUser({
   targetUsername?: string;
 }) {
   if (!(targetUserId || targetUsername)) return false;
-
-  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
-  if (cachedBlockedBy.some((user) => user.id === targetUserId || user.username === targetUsername))
-    return true;
-
   if (!targetUserId && targetUsername)
     targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
+
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId)) return true;
+
   if (!targetUserId) return false;
   if (targetUserId === userId) return false;
 

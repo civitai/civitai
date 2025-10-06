@@ -49,11 +49,14 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords, includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
+import { includesInappropriate, includesPoi } from '~/utils/metadata/audit';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -132,14 +135,16 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const supportsMinor = ['models', 'images'].includes(targetIndex);
   const filters = [
     isModels && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true OR user.id = ${currentUser?.id}`
+      ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''}`
       : null,
     isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true OR user.username = ${currentUser?.username}`
+      ? `poi != true${currentUser?.username ? ` OR user.username = ${currentUser?.username}` : ''}`
       : null,
     supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
     isModels && !currentUser?.isModerator
-      ? `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`
+      ? `availability != ${Availability.Private}${
+          currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''
+        }`
       : null,
   ].filter(isDefined);
 
@@ -197,6 +202,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
   const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
+  const domainColor = useDomainColor();
 
   const { status } = useInstantSearch({
     catchError: true,
@@ -214,7 +220,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [searchPageQuery, setSearchPageQuery] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { trackSearch } = useTrackEvent();
+  const { trackSearch, trackAction } = useTrackEvent();
   const searchErrorState = status === 'error';
 
   const { key, value } = paired<SearchIndexDataMap>(indexName, hits as SearchIndexDataMap[TKey]);
@@ -222,6 +228,20 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     type: key,
     data: value,
   });
+
+  // Check for illegal search first
+  const isIllegalSearch = useMemo(() => {
+    if (!debouncedSearch) return false;
+    const illegalSearch = includesInappropriate({ prompt: debouncedSearch });
+    return illegalSearch === 'minor';
+  }, [debouncedSearch]);
+
+  // Check profanity in search query (only if not illegal and domain is green)
+  const profanityAnalysis = useCheckProfanity(debouncedSearch, {
+    enabled: domainColor === 'green' && !isIllegalSearch && !!debouncedSearch,
+  });
+
+  const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
     const isIllegalQuery = debouncedSearch
@@ -236,6 +256,18 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       return [
         {
           key: 'blocked',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Blocked',
+        },
+      ];
+    }
+
+    // Check for profanity (only in green domain)
+    if (isProfaneSearch && domainColor === 'green') {
+      return [
+        {
+          key: 'profanity',
           value: debouncedSearch,
           hit: null as any,
           label: 'Blocked',
@@ -301,6 +333,26 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     return items;
   }, [status, filtered, results?.nbHits, query]);
 
+  // Track profanity search separately to avoid side effects in useMemo
+  useEffect(() => {
+    if (!debouncedSearch || !profanityAnalysis.hasProfanity || domainColor !== 'green') return;
+
+    trackAction({
+      type: 'ProfanitySearch',
+      details: {
+        query: debouncedSearch,
+        index: searchIndexMap[indexName],
+        matches: profanityAnalysis.matches,
+      },
+    }).catch(() => undefined);
+  }, [
+    debouncedSearch,
+    domainColor,
+    profanityAnalysis.hasProfanity,
+    profanityAnalysis.matches,
+    indexName,
+  ]);
+
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
 
@@ -347,6 +399,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
     if (
       item.key === 'blocked' ||
+      item.key === 'profanity' ||
       item.key === 'disabled' ||
       item.key === 'blocked-words' ||
       item.key === 'error'
@@ -416,17 +469,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const processHitUrl = (hit: Hit) => {
     switch (indexName) {
       case 'articles':
-        return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
+        return `/${indexName}/${hit.id as number}/${slugit(hit.title)}`;
       case 'images':
       case 'collections':
-        return `/${indexName}/${hit.id}`;
+        return `/${indexName}/${hit.id as number}`;
       case 'users':
-        return `/user/${hit.username}`;
+        return `/user/${hit.username as string}`;
       case 'tools':
         return `/${indexName}/${slugit(hit.name)}`;
       case 'models':
       default:
-        return `/${indexName}/${hit.id}/${slugit(hit.name)}`;
+        return `/${indexName}/${hit.id as number}/${slugit(hit.name)}`;
     }
   };
 
@@ -493,6 +546,24 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                   </Text>
                   <Text size="xs" align="center">
                     Please try a different search term.
+                  </Text>
+                </Stack>
+              );
+            }
+            if (key === 'profanity') {
+              return (
+                <Stack gap="xs" align="center">
+                  <Text size="sm" align="center">
+                    Your search query contains inappropriate content that violates our community
+                    guidelines.
+                  </Text>
+                  {profanityAnalysis.matches.length > 0 && (
+                    <Text size="xs" align="center" c="dimmed">
+                      Flagged terms: {profanityAnalysis.matches.join(', ')}
+                    </Text>
+                  )}
+                  <Text size="xs" align="center">
+                    Please refine your search terms to find appropriate content.
                   </Text>
                 </Stack>
               );
@@ -654,6 +725,7 @@ function parseQuery(index: string, query: string) {
       for (const match of query.matchAll(regex)) {
         const cleanedMatch = match?.groups?.value?.trim();
         const not = match?.groups?.not !== undefined;
+        if (!cleanedMatch) continue;
         filters.push(`${not ? 'NOT ' : ''}${attribute} = ${cleanedMatch}`);
         searchPageQuery.push(
           `${filterAttributes.searchPageMap[attribute] ?? attribute}=${encodeURIComponent(

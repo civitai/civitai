@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Button,
   Center,
@@ -21,7 +20,7 @@ import {
   IconStar,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -36,13 +35,12 @@ import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDro
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
@@ -52,24 +50,22 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 
-type ImagesAsPostsInfiniteProps = {
+export type ImagesAsPostsInfiniteProps = {
   selectedVersionId?: number;
   model: ModelById;
   username?: string;
   modelVersions?: ModelVersionsProps[];
-  generationOptions?: { generationModelId?: number; includeEditingActions?: boolean };
   showModerationOptions?: boolean;
   showPOIWarning?: boolean;
   canReview?: boolean;
 };
 
 const LIMIT = 50;
-export default function ImagesAsPostsInfinite({
+export function ImagesAsPostsInfinite({
   model,
   username,
   modelVersions,
   selectedVersionId,
-  generationOptions,
   showModerationOptions,
   showPOIWarning,
   canReview,
@@ -119,11 +115,19 @@ export default function ImagesAsPostsInfinite({
     [gallerySettings?.hiddenTags]
   );
 
+  const hiddenImageIds = useMemo(
+    () =>
+      selectedVersionId && gallerySettings
+        ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
+        : [],
+    [selectedVersionId, gallerySettings]
+  );
+
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    hiddenImages: !showHidden ? gallerySettings?.hiddenImages : undefined,
+    hiddenImages: !showHidden ? hiddenImageIds : undefined,
     hiddenUsers: !showHidden ? hiddenUsers : undefined,
     hiddenTags: !showHidden ? hiddenTags : undefined,
     browsingLevel: intersection,
@@ -141,12 +145,12 @@ export default function ImagesAsPostsInfinite({
   };
 
   useEffect(() => {
-    if (!gallerySettings?.hiddenImages.length) setShowHidden(false);
-  }, [gallerySettings?.hiddenImages]);
+    if (!hiddenImageIds.length) setShowHidden(false);
+  }, [hiddenImageIds]);
 
   const isMuted = currentUser?.muted ?? false;
   const hasModerationPreferences =
-    !!gallerySettings?.hiddenImages.length ||
+    !!hiddenImageIds.length ||
     !!gallerySettings?.hiddenUsers.length ||
     !!gallerySettings?.hiddenTags.length;
 
@@ -195,7 +199,7 @@ export default function ImagesAsPostsInfinite({
                 <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
                 {showModerationOptions && (
                   <>
-                    {!!gallerySettings?.hiddenImages.length && (
+                    {!!hiddenImageIds.length && (
                       <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                         <LegacyActionIcon
                           variant="light"
@@ -239,7 +243,7 @@ export default function ImagesAsPostsInfinite({
                 </Text>
               </Text>
             )}
-            {hasModerationPreferences ? (
+            {hasModerationPreferences && selectedVersionId ? (
               <Text size="xs" c="dimmed" mt="-md">
                 Some images have been hidden based on moderation preferences set by the creator,{' '}
                 <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>
@@ -258,20 +262,8 @@ export default function ImagesAsPostsInfinite({
             ) : !!items.length ? (
               <div style={{ position: 'relative' }}>
                 <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-                <MasonryColumns
+                <MasonryColumnsVirtual
                   data={items}
-                  staticItem={
-                    !!generationOptions?.generationModelId && selectedVersionId
-                      ? (props) => (
-                          <ModelGenerationCard
-                            {...props}
-                            versionId={selectedVersionId}
-                            modelId={generationOptions.generationModelId}
-                            withEditingActions={generationOptions?.includeEditingActions}
-                          />
-                        )
-                      : undefined
-                  }
                   imageDimensions={(data) => {
                     const tallestImage = data.images.sort((a, b) => {
                       const aHeight = a.height ?? 0;

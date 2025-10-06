@@ -384,7 +384,7 @@ export const upsertBountyHandler = async ({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator ?? false,
     });
-    if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
+    if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id as number}`);
 
     if (input.id) ctx.track.bounty({ type: 'Update', bountyId: input.id }).catch(handleLogError);
     else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
@@ -430,7 +430,11 @@ export const addBenefactorUnitAmountHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const bountyBenefactor = await addBenefactorUnitAmount({ ...input, userId });
+    const bountyBenefactor = await addBenefactorUnitAmount({
+      ...input,
+      userId,
+      buzzType: ctx.features.isGreen ? 'green' : 'yellow',
+    });
 
     ctx.track
       .bountyBenefactor({

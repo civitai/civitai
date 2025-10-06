@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { createStore, useStore } from 'zustand';
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 import { setCookie } from '~/utils/cookies-helpers';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
@@ -9,7 +9,7 @@ import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { devtools } from 'zustand/middleware';
 import type { NsfwLevel } from '~/server/common/enums';
-import type { ColorDomain } from '~/server/common/constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 const Context = createContext<ContentSettingsStore | null>(null);

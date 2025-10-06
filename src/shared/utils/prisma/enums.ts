@@ -416,6 +416,7 @@ export const TagSource = {
   MinorDetection: 'MinorDetection',
   HiveDemographics: 'HiveDemographics',
   Clavata: 'Clavata',
+  SpineRating: 'SpineRating',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];
@@ -450,6 +451,15 @@ export const TagEngagementType = {
 
 export type TagEngagementType = (typeof TagEngagementType)[keyof typeof TagEngagementType];
 
+export const DomainColor = {
+  red: 'red',
+  green: 'green',
+  blue: 'blue',
+  all: 'all',
+} as const;
+
+export type DomainColor = (typeof DomainColor)[keyof typeof DomainColor];
+
 export const CosmeticType = {
   Badge: 'Badge',
   NamePlate: 'NamePlate',
@@ -483,6 +493,8 @@ export const BuzzAccountType = {
   user: 'user',
   generation: 'generation',
   club: 'club',
+  green: 'green',
+  fakered: 'fakered',
 } as const;
 
 export type BuzzAccountType = (typeof BuzzAccountType)[keyof typeof BuzzAccountType];
@@ -631,6 +643,7 @@ export type BountyEngagementType = (typeof BountyEngagementType)[keyof typeof Bo
 export const CsamReportType = {
   Image: 'Image',
   TrainingData: 'TrainingData',
+  GeneratedImage: 'GeneratedImage',
 } as const;
 
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];

@@ -1,6 +1,6 @@
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -8,6 +8,7 @@ import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-h
 import type { ImageMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
 import { getJobDate } from '~/server/jobs/job';
+import type { Dayjs } from 'dayjs';
 
 const log = createLogger('metrics:image');
 
@@ -41,7 +42,6 @@ export const imageMetrics = createMetricProcessor({
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', tasks.length);
 
-      const batchJson = JSON.stringify(batch);
       const metricInsertColumns = metrics.map((key) => `"${key}" INT[]`).join(', ');
       const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
       const metricValues = metrics
@@ -61,7 +61,7 @@ export const imageMetrics = createMetricProcessor({
 
       await executeRefresh(ctx)`
         -- update image metrics
-        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("imageId" INT, ${metricInsertColumns}))
+        WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("imageId" INT, ${metricInsertColumns}))
         INSERT INTO "ImageMetric" ("imageId", "timeframe", "updatedAt", ${metricInsertKeys})
         SELECT
           d."imageId",
@@ -123,7 +123,7 @@ export const imageMetrics = createMetricProcessor({
               WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
               ELSE 'AllTime'::"MetricTimeframe"
           END
-          WHERE "imageId" IN (${ids})
+          WHERE "imageId" = ANY(${ids}::int[])
             AND "imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]};
         `;
         await sleep(2000);
@@ -149,7 +149,7 @@ type ImageMetricKey = keyof ImageMetric;
 type TimeframeData = [number, number, number, number, number];
 type ImageMetricContext = MetricProcessorRunContext & {
   updates: Record<number, Record<ImageMetricKey, TimeframeData | number>>;
-  lastViewUpdate: dayjs.Dayjs;
+  lastViewUpdate: Dayjs;
   setLastViewUpdate: () => void;
 };
 const metrics = [
@@ -173,7 +173,7 @@ async function getReactionTasks(ctx: ImageMetricContext) {
     SELECT
       "imageId" AS id
     FROM "ImageReaction"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -229,7 +229,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
     SELECT t."imageId" as id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."imageId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+    WHERE t."imageId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
     ORDER BY t."imageId"
   `;
 
@@ -260,7 +260,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
     -- get recent image collections
     SELECT "imageId" as id
     FROM "CollectionItem"
-    WHERE "imageId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "imageId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
     ORDER BY "imageId"
   `;
 
@@ -290,7 +290,7 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
     -- get recent image tips
     SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
-    WHERE "entityType" = 'Image' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
+    WHERE "entityType" = 'Image' AND ("createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate})
     ORDER BY "entityId"
   `;
 

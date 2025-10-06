@@ -7,7 +7,7 @@ import {
   browsingLevelLabels,
   browsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { Flags } from '~/shared/utils/flags';
 
 export function BrowsingLevelsStacked() {
   const levels = browsingLevels;
