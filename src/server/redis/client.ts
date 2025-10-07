@@ -482,7 +482,7 @@ export const REDIS_KEYS = {
   },
   EMAIL_VERIFICATION: 'email:verification',
   SESSION: {
-    BASE: 'session',
+    USER_TOKENS: 'session:user-tokens',
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {

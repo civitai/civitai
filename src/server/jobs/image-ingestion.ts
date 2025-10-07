@@ -1,47 +1,52 @@
 import { Prisma } from '@prisma/client';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-import { BlockedReason } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import {
-  deleteImageById,
   deleteImages,
   ingestImage,
-  ingestImageBulk,
+  ingestImageBulk
 } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
-import { getExplainSql } from '~/server/db/db-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 3;
-const rescanInterval = `${env.IMAGE_SCANNING_RETRY_DELAY} minutes`;
-const errorInterval = `${IMAGE_SCANNING_ERROR_DELAY} minutes`;
+
+type PendingIngestImageRow = IngestImageInput & {
+  scanRequestedAt: Date | null;
+}
+type ErrorIngestImageRow = PendingIngestImageRow & {
+  retryCount: number;
+}
 
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
-  const images = await dbWrite.$queryRaw<IngestImageInput[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt
+  const now = new Date();
+
+  // Fetch then filter pending images in JS to avoid a slow query
+  const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
+  const pendingImages = ((await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
     FROM "Image"
-    WHERE (
-        ingestion = ${ImageIngestionStatus.Pending}::"ImageIngestionStatus"
-        AND ("scanRequestedAt" IS NULL OR "scanRequestedAt" <= now() - ${rescanInterval}::interval)
-      ) OR (
-        ingestion = ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
-        AND "scanRequestedAt" <= now() - ${errorInterval}::interval
-        AND ("scanJobs"->>'retryCount')::int < ${IMAGE_SCANNING_RETRY_LIMIT}
-      )
-  `;
+    WHERE ingestion = 'Pending'::"ImageIngestionStatus"
+  `) ?? []).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
 
-  if (!isProd) {
-    console.log(images.length);
-    return;
-  }
+  // Fetch then filter error images in JS to avoid a slow query
+  const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes');
+  const errorImages = ((await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as retryCount
+    FROM "Image"
+    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND "createdAt" > now() - '6 hours'::interval
+  `) ?? []).filter((img) => img.scanRequestedAt && img.scanRequestedAt <= errorRetryDate && img.retryCount < IMAGE_SCANNING_RETRY_LIMIT);
 
-  await sendImagesForScanBulk(images);
+  const images: IngestImageInput[] = [...pendingImages, ...errorImages]
+
+  if (isProd) await sendImagesForScanBulk(images);
+
+  return { toScan: images.length };
 });
 
 async function sendImagesForScanSingle(images: IngestImageInput[]) {
