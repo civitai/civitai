@@ -65,6 +65,15 @@ export default WebhookEndpoint(async (req, res) => {
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
+    // Capture existing SHA256 hash BEFORE deletion to prevent false positives on rescans
+    const existingHash = await dbWrite.modelFileHash.findFirst({
+      where: {
+        fileId,
+        type: ModelHashType.SHA256,
+      },
+      select: { hash: true },
+    });
+
     await dbWrite.$transaction([
       dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
       dbWrite.modelFileHash.createMany({
@@ -79,7 +88,10 @@ export default WebhookEndpoint(async (req, res) => {
     ]);
 
     const sha256Hash = scanResult.hashes.SHA256;
-    if (sha256Hash && (await isModelHashBlocked(sha256Hash))) {
+    // Only check blocking if this is a NEW or CHANGED hash (not a rescan of existing file)
+    const hashChanged = !existingHash || existingHash.hash !== sha256Hash;
+
+    if (sha256Hash && hashChanged && (await isModelHashBlocked(sha256Hash))) {
       await unpublishBlockedModel(file.modelVersionId);
     }
   }
