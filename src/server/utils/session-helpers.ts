@@ -82,7 +82,10 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
 
     // Check if token is invalid BEFORE tracking it
     const tokenInvalid = await sysRedis.hExists(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, tokenId);
-    if (tokenInvalid) return null; // Explicit invalidation
+    if (tokenInvalid) {
+      await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, tokenId);
+      return null; // Explicit invalidation
+    }
 
     // Check if token is tracked (migration for pre-existing sessions)
     const isTracked = await redis.sIsMember(
@@ -171,6 +174,7 @@ export async function invalidateSession(userId: number) {
     (acc, token) => ({ ...acc, [token]: now }),
     {}
   );
+  console.log({ userTokensObj });
 
   await Promise.all([
     redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
