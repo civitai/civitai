@@ -1,6 +1,5 @@
-import type { MigrationPackage, EntityMetricEvent, QueryContext, BatchRange } from '../types';
-import { CUTOFF_DATE } from '../utils';
-import { createColumnRangeFetcher, createIdRangeFetcher } from './base';
+import type { BatchRange, MigrationPackage, QueryContext } from '../types';
+import { CUTOFF_DATE, START_DATE } from '../utils';
 
 type ImageResourceRow = {
   modelId: number;
@@ -13,14 +12,14 @@ export const imageResourcePackage: MigrationPackage<ImageResourceRow> = {
   queryBatchSize: 5000,
   range: async (ctx: QueryContext): Promise<BatchRange> => {
     const { pg } = ctx;
-    const lastImageId = await pg.query<{ id: number }>(`
-      SELECT id
-      FROM "Image"
-      WHERE "createdAt" < $1
-      ORDER BY "createdAt" DESC
-      LIMIT 1
-    `, [CUTOFF_DATE]);
-    return createColumnRangeFetcher('ImageResourceNew', 'imageId', `"imageId" <= ${lastImageId[0]?.id || 0}`)(ctx);
+    const result = await pg.query<{ minId: number, maxId: number }>(`
+      SELECT
+        (SELECT id FROM "Image" WHERE "createdAt" >= $1 ORDER BY "createdAt" ASC LIMIT 1) as "minId",
+        (SELECT id FROM "Image" WHERE "createdAt" < $2 ORDER BY "createdAt" DESC LIMIT 1) as "maxId"
+    `, [START_DATE, CUTOFF_DATE]);
+    const minId = result[0]?.minId || 0;
+    const maxId = result[0]?.maxId || 0;
+    return { start: minId, end: maxId };
   },
 
   query: async ({ pg }, { start, end }) => {

@@ -1,5 +1,5 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import type { MigrationPackage } from '../types';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createFilteredIdRangeFetcher } from './base';
 
 type CollectionItemRow = {
@@ -11,8 +11,8 @@ type CollectionItemRow = {
 };
 
 export const collectionItemPackage: MigrationPackage<CollectionItemRow> = {
-  queryBatchSize: 2000,
-  range: createFilteredIdRangeFetcher('CollectionItem', 'createdAt', `"createdAt" < '${CUTOFF_DATE}'`),
+  queryBatchSize: 10000,
+  range: createFilteredIdRangeFetcher('CollectionItem', 'createdAt', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<CollectionItemRow>(
@@ -26,11 +26,9 @@ export const collectionItemPackage: MigrationPackage<CollectionItemRow> = {
               END as "entityType",
               "addedById", "createdAt"
        FROM "CollectionItem"
-       WHERE "createdAt" < $1
-         AND id >= $2
-         AND id <= $3
-       ORDER BY id`,
-      [CUTOFF_DATE, start, end]
+       WHERE id >= $1
+         AND id <= $2`,
+      [start, end]
     );
   },
 

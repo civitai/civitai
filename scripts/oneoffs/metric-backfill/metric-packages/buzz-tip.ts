@@ -1,5 +1,5 @@
 import type { MigrationPackage } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createTimestampPgRangeFetcher, TIME_FETCHER_BATCH } from './base';
 
 type BuzzTipRow = {
@@ -13,7 +13,7 @@ type BuzzTipRow = {
 
 export const buzzTipPackage: MigrationPackage<BuzzTipRow> = {
   queryBatchSize: 2*TIME_FETCHER_BATCH.day,
-  range: createTimestampPgRangeFetcher('BuzzTip', 'createdAt', `"createdAt" < '${CUTOFF_DATE}' AND "entityType" != 'Image'`),
+  range: createTimestampPgRangeFetcher('BuzzTip', 'createdAt', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}' AND "entityType" != 'Image'`),
   query: async ({ pg }, { start, end }) => {
     return pg.query<BuzzTipRow>(
       `SELECT "entityType", "entityId", "toUserId", "fromUserId", "amount", "createdAt"
@@ -21,7 +21,6 @@ export const buzzTipPackage: MigrationPackage<BuzzTipRow> = {
        WHERE
         extract(epoch from "createdAt") >= $1
         AND extract(epoch from "createdAt") <= $2
-        AND "entityType" != 'Image'
       `,
       [start, end]
     );

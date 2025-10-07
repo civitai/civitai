@@ -1,5 +1,5 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import type { MigrationPackage } from '../types';
+import { CUTOFF_DATE, START_DATE } from '../utils';
 import { createColumnRangeFetcher } from './base';
 
 enum CollectionContributorPermission {
@@ -18,19 +18,18 @@ type CollectionContributorRow = {
 
 export const collectionContributorPackage: MigrationPackage<CollectionContributorRow> = {
   queryBatchSize: 2000,
-  range: createColumnRangeFetcher('CollectionContributor', 'collectionId', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createColumnRangeFetcher('CollectionContributor', 'collectionId', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<CollectionContributorRow>(
       `SELECT "collectionId", cc."userId", cc."createdAt", permissions
        FROM "CollectionContributor" cc
        JOIN "Collection" c ON c.id = cc."collectionId"
-       WHERE cc."createdAt" < $1
-         AND "collectionId" >= $2
-         AND "collectionId" <= $3
+       WHERE "collectionId" >= $1
+         AND "collectionId" <= $2
          AND c."mode" != 'Bookmark'
        ORDER BY "collectionId"`,
-      [CUTOFF_DATE, start, end]
+      [start, end]
     );
   },
 

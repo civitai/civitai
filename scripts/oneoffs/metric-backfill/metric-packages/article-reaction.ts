@@ -1,5 +1,5 @@
 import type { MigrationPackage, Reactions } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createIdRangeFetcher } from './base';
 
 type ArticleReactionRow = {
@@ -12,7 +12,7 @@ type ArticleReactionRow = {
 
 export const articleReactionPackage: MigrationPackage<ArticleReactionRow> = {
   queryBatchSize: 2000,
-  range: createIdRangeFetcher('ArticleReaction', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createIdRangeFetcher('ArticleReaction', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<ArticleReactionRow>(
@@ -20,11 +20,9 @@ export const articleReactionPackage: MigrationPackage<ArticleReactionRow> = {
               a."userId" as "articleOwnerId"
        FROM "ArticleReaction" ar
        JOIN "Article" a ON a.id = ar."articleId"
-       WHERE ar."createdAt" < $1
-         AND ar.id >= $2
-         AND ar.id <= $3
-       ORDER BY ar.id`,
-      [CUTOFF_DATE, start, end]
+       WHERE ar.id >= $1
+         AND ar.id <= $2`,
+      [start, end]
     );
   },
 

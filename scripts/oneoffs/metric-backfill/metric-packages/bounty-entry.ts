@@ -1,5 +1,5 @@
 import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createIdRangeFetcher } from './base';
 
 type BountyEntryRow = {
@@ -10,17 +10,15 @@ type BountyEntryRow = {
 
 export const bountyEntryPackage: MigrationPackage<BountyEntryRow> = {
   queryBatchSize: 2000,
-  range: createIdRangeFetcher('BountyEntry', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createIdRangeFetcher('BountyEntry', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<BountyEntryRow>(
       `SELECT "bountyId", "userId", "createdAt"
        FROM "BountyEntry"
-       WHERE "createdAt" < $1
-         AND id >= $2
-         AND id <= $3
-       ORDER BY id`,
-      [CUTOFF_DATE, start, end]
+       WHERE id >= $1
+         AND id <= $2`,
+      [start, end]
     );
   },
 

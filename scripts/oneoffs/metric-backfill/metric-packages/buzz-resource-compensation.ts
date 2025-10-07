@@ -1,5 +1,5 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import type { MigrationPackage } from '../types';
+import { CUTOFF_DATE, START_DATE } from '../utils';
 import { createTimestampRangeFetcher, TIME_FETCHER_BATCH } from './base';
 
 type BuzzResourceCompensationRow = {
@@ -12,7 +12,8 @@ export const buzzResourceCompensationPackage: MigrationPackage<BuzzResourceCompe
   queryBatchSize: TIME_FETCHER_BATCH.day,
   range: createTimestampRangeFetcher(
     'buzz_resource_compensation',
-    'date'
+    'date',
+    `date >= parseDateTimeBestEffort('${START_DATE}') AND date < parseDateTimeBestEffort('${CUTOFF_DATE}')`
   ),
 
   query: async ({ ch }, { start, end }) => {

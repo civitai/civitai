@@ -1,5 +1,5 @@
 import type { MigrationPackage } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createFilteredIdRangeFetcher } from './base';
 
 type CommentRow = {
@@ -11,7 +11,7 @@ type CommentRow = {
 
 export const commentV2Package: MigrationPackage<CommentRow> = {
   queryBatchSize: 5000,
-  range: createFilteredIdRangeFetcher('CommentV2', 'createdAt', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createFilteredIdRangeFetcher('CommentV2', 'createdAt', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<CommentRow>(

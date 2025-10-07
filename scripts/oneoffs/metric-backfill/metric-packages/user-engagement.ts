@@ -1,5 +1,5 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import type { MigrationPackage } from '../types';
+import { CUTOFF_DATE, START_DATE } from '../utils';
 import { createColumnRangeFetcher } from './base';
 
 type UserEngagementRow = {
@@ -11,17 +11,18 @@ type UserEngagementRow = {
 
 export const userEngagementPackage: MigrationPackage<UserEngagementRow> = {
   queryBatchSize: 5000,
-  range: createColumnRangeFetcher('UserEngagement', 'userId', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createColumnRangeFetcher('UserEngagement', 'userId', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<UserEngagementRow>(
       `SELECT "userId", "targetUserId", "type", "createdAt"
        FROM "UserEngagement"
-       WHERE "createdAt" < $1
-         AND "userId" >= $2
-         AND "userId" <= $3
+       WHERE "createdAt" >= $1
+         AND "createdAt" < $2
+         AND "userId" >= $3
+         AND "userId" <= $4
        ORDER BY "userId"`,
-      [CUTOFF_DATE, start, end]
+      [START_DATE, CUTOFF_DATE, start, end]
     );
   },
 

@@ -1,10 +1,10 @@
 import type { MigrationPackage } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 
 export const orchestrationJobsPackage: MigrationPackage<any> = {
   queryBatchSize: 60*60, // 1 hour in seconds
   range: async () => ({
-    start: Math.floor(new Date('2024-08-21 21:53:49.294').getTime() / 1000),
+    start: Math.floor(new Date(START_DATE).getTime() / 1000),
     end: Math.ceil(new Date(CUTOFF_DATE).getTime() / 1000),
   }),
 

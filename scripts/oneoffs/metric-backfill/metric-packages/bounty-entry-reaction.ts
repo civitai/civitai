@@ -1,5 +1,5 @@
-import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import type { MigrationPackage } from '../types';
+import { CUTOFF_DATE, START_DATE } from '../utils';
 import { createColumnRangeFetcher } from './base';
 
 type BountyEntryReactionRow = {
@@ -12,7 +12,7 @@ type BountyEntryReactionRow = {
 
 export const bountyEntryReactionPackage: MigrationPackage<BountyEntryReactionRow> = {
   queryBatchSize: 2000,
-  range: createColumnRangeFetcher('BountyEntryReaction', 'bountyEntryId', `"createdAt" < '${CUTOFF_DATE}'`),
+  range: createColumnRangeFetcher('BountyEntryReaction', 'bountyEntryId', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<BountyEntryReactionRow>(
@@ -20,11 +20,12 @@ export const bountyEntryReactionPackage: MigrationPackage<BountyEntryReactionRow
               be."userId" as "entryOwnerId"
        FROM "BountyEntryReaction" ber
        JOIN "BountyEntry" be ON be.id = ber."bountyEntryId"
-       WHERE ber."createdAt" < $1
-         AND ber."bountyEntryId" >= $2
-         AND ber."bountyEntryId" <= $3
+       WHERE ber."createdAt" >= $1
+         AND ber."createdAt" < $2
+         AND ber."bountyEntryId" >= $3
+         AND ber."bountyEntryId" <= $4
        ORDER BY ber."bountyEntryId"`,
-      [CUTOFF_DATE, start, end]
+      [START_DATE, CUTOFF_DATE, start, end]
     );
   },
 

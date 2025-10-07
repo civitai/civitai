@@ -1,5 +1,5 @@
 import type { MigrationPackage, Reactions } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createFilteredIdRangeFetcher } from './base';
 
 type ImageReactionRow = {
@@ -13,7 +13,7 @@ type ImageReactionRow = {
 
 export const imageReactionPackage: MigrationPackage<ImageReactionRow> = {
   queryBatchSize: 5000,
-  range: createFilteredIdRangeFetcher('ImageReaction', 'createdAt', `"createdAt" < '${CUTOFF_DATE}'`, 'imageId'),
+  range: createFilteredIdRangeFetcher('ImageReaction', 'createdAt', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`, 'imageId'),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<ImageReactionRow>(

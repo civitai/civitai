@@ -1,5 +1,5 @@
 import type { MigrationPackage } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createTimestampRangeFetcher } from './base';
 
 export const modelVersionEventsPackage: MigrationPackage<any> = {
@@ -7,7 +7,7 @@ export const modelVersionEventsPackage: MigrationPackage<any> = {
   range: createTimestampRangeFetcher(
     'modelVersionEvents',
     'time',
-    `type = 'Download' AND time < parseDateTimeBestEffort('${CUTOFF_DATE}')`
+    `type = 'Download' AND time >= parseDateTimeBestEffort('${START_DATE}') AND time < parseDateTimeBestEffort('${CUTOFF_DATE}')`
   ),
 
   query: async (_ctx, { start, end }) => {

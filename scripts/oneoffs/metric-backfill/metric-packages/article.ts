@@ -1,5 +1,5 @@
 import type { MigrationPackage, EntityMetricEvent } from '../types';
-import { CUTOFF_DATE } from '../utils';
+import { START_DATE, CUTOFF_DATE } from '../utils';
 import { createIdRangeFetcher } from './base';
 
 type ArticleRow = {
@@ -9,18 +9,17 @@ type ArticleRow = {
 
 export const articlePackage: MigrationPackage<ArticleRow> = {
   queryBatchSize: 2000,
-  range: createIdRangeFetcher('Article', `"publishedAt" IS NOT NULL AND "publishedAt" < '${CUTOFF_DATE}'`),
+  range: createIdRangeFetcher('Article', `"publishedAt" IS NOT NULL AND "publishedAt" >= '${START_DATE}' AND "publishedAt" < '${CUTOFF_DATE}'`),
 
   query: async ({ pg }, { start, end }) => {
     return pg.query<ArticleRow>(
       `SELECT "userId", "publishedAt"
        FROM "Article"
        WHERE "publishedAt" IS NOT NULL
-         AND "publishedAt" < $1
-         AND id >= $2
-         AND id <= $3
+         AND id >= $1
+         AND id <= $2
        ORDER BY id`,
-      [CUTOFF_DATE, start, end]
+      [start, end]
     );
   },
 

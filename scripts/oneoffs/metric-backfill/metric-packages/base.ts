@@ -1,5 +1,4 @@
 import type { QueryContext, BatchRange } from '../types';
-import { CUTOFF_DATE } from '../utils';
 
 /**
  * Helper to create a standard ID-based range fetcher for Postgres tables

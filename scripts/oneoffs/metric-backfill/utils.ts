@@ -5,7 +5,8 @@ import { createClient } from '@clickhouse/client';
 import type { EntityMetricEvent } from './types';
 import { Pool } from 'pg';
 
-export const CUTOFF_DATE = '2025-08-07 15:44:39.044';
+export const START_DATE = '2022-11-01 00:00:00.000';
+export const CUTOFF_DATE = '2025-10-07 00:00:00.000';
 
 const pgConnString = new URL(env.DATABASE_URL);
 if (env.DATABASE_SSL !== false) pgConnString.searchParams.set('sslmode', 'no-verify');
@@ -35,6 +36,7 @@ export class ProgressTracker {
     { current: number; total: number; metrics: number; startTime: number }
   >();
   private metricsPerSecond: number[] = [];
+  private saveProgressLock: Promise<void> = Promise.resolve();
 
   start(name: string) {
     console.log(`Starting migration: ${name}`);
@@ -98,13 +100,17 @@ export class ProgressTracker {
   }
 
   async saveProgress(packageName: string, lastBatch: number) {
-    try {
-      const progress = await this.loadProgress();
-      progress[packageName] = lastBatch;
-      await fs.writeFile(this.progressFile, JSON.stringify(progress, null, 2));
-    } catch (error) {
-      console.log(`Failed to save progress: ${error}`);
-    }
+    // Serialize all saveProgress calls to prevent concurrent writes from losing data
+    this.saveProgressLock = this.saveProgressLock.then(async () => {
+      try {
+        const progress = await this.loadProgress();
+        progress[packageName] = lastBatch;
+        await fs.writeFile(this.progressFile, JSON.stringify(progress, null, 2));
+      } catch (error) {
+        console.log(`Failed to save progress: ${error}`);
+      }
+    });
+    await this.saveProgressLock;
   }
 
   async loadProgress(): Promise<Record<string, number>> {

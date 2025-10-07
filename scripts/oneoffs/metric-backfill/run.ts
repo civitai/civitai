@@ -58,13 +58,25 @@ export async function runMigrations(
 
   // Load saved progress if auto-resume is enabled
   console.log('Checking for saved progress...');
-  const savedProgress = params.autoResume ? await progressBar.loadProgress() : {};
+  let savedProgress = params.autoResume ? await progressBar.loadProgress() : {};
   if (Object.keys(savedProgress).length > 0) {
     console.log(`Found saved progress: ${JSON.stringify(savedProgress)}`);
   }
 
   for (const [name, pkg] of packagesToRun) {
     console.log(`\n=== Starting package: ${name} ===`);
+
+    // Reload progress to check for completion status
+    if (params.autoResume) {
+      savedProgress = await progressBar.loadProgress();
+    }
+
+    // Check if package was already completed
+    if (params.autoResume && savedProgress[name] === -1) {
+      console.log(`${name}: Already completed, skipping...`);
+      continue;
+    }
+
     progressBar.start(name);
 
     const queryBatchSize = pkg.queryBatchSize ?? 1000;
@@ -82,6 +94,7 @@ export async function runMigrations(
       if (rangeStart === 0 && rangeEnd === 0) {
         console.log(`${name}: No data to process`);
         progressBar.complete(name, 0);
+        await progressBar.saveProgress(name, -1);
         continue;
       }
 
@@ -142,6 +155,10 @@ export async function runMigrations(
         ).then(() => {
           activeFlushes.delete(flushPromise);
           console.log(`${name}: Flush complete (${toFlush.length} metrics)`);
+        }).catch((err) => {
+          activeFlushes.delete(flushPromise);
+          console.error(`${name}: Flush failed:`, err.message);
+          throw err; // Re-throw so it's caught by Promise.all(activeFlushes)
         });
 
         activeFlushes.add(flushPromise);
@@ -224,14 +241,32 @@ export async function runMigrations(
 
       // Process batches with controlled concurrency using async iteration
       const activePromises = new Set<Promise<void>>();
+      let encounteredError: Error | null = null;
 
       for await (const { batchRange, actualIndex } of generateBatches()) {
+        // Check if any batch has failed
+        if (encounteredError) {
+          console.error(`${name}: Stopping batch generation due to error`);
+          break;
+        }
+
         // Clean up completed promises
-        activePromises.forEach(p => p.then(() => activePromises.delete(p)).catch(() => activePromises.delete(p)));
+        activePromises.forEach(p => {
+          p.then(() => activePromises.delete(p))
+           .catch((err) => {
+             activePromises.delete(p);
+             if (!encounteredError) {
+               encounteredError = err;
+               console.error(`${name}: Batch error detected:`, err.message);
+             }
+           });
+        });
 
         // Wait if we're at max concurrency
         while (activePromises.size >= (params.concurrency ?? 1)) {
-          await Promise.race(activePromises);
+          await Promise.race(activePromises).catch(() => {
+            // Error already captured above, just need to let Promise.race resolve
+          });
         }
 
         // Queue the next batch
@@ -240,7 +275,14 @@ export async function runMigrations(
       }
 
       // Wait for all remaining batches to complete
-      await Promise.all(activePromises);
+      await Promise.all(activePromises).catch((err) => {
+        if (!encounteredError) encounteredError = err;
+      });
+
+      // Throw the first error encountered to trigger the outer catch block
+      if (encounteredError) {
+        throw encounteredError;
+      }
 
       // Flush any remaining metrics in the buffer
       if (metricsBuffer.length > 0) {
@@ -253,6 +295,8 @@ export async function runMigrations(
       await Promise.all(activeFlushes);
 
       progressBar.complete(name, totalMetrics);
+      // Mark package as completed with -1 sentinel value
+      await progressBar.saveProgress(name, -1);
     } catch (error) {
       progressBar.error(name, error);
       throw error;
