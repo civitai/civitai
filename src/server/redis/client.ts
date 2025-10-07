@@ -396,7 +396,7 @@ export const REDIS_SYS_KEYS = {
   EVENT: 'event', // special case
   SESSION: {
     ALL: 'session:all',
-    INVALID_TOKENS: 'session:invalid-tokens',
+    TOKEN_STATE: 'session:token-state',
   },
   JOB: 'job',
   BUZZ_WITHDRAWAL_REQUEST: {
@@ -482,7 +482,7 @@ export const REDIS_KEYS = {
   },
   EMAIL_VERIFICATION: 'email:verification',
   SESSION: {
-    USER_TOKENS: 'session:user-tokens',
+    USER_TOKENS: 'session:user-tokens2',
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {

@@ -14,7 +14,7 @@ import type {
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
@@ -383,7 +383,7 @@ export async function consumeRedeemableCode({
   );
 
   if (consumedCode.type === RedeemableCodeType.Membership) {
-    await invalidateSession(userId);
+    await refreshSession(userId);
     await getMultipliersForUser(userId, true);
     await setVaultFromSubscription({
       userId,
