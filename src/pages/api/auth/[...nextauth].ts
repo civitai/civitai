@@ -157,13 +157,12 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         }
 
         const isNewToken = !token.id;
-        if (!token.id) token.id = uuid();
+        if (isNewToken) token.id = uuid();
         if (!token.signedAt) token.signedAt = Date.now(); // Initialize signedAt on token creation
 
         // Track new tokens
-        console.log({ isNewToken, tokenId: token.id });
-        if (isNewToken && token.id && token.user) {
-          await trackToken(token.id as string, (token.user as any).id);
+        if (isNewToken && token.user) {
+          await trackToken(token.id as string, (token.user as User).id);
         }
 
         return token;
