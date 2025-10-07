@@ -136,7 +136,7 @@ export function getBaseModelConfig(baseModel: string) {
 }
 
 export function getBaseModelGroup(baseModel: string) {
-  return getBaseModelConfig(baseModel)?.group;
+  return getBaseModelConfig(baseModel).group;
 }
 
 export function getBaseModelSeoName(baseModel?: string) {
