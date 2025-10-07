@@ -30,5 +30,8 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
     })
     .filter((item) => !!item.curr);
 
-  return res.status(200).json(diff);
+  return res.status(200).json({
+    diff,
+    v2: d1,
+  });
 });
