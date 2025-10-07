@@ -397,6 +397,7 @@ export const REDIS_SYS_KEYS = {
   SESSION: {
     ALL: 'session:all',
     INVALID_TOKENS: 'session:invalid-tokens',
+    USER_TOKENS: 'session:user-tokens',
   },
   JOB: 'job',
   BUZZ_WITHDRAWAL_REQUEST: {
