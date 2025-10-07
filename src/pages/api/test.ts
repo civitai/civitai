@@ -19,7 +19,7 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
   const d1 = await getPoolParticipantsV2(prevMonth);
   const d2 = await getPoolParticipants(prevMonth);
 
-  const diff = d1
+  const diffa = d1
     .map((item) => {
       const match = d2.find((i) => i.userId === item.userId);
       return {
@@ -29,9 +29,23 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
       };
     })
     .filter((item) => !item.match);
+  const diffb = d2
+    .map((item) => {
+      const match = d1.find((i) => i.userId === item.userId);
+      return {
+        userId: item.userId,
+        data: item,
+        match,
+      };
+    })
+    .filter((item) => !item.match);
+
+  console.log('diffa', diffa.length);
+  console.log('diffb', diffb.length);
 
   return res.status(200).json({
-    diff,
+    diffa,
+    diffb,
     v2: d1,
   });
 });
