@@ -799,12 +799,17 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
 export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts = false) {
   month ??= new Date();
   const monthAccount = getMonthAccount(month);
-  const data = await getTopContributors({ accountIds: [monthAccount], limit: 10000, all: true });
+  const data = await getTopContributors({
+    accountIds: [monthAccount],
+    accountType: 'CreatorProgramBank',
+    limit: 10000,
+    all: true,
+  });
   const participants = data[`${monthAccount}`];
   let bannedParticipants: { userId: number }[] = [];
 
   if (participants.length > 0) {
-    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>`
+    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>` 
       SELECT "id" as "userId"
       FROM "User"
       WHERE id IN (${Prisma.join(participants.map((p) => p.userId))})
