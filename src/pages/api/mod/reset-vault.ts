@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { numericString } from '~/utils/zod-helpers';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 
 const schema = z.object({
   userId: numericString(),
@@ -27,7 +27,7 @@ export default ModEndpoint(async (req: NextApiRequest, res: NextApiResponse) => 
       userId,
     });
 
-    await invalidateSession(userId);
+    await refreshSession(userId);
 
     return res.status(200).json({
       message: 'Vault updated successfully.',

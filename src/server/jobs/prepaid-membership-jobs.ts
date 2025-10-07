@@ -6,7 +6,7 @@ import { createJob } from './job';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
@@ -445,7 +445,7 @@ export const cancelExpiredPrepaidMemberships = createJob(
     // Invalidate sessions for all affected users
     const updatedUserIds = [...new Set(updated.map((m) => m.userId))];
     console.log(`Invalidating sessions for ${updatedUserIds.length} users`);
-    await Promise.all(updatedUserIds.map((userId) => invalidateSession(userId)));
+    await Promise.all(updatedUserIds.map((userId) => refreshSession(userId)));
 
     console.log(`Canceled ${expiredMemberships.length} expired prepaid memberships`);
   }

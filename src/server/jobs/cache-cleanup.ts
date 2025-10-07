@@ -20,14 +20,7 @@ export const cacheCleanup = createJob('cache-cleanup', '0 */1 * * *', async () =
     if (toRemove.size > 0) await redis.hDel(limitKey, [...toRemove]);
   }
 
-  // Clean invalid token ids
-  const invalidTokenIds = await sysRedis.hGetAll(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS);
-  const toRemove = new Set<string>();
-  const tokenCutoff = Date.now() - CacheTTL.month * 1000;
-  for (const [key, value] of Object.entries(invalidTokenIds)) {
-    if (Number(value) < tokenCutoff) toRemove.add(key);
-  }
-  if (toRemove.size > 0) await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, [...toRemove]);
+  // Note: Token state cleanup not needed - Redis hExpire handles TTL automatically
 
   // Merge queues
   const queues = await sysRedis.hGetAll(REDIS_SYS_KEYS.QUEUES.BUCKETS);

@@ -84,7 +84,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { invalidateSession, refreshSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
@@ -1264,7 +1264,7 @@ export const toggleContestBan = async ({
     data: { meta: updatedMeta },
   });
 
-  await invalidateSession(id);
+  await refreshSession(id);
 
   return updatedUser;
 };
@@ -1802,7 +1802,7 @@ export async function updateContentSettings({
 
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
-  await invalidateSession(userId);
+  await refreshSession(userId);
 }
 
 export const getUserByPaddleCustomerId = async ({

@@ -6,6 +6,7 @@ import { getModeratedTags } from '~/server/services/system-cache';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { invalidateSession } from '~/server/utils/session-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type MatureContent = {
@@ -81,6 +82,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   }
     // }
     const data = await getModeratedTags();
+    await invalidateSession(5);
     res.status(200).send({ data });
   } catch (e) {
     console.log(e);
