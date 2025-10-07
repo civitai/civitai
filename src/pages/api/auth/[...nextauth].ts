@@ -35,12 +35,7 @@ import {
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
-import {
-  invalidateSession,
-  invalidateToken,
-  refreshToken,
-  trackToken,
-} from '~/server/utils/session-helpers';
+import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -155,16 +150,8 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           const { deletedAt, ...restUser } = token.user as User;
           token.user = { ...restUser };
         }
-
-        const isNewToken = !token.id;
         if (!token.id) token.id = uuid();
         if (!token.signedAt) token.signedAt = Date.now(); // Initialize signedAt on token creation
-
-        // Track new tokens
-        console.log({ isNewToken, tokenId: token.id });
-        if (isNewToken && token.id && token.user) {
-          await trackToken(token.id as string, (token.user as any).id);
-        }
 
         return token;
       },

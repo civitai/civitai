@@ -21,34 +21,13 @@ declare global {
 
 const TOKEN_ID_ENFORCEMENT = 1713139200000;
 
-export async function trackToken(tokenId: string, userId: number) {
-  try {
-    await sysRedis
-      .multi()
-      .sAdd(`${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${userId}`, tokenId)
-      .expire(`${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${userId}`, DEFAULT_EXPIRATION)
-      .exec();
-
-    log(`Tracked token ${tokenId} for user ${userId}`);
-  } catch (error) {
-    log(`Error tracking token ${tokenId} for user ${userId}: ${(error as Error).message}`);
-  }
-}
-
 export async function invalidateToken(token: JWT) {
   if (!token?.id || typeof token.id !== 'string') return;
 
-  await sysRedis
-    .multi()
-    .hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, Date.now())
-    .hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, DEFAULT_EXPIRATION)
-    .exec();
-
-  // Remove from user's token set
-  if (!token.user) return;
-  const user = token.user as User;
-  await sysRedis.sRem(`${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${user.id}`, token.id);
-
+  await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, Date.now());
+  // Refresh TTL on the hash to prevent unbounded growth
+  // Note: The hourly cleanup job handles bulk cleanup, but TTL adds defense-in-depth
+  await sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, DEFAULT_EXPIRATION);
   log(`Invalidated token ${token.id}`);
 }
 
@@ -67,21 +46,11 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
     if (Date.now() > TOKEN_ID_ENFORCEMENT) return null;
     shouldRefresh = true;
   } else {
-    const tokenId = token.id as string;
-
-    // Check if token is invalid BEFORE tracking it
-    const tokenInvalid = await sysRedis.hExists(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, tokenId);
-    if (tokenInvalid) return null; // Explicit invalidation
-
-    // Track existing tokens on first encounter (migration for pre-existing sessions)
-    const isTracked = await sysRedis.sIsMember(
-      `${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${user.id}`,
-      tokenId
+    const tokenInvalid = await sysRedis.hExists(
+      REDIS_SYS_KEYS.SESSION.INVALID_TOKENS,
+      token.id as string
     );
-    if (!isTracked) {
-      await trackToken(tokenId, user.id);
-      log(`Migrated untracked token ${tokenId} for user ${user.id}`);
-    }
+    if (tokenInvalid) return null; // Explicit invalidation
   }
 
   // Enforce Token Refresh
@@ -135,38 +104,11 @@ function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
     else if (typeof _user[key] === 'undefined') delete _user[key];
   }
 
-  const tokenId = (token.id as string | undefined) ?? uuid();
-  token.id = tokenId;
+  token.id = token.id ?? uuid();
   token.signedAt = Date.now();
-
-  // Track this token for the user
-  if (session.id) {
-    sysRedis
-      .sAdd(`${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${session.id}`, tokenId)
-      .then(() => {
-        // Set expiration to match token lifetime (30 days)
-        return sysRedis.expire(
-          `${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${session.id}`,
-          DEFAULT_EXPIRATION
-        );
-      })
-      .catch((error) => {
-        log(`Error tracking token ${tokenId} for user ${session.id}: ${error.message as string}`);
-      });
-  }
 }
 
 export async function invalidateSession(userId: number) {
-  // Get all tokens for this user and invalidate them
-  const userTokens = await sysRedis.sMembers(`${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${userId}`);
-
-  const now = Date.now();
-
-  const userTokensObj = userTokens.reduce<Record<string, number>>(
-    (acc, token) => ({ ...acc, [token]: now }),
-    {}
-  );
-
   await Promise.all([
     redis.set(`${REDIS_KEYS.SESSION.BASE}:${userId}`, new Date().toISOString(), {
       EX: DEFAULT_EXPIRATION, // 30 days
@@ -174,17 +116,9 @@ export async function invalidateSession(userId: number) {
     redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
     redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
-    sysRedis.del(`${REDIS_SYS_KEYS.SESSION.USER_TOKENS}:${userId}`), // Clean up token set
-    // Invalidate all user tokens
-    sysRedis
-      .multi()
-      .hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, userTokensObj)
-      .hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, userTokens, DEFAULT_EXPIRATION)
-      .exec(),
     invalidateCivitaiUser({ userId }), // Ensures the orch. user is also invalidated
   ]);
-
-  log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);
+  log(`Scheduling refresh session for user ${userId}`);
 }
 
 export async function invalidateAllSessions(asOf: Date | undefined = new Date()) {
