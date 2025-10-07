@@ -44,7 +44,7 @@ import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 // import { adWatchedReward } from '~/server/rewards';
 
-type AccountType = 'User';
+type AccountType = 'User' | 'CreatorProgramBank' | 'CashPending' | 'CashSettled';
 
 export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
@@ -572,18 +572,32 @@ export async function getAccountSummary({
   );
 }
 
+/**
+ * Gets the top contributors for the specified account(s).
+ *
+ * @param accountIds - Single account ID or array of account IDs to get contributors for
+ * @param accountType - Type of account (e.g., 'User'). Defaults to 'User'
+ * @param start - Optional start date to filter contributions
+ * @param end - Optional end date to filter contributions
+ * @param limit - Maximum number of contributors to return. Defaults to 100
+ * @param all - When true, contributedBalance will be the sum of all transactions for that user.
+ *              The value can be negative if the user has received more from that account than what they put in.
+ *              When false, only considers positive contributions. Defaults to false
+ */
 export async function getTopContributors({
   accountIds,
   accountType = 'User',
   start,
   end,
   limit = 100,
+  all = false,
 }: {
   accountIds: number | number[];
   accountType?: AccountType;
   start?: Date;
   end?: Date;
   limit?: number;
+  all?: boolean;
 }) {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
 
@@ -591,6 +605,7 @@ export async function getTopContributors({
   const queryParams: [string, string][] = [['limit', limit.toString()]];
   if (start) queryParams.push(['start', start.toISOString()]);
   if (end) queryParams.push(['end', end.toISOString()]);
+  if (all) queryParams.push(['all', 'true']);
   for (const accountId of accountIds) queryParams.push(['accountId', accountId.toString()]);
 
   const response = await fetch(
@@ -605,6 +620,8 @@ export async function getTopContributors({
     string,
     { accountType: AccountType; accountId: number; contributedBalance: number }[]
   >;
+
+  console.log(dataRaw);
 
   return Object.fromEntries(
     Object.entries(dataRaw).map(([accountId, contributors]) => [

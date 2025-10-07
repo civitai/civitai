@@ -8,7 +8,7 @@ import {
   bustCompensationPoolCache,
   flushBankedCache,
   getCompensationPool,
-  getPoolParticipants,
+  getPoolParticipantsV2,
   userCapCache,
   userCashCache,
 } from '~/server/services/creator-program.service';
@@ -51,7 +51,7 @@ export const creatorsProgramDistribute = createJob(
     const pool = await getCompensationPool({ month });
 
     // Get totals for all participants in bank
-    const participants = await getPoolParticipants(month);
+    const participants = await getPoolParticipantsV2(month);
 
     // Allocate pool value based on participant portion
     const allocations: [number, number][] = [];
