@@ -24,11 +24,11 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
       const match = d2.find((i) => i.userId === item.userId);
       return {
         userId: item.userId,
-        prev: item,
-        curr: match,
+        data: item,
+        match,
       };
     })
-    .filter((item) => !!item.curr);
+    .filter((item) => !item.match);
 
   return res.status(200).json({
     diff,
