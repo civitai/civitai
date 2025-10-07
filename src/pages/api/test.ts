@@ -7,13 +7,16 @@ import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelsSearchIndex } from '~/server/search-index';
-import { getPoolParticipants } from '~/server/services/creator-program.service';
+import {
+  getPoolParticipants,
+  getPoolParticipantsV2,
+} from '~/server/services/creator-program.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { sleep } from '~/utils/errorHandling';
 
 export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const prevMonth = dayjs().subtract(1, 'month').toDate();
-  const d1 = await getPoolParticipants(prevMonth);
+  const d1 = await getPoolParticipantsV2(prevMonth);
   const d2 = await getPoolParticipants(prevMonth);
 
   const diff = d1
