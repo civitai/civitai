@@ -286,13 +286,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie) {
-    console.log('you had me at the cookie');
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
   }
-  console.log('-----------');
-  console.log({ session, hasAuthCookie });
-  console.log('-----------');
   const allowMatureContent =
     appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN;
 
