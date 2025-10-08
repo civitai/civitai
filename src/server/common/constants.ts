@@ -506,6 +506,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://seed.bytedance.com/en/user-agreement',
     name: 'Seedream',
   },
+  ponyV7: {
+    url: 'https://purplesmart.ai/license',
+    name: 'Pony',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -541,7 +545,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
-  'Pony V7': baseLicenses['openrail++'],
+  'Pony V7': baseLicenses['ponyV7'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
