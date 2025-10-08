@@ -192,12 +192,15 @@ export const orchestratorRouter = router({
         });
       }
 
+      delete input.params.experimental;
       const group = getBaseModelGroup(input.params.baseModel);
       if (
         EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group) &&
         !input.params.enhancedCompatibility
       ) {
         input.params.engine = 'comfyui';
+      } else {
+        delete input.params.enhancedCompatibility;
       }
       const experimental = true; // ctx.experimental;
 
