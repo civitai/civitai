@@ -112,7 +112,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -981,7 +981,7 @@ export const toggleMuteHandler = async ({
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
-  await invalidateSession(id);
+  await refreshSession(id);
 
   await ctx.track.userActivity({
     type: user.muted ? 'Unmuted' : 'Muted',
@@ -1187,7 +1187,7 @@ export const reportProhibitedRequestHandler = async ({
       constants.imageGeneration.requestBlocking.notified;
     if (count >= limit) {
       await updateUserById({ id: userId, data: { muted: true } });
-      await invalidateSession(userId);
+      await refreshSession(userId);
 
       await ctx.track.userActivity({
         type: 'Muted',

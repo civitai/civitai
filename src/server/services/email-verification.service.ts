@@ -4,7 +4,7 @@ import { env } from '~/env/server';
 import { emailVerificationEmail } from '~/server/email/templates/emailVerification.email';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 
 const EMAIL_VERIFICATION_EXPIRY = 15 * 60; // 15 minutes in seconds
 
@@ -108,7 +108,7 @@ export async function requestEmailChange(userId: number, newEmail: string) {
   await sendVerificationEmail(newEmail, user.username || 'User', token);
 
   // Invalidate the user's session to ensure they re-authenticate after email change
-  await invalidateSession(userId);
+  await refreshSession(userId);
 
   return { success: true, message: 'Verification email sent' };
 }
@@ -123,7 +123,7 @@ export async function confirmEmailChange(token: string) {
   });
 
   // Invalidate the user's session after successful email change
-  await invalidateSession(userId);
+  await refreshSession(userId);
 
   return { success: true, message: 'Email address updated successfully' };
 }

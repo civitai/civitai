@@ -7,7 +7,7 @@ import { updateUserById } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
@@ -160,7 +160,7 @@ async function reportProhibitedRequest(options: {
 
     if (count >= limit) {
       await updateUserById({ id: userId, data: { muted: true } });
-      await invalidateSession(userId);
+      await refreshSession(userId);
 
       if (track) {
         await track.userActivity({

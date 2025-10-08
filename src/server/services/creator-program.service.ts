@@ -40,7 +40,7 @@ import {
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,
@@ -227,7 +227,7 @@ export async function joinCreatorsProgram(userId: number) {
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};
   `;
-  await invalidateSession(userId);
+  await refreshSession(userId);
 }
 
 async function getPoolValue(month?: Date) {

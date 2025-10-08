@@ -21,16 +21,11 @@ declare global {
 
 export async function trackToken(tokenId: string, userId: number) {
   try {
-    // await redis
-    //   .multi()
-    //   .sAdd(`${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`, tokenId)
-    //   .expire(`${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`, DEFAULT_EXPIRATION)
-    //   .exec();
+    const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
 
-    await Promise.all([
-      redis.sAdd(`${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`, tokenId),
-      redis.expire(`${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`, DEFAULT_EXPIRATION),
-    ]);
+    // Use sysRedis which supports hExpire for individual field TTL
+    await sysRedis.hSet(key as any, tokenId, Date.now());
+    await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
 
     log(`Tracked token ${tokenId} for user ${userId}`);
   } catch (error) {
@@ -43,30 +38,31 @@ export async function invalidateToken(token: JWT) {
 
   // await sysRedis
   //   .multi()
-  //   .hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, Date.now())
+  //   .hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, 'invalid')
   //   .hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, DEFAULT_EXPIRATION)
   //   .exec();
 
-  await Promise.all([
-    sysRedis.hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, Date.now()),
-    sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, DEFAULT_EXPIRATION),
-  ]);
+  await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, token.id, 'invalid');
+  await sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, token.id, DEFAULT_EXPIRATION);
 
-  // Remove from user's token set
+  // Remove from user's token hash
   if (!token.user) return;
   const user = token.user as User;
-  await redis.sRem(`${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`, token.id);
+  await Promise.all([
+    sysRedis.hDel(`${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}` as any, token.id),
+    clearSessionCache(user.id),
+  ]);
 
   log(`Invalidated token ${token.id}`);
 }
 
 export async function refreshToken(token: JWT): Promise<JWT | null> {
-  if (!token.user) return token;
+  if (!token.user) return null;
   const user = token.user as User;
 
   // Return null only for explicit invalidations
   if (!!(user as any).clearedAt) return null;
-  if (!user.id) return token;
+  if (!user.id) return null;
 
   // Enforce token ID requirement
   if (!token.id) return null;
@@ -77,23 +73,28 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
     shouldRefresh = true;
   }
 
+  const tokenId = token.id as string;
+
+  // Check token state in INVALID_TOKENS hash (single Redis call)
+  const tokenState = await sysRedis.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
+  if (tokenState === 'invalid') {
+    // Remove the user token tracking since it's invalid
+    await sysRedis.hDel(`${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}` as any, tokenId);
+    return null; // Explicit invalidation - force logout
+  } else if (tokenState === 'refresh') {
+    shouldRefresh = true;
+    // Remove from hash after detecting it so it only refreshes once
+    await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
+    log(`Token ${tokenId} marked for refresh for user ${user.id}`);
+  }
+
   if (!shouldRefresh) {
-    const tokenId = token.id as string;
+    const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
 
-    // Check if token is invalid BEFORE tracking it
-    const tokenInvalid = await sysRedis.hExists(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, tokenId);
-    if (tokenInvalid) {
-      await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, tokenId);
-      return null; // Explicit invalidation
-    }
-
-    // Check if token is tracked (migration for pre-existing sessions)
-    const isTracked = await redis.sIsMember(
-      `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`,
-      tokenId
-    );
-    if (!isTracked) {
-      // Force refresh for untracked tokens to ensure they get properly tracked
+    // Check if token exists in hash (expired tokens are automatically removed by Redis)
+    const exists = await sysRedis.hExists(key as any, tokenId);
+    if (!exists) {
+      // Token not found - force refresh to track it
       shouldRefresh = true;
       log(`Found untracked token ${tokenId} for user ${user.id}, forcing refresh`);
     }
@@ -126,7 +127,7 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
   return token;
 }
 
-function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
+async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
   if (!session) {
     token.user = undefined;
     return;
@@ -146,52 +147,48 @@ function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
 
   // Track this token for the user
   if (session.id) {
-    // redis
-    //   .multi()
-    //   .sAdd(`${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`, tokenId)
-    //   .expire(`${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`, DEFAULT_EXPIRATION)
-    //   .exec()
-    //   .catch((error) => {
-    //     log(`Error tracking token ${tokenId} for user ${session.id}: ${error.message as string}`);
-    //   });
-
-    Promise.all([
-      redis.sAdd(`${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`, tokenId),
-      redis.expire(`${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`, DEFAULT_EXPIRATION),
-    ]).catch((error) => {
-      log(`Error tracking token ${tokenId} for user ${session.id}: ${error.message as string}`);
-    });
+    const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
+    await sysRedis.hSet(key as any, tokenId, Date.now());
+    await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
   }
 }
 
-export async function invalidateSession(userId: number) {
-  // Get all tokens for this user and invalidate them
-  const userTokens = await redis.sMembers(`${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`);
-
-  const now = Date.now();
-
-  const userTokensObj = userTokens.reduce<Record<string, number>>(
-    (acc, token) => ({ ...acc, [token]: now }),
-    {}
-  );
-  console.log({ userTokensObj });
-
+async function clearSessionCache(userId: number) {
   await Promise.all([
     redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
     redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
-    redis.del(`${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`), // Clean up token set
-    // Invalidate all user tokens
-    // sysRedis
-    //   .multi()
-    //   .hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, userTokensObj)
-    //   .hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, userTokens, DEFAULT_EXPIRATION)
-    //   .exec(),
-    sysRedis.hSet(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, userTokensObj),
-    sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, userTokens, DEFAULT_EXPIRATION),
-    // Ensures the orch. user is also invalidated
     invalidateCivitaiUser({ userId }),
   ]);
+}
+
+async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
+  const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
+
+  // Get all tokens from hash (expired fields are automatically removed by Redis)
+  const tokenHash = await sysRedis.hGetAll(key as any);
+  const userTokens = Object.keys(tokenHash);
+  const userTokensObj = userTokens.reduce<Record<string, string>>(
+    (acc, token) => ({ ...acc, [token]: type }),
+    {}
+  );
+
+  await clearSessionCache(userId);
+  if (Object.keys(userTokensObj).length > 0) {
+    await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, userTokensObj);
+    await sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, userTokens, DEFAULT_EXPIRATION);
+  }
+  return userTokens;
+}
+
+export async function refreshSession(userId: number) {
+  const userTokens = await updateSessionState(userId, 'refresh');
+
+  log(`Refreshed session for user ${userId} - ${userTokens.length} token(s) marked for refresh`);
+}
+
+export async function invalidateSession(userId: number) {
+  const userTokens = await updateSessionState(userId, 'invalid');
 
   log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);
 }

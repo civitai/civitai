@@ -98,7 +98,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -139,7 +139,7 @@ export const userRouter = router({
     .input(updateBrowsingModeSchema)
     .mutation(async ({ input, ctx }) => {
       await updateUserById({ id: ctx.user.id, data: input });
-      await invalidateSession(ctx.user.id);
+      await refreshSession(ctx.user.id);
     }),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),
