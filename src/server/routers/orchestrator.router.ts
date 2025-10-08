@@ -202,7 +202,7 @@ export const orchestratorRouter = router({
       } else {
         delete input.params.enhancedCompatibility;
       }
-      const experimental = true; // ctx.experimental;
+      const experimental = ctx.experimental;
 
       const args = {
         ...input,
