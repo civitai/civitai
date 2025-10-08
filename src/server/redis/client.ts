@@ -199,25 +199,27 @@ function getBaseClient(type: 'cache' | 'system') {
 
   const pingInterval = 4 * 60 * 1000;
 
-  // System redis is a single node, cache redis is a cluster
-  const baseClient =
-    type === 'system'
-      ? createClient({
-          url: connectionUrl,
-          ...authConfig,
-          socket: socketConfig,
-          pingInterval,
-        })
-      : createCluster({
-          rootNodes: [
-            {
-              url: connectionUrl,
-              socket: socketConfig,
-              pingInterval,
-            },
-          ],
-          defaults: authConfig,
-        });
+  // System redis is always a single node
+  // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
+  const isCluster = type === 'cache' && env.REDIS_CLUSTER;
+
+  const baseClient = isCluster
+    ? createCluster({
+        rootNodes: [
+          {
+            url: connectionUrl,
+            socket: socketConfig,
+            pingInterval,
+          },
+        ],
+        defaults: authConfig,
+      })
+    : createClient({
+        url: connectionUrl,
+        ...authConfig,
+        socket: socketConfig,
+        pingInterval,
+      });
 
   baseClient.on('error', (err: Error) => log(`Redis Error`, err));
   baseClient.on('connect', () => log('Redis connected'));

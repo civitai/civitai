@@ -27,6 +27,7 @@ export const serverSchema = z.object({
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   REDIS_URL: z.url(),
+  REDIS_CLUSTER: z.preprocess((x) => x === 'true', z.boolean().default(false)),
   REDIS_SYS_URL: z.url(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
