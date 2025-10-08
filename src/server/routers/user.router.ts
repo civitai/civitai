@@ -67,6 +67,9 @@ import {
   userByReferralCodeSchema,
   userOnboardingSchema,
   userUpdateSchema,
+  requestEmailChangeSchema,
+  verifyEmailChangeSchema,
+  validateEmailTokenSchema,
 } from '~/server/schema/user.schema';
 import {
   computeFingerprint,
@@ -83,6 +86,11 @@ import {
   updateUserById,
 } from '~/server/services/user.service';
 import {
+  requestEmailChange,
+  confirmEmailChange,
+  validateEmailChangeToken,
+} from '~/server/services/email-verification.service';
+import {
   guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
@@ -90,7 +98,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -116,11 +124,22 @@ export const userRouter = router({
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
+  requestEmailChange: protectedProcedure
+    .input(requestEmailChangeSchema)
+    .mutation(async ({ input, ctx }) => {
+      return requestEmailChange(ctx.user.id, input.newEmail);
+    }),
+  validateEmailToken: publicProcedure.input(validateEmailTokenSchema).query(async ({ input }) => {
+    return validateEmailChangeToken(input.token);
+  }),
+  verifyEmailChange: publicProcedure.input(verifyEmailChangeSchema).mutation(async ({ input }) => {
+    return confirmEmailChange(input.token);
+  }),
   updateBrowsingMode: guardedProcedure
     .input(updateBrowsingModeSchema)
     .mutation(async ({ input, ctx }) => {
       await updateUserById({ id: ctx.user.id, data: input });
-      await invalidateSession(ctx.user.id);
+      await refreshSession(ctx.user.id);
     }),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),

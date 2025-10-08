@@ -46,6 +46,7 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Pony', type: 'image', group: 'Pony', ecosystem: 'sdxl' },
+  { name: 'Pony V7', type: 'image', group: 'PonyV7', ecosystem: 'auraflow', hidden: true },
   { name: 'Qwen', type: 'image', group: 'Qwen', ecosystem: 'qwen' },
   {
     name: 'Stable Cascade',
@@ -91,6 +92,8 @@ const baseModelConfig = [
   { name: 'Wan Video 2.2 TI2V-5B', type: 'video', group: 'WanVideo-22-TI2V-5B', engine: 'wan' },
   { name: 'Wan Video 2.2 I2V-A14B', type: 'video', group: 'WanVideo-22-I2V-A14B', engine: 'wan' },
   { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B', engine: 'wan' },
+  { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
+  { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
@@ -114,6 +117,8 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
       'WanVideo-22-I2V-A14B',
       'WanVideo-22-T2V-A14B',
       'WanVideo-22-TI2V-5B',
+      'WanVideo-25-T2V',
+      'WanVideo-25-I2V',
     ],
   },
 ];
@@ -126,12 +131,12 @@ export const activeBaseModels = baseModelConfig
 
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);
-  if (!config) throw new Error(`unsupported base model: ${baseModel}`);
+  if (!config) return baseModelConfig.find((x) => x.group === 'Other')!;
   return config;
 }
 
 export function getBaseModelGroup(baseModel: string) {
-  return getBaseModelConfig(baseModel)?.group;
+  return getBaseModelConfig(baseModel).group;
 }
 
 export function getBaseModelSeoName(baseModel?: string) {
@@ -271,6 +276,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.VAE],
         baseModels: sdxlBaseModels,
+      },
+    ],
+  },
+  {
+    group: 'PonyV7',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint],
+        baseModels: ['Pony V7'],
       },
     ],
   },
@@ -483,6 +497,24 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.LORA],
         baseModels: ['Wan Video 14B t2v', 'Wan Video 14B i2v 480p', 'Wan Video 14B i2v 720p'],
+      },
+    ],
+  },
+  {
+    group: 'WanVideo-25-T2V',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint],
+        baseModels: ['Wan Video 2.5 T2V'],
+      },
+    ],
+  },
+  {
+    group: 'WanVideo-25-I2V',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint],
+        baseModels: ['Wan Video 2.5 I2V'],
       },
     ],
   },

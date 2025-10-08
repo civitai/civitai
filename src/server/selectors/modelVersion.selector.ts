@@ -8,6 +8,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   id: true,
   modelId: true,
   name: true,
+  nsfwLevel: true,
   createdAt: true,
   updatedAt: true,
   status: true,

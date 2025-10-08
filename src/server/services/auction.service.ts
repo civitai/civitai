@@ -398,6 +398,7 @@ export const createBid = async ({
             meta: true,
             poi: true,
             status: true,
+            availability: true,
           },
         },
       },

@@ -192,7 +192,6 @@ import {
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -1678,11 +1677,9 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: { id: true, url: true },
   });
 
-  const s3 = getS3Client();
   const tasks = modelFiles.map((file) => async () => {
     await requestScannerTasks({
       file,
-      s3,
       tasks: ['Hash', 'Scan', 'ParseMetadata'],
       lowPriority: true,
     });
@@ -2069,21 +2066,6 @@ export const upsertModel = async (
   }
 ) => {
   if (input.description) await throwOnBlockedLinkDomain(input.description);
-  if (!input.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
-  // Check model name and description for profanity
-  const profanityFilter = createProfanityFilter();
-  const textToCheck = [input.name, input.description].filter(Boolean).join(' ');
-  const hasProfanity = profanityFilter.isProfane(textToCheck);
-
-  // If profanity is detected, mark model as NSFW and add to locked properties
-  if (hasProfanity && !input.nsfw) {
-    input.nsfw = true;
-    // Add nsfw to lockedProperties to prevent users from changing it
-    input.lockedProperties = [...(input.lockedProperties ?? []), 'nsfw'];
-  }
 
   const {
     id,
@@ -2091,12 +2073,12 @@ export const upsertModel = async (
     userId,
     templateId,
     bountyId,
-    meta,
     isModerator,
     status,
     gallerySettings,
     ...data
   } = input;
+  let { meta } = input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -2104,6 +2086,21 @@ export const upsertModel = async (
     for (const prop of lockedProperties) {
       const key = prop as keyof typeof data;
       if (data[key] !== undefined) delete data[key];
+    }
+
+    // Check model name and description for profanity
+    const profanityFilter = createProfanityFilter();
+    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
+    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+
+    // If profanity is detected, mark model as NSFW and add to locked properties
+    if (isProfane && !data.nsfw) {
+      meta = { ...(meta ?? {}), profanityMatches: matchedWords };
+      data.nsfw = true;
+      data.lockedProperties =
+        data.lockedProperties && !data.lockedProperties.includes('nsfw')
+          ? [...data.lockedProperties, 'nsfw']
+          : ['nsfw'];
     }
   }
 
@@ -2193,6 +2190,7 @@ export const upsertModel = async (
     if (!isOwner) return null;
 
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
+    const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
     const result = await dbWrite.model.update({
       select: {
@@ -2212,7 +2210,7 @@ export const upsertModel = async (
       where: { id },
       data: {
         ...data,
-        meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+        meta: { ...prevMeta, ...meta },
         gallerySettings: {
           ...prevGallerySettings,
           level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
@@ -3605,7 +3603,7 @@ export async function getFeaturedModels() {
           select: {
             position: true,
             modelVersion: {
-              select: { modelId: true },
+              select: { modelId: true, baseModel: true },
             },
           },
           orderBy: { position: 'asc' },
@@ -3613,20 +3611,11 @@ export async function getFeaturedModels() {
         if (data.length === 0) {
           retries++;
         } else {
-          return [
-            ...data
-              .reduce((map, row) => {
-                const current = map.get(row.modelVersion.modelId);
-                if (!current || row.position < current.position) {
-                  map.set(row.modelVersion.modelId, {
-                    modelId: row.modelVersion.modelId,
-                    position: row.position,
-                  });
-                }
-                return map;
-              }, new Map<number, { modelId: number; position: number }>())
-              .values(),
-          ];
+          return data.map((row) => ({
+            modelId: row.modelVersion.modelId,
+            position: row.position,
+            baseModel: row.modelVersion.baseModel as BaseModel,
+          }));
         }
       }
 
@@ -3640,7 +3629,7 @@ export async function getFeaturedModels() {
         ORDER BY "createdAt" desc
         LIMIT 500
       `;
-      return query.map((row) => ({ modelId: row.modelId, position: 0 }));
+      return query.map((row) => ({ modelId: row.modelId, position: 0, baseModel: '' }));
     });
   } catch (e) {
     const error = e as Error;
@@ -3773,30 +3762,35 @@ export const privateModelFromTraining = async ({
       where: { id },
       data: {
         ...data,
+        meta: {
+          ...((meta as ModelMeta) ?? {}),
+          // Makes it so these models cannot go into auctions or be promoted
+          cannotPromote: true,
+        },
         availability: Availability.Private,
         status: ModelStatus.Published,
         sfwOnly: true, // Private models only allow sfw generation
       },
     });
 
-    await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
-      data: {
-        // Ensures things don't break by leaving some versions public.
-        // @luis: TODO: Might be smart to add some DB triggers for this.
-        availability: Availability.Private,
-      },
-    });
-
     if (result.modelVersions.length > 0) {
       const now = new Date();
+
       // Make this private:
       await dbWrite.modelVersion.updateMany({
-        where: { id: { in: result.modelVersions.map((x) => x.id) } },
+        where: { modelId: id },
         data: {
-          availability: Availability.Private,
+          // availability: Availability.Private, -- moved to second updateMany
           publishedAt: now,
           status: ModelStatus.Published,
+        },
+      });
+
+      // Do this after the fact to avoid some triggers.
+      await dbWrite.modelVersion.updateMany({
+        where: { modelId: id },
+        data: {
+          availability: Availability.Private,
         },
       });
 
@@ -3839,6 +3833,13 @@ export const publishPrivateModel = async ({
   modelId,
   publishVersions,
 }: PublishPrivateModelInput) => {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { id: true, userId: true, availability: true, status: true, meta: true },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found');
+
   const versions = await dbRead.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
     select: { id: true },
@@ -3877,7 +3878,12 @@ export const publishPrivateModel = async ({
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
         publishedAt: publishVersions ? now : null,
+        meta: {
+          ...((model.meta ?? {}) as ModelMeta),
+          cannotPromote: false,
+        },
       },
+      select: { id: true },
     }),
   ]);
 

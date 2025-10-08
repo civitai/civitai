@@ -39,6 +39,8 @@ import {
 } from '@civitai/cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import { logToAxiom } from '~/server/logging/client';
+import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 const cybertipClient = new Client({
   environment: isDev ? Environment.Testing : Environment.Production,
@@ -440,6 +442,7 @@ async function constructReportPayload({
 
 export async function processCsamReport(report: CsamReportProps) {
   const status = await cybertipClient.getStatus();
+  if (isDev) console.log({ status });
   if (status.data.responseCode !== 0) return;
 
   switch (report.type) {
@@ -508,82 +511,94 @@ async function reportImages(report: CsamReportProps) {
     ...initialReport,
   });
 
-  const uploadResult = await Limiter({ limit: 2, batchSize: 1 }).process(
-    images,
-    async ([image]) => {
-      const imageReportInfo = report.images.find((x) => x.id === image.id);
-      if (!imageReportInfo) return;
+  try {
+    const uploadResult = await Limiter({ limit: 2, batchSize: 1 }).process(
+      images,
+      async ([image]) => {
+        const imageReportInfo = report.images.find((x) => x.id === image.id);
+        if (!imageReportInfo) return;
 
-      const imageUrl = getEdgeUrl(image.url, { type: image.type });
-      const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
-      const modelVersion = modelVersions.find((x) => x.id === image.modelVersionId);
-      const modelId = modelVersion?.model.id;
-      const modelVersionId = modelVersion?.id;
+        const imageUrl = getEdgeUrl(image.url, { type: image.type });
+        const { prompt, negativePrompt } = (image.meta ?? {}) as Record<string, unknown>;
+        const modelVersion = modelVersions.find((x) => x.id === image.modelVersionId);
+        const modelId = modelVersion?.model.id;
+        const modelVersionId = modelVersion?.id;
 
-      const fileAnnotations =
-        imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
-      const tags = image.tags.map((x) => x.tag.name);
-      if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
-        fileAnnotations.animeDrawingVirtualHentai = true;
+        const fileAnnotations =
+          imageReportInfo?.fileAnnotations ?? ({} as Ncmec.FileAnnotationsSchema);
+        const tags = image.tags.map((x) => x.tag.name);
+        if (tags.some((tag) => ['anime', 'illustrated explicit nudity'].includes(tag))) {
+          fileAnnotations.animeDrawingVirtualHentai = true;
+        }
+        if (
+          tags.some((tag) =>
+            [
+              'violence',
+              'explosions and blasts',
+              'physical violence',
+              'weapon violence',
+              'graphic violence or gore',
+              'hanging',
+            ].includes(tag)
+          )
+        ) {
+          fileAnnotations.physicalHarm = true;
+        }
+
+        const blob = await fetchBlobAsFile(imageUrl);
+        if (!blob) return;
+
+        const {
+          data: { fileId, hash },
+        } = await cybertipClient.uploadFile({ id: reportId, file: blob });
+
+        await cybertipClient.submitFileDetails({
+          reportId,
+          fileId,
+          originalFileName: image.name?.split('?')[0] ?? undefined,
+          locationOfFile: imageUrl,
+          fileViewedByEsp: true,
+          fileAnnotations,
+        });
+
+        return {
+          ...imageReportInfo,
+          fileAnnotations,
+          fileId,
+          hash,
+        };
       }
-      if (
-        tags.some((tag) =>
-          [
-            'violence',
-            'explosions and blasts',
-            'physical violence',
-            'weapon violence',
-            'graphic violence or gore',
-            'hanging',
-          ].includes(tag)
-        )
-      ) {
-        fileAnnotations.physicalHarm = true;
-      }
+    );
 
-      const blob = await fetchBlobAsFile(imageUrl);
-      if (!blob) return;
-
-      const {
-        data: { fileId, hash },
-      } = await cybertipClient.uploadFile({ id: reportId, file: blob });
-
-      await cybertipClient.submitFileDetails({
-        reportId,
-        fileId,
-        originalFileName: image.name ?? undefined,
-        locationOfFile: imageUrl,
-        fileViewedByEsp: true,
-        fileAnnotations,
+    if (isProd) {
+      await dbWrite.csamReport.update({
+        where: { id: report.id },
+        data: {
+          ...report,
+          reportId,
+          reportSentAt: new Date(),
+          details: { ...report.details, images: uploadResult.filter(isDefined) },
+        },
       });
-
-      return {
-        ...imageReportInfo,
-        fileAnnotations,
-        fileId,
-        hash,
-      };
     }
-  );
 
-  await dbWrite.csamReport.update({
-    where: { id: report.id },
-    data: {
-      ...report,
-      reportId,
-      reportSentAt: new Date(),
-      details: { ...report.details, images: uploadResult.filter(isDefined) },
-    },
-  });
-
-  await cybertipClient.finishReport({ id: reportId });
+    await cybertipClient.finishReport({ id: reportId });
+  } catch (e: any) {
+    await cybertipClient.cancelReport({ id: reportId });
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-data',
+      message: e.message,
+    });
+  }
 }
 
 async function reportGenerationData(report: CsamReportProps) {
   const initialReport = await getInitialReportData(report);
   if (!initialReport) return;
 
-  const generatedImages = report.details.generatedImages;
+  const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
   if (!generatedImages) return await deleteCsamReport(report.id);
 
   const {
@@ -591,50 +606,75 @@ async function reportGenerationData(report: CsamReportProps) {
   } = await cybertipClient.submitReport({
     ...initialReport,
   });
+  try {
+    const uploadResult = await Limiter({ batchSize: 1, limit: 2 }).process(
+      generatedImages,
+      async ([{ blobs, prompt, negativePrompt, resources }]) => {
+        const data = (
+          await Promise.all(
+            blobs.map(async (blob) => {
+              const file = await fetchBlobAsFile(blob.url);
+              if (!file) return null;
+              return { ...blob, file };
+            })
+          )
+        ).filter(isDefined);
 
-  const uploadResult = await Limiter({ batchSize: 1, limit: 2 }).process(
-    generatedImages,
-    async ([{ blobs, prompt, negativePrompt, resources }]) => {
-      const data = await Promise.all(
-        blobs.map(async (blob) => ({ ...blob, file: await fetchBlobAsFile(blob.url) }))
-      );
-      const arr: CsamReportGeneratedImageData[] = [];
-      for (const { file, url } of data) {
-        if (file) {
-          const {
-            data: { fileId, hash },
-          } = await cybertipClient.uploadFile({ id: reportId, file });
+        if (!data.length) throw new Error('missing images for report');
 
-          const valuePair: Array<{ name: string; value: string }> = [];
-          if (prompt) valuePair.push({ name: 'prompt', value: prompt });
-          if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: negativePrompt });
-          if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
+        const arr: CsamReportGeneratedImageData[] = [];
+        for (const { file, url } of data) {
+          if (file) {
+            const {
+              data: { fileId, hash },
+            } = await cybertipClient.uploadFile({ id: reportId, file });
 
-          await cybertipClient.submitFileDetails({
-            fileId,
-            reportId,
-            publiclyAvailable: false,
-            details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
-          });
-          arr.push({ url, fileId, hash });
+            const valuePair: Array<{ name: string; value: string }> = [];
+            if (prompt)
+              valuePair.push({ name: 'prompt', value: trimNonAlphanumeric(prompt) ?? '' });
+            if (negativePrompt)
+              valuePair.push({
+                name: 'negativePrompt',
+                value: trimNonAlphanumeric(negativePrompt) ?? '',
+              });
+            if (resources) valuePair.push({ name: 'resources', value: resources.join(',') });
+
+            await cybertipClient.submitFileDetails({
+              fileId,
+              reportId,
+              publiclyAvailable: false,
+              // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
+            });
+            arr.push({ url, fileId, hash });
+          }
         }
+
+        return arr;
       }
+    );
 
-      return arr;
+    if (isProd) {
+      await dbWrite.csamReport.update({
+        where: { id: report.id },
+        data: {
+          ...report,
+          reportId,
+          reportSentAt: new Date(),
+          details: { ...report.details, generatedImages: uploadResult },
+        },
+      });
     }
-  );
 
-  await dbWrite.csamReport.update({
-    where: { id: report.id },
-    data: {
-      ...report,
-      reportId,
-      reportSentAt: new Date(),
-      details: { ...report.details, generatedImages: uploadResult },
-    },
-  });
-
-  await cybertipClient.finishReport({ id: reportId });
+    await cybertipClient.finishReport({ id: reportId });
+  } catch (e: any) {
+    await cybertipClient.cancelReport({ id: reportId });
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-data',
+      message: e.message,
+    });
+  }
 }
 
 async function reportTrainingData(report: CsamReportProps) {
@@ -690,22 +730,29 @@ async function reportTrainingData(report: CsamReportProps) {
       })
     );
 
-    await dbWrite.csamReport.update({
-      where: { id: report.id },
-      data: {
-        ...report,
-        reportId,
-        reportSentAt: new Date(),
-        details: { ...report.details, trainingData: results },
-      },
-    });
+    if (isProd) {
+      await dbWrite.csamReport.update({
+        where: { id: report.id },
+        data: {
+          ...report,
+          reportId,
+          reportSentAt: new Date(),
+          details: { ...report.details, trainingData: results },
+        },
+      });
+    }
 
     await cybertipClient.finishReport({ id: reportId });
 
     removeDir(dir);
-  } catch (e) {
-    removeDir(dir);
-    throw e;
+  } catch (e: any) {
+    await cybertipClient.cancelReport({ id: reportId });
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-data',
+      message: e.message,
+    });
   }
 }
 

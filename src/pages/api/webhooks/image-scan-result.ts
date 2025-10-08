@@ -88,7 +88,10 @@ type BodyProps = z.infer<typeof schema>;
 const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
-  tags: tagSchema.array().nullish(),
+  tags: tagSchema
+    .array()
+    .nullish()
+    .transform((tags) => (tags ? tags.map((x) => ({ ...x, tag: x.tag.toLowerCase() })) : null)),
   hash: z.string().nullish(),
   vectors: z.array(z.number().array()).nullish(),
   status: z.enum(Status),
@@ -97,7 +100,8 @@ const schema = z.object({
     .object({
       movie_rating: z.string().optional(),
       movie_rating_model_id: z.string().optional(),
-      hasMinor: z.boolean().optional(),
+      // hasMinor: z.boolean().optional(),
+      blockedReason: z.string().nullish(),
     })
     .nullish(),
   result: z
@@ -326,6 +330,7 @@ const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => Incom
   [TagSource.WD14]: processWDTags,
   [TagSource.Hive]: processHiveTags,
   [TagSource.Clavata]: processClavataTags,
+  [TagSource.SpineRating]: processSpineRatingTags,
 };
 
 const clavataTagConfidenceRequirements: Record<string, number> = {
@@ -339,8 +344,12 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   minimumNsfw: 51,
 };
 
-type ClavataNsfwLevelTag = (typeof clavataNsfwLevelTags)[number];
-const clavataNsfwLevelTags = ['pg', 'pg-13', 'r', 'x', 'xxx'] as const;
+type NsfwLevelTag = (typeof nsfwLevelTags)[number];
+const nsfwLevelTags = ['pg', 'pg-13', 'r', 'x', 'xxx'] as const;
+
+function processSpineRatingTags(tags: IncomingTag[]) {
+  return tags;
+}
 
 function processClavataTags(tags: IncomingTag[]) {
   // Map tags to lowercase
@@ -353,7 +362,7 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
-    const nsfwLevelIndex = clavataNsfwLevelTags.indexOf(tag.tag as ClavataNsfwLevelTag);
+    const nsfwLevelIndex = nsfwLevelTags.indexOf(tag.tag as NsfwLevelTag);
     const isNsfwLevel = nsfwLevelIndex !== -1;
 
     // Remove tags below confidence threshold
@@ -365,7 +374,7 @@ function processClavataTags(tags: IncomingTag[]) {
 
     // Remove nsfw tags
     if (isNsfwLevel) {
-      if (nsfwLevelIndex > clavataNsfwLevelTags.indexOf(highestNsfwTag.tag as ClavataNsfwLevelTag))
+      if (nsfwLevelIndex > nsfwLevelTags.indexOf(highestNsfwTag.tag as NsfwLevelTag))
         highestNsfwTag = tag;
       return false;
     }
@@ -723,6 +732,7 @@ const ImageScanTypeTagSourceMap = new Map([
   [ImageScanType.MinorDetection, TagSource.MinorDetection],
   [ImageScanType.HiveDemographics, TagSource.HiveDemographics],
   [ImageScanType.Clavata, TagSource.Clavata],
+  [ImageScanType.SpineRating, TagSource.SpineRating],
 ]);
 
 async function updateImageScanJobs({
@@ -796,7 +806,9 @@ async function processScanResult({
         });
     }
     case TagSource.WD14:
-    case TagSource.Clavata: {
+    case TagSource.Clavata:
+    case TagSource.Hive:
+    case TagSource.SpineRating: {
       await getTagsFromIncomingTags({ id, source, tags: incomingTags });
 
       // Add to scanJobs and update aiRating
@@ -873,9 +885,9 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     else if (['adult'].includes(tag.name)) flags.hasAdultTag = true;
   }
 
-  const clavataNsfwLevel = tags.find((x) =>
-    clavataNsfwLevelTags.includes(x.name as ClavataNsfwLevelTag)
-  )?.name as ClavataNsfwLevelTag | undefined;
+  const nsfwLevelTag = tags.find((x) => nsfwLevelTags.includes(x.name as NsfwLevelTag))?.name as
+    | NsfwLevelTag
+    | undefined;
 
   const child10 = tags.find((x) => x.name === 'child-10');
   const child13 = tags.find((x) => x.name === 'child-13');
@@ -883,8 +895,8 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   const realistic = tags.find((x) => x.name === 'realistic');
   const potentialCelebrity = tags.find((x) => x.name === 'potential celebrity');
 
-  if (clavataNsfwLevel) {
-    switch (clavataNsfwLevel) {
+  if (nsfwLevelTag) {
+    switch (nsfwLevelTag) {
       case 'pg':
         if (child10) flags.minor = true;
         if (realistic && child15) {

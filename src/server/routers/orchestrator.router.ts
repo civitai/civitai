@@ -70,6 +70,8 @@ import {
   getFlaggedReasonsSchema,
   getFlaggedConsumerStrikesSchema,
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
+import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -177,41 +179,50 @@ export const orchestratorRouter = router({
   generateImage: orchestratorGuardedProcedure
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
-      try {
-        const args = {
-          ...input,
-          user: ctx.user,
-          token: ctx.token,
-          experimental: ctx.experimental,
-          batchAll: ctx.batchAll,
-          // isGreen: ctx.features.isGreen,
-          allowMatureContent: ctx.allowMatureContent,
-        };
-        // if ('sourceImage' in args.params && args.params.sourceImage) {
-        //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
-        //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
-        //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
-        // }
-        // TODO - handle createImageGen
-        if (input.params.engine && input.params.engine !== 'flux-pro-raw') {
-          return await createImageGen(args);
-        } else if (input.params.workflow === 'txt2img') {
-          return await createTextToImage({ ...args });
-        } else {
-          return await createComfy({ ...args });
-        }
-      } catch (e) {
-        if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
-          await reportProhibitedRequestHandler({
-            input: {
-              prompt: input.params.prompt,
-              negativePrompt: input.params.negativePrompt,
-              source: 'External',
-            },
-            ctx,
-          });
-        }
-        throw e;
+      // Audit prompt (skip for whatIf requests)
+      if (!input.whatIf && input.params.prompt) {
+        const { auditPromptServer } = await import('~/server/services/orchestrator/promptAuditing');
+        await auditPromptServer({
+          prompt: input.params.prompt,
+          negativePrompt: input.params.negativePrompt,
+          userId: ctx.user.id,
+          isGreen: ctx.features.isGreen,
+          isModerator: ctx.user.isModerator,
+          track: ctx.track,
+        });
+      }
+
+      const group = getBaseModelGroup(input.params.baseModel);
+      if (
+        EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group) &&
+        !input.params.enhancedCompatibility
+      ) {
+        input.params.engine = 'comfyui';
+      }
+      const experimental = true; // ctx.experimental;
+
+      const args = {
+        ...input,
+        user: ctx.user,
+        token: ctx.token,
+        experimental,
+        batchAll: ctx.batchAll,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.allowMatureContent,
+      };
+      // if ('sourceImage' in args.params && args.params.sourceImage) {
+      //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
+      //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
+      //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
+      // }
+      // TODO - handle createImageGen
+      const engine = input.params.engine;
+      if (engine && !['flux-pro-raw', 'comfyui'].includes(engine)) {
+        return await createImageGen(args);
+      } else if (input.params.workflow === 'txt2img') {
+        return await createTextToImage({ ...args });
+      } else {
+        return await createComfy({ ...args });
       }
     }),
   getImageWhatIf: orchestratorGuardedProcedure
@@ -301,8 +312,10 @@ export const orchestratorRouter = router({
       userId: ctx.user.id,
       token: ctx.token,
       experimental: ctx.experimental,
-      // isGreen: ctx.features.isGreen,
+      isGreen: ctx.features.isGreen,
       allowMatureContent: ctx.allowMatureContent,
+      isModerator: ctx.user.isModerator,
+      track: ctx.track,
     })
   ),
   // #endregion

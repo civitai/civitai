@@ -527,7 +527,7 @@ export function ImageDetail2() {
                       <ImageGenerationData imageId={image.id} />
                       {/* <ImageRemixOfDetails imageId={image.id} />
                     <ImageRemixesDetails imageId={image.id} /> */}
-                      {!hideAds && <AdUnitSide_3 />}
+                      {/* {!hideAds && <AdUnitSide_3 />} */}
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconBrandWechat />

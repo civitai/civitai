@@ -20,6 +20,7 @@ declare global {
 
 const AdsContext = createContext<{
   ready: boolean;
+  consent: boolean;
   adsBlocked?: boolean;
   adsEnabled: boolean;
   username?: string;
@@ -37,11 +38,13 @@ export function useAdsContext() {
 const useAdProviderStore = create<{
   ready: boolean;
   adsBlocked: boolean;
+  consent: boolean;
   kontextReady: boolean;
   kontextAvailable: boolean;
 }>(() => ({
   ready: false,
   adsBlocked: true,
+  consent: true,
   kontextReady: false,
   kontextAvailable: false,
 }));
@@ -59,6 +62,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const kontextReady = useAdProviderStore((state) => state.kontextReady);
   const kontextAvailable = useAdProviderStore((state) => state.kontextAvailable);
+  const consent = useAdProviderStore((state) => state.consent);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -66,7 +70,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = isDev
-    ? true
+    ? false
     : !features.isGreen &&
       features.isBlue &&
       (allowAds || !isMember) &&
@@ -87,7 +91,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
           window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
           // AdConsent finished asking for consent, do something that is dependend on user consent ...
-          if (!success) useAdProviderStore.setState({ adsBlocked: true });
+          if (!success) useAdProviderStore.setState({ consent: false });
           else useAdProviderStore.setState({ ready: true });
         }
       });
@@ -135,6 +139,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       value={{
         ready,
         adsBlocked,
+        consent,
         adsEnabled,
         username: currentUser?.username,
         isMember,

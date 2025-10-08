@@ -568,7 +568,9 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
   ImageScanType.Hash,
-  ImageScanType.Clavata,
+  // ImageScanType.Clavata,
+  // ImageScanType.Hive,
+  ImageScanType.SpineRating,
 ];
 
 export const ingestImage = async ({
@@ -1746,7 +1748,7 @@ type ImageSearchInput = GetAllImagesInput & {
   //reviewId?: number;
 };
 
-const getImagesWithFeedService = async (input: ImageSearchInput) => {
+export const getImagesWithFeedService = async (input: ImageSearchInput) => {
   const imageFeedServiceClient = new ImageFeedService(
     metricsSearchClient!,
     getMetricsService(),
@@ -3705,6 +3707,7 @@ export async function updateImageNsfwLevel({
   status,
   isModerator,
   activity,
+  reason,
 }: UpdateImageNsfwLevelOutput & {
   userId: number;
   isModerator?: boolean;
@@ -3712,7 +3715,16 @@ export async function updateImageNsfwLevel({
 }) {
   if (!nsfwLevel) throw throwBadRequestError();
   if (isModerator) {
-    await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    const image = await dbRead.image.findUnique({ where: { id }, select: { metadata: true } });
+    if (!image) throw throwNotFoundError('Image not found');
+
+    const metadata = (image.metadata as ImageMetadata) ?? undefined;
+    const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
+
+    await dbWrite.image.update({
+      where: { id },
+      data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
+    });
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -3750,7 +3762,6 @@ export async function updateImageNsfwLevel({
           nsfwLevel,
           imageId: id,
           userId: userId,
-          // -5 means it was added to the queue, 3 means it was locked so mods should see.
           weight: current.userId === userId ? 3 : 1,
         },
         update: { nsfwLevel },
@@ -3878,7 +3889,7 @@ export async function getImageRatingRequests({
   //   LIMIT ${limit + 1}
   // `;
 
-  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+  const query = Prisma.sql`
       WITH image_rating_requests AS (
         SELECT
           "imageId",
@@ -3908,7 +3919,7 @@ export async function getImageRatingRequests({
         i."createdAt"
       FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
-      WHERE (irr.total >= 3 OR (irr.total <= -5 AND irr."createdAt" < NOW() - INTERVAL '10 hours'))
+      WHERE irr.total >= 3
         AND i."blockedFor" IS NULL
         AND i."nsfwLevelLocked" = FALSE
         AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
@@ -3917,6 +3928,8 @@ export async function getImageRatingRequests({
       ORDER BY i."id" ASC
       LIMIT ${limit + 1}
   `;
+
+  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`${query}`;
 
   let nextCursor: number | undefined;
   if (limit && results.length > limit) {

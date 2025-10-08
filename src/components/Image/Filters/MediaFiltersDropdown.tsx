@@ -8,7 +8,6 @@ import {
   Popover,
   ScrollArea,
   Stack,
-  useMantineTheme,
   Tooltip,
   useComputedColorScheme,
   Group,
@@ -47,10 +46,10 @@ export function MediaFiltersDropdown({
   hideBaseModels = false,
   hideMediaTypes = false,
   hideTools = false,
+  style,
   ...buttonProps
 }: Props) {
   const colorScheme = useComputedColorScheme('dark');
-  const theme = useMantineTheme();
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
@@ -138,7 +137,12 @@ export function MediaFiltersDropdown({
       disabled={!filterLength}
       inline
     >
-      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+      <FilterButton
+        {...buttonProps}
+        icon={IconFilter}
+        onClick={() => setOpened((o) => !o)}
+        active={opened}
+      >
         Filters
       </FilterButton>
     </Indicator>

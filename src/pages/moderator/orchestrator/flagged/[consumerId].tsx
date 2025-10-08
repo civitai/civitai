@@ -272,10 +272,12 @@ function SelectedCount({ userId, data }: { userId: number; data: ConsumerStikesG
       .flatMap((x) =>
         x.strikes.map(({ strike, job }) => {
           if (!job || !job.blobs) return null;
+          const blobs = job.blobs
+            .filter((blob) => selected.includes(blob.previewUrl))
+            .map(({ previewUrl }) => ({ url: previewUrl }));
+          if (!blobs.length) return null;
           return {
-            blobs: job.blobs
-              .filter((blob) => selected.includes(blob.previewUrl))
-              .map(({ previewUrl }) => ({ url: previewUrl })),
+            blobs,
             jobId: job.id,
             prompt: job.prompt,
             negativePrompt: job.negativePrompt,

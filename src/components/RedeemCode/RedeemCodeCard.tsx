@@ -1,12 +1,19 @@
-import { Button, Group, Stack, Text, TextInput, ThemeIcon, Loader } from '@mantine/core';
+import { Button, Group, Stack, Text, TextInput, ThemeIcon, Modal } from '@mantine/core';
 import { IconTicket } from '@tabler/icons-react';
+import clsx from 'clsx';
 import React, { useState } from 'react';
-import { showNotification } from '@mantine/notifications';
+import dynamic from 'next/dynamic';
 import { trpc } from '~/utils/trpc';
 import { numberWithCommas } from '~/utils/number-helpers';
 import classes from './RedeemCodeCard.module.scss';
 import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
+
+const SuccessAnimation = dynamic(
+  () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
+  { ssr: false }
+);
 
 interface RedeemCodeCardProps {
   /**
@@ -39,6 +46,15 @@ interface RedeemCodeCardProps {
   className?: string;
 }
 
+type RedeemStatus = 'idle' | 'loading' | 'success';
+
+interface RedeemState {
+  status: RedeemStatus;
+  code: string;
+  successMessage?: string;
+  showSuccessModal?: boolean;
+}
+
 export function RedeemCodeCard({
   showIcon = true,
   description = 'Enter your unique code to instantly receive rewards',
@@ -48,22 +64,21 @@ export function RedeemCodeCard({
   placeholder = 'BUZZ-CODE-HERE',
   className,
 }: RedeemCodeCardProps) {
-  const [code, setCode] = useState(initialCode);
-  const [isLoading, setIsLoading] = useState(false);
+  const [redeemState, setRedeemState] = useState<RedeemState>({
+    status: 'idle',
+    code: initialCode,
+  });
   const queryUtils = trpc.useUtils();
 
   const redeemCodeMutation = trpc.redeemableCode.consume.useMutation({
     onSuccess: async (consumedCode) => {
-      setCode('');
-      setIsLoading(false);
       // Generate success message based on code type
       let message = 'Code redeemed successfully';
 
       if (!consumedCode) {
-        showNotification({
+        showErrorNotification({
           title: 'Error redeeming code',
-          message: 'Code not found or invalid.',
-          color: 'red',
+          error: new Error('Code not found or invalid.'),
         });
 
         return;
@@ -84,54 +99,74 @@ export function RedeemCodeCard({
         message = `${timeDescription} of ${tierName} tier membership has been added to your account!`;
       }
 
-      showNotification({
-        title: 'Success',
-        message,
-        color: 'green',
+      // Set success state with message and show modal
+      setRedeemState({
+        status: 'success',
+        code: '',
+        successMessage: message,
+        showSuccessModal: true,
       });
 
-      await queryUtils.buzz.getAccountTransactions.invalidate();
+      await Promise.all([
+        queryUtils.buzz.getAccountTransactions.invalidate(),
+        queryUtils.buzz.getBuzzAccount.invalidate(),
+      ]);
+
+      // Reset state after 3 seconds
+      setTimeout(() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }), 3000);
     },
-    onError: (data) => {
-      setIsLoading(false);
-      showNotification({
+    onError: (error) => {
+      setRedeemState((prev) => ({ ...prev, status: 'idle' }));
+      let errorMessage: string;
+      try {
+        // Try to parse as JSON first
+        const parsedError = JSON.parse(error.message);
+        errorMessage = parsedError[0]?.message || parsedError.message || error.message;
+      } catch {
+        // If parsing fails, use the original message
+        errorMessage = error.message;
+      }
+
+      showErrorNotification({
         title: 'Failed to redeem code',
-        message: 'There was an error processing your code. Please check the code and try again.',
-        color: 'red',
+        error: new Error(
+          errorMessage ||
+            'There was an error processing your code. Please check the code and try again.'
+        ),
       });
     },
   });
 
   const handleRedeem = async () => {
-    if (!code.trim()) {
-      showNotification({
+    if (redeemState.status !== 'idle') return;
+
+    if (!redeemState.code.trim()) {
+      showWarningNotification({
         title: 'Missing Code',
         message: 'Please enter a code to redeem',
-        color: 'yellow',
       });
 
       return;
     }
 
-    setIsLoading(true);
-    redeemCodeMutation.mutate({ code: code.trim() });
+    setRedeemState({ status: 'loading', code: redeemState.code });
+    redeemCodeMutation.mutate({ code: redeemState.code.trim() });
   };
 
   const handleCodeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     // Remove spaces and convert to uppercase automatically
     const cleanedCode = event.currentTarget.value.replace(/\s+/g, '').toUpperCase();
-    setCode(cleanedCode);
+    setRedeemState((prev) => ({ ...prev, code: cleanedCode }));
   };
 
-  const handleKeyPress = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !isLoading) {
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && redeemState.status === 'idle') {
       handleRedeem();
     }
   };
 
   return (
-    <div className={`${classes.redeemSection} ${className || ''}`}>
-      {/* Content Section */}
+    <div className={clsx(classes.redeemSection, className)}>
       <div className={classes.contentSection}>
         <Stack gap="sm">
           <Group align="center">
@@ -161,11 +196,11 @@ export function RedeemCodeCard({
           <Group gap="sm" wrap="nowrap" className={classes.inputGroup}>
             <TextInput
               placeholder={placeholder}
-              value={code}
+              value={redeemState.code}
               onChange={handleCodeChange}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyDown}
               size={size}
-              disabled={isLoading}
+              disabled={redeemState.status === 'loading'}
               className={classes.codeInput}
               style={{ flex: 1 }}
               variant="filled"
@@ -174,7 +209,7 @@ export function RedeemCodeCard({
 
             <Button
               onClick={handleRedeem}
-              loading={isLoading}
+              loading={redeemState.status === 'loading'}
               size={size}
               variant="gradient"
               gradient={{ from: 'yellow.4', to: 'orange.5' }}
@@ -182,7 +217,7 @@ export function RedeemCodeCard({
               px="xl"
               radius="md"
             >
-              {isLoading ? <Loader size="sm" color="white" /> : 'Redeem'}
+              Redeem
             </Button>
           </Group>
 
@@ -191,6 +226,32 @@ export function RedeemCodeCard({
           </Text>
         </Stack>
       </div>
+
+      <Modal
+        opened={!!redeemState.showSuccessModal}
+        onClose={() => setRedeemState((prev) => ({ ...prev, showSuccessModal: false }))}
+        withCloseButton={false}
+        closeOnClickOutside={false}
+        closeOnEscape={false}
+        withOverlay={false}
+        lockScroll={false}
+        size="auto"
+        radius="lg"
+        centered
+      >
+        <div className="flex flex-col gap-2">
+          <SuccessAnimation
+            gap={8}
+            lottieProps={{ style: { width: 120, margin: 0 } }}
+            align="center"
+            justify="center"
+          >
+            <Text size="xl" fw={500} ta="center">
+              {redeemState.successMessage || 'Code redeemed successfully'}
+            </Text>
+          </SuccessAnimation>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -84,7 +84,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata" | "SpineRating";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -170,16 +170,28 @@ export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incide
 
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
-export type EntityMetric_EntityType_Type =
-  | 'Image'
-  | 'Post'
-  | 'Model'
-  | 'ModelVersion'
+export type EntityMetric_EntityType_Type = "Image" | "Post" | "Model" | "ModelVersion" | "Collection" | "User";
+
+export type EntityMetric_MetricType_Type = 'ReactionLike'
+  | 'ReactionHeart'
+  | 'ReactionLaugh'
+  | 'ReactionCry'
+  | 'Comment'
   | 'Collection'
-  | 'User';
- 
-export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz"  | "ThumbsUp" | "ThumbsDown" | "Tip" | "View" | "Follower" | "Contributor" | "Item" | "Follow" | "Hide" | "Upload" | "Download" | "Generation" | "Favorite" | "Image" | "Earned";
- 
+  | 'Buzz'
+  // New for Models
+  | 'Download'
+  | 'Generation'
+  | 'ThumbsUp'
+  | 'ThumbsDown'
+  | 'Tip'
+  // New for Posts (if needed separately from reactions)
+  | 'View'
+  // New for Collections
+  | 'Follower'
+  | 'Contributor'
+  | 'Item'; 
+
 export interface Account {
   id: number;
   userId: number;

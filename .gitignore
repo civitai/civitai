@@ -83,3 +83,5 @@ trace/types.json
 src/pages/api/dev-local/*
 /.playwright-mcp/
 *.local.json
+# LLM
+/.serena/

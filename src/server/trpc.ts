@@ -86,7 +86,7 @@ export const publicProcedure = t.procedure
  * users are logged in
  */
 const isAuthed = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
-  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (!user || user.deletedAt) throw new TRPCError({ code: 'UNAUTHORIZED' });
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',

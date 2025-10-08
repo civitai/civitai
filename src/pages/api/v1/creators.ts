@@ -3,7 +3,6 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { publicApiContext2 } from '~/server/createContext';
-import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 

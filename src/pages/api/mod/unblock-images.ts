@@ -5,7 +5,10 @@ import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/com
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getImagesFromSearch, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import {
+  getImagesWithFeedService,
+  queueImageSearchIndexUpdate,
+} from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -40,7 +43,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
           batchCount + 1
         }}`
       );
-      const { data: images } = await getImagesFromSearch({
+      const { data: images } = await getImagesWithFeedService({
         browsingLevel: allBrowsingLevelsFlag,
         limit: BATCH_LIMIT,
         offset,
@@ -53,6 +56,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
         blockedFor: ['moderated', 'Moderated'],
         useLogicalReplica: features.logicalReplica,
       });
+
       if (!images.length) {
         console.log(
           `[unblock-images] No more images to update. Finished at offset=${offset}, total batches=${batchCount}.`

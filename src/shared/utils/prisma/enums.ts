@@ -416,6 +416,7 @@ export const TagSource = {
   MinorDetection: 'MinorDetection',
   HiveDemographics: 'HiveDemographics',
   Clavata: 'Clavata',
+  SpineRating: 'SpineRating',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];
@@ -813,10 +814,12 @@ export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRa
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
   Post: 'Post',
-  Model: 'Model',
+  Article: 'Article',
+  Bounty: 'Bounty',
+  BountyEntry: 'BountyEntry',
   ModelVersion: 'ModelVersion',
-  Collection: 'Collection',
-  User: 'User',
+  Model: 'Model',
+  Collection: 'Collection', 
 } as const;
 
 export type EntityMetric_EntityType_Type = (typeof EntityMetric_EntityType_Type)[keyof typeof EntityMetric_EntityType_Type];
@@ -829,21 +832,18 @@ export const EntityMetric_MetricType_Type = {
   Comment: 'Comment',
   Collection: 'Collection',
   Buzz: 'Buzz',
+  // New for Models
+  Download: 'Download',
+  Generation: 'Generation',
   ThumbsUp: 'ThumbsUp',
   ThumbsDown: 'ThumbsDown',
   Tip: 'Tip',
+  // New for Posts (if needed separately from reactions)
   View: 'View',
+  // New for Collections
   Follower: 'Follower',
   Contributor: 'Contributor',
   Item: 'Item',
-  Follow: 'Follow',
-  Hide: 'Hide',
-  Upload: 'Upload',
-  Download: 'Download',
-  Generation: 'Generation',
-  Favorite: 'Favorite',
-  Image: 'Image',
-  Earned: 'Earned',
-} as const;
+} as const; 
 
 export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];

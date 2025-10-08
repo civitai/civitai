@@ -104,6 +104,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
               </Group>
               <Group className={classes.filtersWrapper} gap={8} wrap="nowrap">
                 <SortFilter
+                  className="justify-center"
                   type={isVideo ? 'videos' : 'images'}
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
@@ -124,6 +125,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}
                   size="compact-sm"
+                  className="w-full justify-center"
                   hideMediaTypes
                 />
               </Group>

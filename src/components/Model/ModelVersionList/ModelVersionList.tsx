@@ -24,6 +24,7 @@ import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
 import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -182,18 +183,20 @@ export function ModelVersionList({
               }
             >
               <Group gap={8} wrap="nowrap">
-                {features.imageGeneration && version.canGenerate && (
-                  <ThemeIcon
-                    title="This version is available for image generation"
-                    color="cyan"
-                    variant="light"
-                    radius="xl"
-                    size="sm"
-                    style={{ backgroundColor: 'transparent' }}
-                  >
-                    <IconBrush size={16} stroke={2.5} />
-                  </ThemeIcon>
-                )}
+                {features.imageGeneration &&
+                  version.canGenerate &&
+                  version.status !== ModelStatus.Draft && (
+                    <ThemeIcon
+                      title="This version is available for image generation"
+                      color="cyan"
+                      variant="light"
+                      radius="xl"
+                      size="sm"
+                      style={{ backgroundColor: 'transparent' }}
+                    >
+                      <IconBrush size={16} stroke={2.5} />
+                    </ThemeIcon>
+                  )}
                 {version.name}
               </Group>
             </Button>

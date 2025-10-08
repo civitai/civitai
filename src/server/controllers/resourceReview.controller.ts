@@ -128,7 +128,7 @@ export const upsertResourceReviewHandler = async ({
     if (input.id) {
       oldReview = await dbRead.resourceReview.findUnique({
         where: { id: input.id },
-        select: { recommended: true, modelId: true, modelVersionId: true }
+        select: { recommended: true, modelId: true, modelVersionId: true },
       });
     }
 
@@ -138,7 +138,7 @@ export const upsertResourceReviewHandler = async ({
     // Cast result as it has full data when creating (not updating)
     const review = oldReview
       ? { ...oldReview, ...input }
-      : result as { id: number; modelId: number; modelVersionId: number; recommended: boolean };
+      : (result as { id: number; modelId: number; modelVersionId: number; recommended: boolean });
 
     // Track metrics based on whether it's create or update
     if (!oldReview) {
@@ -224,7 +224,7 @@ export const updateResourceReviewHandler = async ({
     // Get the old review to compare
     const oldReview = await dbRead.resourceReview.findUnique({
       where: { id: input.id },
-      select: { recommended: true, modelId: true, modelVersionId: true }
+      select: { recommended: true, modelId: true, modelVersionId: true },
     });
 
     const result = await updateResourceReview({ ...input });
@@ -237,7 +237,11 @@ export const updateResourceReviewHandler = async ({
     });
 
     // Handle rating changes for entity metrics
-    if (oldReview && input.recommended !== undefined && oldReview.recommended !== input.recommended) {
+    if (
+      oldReview &&
+      input.recommended !== undefined &&
+      oldReview.recommended !== input.recommended
+    ) {
       await handleReviewRatingChange({
         ctx,
         oldReview: { ...oldReview, modelId: result.modelId, modelVersionId: result.modelVersionId },

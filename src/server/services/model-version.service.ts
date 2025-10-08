@@ -58,7 +58,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import type { ModelType, ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
+import type {
+  ModelType,
+  ModelVersionEngagementType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
@@ -210,7 +214,9 @@ export const upsertModelVersion = async ({
   // Check if trying to publish a model version when model is marked as cannotPublish
   const modelMeta = model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish && data.status === ModelStatus.Published) {
-    throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+    throw throwBadRequestError(
+      'This model version cannot be published due to moderation restrictions.'
+    );
   }
 
   if (
@@ -399,7 +405,9 @@ export const upsertModelVersion = async ({
     // Check if trying to publish a model version when model is marked as cannotPublish
     const existingModelMeta = existingVersion.model.meta as ModelMeta | null;
     if (existingModelMeta?.cannotPublish && data.status === ModelStatus.Published) {
-      throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+      throw throwBadRequestError(
+        'This model version cannot be published due to moderation restrictions.'
+      );
     }
 
     const version = await dbWrite.modelVersion.update({
@@ -548,10 +556,12 @@ export const updateModelVersionById = async ({
         },
       },
     });
-    
+
     const modelMeta = modelVersion.model.meta as ModelMeta | null;
     if (modelMeta?.cannotPublish) {
-      throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+      throw throwBadRequestError(
+        'This model version cannot be published due to moderation restrictions.'
+      );
     }
   }
 
@@ -726,7 +736,14 @@ export const publishModelVersionById = async ({
       baseModel: true,
       earlyAccessConfig: true,
       model: {
-        select: { userId: true, name: true, availability: true, publishedAt: true, nsfw: true, meta: true },
+        select: {
+          userId: true,
+          name: true,
+          availability: true,
+          publishedAt: true,
+          nsfw: true,
+          meta: true,
+        },
       },
     },
   });
@@ -749,7 +766,9 @@ export const publishModelVersionById = async ({
   // Check if model is marked as cannotPublish
   const modelMeta = currentVersion.model.meta as ModelMeta | null;
   if (modelMeta?.cannotPublish) {
-    throw throwBadRequestError('This model version cannot be published due to moderation restrictions.');
+    throw throwBadRequestError(
+      'This model version cannot be published due to moderation restrictions.'
+    );
   }
 
   const version = await dbWrite.$transaction(
@@ -1611,6 +1630,7 @@ export type GenerationResourceDataModel = {
   covered: boolean | null;
   status: ModelStatus;
   hasAccess: boolean;
+  epochNumber?: number;
   model: {
     id: number;
     name: string;
@@ -1708,3 +1728,45 @@ export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularit
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
   return await modelVersionResourceCache.fetch(ids);
 };
+
+export async function updateModelVersionTrainingStatus({
+  id,
+  trainingStatus,
+  modelFileId,
+}: {
+  id: number;
+  trainingStatus: TrainingStatus;
+  modelFileId: number;
+}) {
+  const modelFile = await dbRead.modelFile.findUnique({
+    where: { id: modelFileId },
+    select: { id: true, modelVersionId: true, metadata: true },
+  });
+  if (!modelFile || modelFile.modelVersionId !== id)
+    throw throwBadRequestError('No model file associated with this model version');
+
+  const currentFileMetadata = (modelFile.metadata ?? {}) as FileMetadata;
+  const trainingResults = (currentFileMetadata.trainingResults ?? {}) as TrainingResultsV2;
+  const history = trainingResults.history ?? [];
+
+  const newFileMetadata: FileMetadata = {
+    ...currentFileMetadata,
+    trainingResults: {
+      ...trainingResults,
+      history: [...history, { time: new Date().toISOString(), status: trainingStatus }],
+    },
+  };
+
+  const [updatedVersion] = await dbWrite.$transaction([
+    dbWrite.modelVersion.update({
+      where: { id },
+      data: { trainingStatus },
+    }),
+    dbWrite.modelFile.update({
+      where: { id: modelFile.id },
+      data: { metadata: newFileMetadata },
+    }),
+  ]);
+
+  return updatedVersion;
+}

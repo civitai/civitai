@@ -116,7 +116,7 @@ export function Wan22FormInput() {
           <div className="flex items-center gap-1">
             <Input.Label>CFG Scale</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 14 }}>
-              Controls how closely the video generation follows the text prompt. 
+              Controls how closely the video generation follows the text prompt.
             </InfoPopover>
           </div>
         }
@@ -130,7 +130,7 @@ export function Wan22FormInput() {
         name="shift"
         label={
           <div className="flex items-center gap-1">
-            <Input.Label>Shift</Input.Label> 
+            <Input.Label>Shift</Input.Label>
           </div>
         }
         min={1}

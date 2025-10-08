@@ -1,6 +1,6 @@
 import type { DefaultSession, DefaultUser } from 'next-auth';
 import type { UserTier } from '~/server/schema/user.schema';
-import type { User as PrismaUser } from '~/shared/utils/prisma/enums';
+import type { User as PrismaUser } from '~/shared/utils/prisma/models';
 import type { getUserBanDetails } from '~/utils/user-helpers';
 
 interface ExtendedUser {
@@ -31,9 +31,9 @@ interface ExtendedUser {
   allowAds?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
   redBrowsingLevel?: number;
+  deletedAt?: Date;
   // TODO.briant - clean up user session data
   /*
-    remove `deletedAt` from session user data
     remove `emailVerified`, update user account page to make call to get current user data
    */
 }

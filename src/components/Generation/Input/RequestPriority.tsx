@@ -59,7 +59,9 @@ export function RequestPriority({
           >
             <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
               {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
-              {!selected ? placeholder : (
+              {!selected ? (
+                placeholder
+              ) : (
                 <PriorityLabel
                   {...selected}
                   modifier={modifier}
@@ -168,7 +170,7 @@ function PriorityLabel({
     <div className="flex items-center gap-3">
       <span>{label}</span>
       {offset > 0 && (
-        <span className={clsx("flex items-center", isFreeForMember && "line-through opacity-50")}>
+        <span className={clsx('flex items-center', isFreeForMember && 'line-through opacity-50')}>
           <span>+</span>
           <span className="flex items-center">
             <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
@@ -180,7 +182,9 @@ function PriorityLabel({
         </span>
       )}
       {isFreeForMember && (
-        <span className="text-xs text-green-6 dark:text-green-5">Members get High Priority Free</span>
+        <span className="text-xs text-green-6 dark:text-green-5">
+          Members get High Priority Free
+        </span>
       )}
     </div>
   );

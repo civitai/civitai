@@ -5,6 +5,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef } from
 import * as z from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { constants, generation, getGenerationConfig } from '~/server/common/constants';
@@ -34,7 +35,6 @@ import {
   useGenerationStore,
 } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
-import { auditPrompt } from '~/utils/metadata/audit';
 import type { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -47,9 +47,10 @@ import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-
 
 // #region [schemas]
 
-type PartialFormData = Partial<z.input<typeof formSchema>>;
-// type DeepPartialFormData = DeepPartial<z.input<typeof formSchema>>;
-export type GenerationFormOutput = z.infer<typeof formSchema>;
+// We'll define these types after createFormSchema
+type PartialFormData = Partial<z.input<ReturnType<typeof createFormSchema>>>;
+// type DeepPartialFormData = DeepPartial<z.input<ReturnType<typeof createFormSchema>>>;
+export type GenerationFormOutput = z.infer<ReturnType<typeof createFormSchema>>;
 const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
@@ -66,106 +67,68 @@ const baseSchema = textToImageParamsSchema
     fluxUltraRaw: z.boolean().default(false).catch(false),
   });
 const partialSchema = baseSchema.partial();
-const formSchema = baseSchema
-  .transform(({ ...data }) => {
-    const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
-    const { height, width } = isFluxUltra
-      ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
-      : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
+function createFormSchema(domainColor: string) {
+  return baseSchema
+    .transform(({ ...data }) => {
+      const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
+      const { height, width } = isFluxUltra
+        ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
+        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
-    return removeEmpty({
-      ...data,
-      height,
-      width,
-    });
-  })
-  .superRefine((data, ctx) => {
-    if (data.workflow.startsWith('txt2img')) {
-      if (!data.prompt || data.prompt.length === 0) {
-        ctx.addIssue({
-          code: 'custom',
-          message: 'Prompt cannot be empty',
-          path: ['prompt'],
-        });
-      }
-    }
-
-    if (data.prompt.length > 1500) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Prompt cannot be longer than 1500 characters',
-        path: ['prompt'],
+      return removeEmpty({
+        ...data,
+        height,
+        width,
       });
-    }
-
-    if (data.negativePrompt && data.negativePrompt.length > 1000) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Prompt cannot be longer than 1000 characters',
-        path: ['negativePrompt'],
-      });
-    }
-
-    if (data.prompt.length > 0) {
-      const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
-      if (!success) {
-        let message = `Blocked for: ${blockedFor.join(', ')}`;
-        const count = blockedRequest.increment();
-        const status = blockedRequest.status();
-        if (status === 'warned') {
-          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-        } else if (status === 'notified') {
-          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+    })
+    .superRefine((data, ctx) => {
+      if (data.workflow.startsWith('txt2img')) {
+        if (!data.prompt || data.prompt.length === 0) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Prompt cannot be empty',
+            path: ['prompt'],
+          });
         }
+      }
 
+      if ((data.baseModel === 'Imagen4' || data.baseModel === 'NanoBanana') && data.quantity > 4) {
         ctx.addIssue({
           code: 'custom',
-          message,
-          params: { count },
+          message: `${data.baseModel} generation currently only supports a maximum quantity of 4`,
+          path: ['model'],
+        });
+      }
+
+      if (data.prompt.length > 1500) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Prompt cannot be longer than 1500 characters',
           path: ['prompt'],
         });
       }
-    }
 
-    if (data.workflow.startsWith('img2img') && !data.sourceImage) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Image is required',
-        path: ['sourceImage'],
-      });
-    }
-  });
-export const blockedRequest = (() => {
-  let instances: number[] = [];
-  const updateStorage = () => {
-    localStorage.setItem('brc', JSON.stringify(instances));
-  };
-  const increment = () => {
-    instances.push(Date.now());
-    updateStorage();
-    return instances.length;
-  };
-  const status = () => {
-    const count = instances.length;
-    if (count > constants.imageGeneration.requestBlocking.muted) return 'muted';
-    if (count > constants.imageGeneration.requestBlocking.notified) return 'notified';
-    if (count > constants.imageGeneration.requestBlocking.warned) return 'warned';
-    return 'ok';
-  };
-  if (typeof window !== 'undefined') {
-    const storedInstances = JSON.parse(localStorage.getItem('brc') ?? '[]');
-    const cutOff = Date.now() - 1000 * 60 * 60 * 24;
-    instances = storedInstances.filter((x: number) => x > cutOff);
-    updateStorage();
-  }
+      if (data.negativePrompt && data.negativePrompt.length > 1000) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Prompt cannot be longer than 1000 characters',
+          path: ['negativePrompt'],
+        });
+      }
 
-  return {
-    status,
-    increment,
-  };
-})();
+      // Note: Prompt auditing is now handled server-side in the generation endpoints
+      // This allows for proper allowMatureContent logic and centralized violation tracking
 
+      if (data.workflow.startsWith('img2img') && !data.sourceImage) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Image is required',
+          path: ['sourceImage'],
+        });
+      }
+    });
+}
 // #endregion
 
 // #region [data formatter]
@@ -245,7 +208,10 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 // #endregion
 
 // #region [Provider]
-type GenerationFormProps = Omit<UsePersistFormReturn<typeof formSchema>, 'reset'> & {
+type GenerationFormProps = Omit<
+  UsePersistFormReturn<ReturnType<typeof createFormSchema>>,
+  'reset'
+> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
 };
@@ -262,6 +228,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
+  const domainColor = useDomainColor();
   // const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
@@ -278,6 +245,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const prevBaseModelRef = useRef<BaseModelGroup | null>();
   const debouncer = useDebouncer(1000);
+
+  const formSchema = createFormSchema(domainColor);
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,

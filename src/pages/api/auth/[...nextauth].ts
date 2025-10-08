@@ -35,7 +35,12 @@ import {
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
-import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import {
+  refreshSession,
+  invalidateToken,
+  refreshToken,
+  trackToken,
+} from '~/server/utils/session-helpers';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -108,9 +113,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           while (!username) username = await setUserName(Number(user.id), startingUsername);
         }
       },
-      signOut: async ({ token }) => {
-        await invalidateToken(token);
-      },
     },
     callbacks: {
       async signIn({ account, email, user }) {
@@ -145,25 +147,42 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       async jwt({ token, user, trigger }) {
         // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
         if (trigger === 'update') {
-          await invalidateSession(Number(token.sub));
-          console.log('firfirea');
-          token.user = await getSessionUser({ userId: Number(token.sub) });
+          await refreshSession(Number(token.sub));
+          // token.user = await getSessionUser({ userId: Number(token.sub) });
         } else {
           token.sub = Number(token.sub) as any; //eslint-disable-line
           if (user) token.user = user;
           const { deletedAt, ...restUser } = token.user as User;
           token.user = { ...restUser };
         }
-        if (!token.id) token.id = uuid();
 
-        return token;
+        const isNewToken = !token.id;
+        if (isNewToken) {
+          token.id = uuid();
+          token.signedAt = Date.now();
+        }
+
+        // Track new tokens
+        if (isNewToken && token.user) {
+          await trackToken(token.id as string, (token.user as User).id);
+        }
+
+        // Check if token should be refreshed or invalidated
+        const refreshedToken = isNewToken ? token : await refreshToken(token);
+
+        // If token is invalid (returns null), return null to force NextAuth to clear the cookie
+        // Note: Returning null tells NextAuth the token is invalid and should be cleared
+        if (!refreshedToken) {
+          token.user = {};
+          return token;
+        }
+
+        return refreshedToken;
       },
       async session({ session, token }) {
-        // console.log(new Date().toISOString() + ' ::', 'session', session.user?.email);
-        const newToken = await refreshToken(token);
-        // console.log(new Date().toISOString() + ' ::', newToken?.name);
-        if (!newToken?.user) return {} as Session;
-        session.user = (newToken.user ? newToken.user : session.user) as Session['user'];
+        if (token.user) {
+          session.user = token.user as Session['user'];
+        }
         return session;
       },
       async redirect({ url, baseUrl }) {
@@ -328,7 +347,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
   // Handle request hostname
   const protocol = getProtocol(req);
-  req.headers.origin = `${protocol}://${req.headers.host}`;
+  req.headers.origin = `${protocol}://${req.headers.host as string}`;
   const { hostname: reqHostname } = new URL(req.headers.origin);
 
   // Handle domain-specific cookie
@@ -376,17 +395,15 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   }
 
   customAuthOptions.events ??= {};
-  // customAuthOptions.events.session = async (message) => {
-  //   console.log('session event', message.session?.user?.email, message.token?.email);
-  // };
 
-  customAuthOptions.events.signOut = async (context) => {
-    // console.log('signout event', context.user?.email, context.account?.userId);
+  customAuthOptions.events.signOut = async ({ token }) => {
+    // Invalidate the token
+    await invalidateToken(token);
+    // Delete encrypted cookies
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
   };
 
   customAuthOptions.events.signIn = async (context) => {
-    // console.log('signin event', context.user?.email, context.account?.userId);
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
 
     const source = req.cookies['ref_source'] as string;

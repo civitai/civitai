@@ -541,6 +541,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
+  'Pony V7': baseLicenses['openrail++'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
@@ -567,6 +568,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.2 I2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 T2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 TI2V-5B': baseLicenses['apache 2.0'],
+  'Wan Video 2.5 T2V': baseLicenses['apache 2.0'],
+  'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
 };
@@ -640,11 +643,27 @@ const commonAspectRatios = [
 ];
 
 export const seedreamSizes = [
-  { label: '16:9', width: 2272, height: 1280 },
-  { label: '4:3', width: 1696, height: 1280 },
-  { label: '1:1', width: 1280, height: 1280 },
-  { label: '3:4', width: 1280, height: 1696 },
-  { label: '9:16', width: 1280, height: 2272 },
+  { label: '16:9', width: 2560, height: 1440 },
+  { label: '4:3', width: 2304, height: 1728 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1728, height: 2304 },
+  { label: '9:16', width: 1440, height: 2560 },
+];
+
+export const qwenSizes = [
+  { label: '16:9', width: 1664, height: 928 },
+  { label: '4:3', width: 1472, height: 1140 },
+  { label: '1:1', width: 1328, height: 1328 },
+  { label: '3:4', width: 1140, height: 1472 },
+  { label: '9:16', width: 928, height: 1664 },
+];
+
+export const ponyV7Sizes = [
+  { label: '3:2', width: 1536, height: 1024 },
+  { label: '6:5', width: 1536, height: 1280 },
+  { label: '1:1', width: 1536, height: 1536 },
+  { label: '5:6', width: 1280, height: 1536 },
+  { label: '2:3', width: 1024, height: 1536 },
 ];
 
 export const generationConfig = {
@@ -705,6 +724,25 @@ export const generationConfig = {
       model: {
         id: 257749,
         name: 'Pony Diffusion V6 XL',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  PonyV7: {
+    aspectRatios: ponyV7Sizes,
+    checkpoint: {
+      id: 2152373,
+      name: 'v7.0',
+      trainedWords: [],
+      baseModel: 'PonyV7',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 1901521,
+        name: 'Pony V7',
         type: 'Checkpoint',
       },
     } as GenerationResource,
@@ -811,7 +849,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Qwen: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: qwenSizes,
     checkpoint: {
       id: 2113658,
       name: 'Qwen-Image Full BF16',
