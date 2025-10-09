@@ -279,7 +279,7 @@ export function GeneratedImage({
             />
           ) : blockedReason ? (
             <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
-          ) : (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''] ? (
+          ) : isBlockedDueToMatureContent ? (
             <BlockedBlock
               title={'Blocked for Mature Content'}
               message={

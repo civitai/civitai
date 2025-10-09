@@ -68,7 +68,7 @@ export async function generate({
       },
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
-      // nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
     },
   });

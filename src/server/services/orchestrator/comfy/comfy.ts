@@ -24,7 +24,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
-import { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -138,7 +138,7 @@ export async function createComfy(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies,

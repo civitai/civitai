@@ -142,7 +142,7 @@ export async function createTextToImage(
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
       // Ensures private generation does not allow mature content
-      nsfwLevel: isGreen || step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent: allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies,
