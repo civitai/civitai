@@ -261,7 +261,7 @@ export function GeneratedImage({
   const blockedReason = getImageBlockedReason(image.blockedReason);
   const isBlockedDueToMatureContent =
     (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''];
-  const isBlocked = !!nsfwLevelError || !!blockedReason || !isBlockedDueToMatureContent;
+  const isBlocked = !!nsfwLevelError || !!blockedReason || !!isBlockedDueToMatureContent;
   const aspectRatio = isBlocked ? 1 : image.aspect;
 
   return (
@@ -605,6 +605,7 @@ function GeneratedImageWorkflowMenuItems({
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
   const canImg2Img =
     !isQwen && !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream && !isPonyV7;
+
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
   const img2imgWorkflows =
     !isVideo && !isBlocked
