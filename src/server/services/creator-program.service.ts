@@ -31,6 +31,7 @@ import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   getCounterPartyBuzzTransactions,
+  getTopContributors,
   getUserBuzzAccount,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -50,7 +51,7 @@ import {
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,
@@ -267,7 +268,7 @@ export async function joinCreatorsProgram(userId: number) {
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};
   `;
-  await invalidateSession(userId);
+  await refreshSession(userId);
 }
 
 async function getPoolValue(month?: Date, buzzType?: BuzzSpendType) {
@@ -865,6 +866,32 @@ export async function getPoolParticipants(
   }
 
   return participants.filter((p) => !bannedParticipants.some((b) => b.userId === p.userId));
+}
+
+export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts = false, accountType: 'yellow' | 'green' = 'yellow') {
+  month ??= new Date();
+  const monthAccount = getMonthAccount(month);
+  const data = await getTopContributors({
+    accountIds: [monthAccount],
+    accountType: accountType === 'green'  ? 'creatorprogrambank' : 'creatorprogrambankgreen',
+    limit: 10000,
+    all: true,
+  });
+  const participants = data[`${monthAccount}`];
+  let bannedParticipants: { userId: number }[] = [];
+
+  if (participants.length > 0) {
+    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>` 
+      SELECT "id" as "userId"
+      FROM "User"
+      WHERE id IN (${Prisma.join(participants.map((p) => p.userId))})
+        AND ("bannedAt" IS NOT NULL OR onboarding & ${OnboardingSteps.BannedCreatorProgram} != 0);
+    `;
+  }
+
+  return participants
+    .filter((p) => !bannedParticipants.some((b) => b.userId === p.userId))
+    .filter((p) => includeNegativeAmounts || p.amount > 0);
 }
 
 export const updateCashWithdrawal = async ({

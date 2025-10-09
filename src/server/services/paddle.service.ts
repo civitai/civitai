@@ -52,7 +52,7 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -67,7 +67,7 @@ export const createCustomer = async ({ id, email }: { id: number; email: string 
     const customer = await getOrCreateCustomer({ email, userId: id });
 
     await dbWrite.user.update({ where: { id }, data: { paddleCustomerId: customer.id } });
-    await invalidateSession(id);
+    await refreshSession(id);
 
     return customer.id;
   } else {
@@ -468,7 +468,7 @@ export const upsertSubscription = async (
       },
     });
     await getMultipliersForUser(user.id, true);
-    await invalidateSession(user.id);
+    await refreshSession(user.id);
     await dbWrite.vault.update({
       where: { userId: user.id },
       data: {
@@ -630,7 +630,7 @@ export const upsertSubscription = async (
     }
   }
 
-  await invalidateSession(user.id);
+  await refreshSession(user.id);
   await getMultipliersForUser(user.id, true);
 };
 
@@ -780,7 +780,7 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await invalidateSession(userId);
+    await refreshSession(userId);
     await getMultipliersForUser(userId, true);
 
     return true;
@@ -946,7 +946,7 @@ export const updateSubscriptionPlan = async ({
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await invalidateSession(userId);
+    await refreshSession(userId);
     await getMultipliersForUser(userId, true);
 
     return true;

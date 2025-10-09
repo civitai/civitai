@@ -9,7 +9,6 @@ import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { baseModels } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
-import { auditPrompt } from '~/utils/metadata/audit';
 import { booleanString } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
@@ -98,7 +97,13 @@ const baseGenerationParamsSchema = z.object({
   draft: z.boolean().optional(),
 });
 
+// Note: blockedRequest and promptAuditRefiner have been removed
+// All prompt auditing is now handled server-side in the generation endpoints
+// This allows for proper allowMatureContent logic and centralized violation tracking
+
 export const blockedRequest = (() => {
+  // Keeping stub for backward compatibility with existing code that checks status
+  // But no longer tracking or auditing client-side
   let instances: number[] = [];
   const updateStorage = () => {
     localStorage.setItem('brc', JSON.stringify(instances));
@@ -127,30 +132,6 @@ export const blockedRequest = (() => {
     increment,
   };
 })();
-
-function promptAuditRefiner(
-  data: { prompt: string; negativePrompt?: string },
-  ctx: z.RefinementCtx
-) {
-  const { blockedFor, success } = auditPrompt(data.prompt); // TODO: re-enable negativePrompt here
-  if (!success) {
-    let message = `Blocked for: ${blockedFor.join(', ')}`;
-    const count = blockedRequest.increment();
-    const status = blockedRequest.status();
-    if (status === 'warned') {
-      message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-    } else if (status === 'notified') {
-      message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-    }
-
-    ctx.addIssue({
-      code: 'custom',
-      path: ['prompt'],
-      message,
-      params: { count },
-    });
-  }
-}
 
 const sharedGenerationParamsSchema = z.object({
   prompt: z
@@ -238,7 +219,6 @@ export const generateFormSchema = generationFormShapeSchema
     creatorTip: z.number().min(0).max(1).optional(),
     civitaiTip: z.number().min(0).max(1).optional(),
   })
-  .superRefine(promptAuditRefiner)
   .refine(
     (data) => {
       // Check if resources are at limit based on tier
@@ -261,7 +241,7 @@ export const createGenerationRequestSchema = z.object({
     })
     .array()
     .min(1, 'You must select at least one resource'),
-  params: sharedGenerationParamsSchema.superRefine(promptAuditRefiner),
+  params: sharedGenerationParamsSchema,
 });
 
 export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;

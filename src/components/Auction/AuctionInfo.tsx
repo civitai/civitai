@@ -635,6 +635,7 @@ export const AuctionInfo = () => {
                   }}
                   buttonProps={{
                     fullWidth: mobile,
+                    disabled: isLoadingAuctionData || !auctionData || !canBid,
                   }}
                   groupPosition={!mobile ? 'left' : 'apart'}
                   showAsCheckpoint

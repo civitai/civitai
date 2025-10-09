@@ -1,7 +1,7 @@
 // src/pages/_app.tsx
 
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { getCookie, getCookies } from 'cookies-next';
+import { getCookie, getCookies, deleteCookie } from 'cookies-next';
 import type { Session, SessionUser } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import { SessionProvider } from 'next-auth/react';
@@ -267,26 +267,27 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  let hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const canIndex = Object.values(serverDomainMap).includes(request.headers.host);
-  const token = await getToken({
-    req: appContext.ctx.req as any,
-    secret: process.env.NEXTAUTH_SECRET,
-    cookieName: civitaiTokenCookieName,
-  });
 
-  const session = token?.user ? { user: token.user as SessionUser } : null;
   const region = getRegion(request);
+
+  const { settings, session } = await fetch(`${baseUrl as string}/api/user/settings`, {
+    headers: { ...request.headers } as HeadersInit,
+  }).then(async (res) => {
+    const data: { settings: UserSettingsSchema; session: Session | null } = await res.json();
+    return data;
+  });
+  // Pass this via the request so we can use it in SSR
   const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
 
-  const settings = await fetch(`${baseUrl as string}/api/user/settings`, {
-    headers: { ...request.headers } as HeadersInit,
-  }).then((res) => res.json() as UserSettingsSchema);
-  // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
+  } else if (hasAuthCookie) {
+    deleteCookie(civitaiTokenCookieName, appContext.ctx);
+    hasAuthCookie = false;
   }
   const allowMatureContent =
     appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN && !flags.isGreen;

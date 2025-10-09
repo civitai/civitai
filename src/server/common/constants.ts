@@ -508,6 +508,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://seed.bytedance.com/en/user-agreement',
     name: 'Seedream',
   },
+  ponyV7: {
+    url: 'https://purplesmart.ai/license',
+    name: 'Pony',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -543,7 +547,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
-  'Pony V7': baseLicenses['openrail++'],
+  'Pony V7': baseLicenses['ponyV7'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
@@ -660,6 +664,14 @@ export const qwenSizes = [
   { label: '9:16', width: 928, height: 1664 },
 ];
 
+export const ponyV7Sizes = [
+  { label: '3:2', width: 1536, height: 1024 },
+  { label: '6:5', width: 1536, height: 1280 },
+  { label: '1:1', width: 1536, height: 1536 },
+  { label: '5:6', width: 1280, height: 1536 },
+  { label: '2:3', width: 1024, height: 1536 },
+];
+
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -723,7 +735,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   PonyV7: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: ponyV7Sizes,
     checkpoint: {
       id: 2152373,
       name: 'v7.0',

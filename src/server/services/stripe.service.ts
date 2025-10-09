@@ -13,7 +13,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
@@ -43,7 +43,7 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
     const customer = await stripe.customers.create({ email });
 
     await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
-    await invalidateSession(id);
+    await refreshSession(id);
 
     return customer.id;
   } else {
@@ -176,7 +176,7 @@ export const createSubscribeSession = async ({
         discounts,
       });
 
-      await invalidateSession(user.id);
+      await refreshSession(user.id);
       return {
         sessionId: null,
         url: isUpgrade
@@ -185,7 +185,7 @@ export const createSubscribeSession = async ({
       };
     } else {
       const { url } = await createManageSubscriptionSession({ customerId });
-      await invalidateSession(user.id);
+      await refreshSession(user.id);
       return { sessionId: null, url };
     }
   }
@@ -427,7 +427,7 @@ export const upsertSubscription = async (
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     await getMultipliersForUser(user.id, true);
-    await invalidateSession(user.id);
+    await refreshSession(user.id);
     return;
   }
 
@@ -508,7 +508,7 @@ export const upsertSubscription = async (
     }
   }
 
-  await invalidateSession(user.id);
+  await refreshSession(user.id);
   await getMultipliersForUser(user.id, true);
 };
 

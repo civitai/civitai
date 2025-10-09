@@ -35,7 +35,12 @@ import {
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
-import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import {
+  refreshSession,
+  invalidateToken,
+  refreshToken,
+  trackToken,
+} from '~/server/utils/session-helpers';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -142,40 +147,42 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       async jwt({ token, user, trigger }) {
         // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
         if (trigger === 'update') {
-          await invalidateSession(Number(token.sub));
-          token.user = await getSessionUser({ userId: Number(token.sub) });
+          await refreshSession(Number(token.sub));
+          // token.user = await getSessionUser({ userId: Number(token.sub) });
         } else {
           token.sub = Number(token.sub) as any; //eslint-disable-line
           if (user) token.user = user;
           const { deletedAt, ...restUser } = token.user as User;
           token.user = { ...restUser };
         }
-        if (!token.id) token.id = uuid();
-        if (!token.signedAt) token.signedAt = Date.now(); // Initialize signedAt on token creation
 
-        return token;
-      },
-      async session({ session, token }) {
-        // console.log(new Date().toISOString() + ' ::', 'session', session.user?.email);
-        const newToken = await refreshToken(token);
-        // console.log(new Date().toISOString() + ' ::', newToken?.name);
-
-        // Token was explicitly invalidated (clearedAt, invalid token hash)
-        if (!newToken) return {} as Session;
-
-        if (!newToken.user && token.user) {
-          // Transient failure during refresh - keep existing session
-          if (token.sub)
-            console.warn(`Session refresh failed for token ${token.sub}, using cached session`);
-          session.user = token.user as Session['user'];
-
-          return session;
+        const isNewToken = !token.id;
+        if (isNewToken) {
+          token.id = uuid();
+          token.signedAt = Date.now();
         }
 
-        // No user data available at all
-        if (!newToken.user) return {} as Session;
+        // Track new tokens
+        if (isNewToken && token.user) {
+          await trackToken(token.id as string, (token.user as User).id);
+        }
 
-        session.user = newToken.user as Session['user'];
+        // Check if token should be refreshed or invalidated
+        const refreshedToken = isNewToken ? token : await refreshToken(token);
+
+        // If token is invalid (returns null), return null to force NextAuth to clear the cookie
+        // Note: Returning null tells NextAuth the token is invalid and should be cleared
+        if (!refreshedToken) {
+          token.user = {};
+          return token;
+        }
+
+        return refreshedToken;
+      },
+      async session({ session, token }) {
+        if (token.user) {
+          session.user = token.user as Session['user'];
+        }
         return session;
       },
       async redirect({ url, baseUrl }) {

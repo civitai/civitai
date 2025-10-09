@@ -53,6 +53,7 @@ export const textToImageParamsSchema = z.object({
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),
   process: z.string().optional(),
+  enhancedCompatibility: z.boolean().optional(),
 });
 
 // #endregion

@@ -39,7 +39,7 @@ export function CivitaiSessionProvider({
       } as UnauthedUser;
 
     const isMember = user.tier != null;
-    const isPaidMember = user.tier != null && user.tier !== 'free';
+    const isPaidMember = !!user.tier && user.tier !== 'free';
     const currentUser: AuthedUser = {
       type: 'authed',
       ...user,

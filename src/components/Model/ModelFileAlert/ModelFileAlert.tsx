@@ -3,9 +3,15 @@ import { IconAlertCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 
-export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: ModelFileAlertProps) => {
+export const ModelFileAlert = ({
+  files,
+  modelType,
+  versionId,
+  baseModel,
+  usageControl,
+}: ModelFileAlertProps) => {
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
@@ -27,7 +33,7 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
 
   return (
     <>
-      {onlyPickle && (
+      {onlyPickle && usageControl === ModelUsageControl.Download && (
         <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" color="yellow">
           <Text size="xs">
             {modelType === 'TextualInversion' || modelType === 'Hypernetwork'
@@ -99,4 +105,5 @@ type ModelFileAlertProps = {
   baseModel: BaseModel;
   modelType: ModelType;
   versionId: number;
+  usageControl: ModelUsageControl;
 };

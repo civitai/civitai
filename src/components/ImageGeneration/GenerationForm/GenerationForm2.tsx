@@ -48,16 +48,12 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import {
-  blockedRequest,
-  useGenerationForm,
-} from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { InputExperimentalMode } from '~/components/ImageGeneration/GenerationForm/ExperimentalModeCard';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
@@ -110,6 +106,7 @@ import {
   getIsFluxKrea,
   getIsQwen,
   getIsChroma,
+  EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -145,6 +142,7 @@ import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerat
 import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
+  getBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
 import { getIsNanoBanana } from '~/shared/orchestrator/ImageGen/gemini.config';
 import {
@@ -152,6 +150,7 @@ import {
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import { useAppContext } from '~/providers/AppProvider';
 
 let total = 0;
 const tips = {
@@ -161,6 +160,7 @@ const tips = {
 
 // #region [form component]
 export function GenerationFormContent() {
+  const { allowMatureContent } = useAppContext();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const featureFlags = useFeatureFlags();
@@ -310,37 +310,32 @@ export function GenerationFormContent() {
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
-      try {
-        const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
-        setSubmitError(undefined);
-        await mutateAsync({
-          resources,
-          params: {
-            ...params,
-            // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            disablePoi: browsingSettingsAddons.settings.disablePoi,
-            experimental: data.experimental,
-          },
-          tips,
-          remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
-        }).catch((error: any) => {
-          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
-        });
 
-        if (hasEarlyAccess) {
-          invalidateWhatIf();
-        }
-      } catch (e) {
-        const error = e as Error;
-        if (error.message.startsWith('Your prompt was flagged')) {
-          setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
-          currentUser?.refresh();
-        }
-
-        if (error.message.includes('POI')) {
+      const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
+      setSubmitError(undefined);
+      await mutateAsync({
+        resources,
+        params: {
+          ...params,
+          // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+          disablePoi: browsingSettingsAddons.settings.disablePoi,
+          experimental: data.enhancedCompatibility,
+        },
+        tips,
+        remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+      }).catch((error: any) => {
+        if (
+          allowMatureContent &&
+          (error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI'))
+        ) {
           setPromptWarning(error.message);
           currentUser?.refresh();
-        }
+        } else
+          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
+      });
+
+      if (hasEarlyAccess) {
+        invalidateWhatIf();
       }
     }
 
@@ -351,23 +346,6 @@ export function GenerationFormContent() {
       setFilters({ marker: undefined });
     }
   }
-
-  const { mutateAsync: reportProhibitedRequest } =
-    trpc.orchestrator.reportProhibitedRequest.useMutation();
-  const handleError = async (e: unknown) => {
-    const promptError = (e as any)?.prompt as any;
-    if (promptError?.type === 'custom' && promptError.message.startsWith('Blocked for')) {
-      const status = blockedRequest.status();
-      setPromptWarning(promptError.message);
-      if (status === 'notified' || status === 'muted') {
-        const { prompt, negativePrompt } = form.getValues();
-        const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
-        if (isBlocked) currentUser?.refresh();
-      }
-    } else {
-      setPromptWarning(null);
-    }
-  };
 
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
@@ -476,7 +454,6 @@ export function GenerationFormContent() {
       <GenForm
         form={form}
         onSubmit={handleSubmit}
-        onError={handleError}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
         <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
@@ -850,12 +827,6 @@ export function GenerationFormContent() {
                       );
                     }}
                   </Watch>
-
-                  <InputExperimentalMode
-                    name="experimental"
-                    baseModel={baseModel}
-                    workflow={workflow}
-                  />
 
                   {enableImageInput && (
                     <InputSourceImageUpload
@@ -1487,6 +1458,24 @@ export function GenerationFormContent() {
                                 }}
                               />
                             )}
+                            {EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
+                              getBaseModelGroup(baseModel)
+                            ) && (
+                              <InputSwitch
+                                name="enhancedCompatibility"
+                                labelPosition="left"
+                                label={
+                                  <div className="relative flex items-center gap-1">
+                                    <Input.Label>Enhanced Compatibility</Input.Label>
+                                    <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                                      {`We've updated our generation engine for better performance,
+                                        but older prompts may look different. Turn this on to make
+                                        new generations look more like your originals.`}
+                                    </InfoPopover>
+                                  </div>
+                                }
+                              />
+                            )}
                           </div>
                           {/* <Text variant="link" onClick={() => {
                           const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};
@@ -1506,7 +1495,7 @@ export function GenerationFormContent() {
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
-                        <Text>{promptWarning}</Text>
+                        <Text className="whitespace-pre-wrap ">{promptWarning}</Text>
                         <Button
                           color="red"
                           variant="light"
@@ -1583,7 +1572,7 @@ export function GenerationFormContent() {
                               icon={<IconX size={18} />}
                               color="red"
                               onClose={() => setSubmitError(undefined)}
-                              className="rounded-md bg-red-8/20"
+                              className="whitespace-pre-wrap rounded-md bg-red-8/20"
                             >
                               {submitError}
                             </Notification>
@@ -1665,6 +1654,7 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
+  const { allowMatureContent } = useAppContext();
   const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
@@ -1679,7 +1669,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream && !isPonyV7) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();

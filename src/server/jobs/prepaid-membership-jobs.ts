@@ -6,10 +6,12 @@ import { createJob } from './job';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
+import { refreshSession } from '~/server/utils/session-helpers';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
+import { withRetries } from '~/utils/errorHandling';
 
 const schema = z.object({
   date: z.coerce.date().optional(),
@@ -101,6 +103,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
             date: date,
             productId: d.productId,
             interval: d.interval,
+            tier: d.tier,
           },
         };
       })
@@ -109,35 +112,45 @@ export const deliverPrepaidMembershipBuzz = createJob(
     // Process in batches to avoid overwhelming the database
     const batches = chunk(buzzTransactions, 100);
     for (const batch of batches) {
-      await createBuzzTransactionMany(batch);
-    }
+      await withRetries(
+        async () => {
+          await createBuzzTransactionMany(batch);
+          const userData = batch.map((b) => ({
+            id: b.toAccountId,
+            tier: (b.details as any).tier,
+          }));
 
-    // Decrement prepaid counts for each user who received buzz
-    if (data.length > 0) {
-      console.log(`Decrementing prepaid counts for ${data.length} users`);
+          // Decrement prepaid counts for each user who received buzz
+          if (userData.length > 0) {
+            console.log(`Decrementing prepaid counts for ${userData.length} users`);
 
-      await dbWrite.$executeRaw`
-        UPDATE "CustomerSubscription"
-        SET
-          "metadata" = jsonb_set(
-            "metadata",
-            ARRAY['prepaids', (updates.data ->> 'tier')],
-            (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
-          ),
-          "updatedAt" = NOW()
-        FROM (
-          SELECT
-            (value ->> 'id')::text AS "id",
-            value AS data
-          FROM json_array_elements(${JSON.stringify(
-            data.map((d) => ({
-              id: d.id,
-              tier: d.tier,
-            }))
-          )}::json)
-        ) AS updates
-        WHERE "CustomerSubscription"."id" = updates."id"
-      `;
+            await dbWrite.$executeRaw`
+              UPDATE "CustomerSubscription"
+              SET
+                "metadata" = jsonb_set(
+                  "metadata",
+                  ARRAY['prepaids', (updates.data ->> 'tier')],
+                  (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
+                ),
+                "updatedAt" = NOW()
+              FROM (
+                SELECT
+                  (value ->> 'id')::text AS "id",
+                  value AS data
+                FROM json_array_elements(${JSON.stringify(
+                  userData.map((d) => ({
+                    id: d.id,
+                    tier: d.tier,
+                  }))
+                )}::json)
+              ) AS updates
+              WHERE "CustomerSubscription"."id" = updates."id"
+            `;
+          }
+        },
+        3,
+        1000
+      );
     }
 
     // Grant cosmetics for Civitai membership holders
@@ -397,7 +410,64 @@ export const processPrepaidMembershipTransitions = createJob(
   }
 );
 
+export const cancelExpiredPrepaidMemberships = createJob(
+  'cancel-expired-prepaid-memberships',
+  '0 2 * * *', // Run daily at 2:00 AM
+  async () => {
+    const now = dayjs();
+
+    // Find all active Civitai memberships where currentPeriodEnd has passed
+    const expiredMemberships = await dbWrite.customerSubscription.findMany({
+      where: {
+        status: 'active',
+        currentPeriodEnd: {
+          lt: now.toDate(),
+        },
+        product: {
+          provider: 'Civitai',
+        },
+      },
+      select: {
+        id: true,
+        userId: true,
+        currentPeriodEnd: true,
+      },
+    });
+
+    if (!expiredMemberships.length) {
+      console.log('No expired prepaid memberships to cancel');
+      return;
+    }
+
+    console.log(`Canceling ${expiredMemberships.length} expired prepaid memberships`);
+
+    // Batch update all expired memberships to canceled status
+    const updated = await dbWrite.customerSubscription.updateManyAndReturn({
+      select: { userId: true },
+      where: {
+        id: {
+          in: expiredMemberships.map((m) => m.id),
+        },
+      },
+      data: {
+        status: 'canceled',
+        canceledAt: now.toDate(),
+        endedAt: now.toDate(),
+        updatedAt: now.toDate(),
+      },
+    });
+
+    // Invalidate sessions for all affected users
+    const updatedUserIds = [...new Set(updated.map((m) => m.userId))];
+    console.log(`Invalidating sessions for ${updatedUserIds.length} users`);
+    await Promise.all(updatedUserIds.map((userId) => refreshSession(userId)));
+
+    console.log(`Canceled ${expiredMemberships.length} expired prepaid memberships`);
+  }
+);
+
 export const prepaidMembershipJobs = [
   deliverPrepaidMembershipBuzz,
   processPrepaidMembershipTransitions,
+  cancelExpiredPrepaidMemberships,
 ];
