@@ -5,11 +5,7 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
-import {
-  deleteImages,
-  ingestImage,
-  ingestImageBulk
-} from '~/server/services/image.service';
+import { deleteImages, ingestImage, ingestImageBulk } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 
@@ -18,31 +14,41 @@ const IMAGE_SCANNING_RETRY_LIMIT = 3;
 
 type PendingIngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
-}
+};
 type ErrorIngestImageRow = PendingIngestImageRow & {
   retryCount: number;
-}
+};
 
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
   const now = new Date();
 
   // Fetch then filter pending images in JS to avoid a slow query
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
-  const pendingImages = ((await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+  const pendingImages = (
+    (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
     FROM "Image"
     WHERE ingestion = 'Pending'::"ImageIngestionStatus"
-  `) ?? []).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
+    LIMIT 20000
+  `) ?? []
+  ).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
 
   // Fetch then filter error images in JS to avoid a slow query
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes');
-  const errorImages = ((await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
+  const errorImages = (
+    (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as retryCount
     FROM "Image"
     WHERE ingestion = 'Error'::"ImageIngestionStatus" AND "createdAt" > now() - '6 hours'::interval
-  `) ?? []).filter((img) => img.scanRequestedAt && img.scanRequestedAt <= errorRetryDate && img.retryCount < IMAGE_SCANNING_RETRY_LIMIT);
+  `) ?? []
+  ).filter(
+    (img) =>
+      img.scanRequestedAt &&
+      img.scanRequestedAt <= errorRetryDate &&
+      img.retryCount < IMAGE_SCANNING_RETRY_LIMIT
+  );
 
-  const images: IngestImageInput[] = [...pendingImages, ...errorImages]
+  const images: IngestImageInput[] = [...pendingImages, ...errorImages];
 
   if (isProd) await sendImagesForScanBulk(images);
 
