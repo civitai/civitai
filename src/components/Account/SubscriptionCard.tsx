@@ -33,15 +33,6 @@ export function SubscriptionCard() {
   }
 
   // If user has subscription but is on red environment, show redirect message
-  const showRedirectMessage = !features.isGreen && subscription;
-
-  const handleRedirectToGreen = () => {
-    window.open(
-      `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
-      '_blank',
-      'noreferrer'
-    );
-  };
   const isCivitaiProvider = subscription?.product?.provider === PaymentProvider.Civitai;
 
   return (
@@ -51,28 +42,16 @@ export function SubscriptionCard() {
           <Title id="manage-subscription" order={2}>
             Membership
           </Title>
-          {showRedirectMessage ? (
-            <Button
-              size="compact-sm"
-              radius="xl"
-              rightSection={<IconExternalLink size={16} />}
-              onClick={handleRedirectToGreen}
-              className={`${greenClassNames?.btn} px-2 py-1 text-xs`}
-            >
-              Manage on Green
-            </Button>
-          ) : (
-            <Button
-              size="compact-sm"
-              radius="xl"
-              color="gray"
-              rightSection={<IconSettings size={16} />}
-              component={Link}
-              href="/user/membership"
-            >
-              Manage
-            </Button>
-          )}
+          <Button
+            size="compact-sm"
+            radius="xl"
+            color="gray"
+            rightSection={<IconSettings size={16} />}
+            component={Link}
+            href="/user/membership"
+          >
+            Manage
+          </Button>
         </Group>
         {subscriptionLoading ? (
           <Center p="xl">
@@ -80,14 +59,6 @@ export function SubscriptionCard() {
           </Center>
         ) : subscription ? (
           <>
-            {showRedirectMessage && (
-              <Alert color="blue" variant="light">
-                <Text size="sm">
-                  Your membership needs to be managed on Civitai Green. Click &quot;Manage on
-                  Green&quot; to open the management page in a new window.
-                </Text>
-              </Alert>
-            )}
             <Group justify="space-between">
               <Group wrap="nowrap">
                 {image && (
@@ -115,7 +86,7 @@ export function SubscriptionCard() {
                 </Text>
               </Stack>
             </Group>
-            {!subscription.cancelAt && !showRedirectMessage && !isCivitaiProvider && (
+            {!subscription.cancelAt && !isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
                 buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}
