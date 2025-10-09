@@ -1,4 +1,4 @@
-import type { WorkflowCost } from '@civitai/client';
+import type { TransactionInfo, WorkflowCost } from '@civitai/client';
 import type { PopoverProps } from '@mantine/core';
 import { Group, NumberInput, Popover, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
@@ -34,12 +34,21 @@ export function GenerationCostPopover({
   hideCreatorTip,
   hideCivitaiTip,
   variant = 'info-circle',
+  transactions,
   ...popoverProps
 }: Omit<PopoverProps, 'children'> & Props) {
   const totalCost = workflowCost.total ?? 0;
   const disabled = totalCost > 0 ? popoverProps.disabled : true;
+
+  // When no transactions are available, we use the cost to determine the badge color.
   const availableBuzzTypes = useAvailableBuzz(['blue']);
-  const mainBuzzAccountType = useMainBuzzAccountType(availableBuzzTypes, totalCost);
+  const guessedMainBuzzAccountType = useMainBuzzAccountType(availableBuzzTypes, totalCost);
+  const mainBuzzAccountType =
+    transactions && transactions.length > 0
+      ? transactions.reduce((highest, current) =>
+          current.amount > highest.amount ? current : highest
+        ).accountType
+      : guessedMainBuzzAccountType;
 
   return (
     <Popover shadow="md" {...popoverProps} withinPortal>
@@ -60,7 +69,7 @@ export function GenerationCostPopover({
             currency={Currency.BUZZ}
             size="xs"
             className="cursor-pointer"
-            type={mainBuzzAccountType}
+            type={mainBuzzAccountType as BuzzSpendType}
           />
         )}
       </Popover.Target>
@@ -71,7 +80,7 @@ export function GenerationCostPopover({
           disabled={disabled}
           hideCreatorTip={hideCreatorTip}
           hideCivitaiTip={hideCivitaiTip}
-          buzzAccountType={mainBuzzAccountType}
+          buzzAccountType={mainBuzzAccountType as BuzzSpendType}
         />
       </Popover.Dropdown>
     </Popover>
@@ -318,4 +327,5 @@ type Props = {
   hideCivitaiTip?: boolean;
   variant?: 'info-circle' | 'badge';
   buzzAccountType?: BuzzSpendType;
+  transactions?: TransactionInfo[];
 };

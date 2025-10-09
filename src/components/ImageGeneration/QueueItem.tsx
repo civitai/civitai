@@ -203,7 +203,12 @@ export function QueueItem({
                 {formatDateMin(request.createdAt)}
               </Text>
               {!!request.cost?.total && (
-                <GenerationCostPopover workflowCost={request.cost} readOnly variant="badge" />
+                <GenerationCostPopover
+                  workflowCost={request.cost}
+                  transactions={request.transactions}
+                  readOnly
+                  variant="badge"
+                />
               )}
               {request.transactions.length > 0 && (
                 <TransactionsPopover data={request.transactions} />
