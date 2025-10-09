@@ -77,9 +77,11 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
   }): AsyncGenerator<string[], void, unknown>;
   packed: {
     get<T>(key: K): Promise<T | null>;
+    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     mGet<T>(keys: K[]): Promise<(T | null)[]>;
     set<T>(key: K, value: T, setOptions?: SetOptions): Promise<void>;
-    mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
+    // mSet still disabled - sets are more complex with different argument formats
+    // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
     setNX<T>(key: K, value: T): Promise<void>;
     sAdd<T>(key: K, values: T[]): Promise<void>;
     sRemove<T>(key: K, value: T): Promise<void>;
@@ -98,15 +100,16 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
       | [options: CommandType, key: K, value: T, setOptions?: SetOptions]
   ): Promise<T | null>;
   get<T = string>(...args: [key: K] | [options: CommandType, key: K]): Promise<T | null>;
+  // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
   mGet<T = string>(...args: [keys: K[]] | [options: CommandType, keys: K[]]): Promise<(T | null)[]>;
-  mSet<T = string>(
-    ...args:
-      | [records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>]
-      | [
-          options: CommandType,
-          records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>
-        ]
-  ): Promise<T>;
+  // mSet<T = string>(
+  //   ...args:
+  //     | [records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>]
+  //     | [
+  //         options: CommandType,
+  //         records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>
+  //       ]
+  // ): Promise<T>;
   setNX<T>(key: K, value: T): Promise<boolean>;
   sAdd<T>(key: K, values: T | T[]): Promise<number>;
   sRem<T>(key: K, values: T | T[]): Promise<number>;
@@ -134,6 +137,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
       | [key: K, hashKeys: RedisCommandArgument | RedisCommandArgument[]]
       | [options: CommandType, key: K, hashKeys: RedisCommandArgument | RedisCommandArgument[]]
   ): Promise<T[]>;
+  // Wrapped to avoid CROSSSLOT errors - deletes keys individually with Promise.all when array
   del(key: K | K[]): Promise<number>;
   exists(key: K | K[]): Promise<number>;
   expire(key: K, seconds: number, mode?: 'NX' | 'XX' | 'GT' | 'LT'): Promise<boolean>;
@@ -251,21 +255,14 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       return result ? unpack(result) : null;
     },
 
+    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     async mGet<T>(keys: K[]): Promise<(T | null)[]> {
-      const results = await bufferClient.mGet<Buffer>(keys);
+      const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
       return results.map((result) => (result ? unpack(result) : null));
     },
 
     async set<T>(key: K, value: T, options?: SetOptions): Promise<void> {
       await client.set(key, pack(value), options);
-    },
-
-    async mSet(records: Record<K, unknown>): Promise<void> {
-      const packedRecords: [K, Buffer][] = Object.entries(records).map(([k, v]) => [
-        k as K,
-        pack(v),
-      ]);
-      await client.mSet(packedRecords);
     },
 
     async setNX<T>(key: K, value: T): Promise<void> {
@@ -353,6 +350,25 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       // Single node mode: use original native scanIterator
       yield* originalScanIterator(options);
     }
+  };
+
+  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually
+  const originalMGet = baseClient.mGet?.bind(baseClient);
+  client.mGet = async function (...args: any[]): Promise<any> {
+    const keys = args[0] as K[];
+    if (!Array.isArray(keys)) return originalMGet(...args);
+
+    const results = await Promise.all(keys.map((key) => client.get(key)));
+    return results;
+  };
+
+  // Wrap del to avoid CROSSSLOT errors - delete keys individually when array
+  const originalDel = baseClient.del?.bind(baseClient);
+  client.del = async function (key: K | K[]): Promise<number> {
+    if (!Array.isArray(key)) key = [key];
+
+    const results = await Promise.all(key.map((k) => originalDel(k)));
+    return results.reduce((sum, count) => sum + count, 0);
   };
 
   return client;
