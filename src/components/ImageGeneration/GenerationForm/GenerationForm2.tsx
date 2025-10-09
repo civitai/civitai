@@ -1357,6 +1357,11 @@ export function GenerationFormContent() {
                                         <InputNumberSlider
                                           name="steps"
                                           disabled={stepsDisabled}
+                                          description={
+                                            isPonyV7
+                                              ? 'This model works best when using 40 steps or more.'
+                                              : undefined
+                                          }
                                           label={
                                             <div className="flex items-center gap-1">
                                               <Input.Label>Steps</Input.Label>
