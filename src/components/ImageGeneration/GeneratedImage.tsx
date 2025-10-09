@@ -606,11 +606,12 @@ function GeneratedImageWorkflowMenuItems({
   const canImg2Img =
     !isQwen && !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream && !isPonyV7;
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
-  const img2imgWorkflows = !isVideo
-    ? workflowDefinitions.filter(
-        (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
-      )
-    : [];
+  const img2imgWorkflows =
+    !isVideo && !isBlocked
+      ? workflowDefinitions.filter(
+          (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
+        )
+      : [];
 
   const img2vidConfigs = !isVideo
     ? engines.filter((x) => !x.disabled && x.processes.includes('img2vid'))

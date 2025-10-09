@@ -86,7 +86,7 @@ export function SubscriptionCard() {
                 </Text>
               </Stack>
             </Group>
-            {!subscription.cancelAt && !showRedirectMessage && !isCivitaiProvider && (
+            {!subscription.cancelAt && !isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
                 buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}
