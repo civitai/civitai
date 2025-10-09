@@ -146,15 +146,30 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       },
       async jwt({ token, user, trigger }) {
         // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
+
+        // Handle manual session update (e.g., when user clicks "refresh session")
         if (trigger === 'update') {
+          console.log('this triggers an update');
+          // Clear cache first, then fetch fresh user data to avoid getting stale cached data
+          // Also mark all user's tokens for refresh in case they have multiple sessions
           await refreshSession(Number(token.sub));
-          // token.user = await getSessionUser({ userId: Number(token.sub) });
-        } else {
-          token.sub = Number(token.sub) as any; //eslint-disable-line
-          if (user) token.user = user;
-          const { deletedAt, ...restUser } = token.user as User;
-          token.user = { ...restUser };
+
+          // Now fetch fresh user data (cache is cleared, so this will hit the database)
+          const freshUser = await getSessionUser({ userId: Number(token.sub) });
+          if (freshUser) {
+            token.user = freshUser;
+            token.signedAt = Date.now(); // Update signedAt to mark this refresh
+          }
+
+          // Return immediately - no need to go through refreshToken() since we just refreshed
+          return token;
         }
+
+        // Handle initial token setup (not update trigger)
+        token.sub = Number(token.sub) as any; //eslint-disable-line
+        if (user) token.user = user;
+        const { deletedAt, ...restUser } = token.user as User;
+        token.user = { ...restUser };
 
         const isNewToken = !token.id;
         if (isNewToken) {

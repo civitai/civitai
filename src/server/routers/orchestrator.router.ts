@@ -78,9 +78,15 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  const allowMatureContent = (ctx.domain === 'green' || !user.showNsfw) ? false : undefined;
+  const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
   return next({
-    ctx: { ...ctx, user, token, allowMatureContent, hideMatureContent: ctx.domain === 'green' || !user.showNsfw },
+    ctx: {
+      ...ctx,
+      user,
+      token,
+      allowMatureContent,
+      hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+    },
   });
   // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
