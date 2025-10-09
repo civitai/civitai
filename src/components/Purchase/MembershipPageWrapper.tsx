@@ -135,9 +135,7 @@ export function MembershipPageWrapper({
               <PromoBanner
                 icon={<IconInfoCircle size={24} />}
                 title="Prepaid Memberships Available!"
-                subtitle="Regular membership purchases are temporarily disabled, but you can still
-                      purchase prepaid memberships! Prepaid memberships give you all the same
-                      benefits and can be stacked up!"
+                subtitle="Regular membership purchases are unavailable, but you can still purchase Yellow prepaid memberships for Civitai.com! Prepaid memberships give you all the same benefits and can be stacked up!"
                 buyNowHref="/gift-cards?type=memberships"
                 buyNowText="Purchase Now!"
               />

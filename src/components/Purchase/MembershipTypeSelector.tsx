@@ -20,7 +20,7 @@ export function MembershipTypeSelector({ onSelect }: MembershipTypeSelectorProps
         description: (
           <>
             Membership benefits include <b>Green Buzz</b>.<br />
-            Can <b>only</b> be used to generate <b>safe for work</b> content.
+            Can <b>only</b> be used to generate <b>safe for work</b> content on Civitai.green
           </>
         ),
       }}
@@ -29,7 +29,8 @@ export function MembershipTypeSelector({ onSelect }: MembershipTypeSelectorProps
         description: (
           <>
             Membership benefits include <b>Yellow Buzz</b>.<br />
-            Can be used to generate <b>NSFW</b> content as well as anything else on the site.
+            Can be used to generate <b>NSFW</b> content as well as anything else on the site. Can be
+            bought via Gift Cards.
           </>
         ),
       }}

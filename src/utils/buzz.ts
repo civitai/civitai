@@ -19,7 +19,7 @@ export const parseBuzzTransactionDetails = (
 
   const fallbackUrl = details.user && details.user !== 'a user' ? `/user/${details.user}` : '';
   const baseNotification = `You received a tip of ${String(details.amount)} ${
-    details.toAccountType ?? 'Yellow'
+    capitalize(details.toAccountType) ?? 'Yellow'
   } Buzz from ${details.user ? `@${details.user}` : 'a user'}`;
 
   if (!details.entityId || !details.entityType) {
