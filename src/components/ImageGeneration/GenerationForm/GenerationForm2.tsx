@@ -1682,7 +1682,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream && !isPonyV7) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();

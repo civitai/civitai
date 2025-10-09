@@ -11,6 +11,7 @@ import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
+import { withRetries } from '~/utils/errorHandling';
 
 const schema = z.object({
   date: z.coerce.date().optional(),
@@ -99,6 +100,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
             date: date,
             productId: d.productId,
             interval: d.interval,
+            tier: d.tier,
           },
         };
       })
@@ -107,35 +109,45 @@ export const deliverPrepaidMembershipBuzz = createJob(
     // Process in batches to avoid overwhelming the database
     const batches = chunk(buzzTransactions, 100);
     for (const batch of batches) {
-      await createBuzzTransactionMany(batch);
-    }
+      await withRetries(
+        async () => {
+          await createBuzzTransactionMany(batch);
+          const userData = batch.map((b) => ({
+            id: b.toAccountId,
+            tier: (b.details as any).tier,
+          }));
 
-    // Decrement prepaid counts for each user who received buzz
-    if (data.length > 0) {
-      console.log(`Decrementing prepaid counts for ${data.length} users`);
+          // Decrement prepaid counts for each user who received buzz
+          if (userData.length > 0) {
+            console.log(`Decrementing prepaid counts for ${userData.length} users`);
 
-      await dbWrite.$executeRaw`
-        UPDATE "CustomerSubscription"
-        SET
-          "metadata" = jsonb_set(
-            "metadata",
-            ARRAY['prepaids', (updates.data ->> 'tier')],
-            (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
-          ),
-          "updatedAt" = NOW()
-        FROM (
-          SELECT
-            (value ->> 'id')::text AS "id",
-            value AS data
-          FROM json_array_elements(${JSON.stringify(
-            data.map((d) => ({
-              id: d.id,
-              tier: d.tier,
-            }))
-          )}::json)
-        ) AS updates
-        WHERE "CustomerSubscription"."id" = updates."id"
-      `;
+            await dbWrite.$executeRaw`
+              UPDATE "CustomerSubscription"
+              SET
+                "metadata" = jsonb_set(
+                  "metadata",
+                  ARRAY['prepaids', (updates.data ->> 'tier')],
+                  (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
+                ),
+                "updatedAt" = NOW()
+              FROM (
+                SELECT
+                  (value ->> 'id')::text AS "id",
+                  value AS data
+                FROM json_array_elements(${JSON.stringify(
+                  userData.map((d) => ({
+                    id: d.id,
+                    tier: d.tier,
+                  }))
+                )}::json)
+              ) AS updates
+              WHERE "CustomerSubscription"."id" = updates."id"
+            `;
+          }
+        },
+        3,
+        1000
+      );
     }
 
     // Grant cosmetics for Civitai membership holders

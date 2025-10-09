@@ -993,6 +993,7 @@ export function ModelVersionDetails({
             modelType={model.type}
             files={version.files}
             baseModel={version.baseModel}
+            usageControl={version.usageControl}
           />
 
           {hideDownload && (
