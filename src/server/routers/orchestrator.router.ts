@@ -78,9 +78,10 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  const allowMatureContent = user.showNsfw;
-  // const allowMatureContent = ctx.domain === 'blue' && user.showNsfw;
-  return next({ ctx: { ...ctx, user, token, allowMatureContent } });
+  const allowMatureContent = (ctx.domain === 'green' || !user.showNsfw) ? false : undefined;
+  return next({
+    ctx: { ...ctx, user, token, allowMatureContent, hideMatureContent: ctx.domain === 'green' || !user.showNsfw },
+  });
   // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 
@@ -174,7 +175,7 @@ export const orchestratorRouter = router({
       ...input,
       token: ctx.token,
       user: ctx.user,
-      allowMatureContent: ctx.allowMatureContent,
+      hideMatureContent: ctx.hideMatureContent,
     })
   ),
   generateImage: orchestratorGuardedProcedure

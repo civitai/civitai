@@ -17,23 +17,7 @@ import { REDIS_KEYS, REDIS_SYS_KEYS } from '../redis/client';
 import { clickhouse } from '../clickhouse/client';
 
 
-type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent: boolean , currencies?: BuzzSpendType[]};
-
-const blockedPromptLimiter = createLimiter({
-  counterKey: REDIS_KEYS.GENERATION.COUNT,
-  limitKey: REDIS_SYS_KEYS.GENERATION.LIMITS,
-  fetchCount: async (userKey) => {
-    if (!clickhouse) return 0;
-    const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM prohibitedRequests
-      WHERE time > subtractHours(now(), 24) AND userId = ${userKey}
-    `;
-    const count = data[0]?.count ?? 0;
-    return count;
-  },
-});
+type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent?: boolean , currencies?: BuzzSpendType[]};
 
 export async function generate({
   token,
@@ -47,8 +31,7 @@ export async function generate({
   isModerator,
   track,
   ...args
-}: GenerationSchema &
-  Ctx & { isGreen?: boolean; isModerator?: boolean; track?: any }) {
+}: GenerationSchema & Ctx & { isGreen?: boolean; isModerator?: boolean; track?: any }) {
   // Audit prompt if present
   if ('prompt' in args.data) {
     const negativePrompt =

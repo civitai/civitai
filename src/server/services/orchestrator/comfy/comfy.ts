@@ -113,7 +113,7 @@ export async function createComfy(
     token: string;
     experimental?: boolean;
     isGreen?: boolean;
-    allowMatureContent: boolean;
+    allowMatureContent?: boolean;
     currencies: BuzzSpendType[];
   }
 ) {

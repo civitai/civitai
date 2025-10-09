@@ -30,7 +30,7 @@ import {
 export async function queryWorkflows({
   token,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string; allowMatureContent: boolean }) {
+}: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
   const { data, error } = await clientQueryWorkflows({

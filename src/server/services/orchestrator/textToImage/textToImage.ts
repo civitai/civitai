@@ -116,7 +116,7 @@ export async function createTextToImage(
     experimental?: boolean;
     batchAll?: boolean;
     isGreen?: boolean;
-    allowMatureContent: boolean;
+    allowMatureContent?: boolean;
     currencies: BuzzSpendType[];
   }
 ) {

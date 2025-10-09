@@ -692,7 +692,7 @@ export async function queryGeneratedImageWorkflows({
 }: Parameters<typeof queryWorkflows>[0] & {
   token: string;
   user?: SessionUser;
-  allowMatureContent: boolean;
+  hideMatureContent: boolean;
 }) {
   const { nextCursor, items } = await queryWorkflows(props);
 
