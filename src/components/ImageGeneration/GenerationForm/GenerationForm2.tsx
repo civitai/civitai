@@ -1701,6 +1701,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
       onClick={() => {
         if (running) helpers?.next();
       }}
+      transactions={data?.transactions}
     />
   );
 

@@ -1,7 +1,7 @@
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { hashify } from '~/utils/string-helpers';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -36,6 +36,7 @@ import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
+import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -201,6 +202,9 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
   const debouncer = useDebouncer(150);
 
+  const promptRef = useRef('');
+  const promptFocused = usePromptFocusedStore((x) => x.focused);
+
   useEffect(() => {
     function handleFormData() {
       debouncer(() => {
@@ -211,12 +215,21 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
         );
 
         try {
-          const result = config.getWhatIfValues({ ...whatIfData, priority: formData.priority });
+          const result = config.getWhatIfValues({
+            ...whatIfData,
+            priority: formData.priority,
+            prompt: formData['prompt'],
+          });
           if ('resources' in result && !!result.resources)
             result.resources = (result.resources! as Record<string, any>[]).map(
               ({ image, ...resource }) => resource
             ) as any;
-          setQuery(result);
+
+          if (!promptFocused && result.prompt !== undefined) {
+            promptRef.current = result.prompt!;
+          }
+
+          setQuery({ ...result, prompt: promptRef.current });
         } catch (e: any) {
           console.log({ e });
           setQuery(null);
@@ -228,7 +241,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       handleFormData();
     });
     return subscription.unsubscribe;
-  }, [engine]);
+  }, [engine, promptFocused]);
 
   useEffect(() => {
     setTimeout(() => {
@@ -248,6 +261,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
         disabled={!data || !query || isUploadingImage}
         loading={isFetching || loading}
         cost={totalCost}
+        transactions={data?.transactions}
       >
         Generate
       </GenerateButton>

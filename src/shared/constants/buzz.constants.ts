@@ -113,6 +113,7 @@ const apiTypesMap = Object.fromEntries(
     return [
       [getApiTypeFromClientType(type as BuzzAccountType), type],
       [getApiTypeFromClientType(type as BuzzAccountType).toLowerCase(), type],
+      [type, type],
     ];
   })
 );
@@ -127,6 +128,12 @@ export class BuzzTypes {
   static toClientType(value: string): BuzzAccountType {
     if (!(value in apiTypesMap)) throw new Error(`unsupported buzz type: ${value}`);
     return apiTypesMap[value as BuzzApiAccountType];
+  }
+  static toSpendType(value: string): BuzzSpendType {
+    const type = this.toClientType(value);
+    if (!buzzSpendTypes.includes(type as BuzzSpendType))
+      throw new Error(`unsupported buzz type: ${value}`);
+    return type as BuzzSpendType;
   }
   static getApiTransaction<
     T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }

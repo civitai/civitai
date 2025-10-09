@@ -14,7 +14,7 @@ import {
 } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -99,13 +99,15 @@ export async function createTextToImageStep(
       imageMetadata,
     },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
-    metadata: {
-      resources: input.resources,
-      params: removeEmpty(inputParams),
-      remixOfId: input.remixOfId,
-      maxNsfwLevel: isPrivateGeneration ? 'pG13' : undefined,
-      isPrivateGeneration,
-    },
+    metadata: !input.whatIf
+      ? {
+          resources: input.resources,
+          params: removeEmpty(inputParams),
+          remixOfId: input.remixOfId,
+          maxNsfwLevel: isPrivateGeneration ? 'pG13' : undefined,
+          isPrivateGeneration,
+        }
+      : undefined,
   } as TextToImageStepTemplate;
 }
 

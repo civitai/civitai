@@ -5,6 +5,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
@@ -20,7 +21,7 @@ export function HunyuanFormInput() {
         options={{ resources: getGenerationBaseModelResourceOptions('HyV1'), canGenerate: true }}
         buttonLabel="Add additional resource"
       />
-      <InputTextArea
+      <InputPrompt
         required
         name="prompt"
         label="Prompt"
