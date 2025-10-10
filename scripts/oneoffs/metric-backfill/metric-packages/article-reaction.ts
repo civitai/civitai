@@ -1,0 +1,53 @@
+import type { MigrationPackage, Reactions } from '../types';
+import { START_DATE, CUTOFF_DATE } from '../utils';
+import { createIdRangeFetcher } from './base';
+
+type ArticleReactionRow = {
+  articleId: number;
+  userId: number;
+  reaction: Reactions;
+  createdAt: Date;
+  articleOwnerId: number;
+};
+
+export const articleReactionPackage: MigrationPackage<ArticleReactionRow> = {
+  queryBatchSize: 2000,
+  range: createIdRangeFetcher('ArticleReaction', `"createdAt" >= '${START_DATE}' AND "createdAt" < '${CUTOFF_DATE}'`),
+
+  query: async ({ pg }, { start, end }) => {
+    return pg.query<ArticleReactionRow>(
+      `SELECT ar."articleId", ar."userId", ar."reaction", ar."createdAt",
+              a."userId" as "articleOwnerId"
+       FROM "ArticleReaction" ar
+       JOIN "Article" a ON a.id = ar."articleId"
+       WHERE ar.id >= $1
+         AND ar.id <= $2`,
+      [start, end]
+    );
+  },
+
+  processor: ({ rows, addMetrics }) => {
+    rows.forEach((reaction) => {
+      // User reactionCount (content owner gets credit)
+      addMetrics(
+        {
+          entityType: 'User',
+          entityId: reaction.articleOwnerId,
+          userId: reaction.userId,
+          metricType: 'reactionCount',
+          metricValue: 1,
+          createdAt: reaction.createdAt,
+        },
+        // Article-specific reaction metrics
+        {
+          entityType: 'Article',
+          entityId: reaction.articleId,
+          userId: reaction.userId,
+          metricType: reaction.reaction,
+          metricValue: 1,
+          createdAt: reaction.createdAt,
+        }
+      );
+    });
+  },
+};
