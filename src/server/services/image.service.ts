@@ -673,19 +673,19 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  if (!isProd || !callbackUrl) {
-    console.log('skip ingest');
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-        nsfwLevel: NsfwLevel.PG,
-      },
-    });
-    return true;
-  }
+  // if (!isProd || !callbackUrl) {
+  //   console.log('skip ingest');
+  //   await dbClient.image.updateMany({
+  //     where: { id: { in: imageIds } },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
+  //   return true;
+  // }
 
   const needsPrompts = !images.some((x) => x.prompt);
   if (needsPrompts) {
@@ -695,6 +695,22 @@ export const ingestImageBulk = async ({
     const promptMap = Object.fromEntries(prompts.map((x) => [x.id, x.prompt]));
     for (const image of images) image.prompt = promptMap[image.id];
   }
+
+  console.log('doing fetch on image scanning endpoint');
+  console.log(
+    JSON.stringify(
+      images.map((image) => ({
+        imageId: image.id,
+        imageKey: image.url,
+        type: image.type,
+        width: image.width,
+        height: image.height,
+        prompt: image.prompt,
+        scans: scans ?? imageScanTypes,
+        callbackUrl,
+      }))
+    )
+  );
 
   const response = await fetch(
     env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
@@ -716,6 +732,7 @@ export const ingestImageBulk = async ({
     }
   );
   if (response.status === 202) {
+    console.log('ingestion accepted');
     await dbClient.image.updateMany({
       where: { id: { in: imageIds } },
       data: { scanRequestedAt },

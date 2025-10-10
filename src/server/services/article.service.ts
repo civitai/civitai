@@ -737,10 +737,22 @@ export const upsertArticle = async ({
     }
 
     if (!id) {
+      // Set publishedAt based on status
+      // - Published: Set to now (appears at top of feed)
+      // - Processing: Don't set yet (will be set when scan completes)
+      // - Draft/Other: Don't set
+      let publishedAt: Date | null | undefined = undefined;
+      if (data.status === ArticleStatus.Published) {
+        publishedAt = new Date();
+      } else if (data.status === ArticleStatus.Processing) {
+        publishedAt = null;
+      }
+
       const result = await dbWrite.$transaction(async (tx) => {
         const article = await tx.article.create({
           data: {
             ...data,
+            publishedAt,
             coverId,
             userId,
             tags: tags
@@ -825,13 +837,33 @@ export const upsertArticle = async ({
 
     const prevMetadata = article.metadata as ArticleMetadata | null;
 
+    // Set publishedAt based on status
+    // - Published: Set to now for new articles, preserve for republishing
+    // - Processing: Preserve existing publishedAt if article was already published (re-scan scenario)
+    // - Unpublished: Preserve publishedAt so republishing keeps original date
+    // - Draft: Clear publishedAt (never been published)
+    let publishedAt: Date | null | undefined = undefined;
+    if (data.status === ArticleStatus.Published) {
+      publishedAt = republishing ? article.publishedAt : new Date();
+    } else if (data.status === ArticleStatus.Processing) {
+      // Preserve original publishedAt if article was already published (re-scanning scenario)
+      // Otherwise set to null for new articles
+      publishedAt = article.publishedAt || null;
+    } else if (data.status === ArticleStatus.Unpublished) {
+      // Preserve publishedAt when unpublishing so republish keeps original date
+      publishedAt = article.publishedAt;
+    } else if (data.status === ArticleStatus.Draft) {
+      // Clear publishedAt for drafts
+      publishedAt = null;
+    }
+
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
         where: { id },
         data: {
           ...data,
           metadata: { ...prevMetadata, ...data.metadata },
-          publishedAt: republishing ? article.publishedAt : data.publishedAt,
+          publishedAt,
           coverId,
           tags: tags
             ? {
@@ -1242,10 +1274,16 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
             select: { status: true, publishedAt: true, userId: true },
           });
 
-          if (article?.status === ArticleStatus.Processing && article.publishedAt) {
+          if (article?.status === ArticleStatus.Processing) {
+            // Set publishedAt based on whether this is a new article or re-scan
+            // - If article already has publishedAt: preserve it (re-scan scenario)
+            // - If article has no publishedAt: set to now (new article scenario)
             await tx.article.update({
               where: { id: articleId },
-              data: { status: ArticleStatus.Published },
+              data: {
+                status: ArticleStatus.Published,
+                publishedAt: article.publishedAt || new Date(),
+              },
             });
 
             // Notify user if there were errors/blocked images

@@ -826,3 +826,9 @@ upsertArticle = async ({ content, ...data }) => {
 
 **Analysis Completed**: 2025-10-06
 **Next Steps**: Review with team, prioritize implementation phases, create GitHub issues
+
+
+## Before release
+- [ ] Add index on ImageConnection in prod
+- [ ] Test all possible scenarios
+- [ ] Put everything behind feature flag

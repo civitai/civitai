@@ -155,7 +155,7 @@ export function ArticleUpsertForm({ article }: Props) {
               : 0
             : undefined,
           tags,
-          publishedAt: publishing ? new Date() : null,
+          // publishedAt will be set server-side based on status
           status: args?.status ? args.status : publishing ? ArticleStatus.Published : undefined,
           coverImage: coverImage,
           lockedProperties: lockedPropertiesRef.current,
@@ -215,7 +215,7 @@ export function ArticleUpsertForm({ article }: Props) {
             </Text>
           </Stack>
         ),
-        labels: { cancel: 'Cancel', confirm: 'Continue Publishing' },
+        labels: { cancel: 'Cancel', confirm: 'Continue' },
         confirmProps: { color: 'blue' },
         onConfirm: () => submitArticle({ status: ArticleStatus.Processing }),
       });
