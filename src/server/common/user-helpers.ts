@@ -1,4 +1,4 @@
-import { constants } from './constants';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 type Props = {
   tier?: string;
@@ -13,5 +13,5 @@ export function getUserBuzzBonusAmount(user: Props) {
 }
 
 export function checkUserCreatedAfterBuzzLaunch(user: Props) {
-  return !!user.createdAt && new Date(user.createdAt) > constants.buzz.cutoffDate;
+  return !!user.createdAt && new Date(user.createdAt) > buzzConstants.cutoffDate;
 }

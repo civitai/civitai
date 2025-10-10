@@ -1,6 +1,7 @@
 import { useFormContext } from 'react-hook-form';
 import { Group, Input, Radio, Text } from '@mantine/core';
 import { InputRadioGroup, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import {
   viduAspectRatios,
   viduDurations,
@@ -118,7 +119,7 @@ export function ViduFormInput() {
           {Warning1 ?? Warning2}
         </div>
       )}
-      <InputTextArea
+      <InputPrompt
         required={isTxt2Vid}
         name="prompt"
         label="Prompt"

@@ -5,7 +5,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type {
   GetPaginatedPurchasableRewardsModeratorSchema,
@@ -17,7 +17,7 @@ import {
   purchasableRewardDetails,
   purchasableRewardDetailsModerator,
 } from '~/server/selectors/purchasableReward.selector';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -229,7 +229,13 @@ export const purchasableRewardUpsert = async ({
 export const purchasableRewardPurchase = async ({
   userId,
   purchasableRewardId,
-}: PurchasableRewardPurchase & { userId: number }) => {
+  buzzType,
+}: PurchasableRewardPurchase & { userId: number; buzzType: BuzzSpendType }) => {
+  if (buzzType === 'blue') {
+    throw throwBadRequestError('You cannot use Blue Buzz to purchase rewards.');
+  }
+
+  // Check if user has already purchased this reward:
   const hasPurchasedReward = await dbRead.userPurchasedRewards.findFirst({
     where: {
       userId,
@@ -276,16 +282,18 @@ export const purchasableRewardPurchase = async ({
   }
 
   // Pay for reward:
-  const transaction = await createBuzzTransaction({
+  const prefix = `purchasable-reward-purchase-${userId}-${purchasableRewardId}`;
+  const data = await createMultiAccountBuzzTransaction({
     fromAccountId: userId, // bank
+    fromAccountTypes: [buzzType],
     toAccountId: 0,
     amount: reward.unitPrice,
     type: TransactionType.Purchase,
     description: 'Purchase of reward',
     // Safeguard in case the above check fails :shrug:
-    externalTransactionId: `purchasable-reward-purchase-${userId}-${purchasableRewardId}`,
+    externalTransactionIdPrefix: prefix,
   });
-  if (!transaction.transactionId) {
+  if (!data.transactionCount || data.transactionCount === 0) {
     throw throwBadRequestError('Failed to create transaction');
   }
 
@@ -294,7 +302,7 @@ export const purchasableRewardPurchase = async ({
     data: {
       userId,
       purchasableRewardId,
-      buzzTransactionId: transaction.transactionId,
+      buzzTransactionId: prefix,
       code,
       meta: {
         // Store core data for safekeeping in case the reward is ever deleted:

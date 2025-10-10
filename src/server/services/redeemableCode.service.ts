@@ -2,7 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,
@@ -354,6 +354,7 @@ export async function consumeRedeemableCode({
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: userId,
+            toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
             type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id

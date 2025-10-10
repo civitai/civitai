@@ -84,6 +84,7 @@ import classes from './BountyUpsertForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { stringToDate } from '~/utils/zod-helpers';
 import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -125,6 +126,10 @@ const formSchema = upsertBountyInputSchema
   .refine((data) => data.expiresAt > data.startsAt, {
     error: 'Expiration date must be after start date',
     path: ['expiresAt'],
+  })
+  .refine((data) => data.nsfw && data.buzzType === 'green', {
+    error: 'When using Green Buzz, you are not allowed to create NSFW content',
+    path: ['nsfw']
   });
 
 const lockableProperties = ['nsfw', 'poi'];
@@ -133,6 +138,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
+  const [mainBuzzType] = useAvailableBuzz();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [bountyImages, setBountyImages] = useState<BountyGetById['images']>(bounty?.images ?? []);
@@ -808,12 +814,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputSwitch
-                disabled={isLocked('nsfw')}
-                description={isLockedDescription('nsfw')}
-                name="nsfw"
-                label="Is intended to produce sexual themes"
-              />
+              {mainBuzzType !== 'green' && (
+                <InputSwitch
+                  disabled={isLocked('nsfw')}
+                  description={isLockedDescription('nsfw')}
+                  name="nsfw"
+                  label="Is intended to produce sexual themes"
+                />
+              )}
 
               {currentUser?.isModerator && (
                 <Paper radius="md" p="lg" withBorder>
@@ -874,7 +882,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               disabled={poi || hasPoiInNsfw || !features.canWrite}
               label="Save"
               buzzAmount={unitAmount}
-              color="yellow.7"
             />
           ) : (
             <Button

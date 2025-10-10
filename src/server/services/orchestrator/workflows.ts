@@ -30,7 +30,7 @@ import {
 export async function queryWorkflows({
   token,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string; allowMatureContent: boolean }) {
+}: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
   const { data, error } = await clientQueryWorkflows({
@@ -99,6 +99,11 @@ export async function submitWorkflow({
 
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
+
+  if (body.allowMatureContent === false) {
+    body.upgradeMode = 'manual';
+    body.tags = [...(body.tags ?? []), 'green'];
+  }
 
   if (isDev) {
     // console.log('------');

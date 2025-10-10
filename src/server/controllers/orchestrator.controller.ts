@@ -7,14 +7,21 @@ import { formatGenerationResponse } from '~/server/services/orchestrator/common'
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { createLimiter } from '~/server/utils/rate-limiting';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '../redis/client';
+import { clickhouse } from '../clickhouse/client';
 
 type Ctx = {
   token: string;
   userId: number;
   experimental?: boolean;
-  allowMatureContent: boolean;
+  allowMatureContent?: boolean;
+  currencies?: BuzzSpendType[];
 };
 
 export async function generate({
@@ -29,8 +36,7 @@ export async function generate({
   isModerator,
   track,
   ...args
-}: GenerationSchema &
-  Ctx & { isGreen?: boolean; isModerator?: boolean; track?: any }) {
+}: GenerationSchema & Ctx & { isGreen?: boolean; isModerator?: boolean; track?: any }) {
   // Audit prompt if present
   if ('prompt' in args.data) {
     const negativePrompt =
@@ -62,7 +68,7 @@ export async function generate({
       },
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
-      // nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
     },
   });
@@ -80,6 +86,8 @@ export async function whatIf(args: GenerationSchema & Ctx) {
       steps: [step],
       experimental: args.experimental,
       allowMatureContent: args.allowMatureContent,
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies: args.currencies,
     },
     query: { whatif: true },
   });
@@ -97,6 +105,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
   }
 
   return {
+    transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
   };

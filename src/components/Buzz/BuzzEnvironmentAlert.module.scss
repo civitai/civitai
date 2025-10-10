@@ -1,0 +1,33 @@
+/* Buzz Environment Alert Component */
+.alert {
+  position: relative;
+  overflow: hidden;
+  border: 2px solid rgba(var(--buzz-color), 0.5);
+  border-left: 4px solid rgba(var(--buzz-color), 1);
+  box-shadow:
+    0 4px 20px rgba(var(--buzz-color), 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
+}
+
+.subtitle {
+  color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-3));
+}
+
+.buzzColoredText {
+  color: rgb(var(--buzz-color));
+}
+
+.icon {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  width: 32px;
+  height: 32px;
+}
+
+.button {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  font-weight: 600;
+}

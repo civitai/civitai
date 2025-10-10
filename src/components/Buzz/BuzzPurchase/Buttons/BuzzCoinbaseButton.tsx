@@ -1,19 +1,24 @@
 import { Button, Stack } from '@mantine/core';
 import { IconCoinBitcoin } from '@tabler/icons-react';
-import type { BuzzPurchaseProps } from '~/components/Buzz/BuzzPurchase';
+import type { BuzzPurchaseImprovedProps } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 import { useMutateCoinbase, useCoinbaseStatus } from '~/components/Coinbase/util';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const BuzzCoinbaseButton = ({
   unitAmount,
   buzzAmount,
   disabled,
-}: Pick<BuzzPurchaseProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+  buzzType,
+}: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
+  buzzType?: BuzzSpendType;
 }) => {
   const { createBuzzOrder, creatingBuzzOrder } = useMutateCoinbase();
   const { isLoading: checkingHealth, healthy } = useCoinbaseStatus();
+  const buzzConfig = useBuzzCurrencyConfig(buzzType);
 
   if (!checkingHealth && !healthy) {
     return null;
@@ -39,8 +44,8 @@ export const BuzzCoinbaseButton = ({
         size="md"
         radius="md"
         variant="light"
-        color="yellow"
-        leftSection={<IconCoinBitcoin size={16} />}
+        color={buzzConfig.color}
+        leftSection={<IconCoinBitcoin size={18} />}
         fw={500}
         fullWidth
       >

@@ -4,15 +4,13 @@ import { dbRead } from '~/server/db/client';
 import { createJob, getJobDate } from './job';
 import { Prisma } from '@prisma/client';
 import { withRetries } from '~/server/utils/errorHandling';
-import dayjs from '~/shared/utils/dayjs';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import dayjs from 'dayjs';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
-const IMAGE_CREATOR_COMP = 0.25;
-const VIDEO_CREATOR_COMP = 0.1;
-const BASE_MODEL_COMP = 0.25;
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
   '15 * * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
@@ -25,78 +23,28 @@ export const updateCreatorResourceCompensation = createJob(
       new Date()
     );
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
-    // If we're preping for payout, we need to grab the last numbers for yesterday.
-    const subtractDays = shouldPayout ? 1 : 0;
-    const addDays = 1;
-
-    await clickhouse.$query`
-      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count, final)
-      SELECT
-        toStartOfDay(createdAt) as date,
-        modelVersionId,
-        FLOOR(SUM(comp)) as comp,
-        FLOOR(SUM(tip)) AS tip,
-        comp + tip as total,
-        count(*) as count,
-        date < toStartOfDay(now()) as final
-      FROM (
-        SELECT
-        modelVersionId,
-        createdAt,
-        max(jobCost) * (if(isVideo, ${VIDEO_CREATOR_COMP}, ${IMAGE_CREATOR_COMP})) as creator_comp,
-        max(creatorsTip) as full_tip,
-        max(resource_count) as resource_count,
-        creator_comp * if(max(isBaseModel) = 1, ${BASE_MODEL_COMP}, 0) as base_model_comp,
-        creator_comp * ${1 - BASE_MODEL_COMP} / resource_count as resource_comp,
-        base_model_comp + resource_comp as comp,
-        full_tip / resource_count as tip,
-        comp + tip as total
-        FROM (
-          SELECT
-            rj.modelVersionId as modelVersionId,
-            rj.resource_count as resource_count,
-            rj.createdAt as createdAt,
-            rj.jobCost as jobCost,
-            rj.jobId as jobId,
-            rj.creatorsTip as creatorsTip,
-            m.type = 'Checkpoint' as isBaseModel,
-            rj.isVideo as isVideo
-          FROM (
-            SELECT
-              arrayJoin(resourcesUsed) AS modelVersionId,
-              length(arrayFilter(x -> NOT x IN (250708, 250712, 106916), resourcesUsed)) as resource_count,
-              createdAt,
-              cost as jobCost,
-              jobId,
-              creatorsTip,
-              jobType = 'comfyVideoGen' as isVideo
-            FROM orchestration.jobs
-            WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
-              AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays})) AND toStartOfDay(addDays(now(),${addDays}))
-              AND modelVersionId NOT IN (250708, 250712, 106916)
-          ) rj
-          JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
-          JOIN civitai_pg.Model m ON m.id = mv.modelId
-        ) resource_job_details
-        GROUP BY modelVersionId, jobId, createdAt, isVideo
-      ) resource_job_values
-      GROUP BY date, modelVersionId
-      HAVING total >= 1
-      ORDER BY total DESC;
-    `;
 
     if (shouldPayout) {
       await runPayout(lastPayout);
       await setLastPayout();
+      try {
+        await clickhouse.$query`
+          INSERT INTO kafka.manual_events VALUES
+            (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
+        `;
+      } catch (error) {
+        console.error('Error queueing compensation update event', error);
+      }
     }
   }
 );
 
 type UserVersions = { userId: number; modelVersionIds: number[] };
-type Compensation = { modelVersionId: number; comp: number; tip: number };
+type Compensation = { modelVersionId: number; amount: number; accountType: BuzzAccountType };
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
+
 export async function runPayout(lastUpdate: Date) {
   if (!clickhouse) return;
   if (lastUpdate < COMP_START_DATE) return;
@@ -105,11 +53,12 @@ export async function runPayout(lastUpdate: Date) {
   const compensations = await clickhouse.$query<Compensation>`
     SELECT
       modelVersionId,
-      MAX(comp) as comp,
-      MAX(tip) as tip
-    FROM buzz_resource_compensation FINAL
-    WHERE date = ${date} AND final
-    GROUP BY modelVersionId;
+	    accountType,
+	    MAX(FLOOR(amount))::int AS amount
+    FROM orchestration.resourceCompensations
+    WHERE date = ${date}
+    GROUP BY modelVersionId, accountType 
+    HAVING amount > 0;
   `;
   if (!compensations.length) return;
 
@@ -141,35 +90,37 @@ export async function runPayout(lastUpdate: Date) {
   }
   if (isEmpty(creatorsToPay)) return;
 
+  // Compensations and transactions are now one and the same.
   const compensationTransactions = Object.entries(creatorsToPay)
-    .map(([userId, compensations]) => ({
-      fromAccountId: 0,
-      toAccountId: Number(userId),
-      amount: compensations.reduce((acc, c) => acc + c.comp, 0),
-      description: `Generation creator compensation (${formatDate(date)})`,
-      type: TransactionType.Compensation,
-      externalTransactionId: `creator-comp-${formatDate(date, 'YYYY-MM-DD')}-${userId}`,
-    }))
-    .filter((comp) => comp.amount > 0);
+    .flatMap(([userId, compensations]) => {
+      const groupedCompensations = compensations.reduce<Partial<Record<BuzzAccountType, number>>>(
+        (acc, c) => {
+          acc[c.accountType] = (acc[c.accountType] || 0) + c.amount;
+          return acc;
+        },
+        {}
+      );
 
-  const tipTransactions = Object.entries(creatorsToPay)
-    .map(([userId, compensations]) => ({
-      fromAccountId: 0,
-      toAccountId: Number(userId),
-      amount: compensations.reduce((acc, c) => acc + c.tip, 0),
-      description: `Generation tips (${formatDate(date)})`,
-      type: TransactionType.Tip,
-      externalTransactionId: `creator-tip-${formatDate(date, 'YYYY-MM-DD')}-${userId}`,
-    }))
-    .filter((tip) => tip.amount > 0);
+      return Object.entries(groupedCompensations).map(([accountType, amount]) => ({
+        fromAccountId: 0,
+        toAccountId: Number(userId),
+        toAccountType: accountType as BuzzAccountType,
+        amount,
+        description: `Creator tip compensation (${formatDate(date)})`,
+        type: TransactionType.Compensation,
+        externalTransactionId: `creator-tip-comp-${formatDate(
+          date,
+          'YYYY-MM-DD'
+        )}-${userId}-${accountType}`,
+      }));
+    })
+    .filter((transaction) => transaction.amount > 0);
 
   const tasks = [
     ...chunk(compensationTransactions, BATCH_SIZE).map((batch) => async () => {
       await withRetries(() => createBuzzTransactionMany(batch), 1);
     }),
-    ...chunk(tipTransactions, BATCH_SIZE).map((batch) => async () => {
-      await withRetries(() => createBuzzTransactionMany(batch), 1);
-    }),
   ];
+
   await limitConcurrency(tasks, 2);
 }

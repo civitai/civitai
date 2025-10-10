@@ -3,6 +3,7 @@ import type {
   WorkflowStep,
   TextToImageStep,
   WorkflowCost,
+  TransactionInfo,
 } from '@civitai/client';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 
@@ -19,6 +20,7 @@ export {
 } from './comfy/comfy.types';
 
 export type GenerationWhatIfResponse = {
+  transactions?: TransactionInfo[];
   cost?: WorkflowCost;
   ready: boolean;
 };

@@ -72,13 +72,22 @@ import {
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
 import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  const allowMatureContent = ctx.domain === 'green' ? false : true;
-  return next({ ctx: { ...ctx, user, token, allowMatureContent } });
+  const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+  return next({
+    ctx: {
+      ...ctx,
+      user,
+      token,
+      allowMatureContent,
+      hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+    },
+  });
   // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 
@@ -172,7 +181,8 @@ export const orchestratorRouter = router({
       ...input,
       token: ctx.token,
       user: ctx.user,
-      allowMatureContent: ctx.allowMatureContent,
+      tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,
+      hideMatureContent: ctx.hideMatureContent,
     })
   ),
   generateImage: orchestratorGuardedProcedure
@@ -214,6 +224,7 @@ export const orchestratorRouter = router({
         batchAll: ctx.batchAll,
         isGreen: ctx.features.isGreen,
         allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
       // if ('sourceImage' in args.params && args.params.sourceImage) {
       //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
@@ -243,6 +254,7 @@ export const orchestratorRouter = router({
           token: ctx.token,
           batchAll: ctx.batchAll,
           allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
@@ -260,6 +272,8 @@ export const orchestratorRouter = router({
             steps: [step],
             tips: args.tips,
             experimental: ctx.experimental,
+            // @ts-ignore - BuzzSpendType is properly supported.
+            currencies: args.currencies,
           },
           query: {
             whatif: true,
@@ -279,6 +293,7 @@ export const orchestratorRouter = router({
         }
 
         return {
+          transactions: workflow.transactions?.list,
           cost: workflow.cost,
           ready,
         };
@@ -309,6 +324,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         experimental: ctx.experimental,
         allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       })
     ),
   generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
@@ -319,6 +335,7 @@ export const orchestratorRouter = router({
       experimental: ctx.experimental,
       isGreen: ctx.features.isGreen,
       allowMatureContent: ctx.allowMatureContent,
+      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       isModerator: ctx.user.isModerator,
       track: ctx.track,
     })
@@ -337,13 +354,22 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token, user: ctx.user };
+      const args = {
+        ...input,
+        token: ctx.token,
+        user: ctx.user,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWorkflow(args);
     }),
   createTrainingWhatif: orchestratorProcedure
     .input(imageTrainingRouterWhatIfSchema)
     .query(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token };
+      const args = {
+        ...input,
+        token: ctx.token,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion

@@ -1,5 +1,5 @@
 import { useDebouncedValue } from '@mantine/hooks';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
@@ -24,6 +24,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { useGenerationStore } from '~/store/generation.store';
 import { useDebouncer } from '~/utils/debouncer';
+import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -44,6 +45,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const [enabled, setEnabled] = useState(false);
   const loading = useGenerationStore((state) => state.loading);
   const [query, setQuery] = useState<Record<string, any> | null>(null);
+  const promptRef = useRef('');
+  const promptFocused = usePromptFocusedStore((x) => x.focused);
 
   // const query = useMemo(() => {
   //   const values = { ...form.getValues(), ...watched };
@@ -143,9 +146,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
           return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
         }) ?? [];
 
+      if (!promptFocused && params.prompt !== undefined) {
+        promptRef.current = params.prompt!;
+      }
+
       const parsed = textToImageParamsSchema.parse({
         ...params,
         ...whatIfQueryOverrides,
+        prompt: promptRef.current,
       });
 
       setQuery({
@@ -153,7 +161,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         params: removeEmpty(parsed),
       });
     });
-  }, [watched]);
+  }, [watched, promptFocused]);
 
   // useEffect(() => {
   //   // enable after timeout to prevent multiple requests as form data is set

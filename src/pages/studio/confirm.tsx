@@ -21,6 +21,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 export default function Confirm() {
   const currentUser = useCurrentUser();
@@ -28,11 +29,12 @@ export default function Confirm() {
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const [email, setEmail] = useState(currentUser?.email);
+  const paymentProvider = usePaymentProvider();
   const { data: air, isLoading } = trpc.integration.airStatus.useQuery(undefined, {
     enabled: !!currentUser,
   });
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
-    {},
+    { paymentProvider },
     {
       enabled: !isMember,
     }

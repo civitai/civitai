@@ -89,6 +89,7 @@ export const PlanBenefitList = ({
                         variant="light"
                         size={themeIconSize}
                         radius="xl"
+                        autoContrast
                       >
                         {isUnavailable ? (
                           <IconCircleX size={benefitIconSize} />

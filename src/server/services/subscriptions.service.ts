@@ -18,11 +18,13 @@ export const getPlans = async ({
   includeFree = false,
   includeInactive = false,
   interval = 'month',
+  buzzType,
 }: {
   paymentProvider?: PaymentProvider;
   includeFree?: boolean;
   includeInactive?: boolean;
   interval?: 'month' | 'year';
+  buzzType?: string;
 }) => {
   const products = await dbWrite.product.findMany({
     where: {
@@ -58,10 +60,18 @@ export const getPlans = async ({
   // Only show the default price for a subscription product
   return products
     .filter(({ metadata }) => {
-      return env.TIER_METADATA_KEY
+      const productMeta = metadata as SubscriptionProductMetadata;
+
+      // Filter by tier (membership products)
+      const hasTier = env.TIER_METADATA_KEY
         ? !!(metadata as any)?.[env.TIER_METADATA_KEY] &&
-            ((metadata as any)?.[env.TIER_METADATA_KEY] !== 'free' || includeFree)
+          ((metadata as any)?.[env.TIER_METADATA_KEY] !== 'free' || includeFree)
         : true;
+
+      // Filter by buzzType if provided
+      const matchesBuzzType = buzzType ? (productMeta.buzzType ?? 'yellow') === buzzType : true;
+
+      return hasTier && matchesBuzzType;
     })
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
@@ -78,9 +88,14 @@ export const getPlans = async ({
 
 export type SubscriptionPlan = Awaited<ReturnType<typeof getPlans>>[number];
 
-export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) => {
-  const subscription = await dbWrite.customerSubscription.findUnique({
-    where: { userId },
+export const getUserSubscription = async ({
+  userId,
+  buzzType,
+}: GetUserSubscriptionInput & { buzzType?: string }) => {
+  // If buzzType is provided, use the composite unique key
+  // Otherwise, get the first subscription (backward compatibility - defaults to yellow)
+  const subscription = await dbWrite.customerSubscription.findFirst({
+    where: { userId, buzzType: buzzType ?? 'yellow' }, // Default to yellow for backward compatibility
     select: {
       id: true,
       status: true,
@@ -92,6 +107,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
       createdAt: true,
       endedAt: true,
       metadata: true,
+      buzzType: true,
       product: {
         select: {
           id: true,
@@ -141,6 +157,75 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
 };
 
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
+
+// Get all active subscriptions for a user
+export const getAllUserSubscriptions = async (userId: number) => {
+  const subscriptions = await dbWrite.customerSubscription.findMany({
+    where: {
+      userId,
+      status: { notIn: ['canceled'] },
+    },
+    select: {
+      id: true,
+      status: true,
+      cancelAtPeriodEnd: true,
+      cancelAt: true,
+      canceledAt: true,
+      currentPeriodStart: true,
+      currentPeriodEnd: true,
+      createdAt: true,
+      endedAt: true,
+      metadata: true,
+      buzzType: true,
+      product: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          metadata: true,
+          provider: true,
+          active: true,
+        },
+      },
+      price: {
+        select: {
+          id: true,
+          unitAmount: true,
+          interval: true,
+          intervalCount: true,
+          currency: true,
+          active: true,
+        },
+      },
+    },
+  });
+
+  return subscriptions
+    .map((subscription) => {
+      const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
+      const subscriptionMeta = (subscription.metadata ?? {}) as SubscriptionMetadata;
+
+      // Filter out renewalEmailSent subscriptions
+      if (subscriptionMeta.renewalEmailSent) return null;
+
+      return {
+        ...subscription,
+        price: {
+          ...subscription.price,
+          unitAmount: subscription.price.unitAmount ?? 0,
+          interval: subscription.price.interval as 'month' | 'year',
+        },
+        isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
+          subscription.status
+        ),
+        tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
+        productMeta,
+      };
+    })
+    .filter((sub) => sub !== null);
+};
+
+export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscriptions>>;
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
   const priceIds = data.items.map((i) => i.price?.id).filter(isDefined);

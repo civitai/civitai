@@ -260,8 +260,7 @@ model User {
   isModerator             Boolean?              @default(false)
   createdAt               DateTime              @default(now())
   deletedAt               DateTime?
-  subscriptionId          String?
-  subscription            CustomerSubscription?
+  subscriptions           CustomerSubscription[]
   mutedAt                 DateTime? /// Updated via trigger
   muted                   Boolean               @default(false)
   muteConfirmedAt         DateTime?
@@ -387,8 +386,9 @@ model User {
 
 model CustomerSubscription {
   id                 String    @id
-  userId             Int       @unique
+  userId             Int
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buzzType           String    @default("yellow")
   metadata           Json
   status             String
   priceId            String
@@ -403,6 +403,8 @@ model CustomerSubscription {
   createdAt          DateTime
   endedAt            DateTime?
   updatedAt          DateTime?
+
+  @@unique([userId, buzzType])
 }
 
 enum PaymentProvider {
@@ -2334,6 +2336,8 @@ enum BuzzAccountType {
   user
   generation
   club
+  green
+  fakered
 }
 
 model BuzzClaim {
@@ -2784,17 +2788,18 @@ model BountyEntryReaction {
 }
 
 model BountyBenefactor {
-  userId      Int
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bountyId    Int
-  bounty      Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
-  unitAmount  Int
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  awardedAt   DateTime?
-  awardedToId Int?
-  awartedTo   BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
-  currency    Currency     @default(BUZZ)
+  userId            Int
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId          Int
+  bounty            Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  unitAmount        Int
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  awardedAt         DateTime?
+  awardedToId       Int?
+  awartedTo         BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
+  currency          Currency     @default(BUZZ)
+  buzzTransactionId String?
 
   @@id([bountyId, userId])
   @@index([bountyId], type: Hash)

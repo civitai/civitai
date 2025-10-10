@@ -3355,8 +3355,8 @@ export async function getTopWeeklyEarners(fresh = false) {
       const topEarners = await clickhouse!.$query<{ modelVersionId: number; earned: number }>`
         SELECT
         modelVersionId,
-        cast(SUM(total) as int) as earned
-        FROM buzz_resource_compensation
+        cast(SUM(amount) as int) as earned
+        FROM orchestration.resourceCompensations
         WHERE date >= toStartOfDay(${auctionReset}::Date)
         GROUP BY modelVersionId
         ORDER BY earned DESC

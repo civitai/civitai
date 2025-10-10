@@ -137,6 +137,7 @@ import {
 import classes from './GenerationForm2.module.scss';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 import {
   getGenerationBaseModelResourceOptions,
@@ -201,7 +202,6 @@ export function GenerationFormContent() {
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
-  const subscriptionMismatch = subscription ? subscriptionMeta?.tier !== status.tier : false;
 
   const { errors } = form.formState;
 
@@ -249,7 +249,7 @@ export function GenerationFormContent() {
   // #endregion
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    type: 'Generation',
+    accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
@@ -1497,19 +1497,6 @@ export function GenerationFormContent() {
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                   <DailyBoostRewardClaim />
-                  {subscriptionMismatch && (
-                    <DismissibleAlert
-                      id="subscription-mismatch-generator-alert"
-                      color="red"
-                      title="Subscription Mismatch"
-                    >
-                      <Text size="xs">
-                        Looks like we&rsquo;re having trouble correctly applying your membership
-                        bonuses, try to <RefreshSessionButton />, if that doesn&rsquo;t work please
-                        contact us here <Anchor href="https://civitai.com/support">here</Anchor>
-                      </Text>
-                    </DismissibleAlert>
-                  )}
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
@@ -1714,6 +1701,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
       onClick={() => {
         if (running) helpers?.next();
       }}
+      transactions={data?.transactions}
     />
   );
 

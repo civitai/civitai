@@ -3,11 +3,14 @@ import { Textarea } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import type { KeyboardEvent } from 'react';
 import { useFormContext } from 'react-hook-form';
+import { create } from 'zustand';
 import { keyupEditAttention } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCustomFormContext } from '~/libs/form';
 import { withController } from '~/libs/form/hoc/withController';
 
 type InputPromptProps = Omit<TextareaProps, 'onKeyDown'>;
+
+export const usePromptFocusedStore = create<{ focused: boolean }>(() => ({ focused: false }));
 
 export const InputPrompt = withController(function (props: InputPromptProps) {
   const form = useFormContext();
@@ -30,5 +33,12 @@ export const InputPrompt = withController(function (props: InputPromptProps) {
     ['mod+ArrowDown', handleArrowUpOrDown],
   ]);
 
-  return <Textarea {...props} onKeyDown={keyHandler} />;
+  return (
+    <Textarea
+      {...props}
+      onKeyDown={keyHandler}
+      onFocus={() => usePromptFocusedStore.setState({ focused: true })}
+      onBlur={() => usePromptFocusedStore.setState({ focused: false })}
+    />
+  );
 });

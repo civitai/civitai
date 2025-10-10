@@ -73,6 +73,7 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { WorkflowStatus } from '@civitai/client';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -666,6 +667,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
     return earlyAccessPurchase({
       ...input,
       userId: ctx.user.id,
+      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
     });
   } catch (error) {
     if (error instanceof TRPCError) error;
