@@ -148,18 +148,10 @@ export class EntityMetricRedisClient {
     entityId: number,
     metrics: Record<EntityMetric_MetricType_Type, number>
   ): Promise<void> {
+    if (Object.keys(metrics).length === 0) return; // no-op if no metrics provided
+
     const key = this.getKey(entityType, entityId);
-
-    // Build flat args array: [field1, value1, field2, value2, ...]
-    const args = ['HMSET', key];
-    for (const [metricType, value] of Object.entries(metrics)) {
-      args.push(metricType, value.toString());
-    }
-
-    if (args.length === 0) return; // no-op if no metrics provided
-
-    // Had to do it this way to satisfy twemproxy which doesn't support hSet with multiple fields
-    await this.redis.sendCommand(args);
+    await this.redis.hSet(key, metrics);
   }
 
   async exists(entityType: EntityMetric_EntityType_Type, entityId: number): Promise<boolean> {
