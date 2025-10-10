@@ -178,7 +178,10 @@ export const useQueryModels = (
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
-    showImageless: (_filters.status ?? []).includes(ModelStatus.Draft) || _filters.pending,
+    showImageless:
+      (_filters.status ?? []).includes(ModelStatus.Draft) ||
+      _filters.pending ||
+      _filters.availability === Availability.Private,
     isRefetching: rest.isRefetching,
     hiddenTags: excludedTagIds,
   });
