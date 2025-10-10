@@ -447,6 +447,7 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
       transactions,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
+      allowMatureContent: workflow.allowMatureContent,
       duration:
         workflow.startedAt && workflow.completedAt
           ? Math.round(
