@@ -121,7 +121,7 @@ export function useGetTextToImageRequests(
                 false) as boolean;
               const images = imageFilter({ step, tags }).map((image) => {
                 if (image.blockedReason === 'none') image.blockedReason = null;
-                const isMature = image.nsfwLevel !== NsfwLevel.PG;
+                const isMature = image.nsfwLevel && image.nsfwLevel !== NsfwLevel.PG;
 
                 if (isMature && !image.blockedReason) {
                   if (isPrivateGeneration) {

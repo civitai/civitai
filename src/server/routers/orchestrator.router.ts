@@ -181,6 +181,7 @@ export const orchestratorRouter = router({
       ...input,
       token: ctx.token,
       user: ctx.user,
+      tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,
       hideMatureContent: ctx.hideMatureContent,
     })
   ),
