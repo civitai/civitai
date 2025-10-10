@@ -16,6 +16,7 @@ import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  getArticleScanStatus,
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
@@ -61,4 +62,8 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articles'))
     .mutation(unpublishArticleHandler),
+  getScanStatus: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('articleImageScanning'))
+    .query(({ input }) => getArticleScanStatus(input)),
 });

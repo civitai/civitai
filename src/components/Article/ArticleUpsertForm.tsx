@@ -1,10 +1,12 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Anchor, Button, Group, Stack, Text, Title, Tooltip, Paper, Input } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
+import { extractImagesFromArticle } from '~/utils/article-helpers';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useFormStorage } from '~/hooks/useFormStorage';
@@ -38,6 +40,7 @@ import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -134,41 +137,93 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: selectedTags,
     coverImage,
     userNsfwLevel,
+    content,
     ...rest
   }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
 
-    upsertArticleMutation.mutate(
-      {
-        ...rest,
-        userNsfwLevel: canEditUserNsfwLevel
-          ? userNsfwLevel
-            ? Number(userNsfwLevel)
-            : 0
-          : undefined,
-        tags,
-        publishedAt: publishing ? new Date() : null,
-        status: publishing ? ArticleStatus.Published : undefined,
-        coverImage: coverImage,
-        lockedProperties: lockedPropertiesRef.current,
-      },
-      {
-        async onSuccess(result) {
-          await router.push(`/articles/${result.id}`);
-          await queryUtils.article.getById.invalidate({ id: result.id });
-          await queryUtils.article.getInfinite.invalidate();
-          clearStorage();
+    const submitArticle = (args?: { status?: ArticleStatus }) => {
+      upsertArticleMutation.mutate(
+        {
+          ...rest,
+          content,
+          userNsfwLevel: canEditUserNsfwLevel
+            ? userNsfwLevel
+              ? Number(userNsfwLevel)
+              : 0
+            : undefined,
+          tags,
+          publishedAt: publishing ? new Date() : null,
+          status: args?.status ? args.status : publishing ? ArticleStatus.Published : undefined,
+          coverImage: coverImage,
+          lockedProperties: lockedPropertiesRef.current,
         },
-        onError(error) {
-          showErrorNotification({
-            title: 'Failed to save article',
-            error: new Error(error.message),
-          });
-        },
+        {
+          async onSuccess(result) {
+            await router.push(`/articles/${result.id}`);
+            await queryUtils.article.getById.invalidate({ id: result.id });
+            await queryUtils.article.getInfinite.invalidate();
+            clearStorage();
+          },
+          onError(error) {
+            showErrorNotification({
+              title: 'Failed to save article',
+              error: new Error(error.message),
+            });
+          },
+        }
+      );
+    };
+
+    // Check if publishing with embedded images
+    const contentImages = extractImagesFromArticle(content);
+
+    if (contentImages.length > 0 && publishing) {
+      // Check if images are already in the database
+      const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
+      const newImages = contentImages.filter((img) => !existingImageUrls.has(img.url));
+
+      if (newImages.length === 0) {
+        // All images already exist in database, no scanning delay expected
+        submitArticle();
+        return;
       }
-    );
+
+      // Has new images that need scanning, show confirmation modal
+      openConfirmModal({
+        title: 'Article Image Processing',
+        children: (
+          <Stack gap="sm">
+            <Text>
+              Your article contains {newImages.length} new embedded image
+              {newImages.length > 1 ? 's' : ''} that need to be scanned for content safety.
+            </Text>
+            {existingImageUrls.size > 0 && (
+              <Text size="sm" c="dimmed">
+                ({existingImageUrls.size} existing image{existingImageUrls.size > 1 ? 's' : ''}{' '}
+                already processed)
+              </Text>
+            )}
+            <Text>
+              It will be set to <strong>Processing</strong> status while images are being scanned.
+              This could take some time, and your article will automatically publish when complete.
+            </Text>
+            <Text size="sm" c="dimmed">
+              You&apos;ll receive a notification when your article is published.
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Continue Publishing' },
+        confirmProps: { color: 'blue' },
+        onConfirm: () => submitArticle({ status: ArticleStatus.Processing }),
+      });
+      return;
+    }
+
+    // No images or just saving draft, proceed normally
+    submitArticle();
   };
 
   return (
@@ -222,6 +277,12 @@ export function ArticleUpsertForm({ article }: Props) {
             }}
             gap="xl"
           >
+            {article?.id && article.status === ArticleStatus.Processing && (
+              <ArticleScanStatus
+                articleId={article.id}
+                onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
+              />
+            )}
             <ActionButtons
               article={article}
               saveButtonProps={{

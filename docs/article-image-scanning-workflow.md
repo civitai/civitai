@@ -148,11 +148,11 @@ npm run db:migrate -- --name article-image-scanning --create-only
 5. **Verify constraints** before continuing implementation
 
 **Testing Checklist**:
-- [ ] Migration runs successfully on dev database
-- [ ] All indexes created with CONCURRENTLY (no table locks)
-- [ ] Unique constraint on Image.url prevents duplicates
-- [ ] Existing articles unaffected
-- [ ] Can create article with `Processing` status
+- [x] Migration runs successfully on dev database
+- [x] All indexes created with CONCURRENTLY (no table locks)
+- [x] Unique constraint on Image.url prevents duplicates
+- [x] Existing articles unaffected
+- [x] Can create article with `Processing` status
 - [ ] Rollback strategy documented
 
 **Dependencies**: None
@@ -377,7 +377,7 @@ function isValidCivitaiImageUrl(url: string): boolean {
 // src/server/services/article.service.ts
 
 /**
- * 🔴 OPTIMIZED: Batch queries instead of N+1 loop
+ * 🔴 OPTIMIZED: Batch queries + immediate ingestion queuing
  */
 export async function linkArticleContentImages({
   articleId,
@@ -398,16 +398,17 @@ export async function linkArticleContentImages({
     // Batch query: Get all existing images in one query
     const existingImages = await tx.image.findMany({
       where: { url: { in: imageUrls } },
-      select: { id: true, url: true }
+      select: { id: true, url: true, ingestion: true }
     });
 
-    const existingUrlMap = new Map(existingImages.map(img => [img.url, img.id]));
+    const existingUrlMap = new Map(existingImages.map(img => [img.url, img]));
 
     // Batch create: Missing images (upsert with unique constraint handles races)
     const missingUrls = imageUrls.filter(url => !existingUrlMap.has(url));
+    const newlyCreatedImages: { id: number; url: string }[] = [];
 
     if (missingUrls.length > 0) {
-      await tx.image.createMany({
+      const newImages = await tx.image.createManyAndReturn({
         data: missingUrls.map(url => ({
           url,
           userId,
@@ -415,32 +416,30 @@ export async function linkArticleContentImages({
           ingestion: 'Pending',
           scanRequestedAt: new Date(),
         })),
+        select: { id: true, url: true },
         skipDuplicates: true, // Handle race conditions
       });
 
-      // Refresh map with newly created images
-      const newImages = await tx.image.findMany({
-        where: { url: { in: missingUrls } },
-        select: { id: true, url: true }
+      newImages.forEach(img => {
+        existingUrlMap.set(img.url, { ...img, ingestion: 'Pending' as const });
+        newlyCreatedImages.push(img);
       });
-
-      newImages.forEach(img => existingUrlMap.set(img.url, img.id));
     }
 
     // Batch upsert: ImageConnections
     for (const url of imageUrls) {
-      const imageId = existingUrlMap.get(url);
-      if (!imageId) continue;
+      const image = existingUrlMap.get(url);
+      if (!image) continue;
 
       await tx.imageConnection.upsert({
         where: {
           imageId_entityType_entityId: {
-            imageId,
+            imageId: image.id,
             entityType: 'Article',
             entityId: articleId,
           }
         },
-        create: { imageId, entityType: 'Article', entityId: articleId },
+        create: { imageId: image.id, entityType: 'Article', entityId: articleId },
         update: {},
       });
     }
@@ -450,9 +449,26 @@ export async function linkArticleContentImages({
       where: {
         entityType: 'Article',
         entityId: articleId,
-        imageId: { notIn: Array.from(existingUrlMap.values()) }
+        imageId: { notIn: Array.from(existingUrlMap.values()).map(img => img.id) }
       }
     });
+
+    // 🚀 NEW: Queue newly created images for immediate ingestion (high priority)
+    if (newlyCreatedImages.length > 0) {
+      // Get full image data for ingestion
+      const imagesToIngest = await tx.$queryRaw<IngestImageInput[]>`
+        SELECT id, url, type, width, height, meta->>'prompt' as prompt
+        FROM "Image"
+        WHERE id IN (${Prisma.join(newlyCreatedImages.map(img => img.id))})
+      `;
+
+      // Queue for immediate processing (non-blocking, fire and forget)
+      // Using lowPriority=false ensures faster processing than hourly job
+      ingestImageBulk({ images: imagesToIngest, lowPriority: false, tx }).catch((error) => {
+        // Log error but don't fail the article operation
+        console.error('[linkArticleContentImages] Failed to queue images for ingestion:', error);
+      });
+    }
   });
 }
 

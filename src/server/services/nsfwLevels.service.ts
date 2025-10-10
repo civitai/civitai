@@ -259,21 +259,33 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
   if (!articleIds.length) return;
   const articles = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
       WITH level AS (
-        SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
+        SELECT
+          a.id,
+          bit_or(COALESCE(cover."nsfwLevel", 0)) |
+          bit_or(COALESCE(content_imgs."nsfwLevel", 0)) AS "nsfwLevel"
         FROM "Article" a
-        JOIN "Image" i ON a."coverId" = i.id
+
+        -- Cover image (left join - may not exist)
+        LEFT JOIN "Image" cover
+          ON a."coverId" = cover.id
+          AND cover."ingestion" = 'Scanned'
+
+        -- Content images (left join - may not exist)
+        LEFT JOIN "ImageConnection" ic
+          ON ic."entityId" = a.id
+          AND ic."entityType" = 'Article'
+        LEFT JOIN "Image" content_imgs
+          ON ic."imageId" = content_imgs.id
+          AND content_imgs."ingestion" = 'Scanned'
+
         WHERE a.id IN (${Prisma.join(articleIds)})
         GROUP BY a.id
       )
       UPDATE "Article" a
-      SET "nsfwLevel" = (
-        CASE
-          WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
-          ELSE level."nsfwLevel"
-        END
-      )
+      SET "nsfwLevel" = GREATEST(a."userNsfwLevel", level."nsfwLevel")
       FROM level
-      WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
+      WHERE level.id = a.id
+        AND level."nsfwLevel" != a."nsfwLevel"
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(

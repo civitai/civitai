@@ -2354,6 +2354,7 @@ enum ArticleStatus {
   Draft
   Published
   Unpublished
+  Processing
 }
 
 model Article {

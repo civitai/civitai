@@ -681,6 +681,7 @@ export const ingestImageBulk = async ({
         scanRequestedAt,
         scannedAt: scanRequestedAt,
         ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: NsfwLevel.PG,
       },
     });
     return true;

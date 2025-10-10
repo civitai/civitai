@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { NsfwLevel } from '~/server/common/enums';
+import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
@@ -29,11 +29,12 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { createImage, deleteImageById } from '~/server/services/image.service';
+import { createImage, deleteImageById, ingestImageBulk } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -45,6 +46,7 @@ import {
   ArticleEngagementType,
   ArticleStatus,
   Availability,
+  ImageIngestionStatus,
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -54,6 +56,10 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { createNotification } from '~/server/services/notification.service';
+import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { logToAxiom } from '~/server/logging/client';
+import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
 
 type ArticleRaw = {
   id: number;
@@ -621,6 +627,16 @@ export const getArticleById = async ({
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
     }
 
+    // Fetch connected images with ingestion status
+    const imageConnections = await dbRead.imageConnection.findMany({
+      where: { entityId: id, entityType: 'Article' },
+      include: {
+        image: {
+          select: { id: true, url: true, ingestion: true },
+        },
+      },
+    });
+
     const articleCategories = await getCategoryTags('article');
     const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = await getFilesByEntity({
       id,
@@ -659,6 +675,7 @@ export const getArticleById = async ({
       })),
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
+      contentImages: imageConnections.map((conn) => conn.image),
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -759,6 +776,28 @@ export const upsertArticle = async ({
         return article;
       });
 
+      // Link content images for new article (creates Image entities and ImageConnections)
+      if (result.content) {
+        try {
+          await linkArticleContentImages({
+            articleId: result.id,
+            content: result.content,
+            userId,
+          });
+        } catch (e) {
+          // Non-blocking: continue even if image linking fails, but log the error
+          const error = e as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'article-image-linking',
+            message: error.message,
+            cause: error.cause,
+            stack: error.stack,
+            articleId: result.id,
+          }).catch();
+        }
+      }
+
       return result;
     }
 
@@ -856,6 +895,28 @@ export const upsertArticle = async ({
       const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
       if (isImgOwner) {
         await deleteImageById({ id: article.coverId });
+      }
+    }
+
+    // Link content images (creates Image entities and ImageConnections)
+    if (data.content) {
+      try {
+        await linkArticleContentImages({
+          articleId: id,
+          content: data.content,
+          userId,
+        });
+      } catch (e) {
+        // Non-blocking: continue even if image linking fails, but log the error
+        const error = e as Error;
+        logToAxiom({
+          type: 'error',
+          name: 'article-image-linking',
+          message: error.message,
+          cause: error.cause,
+          stack: error.stack,
+          articleId: result.id,
+        }).catch();
       }
     }
 
@@ -983,4 +1044,231 @@ export async function unpublishArticleById({
   await userContentOverviewCache.bust(article.userId);
 
   return updated;
+}
+
+// --- Article Image Scanning Functions ---
+
+/**
+ * Link article content images to article entity
+ * Creates Image entities and ImageConnections for all embedded images
+ *
+ * Uses batch queries to prevent N+1 performance issues
+ *
+ * @param articleId - Article ID to link images to
+ * @param content - Article HTML content
+ * @param userId - User ID for image ownership
+ */
+export async function linkArticleContentImages({
+  articleId,
+  content,
+  userId,
+}: {
+  articleId: number;
+  content: string;
+  userId: number;
+}): Promise<void> {
+  const contentImages = extractImagesFromArticle(content);
+  if (contentImages.length === 0) return;
+
+  await dbWrite.$transaction(async (tx) => {
+    const imageUrls = contentImages.map((img) => img.url);
+
+    // Batch query: Get all existing images in one query
+    const existingImages = await tx.image.findMany({
+      where: { url: { in: imageUrls } },
+      select: { id: true, url: true, ingestion: true },
+    });
+
+    const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
+
+    // Batch create: Missing images (upsert with unique constraint handles races)
+    const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
+
+    const newlyCreatedImages: { id: number; url: string }[] = [];
+
+    if (missingMedia.length > 0) {
+      const newImages = await tx.image.createManyAndReturn({
+        data: missingMedia.map((media) => ({
+          url: media.url,
+          userId,
+          type: media.type,
+          ingestion: 'Pending' as const,
+          scanRequestedAt: new Date(),
+        })),
+        select: { id: true, url: true },
+        skipDuplicates: true, // Handle race conditions
+      });
+
+      newImages.forEach((img) => {
+        existingUrlMap.set(img.url, { ...img, ingestion: 'Pending' as const });
+        newlyCreatedImages.push(img);
+      });
+    }
+
+    // Batch upsert: ImageConnections
+    for (const url of imageUrls) {
+      const image = existingUrlMap.get(url);
+      if (!image) continue;
+
+      await tx.imageConnection.upsert({
+        where: {
+          imageId_entityType_entityId: {
+            imageId: image.id,
+            entityType: 'Article',
+            entityId: articleId,
+          },
+        },
+        create: { imageId: image.id, entityType: 'Article', entityId: articleId },
+        update: {},
+      });
+    }
+
+    // Remove orphaned connections (images deleted from content)
+    await tx.imageConnection.deleteMany({
+      where: {
+        entityType: 'Article',
+        entityId: articleId,
+        imageId: { notIn: Array.from(existingUrlMap.values()).map((img) => img.id) },
+      },
+    });
+
+    const pendingExistingImages = existingImages.filter(
+      (img) => img.ingestion === ImageIngestionStatus.Pending
+    );
+    const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
+
+    // Queue newly created images for immediate ingestion
+    if (imagesToIngest.length > 0) {
+      await ingestImageBulk({ images: imagesToIngest, lowPriority: false, tx }).catch((error) => {
+        // Log error but don't fail the article operation
+        handleLogError(error, 'article-image-ingestion', {
+          articleId,
+          imageIds: newlyCreatedImages.map((i) => i.id),
+        });
+      });
+    }
+  });
+}
+
+/**
+ * Get article image scan status for real-time progress tracking
+ *
+ * @param articleId - Article ID to get scan status for
+ * @returns Object with scan progress counts and completion status
+ */
+export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
+  total: number;
+  scanned: number;
+  blocked: number;
+  error: number;
+  pending: number;
+  allComplete: boolean;
+}> {
+  const connections = await dbRead.imageConnection.findMany({
+    where: {
+      entityId: id,
+      entityType: 'Article',
+    },
+    include: { image: { select: { ingestion: true } } },
+  });
+
+  const total = connections.length;
+  const scanned = connections.filter(
+    (c) => c.image.ingestion === ImageIngestionStatus.Scanned
+  ).length;
+  const blocked = connections.filter(
+    (c) => c.image.ingestion === ImageIngestionStatus.Blocked
+  ).length;
+  const error = connections.filter(
+    (c) =>
+      c.image.ingestion === ImageIngestionStatus.Error ||
+      c.image.ingestion === ImageIngestionStatus.NotFound
+  ).length;
+  const pending = total - scanned - blocked - error;
+
+  return {
+    total,
+    scanned,
+    blocked,
+    error,
+    pending,
+    allComplete: pending === 0,
+  };
+}
+
+/**
+ * Update article scan status after images complete scanning
+ *
+ * Uses PostgreSQL advisory locks to prevent race conditions from concurrent webhook calls
+ * Implements transaction-safe status updates with automatic rollback on errors
+ *
+ * @param articleIds - Array of article IDs to update
+ */
+export async function updateArticleImageScanStatus(articleIds: number[]): Promise<void> {
+  for (const articleId of articleIds) {
+    await dbWrite.$transaction(
+      async (tx) => {
+        // Acquire PostgreSQL advisory lock (prevents concurrent webhooks)
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+
+        // Get all connected images
+        const connections = await tx.imageConnection.findMany({
+          where: { entityId: articleId, entityType: 'Article' },
+          include: { image: { select: { ingestion: true } } },
+        });
+
+        // Calculate scan status
+        const totalImages = connections.length;
+        const scannedImages = connections.filter(
+          (c) => c.image.ingestion === ImageIngestionStatus.Scanned
+        ).length;
+        const blockedImages = connections.filter(
+          (c) => c.image.ingestion === ImageIngestionStatus.Blocked
+        ).length;
+        const errorImages = connections.filter(
+          (c) =>
+            c.image.ingestion === ImageIngestionStatus.Error ||
+            c.image.ingestion === ImageIngestionStatus.NotFound
+        ).length;
+
+        // Treat errors as "complete" so article can publish
+        const allComplete = scannedImages + blockedImages + errorImages === totalImages;
+
+        if (allComplete) {
+          await updateArticleNsfwLevels([articleId]);
+
+          const article = await tx.article.findUnique({
+            where: { id: articleId },
+            select: { status: true, publishedAt: true, userId: true },
+          });
+
+          if (article?.status === ArticleStatus.Processing && article.publishedAt) {
+            await tx.article.update({
+              where: { id: articleId },
+              data: { status: ArticleStatus.Published },
+            });
+
+            // Notify user if there were errors/blocked images
+            if (blockedImages > 0 || errorImages > 0) {
+              await createNotification({
+                userId: article.userId,
+                category: NotificationCategory.System,
+                type: 'system-message',
+                key: `article-images-${articleId}`,
+                details: {
+                  message: `Your article has been published, but ${
+                    blockedImages > 0
+                      ? `${blockedImages} image(s) were blocked`
+                      : `${errorImages} image(s) failed to scan`
+                  }`,
+                  url: `/articles/${articleId}`,
+                },
+              });
+            }
+          }
+        }
+      },
+      { timeout: 30000, maxWait: 10000 }
+    );
+  }
 }

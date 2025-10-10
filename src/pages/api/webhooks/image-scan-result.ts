@@ -62,6 +62,7 @@ import { normalizeText } from '~/utils/normalize-text';
 import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
+import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
 
 // const REQUIRED_SCANS = 2;
 
@@ -248,6 +249,19 @@ async function updateImage(
 
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
+
+      // NEW: Debounced article updates (prevents N+1 issue)
+      const articleConnections = await dbWrite.imageConnection.findMany({
+        where: { imageId: image.id, entityType: 'Article' },
+        select: { entityId: true },
+      });
+
+      if (articleConnections.length > 0) {
+        for (const { entityId } of articleConnections) {
+          // Uses debouncing: 50 images → 1 DB update
+          await debounceArticleUpdate(entityId);
+        }
+      }
 
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 

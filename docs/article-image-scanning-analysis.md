@@ -673,10 +673,10 @@ upsertArticle = async ({ content, ...data }) => {
 ## 📋 Implementation Checklist
 
 ### Database & Schema
-- [ ] Add `Processing` to `ArticleStatus` enum
-- [ ] Migration: Add enum value to database
-- [ ] Update Prisma schema
-- [ ] Generate new Prisma client
+- [x] Add `Processing` to `ArticleStatus` enum
+- [x] Migration: Add enum value to database
+- [x] Update Prisma schema
+- [x] Generate new Prisma client
 
 ### Utilities
 - [ ] Create `src/utils/article-helpers.ts`
