@@ -258,44 +258,17 @@ export function GeneratedImage({
     if (running && value) helpers?.next();
   }
 
-  const blockedReason = getImageBlockedReason(image.blockedReason);
-  const isBlockedDueToMatureContent =
-    (!allowMatureContent || !showNsfw) && matureDictionary[image.nsfwLevel ?? ''];
-  const isBlocked = !!nsfwLevelError || !!blockedReason || !!isBlockedDueToMatureContent;
-  const aspectRatio = isBlocked ? 1 : image.aspect;
+  if (image.blockedReason || nsfwLevelError) return null;
 
   return (
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full items-center justify-center', classes.imageWrapper)}
-      style={{ aspectRatio }}
+      style={{ aspectRatio: image.aspect }}
     >
       {(isLightbox || inView) && (
         <>
-          {nsfwLevelError || blockedReason === 'NSFWLevel' ? (
-            <BlockedBlock
-              title="Blocked for Mature Content"
-              message="Private Generation is limited to PG content."
-            />
-          ) : blockedReason ? (
-            <BlockedBlock title={`Blocked ${capitalize(image.type)}`} message={blockedReason} />
-          ) : isBlockedDueToMatureContent ? (
-            <BlockedBlock
-              title={'Blocked for Mature Content'}
-              message={
-                !allowMatureContent
-                  ? 'This image received a mature rating and is unavailable on this site'
-                  : () => (
-                      <Text align="center" size="sm">
-                        To view this content, enable mature content in your{' '}
-                        <Anchor component={NextLink} href="/user/account">
-                          account settings
-                        </Anchor>
-                      </Text>
-                    )
-              }
-            />
-          ) : (
+          {
             <EdgeMedia2
               src={image.url}
               type={image.type}
@@ -331,10 +304,10 @@ export function GeneratedImage({
                 autoPlay: true,
               }}
             />
-          )}
+          }
           <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
 
-          {!isLightbox && !isBlocked && (
+          {!isLightbox && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
@@ -356,79 +329,72 @@ export function GeneratedImage({
               </div>
             </Menu.Target>
             <Menu.Dropdown>
-              <GeneratedImageWorkflowMenuItems
-                step={step}
-                image={image}
-                workflowId={request.id}
-                isBlocked={isBlocked}
-              />
+              <GeneratedImageWorkflowMenuItems step={step} image={image} workflowId={request.id} />
             </Menu.Dropdown>
           </Menu>
 
-          {!isBlocked && (
-            <div
-              className={clsx(
-                classes.actionsWrapper,
-                isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
-                'absolute flex flex-wrap items-center gap-1 p-1'
-              )}
+          <div
+            className={clsx(
+              classes.actionsWrapper,
+              isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+              'absolute flex flex-wrap items-center gap-1 p-1'
+            )}
+          >
+            <LegacyActionIcon
+              size="md"
+              className={state.favorite ? classes.favoriteButton : undefined}
+              variant={state.favorite ? 'light' : 'subtle'}
+              color={state.favorite ? 'red' : 'gray'}
+              onClick={() => handleToggleFavorite(!state.favorite)}
             >
-              <LegacyActionIcon
-                size="md"
-                className={state.favorite ? classes.favoriteButton : undefined}
-                variant={state.favorite ? 'light' : 'subtle'}
-                color={state.favorite ? 'red' : 'gray'}
-                onClick={() => handleToggleFavorite(!state.favorite)}
-              >
-                <IconHeart size={16} />
-              </LegacyActionIcon>
+              <IconHeart size={16} />
+            </LegacyActionIcon>
 
-              <Menu
-                zIndex={400}
-                trigger="hover"
-                openDelay={100}
-                closeDelay={100}
-                transitionProps={{
-                  transition: 'fade',
-                  duration: 150,
-                }}
-                withinPortal
-                position="top"
-              >
-                <Menu.Target>
-                  <LegacyActionIcon size="md">
-                    <IconWand size={16} />
-                  </LegacyActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown className={classes.improveMenu}>
-                  <GeneratedImageWorkflowMenuItems
-                    step={step}
-                    image={image}
-                    workflowId={request.id}
-                    workflowsOnly
-                  />
-                </Menu.Dropdown>
-              </Menu>
+            <Menu
+              zIndex={400}
+              trigger="hover"
+              openDelay={100}
+              closeDelay={100}
+              transitionProps={{
+                transition: 'fade',
+                duration: 150,
+              }}
+              withinPortal
+              position="top"
+            >
+              <Menu.Target>
+                <LegacyActionIcon size="md">
+                  <IconWand size={16} />
+                </LegacyActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown className={classes.improveMenu}>
+                <GeneratedImageWorkflowMenuItems
+                  step={step}
+                  image={image}
+                  workflowId={request.id}
+                  workflowsOnly
+                />
+              </Menu.Dropdown>
+            </Menu>
 
-              <LegacyActionIcon
-                size="md"
-                variant={state.feedback === 'liked' ? 'light' : 'subtle'}
-                color={state.feedback === 'liked' ? 'green' : 'gray'}
-                onClick={() => handleToggleFeedback('liked')}
-              >
-                <IconThumbUp size={16} />
-              </LegacyActionIcon>
+            <LegacyActionIcon
+              size="md"
+              variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+              color={state.feedback === 'liked' ? 'green' : 'gray'}
+              onClick={() => handleToggleFeedback('liked')}
+            >
+              <IconThumbUp size={16} />
+            </LegacyActionIcon>
 
-              <LegacyActionIcon
-                size="md"
-                variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
-                color={state.feedback === 'disliked' ? 'red' : 'gray'}
-                onClick={() => handleToggleFeedback('disliked')}
-              >
-                <IconThumbDown size={16} />
-              </LegacyActionIcon>
-            </div>
-          )}
+            <LegacyActionIcon
+              size="md"
+              variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+              color={state.feedback === 'disliked' ? 'red' : 'gray'}
+              onClick={() => handleToggleFeedback('disliked')}
+            >
+              <IconThumbDown size={16} />
+            </LegacyActionIcon>
+          </div>
           {!isLightbox && (
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
