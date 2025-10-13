@@ -14,8 +14,8 @@ export const usePaymentProvider = () => {
     env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === PaymentProvider.Paddle &&
     !env.NEXT_PUBLIC_PADDLE_TOKEN
   ) {
-    return PaymentProvider.Stripe; // Fallback to Stripe if Paddle is not setup.
+    return PaymentProvider.Civitai; // Fallback to Civitai if Paddle is not setup.
   }
 
-  return env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER;
+  return PaymentProvider.Civitai;
 };
