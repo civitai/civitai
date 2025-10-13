@@ -172,8 +172,7 @@ const BuzzPurchasePaymentButton = ({
           <Stack>
             <Text>
               You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} type={buzzType} />
-              .
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} type={buzzType} />.
             </Text>
             <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
