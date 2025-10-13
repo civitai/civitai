@@ -17,5 +17,9 @@ export const usePaymentProvider = () => {
     return PaymentProvider.Civitai; // Fallback to Civitai if Paddle is not setup.
   }
 
+  if (false) {
+    return PaymentProvider.Paddle; // For type checking
+  }
+
   return PaymentProvider.Civitai;
 };
