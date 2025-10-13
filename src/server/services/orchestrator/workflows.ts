@@ -1,4 +1,9 @@
-import type { GetWorkflowData, Options, SubmitWorkflowData } from '@civitai/client';
+import type {
+  GetWorkflowData,
+  Options,
+  SubmitWorkflowData,
+  UpdateWorkflowRequest,
+} from '@civitai/client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
@@ -184,12 +189,13 @@ export async function deleteManyWorkflows({
 
 export async function updateWorkflow({
   workflowId,
-  metadata,
   token,
-}: z.infer<typeof workflowUpdateSchema> & { token: string }) {
+  ...body
+}: UpdateWorkflowRequest & { token: string; workflowId: string }) {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } });
+  await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  return await getWorkflow({ token, path: { workflowId } });
 }
 
 export async function updateManyWorkflows({

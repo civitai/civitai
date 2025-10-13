@@ -23,10 +23,14 @@ import {
   patchSchema,
   workflowIdSchema,
   workflowQuerySchema,
+  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
-import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import {
+  queryGeneratedImageWorkflows,
+  updateWorkflow,
+} from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
@@ -118,6 +122,9 @@ export const orchestratorRouter = router({
   cancelWorkflow: orchestratorProcedure
     .input(workflowIdSchema)
     .mutation(({ ctx, input }) => cancelWorkflow({ ...input, token: ctx.token })),
+  updateWorkflow: orchestratorProcedure
+    .input(workflowUpdateSchema)
+    .mutation(({ ctx, input }) => updateWorkflow({ ...input, token: ctx.token })),
   // #endregion
 
   // #region [steps]

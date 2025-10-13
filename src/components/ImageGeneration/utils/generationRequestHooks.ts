@@ -218,6 +218,24 @@ export function useSubmitCreateImage() {
   });
 }
 
+export function useUpdateWorkflow() {
+  return trpc.orchestrator.updateWorkflow.useMutation({
+    onSuccess: (response, { workflowId }) => {
+      updateTextToImageRequests({
+        cb: (data) => {
+          for (const page of data.pages) {
+            const index = page.items.findIndex((x) => x.id === workflowId);
+            if (index > -1) {
+              page.items[index] = response;
+              break;
+            }
+          }
+        },
+      });
+    },
+  });
+}
+
 export function useGenerate(args?: { onError?: (e: any) => void }) {
   return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {

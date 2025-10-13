@@ -4,8 +4,10 @@ export const workflowIdSchema = z.object({
   workflowId: z.string(),
 });
 
+export type WorkflowUpdateSchema = z.infer<typeof workflowUpdateSchema>;
 export const workflowUpdateSchema = workflowIdSchema.extend({
-  metadata: z.record(z.string(), z.any()),
+  metadata: z.record(z.string(), z.any()).optional(),
+  allowMatureContent: z.boolean().optional(),
 });
 
 export type WorkflowQuerySchema = z.input<typeof workflowQuerySchema>;

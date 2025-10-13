@@ -1,6 +1,5 @@
 import type { RingProgressProps, TooltipProps } from '@mantine/core';
 import {
-  ActionIcon,
   Alert,
   Badge,
   Card,
@@ -10,7 +9,6 @@ import {
   Text,
   Tooltip,
   Anchor,
-  Button,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import {
@@ -23,11 +21,9 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
-
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -38,10 +34,10 @@ import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationSt
 import {
   useCancelTextToImageRequest,
   useDeleteTextToImageRequest,
+  useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-
 import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
-import { TimeSpan, NsfwLevel } from '@civitai/client';
+import { TimeSpan } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -50,7 +46,6 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type {
-  NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
@@ -65,8 +60,6 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { useAppContext } from '~/providers/AppProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 
@@ -636,11 +629,18 @@ function CanUpgradeBlock({
   workflowId: string;
   transactions: TransactionInfo[];
 }) {
+  const { mutate, isLoading } = useUpdateWorkflow();
+
   const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
     if (transaction.accountType === 'yellow') return acc;
     if (transaction.type === 'credit') return acc - transaction.amount;
     else return acc + transaction.amount;
   }, 0);
+
+  function handleClick() {
+    if (isLoading) return;
+    mutate({ workflowId, allowMatureContent: true });
+  }
 
   return (
     <>
@@ -649,7 +649,7 @@ function CanUpgradeBlock({
         <Text component="span" c="yellow">
           yellow
         </Text>{' '}
-        buzz!
+        Buzz!
       </Text>
       <CurrencyBadge
         unitAmount={yellowBuzzRequired}
@@ -657,6 +657,8 @@ function CanUpgradeBlock({
         size="xs"
         className="cursor-pointer"
         type="yellow"
+        onClick={handleClick}
+        loading={isLoading}
       />
     </>
   );

@@ -23,6 +23,7 @@ type Props = BadgeProps & {
   type?: string;
   typeDistribution?: BuzzTypeDistribution;
   asCounter?: boolean;
+  onClick?: () => void;
 } & ({ currency: 'BUZZ'; type?: BuzzSpendType } | { currency: 'USD' | 'USDC' });
 
 const iconSize: Record<MantineSize, number> = {
