@@ -42,6 +42,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 ChartJS.register(
   CategoryScale,
@@ -221,6 +222,20 @@ export function DailyCreatorCompReward({
                     }}
                   />
                 </Group>
+                <DismissibleAlert
+                  title="Compensation Change Notice"
+                  color="blue"
+                  id="compensation-change-10-13-2025"
+                  my="md"
+                  storage="sessionStorage"
+                >
+                  <p>
+                    Compensation calculated before {dayjs('2025-10-13').format('MM/DD/YYYY')} was
+                    paid in <span className="inline text-yellow-500 font-bold">Yellow</span> Buzz. From this
+                    date forward, you will be compensated in the Buzz type used to
+                    generate content.
+                  </p>
+                </DismissibleAlert>
                 <Group justify="flex-start" gap={4}>
                   <CurrencyIcon currency={Currency.BUZZ} size={24} type={buzzAccountType} />
                   <Text
