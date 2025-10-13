@@ -76,9 +76,12 @@ import { Elements, PaymentElement } from '@stripe/react-stripe-js';
 import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
-import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
-import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
+import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
+import {
+  TurnstilePrivacyNotice,
+  TurnstileWidget,
+} from '~/components/TurnstileWidget/TurnstileWidget';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -141,15 +144,6 @@ const BuzzPurchasePaymentButton = ({
     },
   });
 
-  const getPaymentIntentMutation = trpc.stripe.getPaymentIntent.useMutation({
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Could not create payment intent',
-        error: new Error(error.message),
-      });
-    },
-  });
-
   const handleStripeSubmit = async () => {
     if (!onValidate()) {
       return;
@@ -159,60 +153,44 @@ const BuzzPurchasePaymentButton = ({
       return;
     }
 
-    try {
-      const metadata: PaymentIntentMetadataSchema = {
-        type: 'buzzPurchase',
+    const metadata: PaymentIntentMetadataSchema = {
+      type: 'buzzPurchase',
+      unitAmount,
+      buzzAmount,
+      userId: currentUser.id as number,
+      buzzType: buzzType,
+    };
+
+    // Open Stripe payment modal which will handle captcha and payment intent creation
+    dialogStore.trigger({
+      component: StripeTransactionModal,
+      props: {
         unitAmount,
         buzzAmount,
-        userId: currentUser.id as number,
-        buzzType: buzzType,
-      };
-
-      console.log('Creating Stripe payment intent with metadata:', metadata);
-
-      const result = await getPaymentIntentMutation.mutateAsync({
-        unitAmount,
-        currency: Currency.USD,
         metadata,
-        recaptchaToken: 'test-token', // await getToken()
-      });
+        message: (
+          <Stack>
+            <Text>
+              You are about to purchase{' '}
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} type={buzzType} />
+              .
+            </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
+          </Stack>
+        ),
+        successMessage,
+        onSuccess: async (stripePaymentIntentId) => {
+          // Complete the buzz purchase transaction
+          await completeStripeBuzzPurchaseMutation({
+            amount: buzzAmount,
+            details: metadata,
+            stripePaymentIntentId,
+          });
 
-      if (result.clientSecret) {
-        // Open Stripe payment modal with the client secret
-        dialogStore.trigger({
-          component: StripeTransactionModal,
-          props: {
-            clientSecret: result.clientSecret,
-            unitAmount,
-            buzzAmount,
-            message: (
-              <Stack>
-                <Text>
-                  You are about to purchase{' '}
-                  <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} type={buzzType} />
-                  .
-                </Text>
-                <Text>Please fill in your data and complete your purchase.</Text>
-              </Stack>
-            ),
-            successMessage,
-            onSuccess: async (stripePaymentIntentId) => {
-              // Complete the buzz purchase transaction
-              await completeStripeBuzzPurchaseMutation({
-                amount: buzzAmount,
-                details: metadata,
-                stripePaymentIntentId,
-              });
-
-              onPurchaseSuccess?.();
-            },
-          },
-        });
-      }
-    } catch (error) {
-      // Error handling is already done in the mutation
-      console.error('Failed to create Stripe payment intent:', error);
-    }
+          onPurchaseSuccess?.();
+        },
+      },
+    });
   };
 
   const handlePaddleSubmit = async () => {
@@ -254,7 +232,6 @@ const BuzzPurchasePaymentButton = ({
   return (
     <Button
       disabled={disabled || features.disablePayments}
-      loading={getPaymentIntentMutation.isLoading}
       onClick={
         shouldUsePaddle ? handlePaddleSubmit : shouldUseStripe ? handleStripeSubmit : undefined
       }
@@ -270,11 +247,7 @@ const BuzzPurchasePaymentButton = ({
       ) : (
         <Group gap="sm">
           <Text size="sm" fw={500}>
-            {getPaymentIntentMutation.isLoading
-              ? 'Setting up payment...'
-              : buzzType === 'green'
-              ? 'Pay with Card'
-              : 'Complete Purchase'}
+            {buzzType === 'green' ? 'Pay with Card' : 'Complete Purchase'}
           </Text>
         </Group>
       )}
@@ -1171,18 +1144,18 @@ export const BuzzPurchaseImproved = ({
 
 // Stripe Transaction Modal Component
 type StripeTransactionModalProps = {
-  clientSecret: string;
   unitAmount: number;
   buzzAmount: number;
+  metadata: PaymentIntentMetadataSchema;
   message?: React.ReactNode;
   successMessage?: React.ReactNode;
   onSuccess?: (paymentIntentId: string) => Promise<void>;
 };
 
 const StripeTransactionModal = ({
-  clientSecret,
   unitAmount,
   buzzAmount,
+  metadata,
   message,
   successMessage,
   onSuccess,
@@ -1190,18 +1163,127 @@ const StripeTransactionModal = ({
   const dialog = useDialogContext();
   const stripePromise = useStripePromise();
   const colorScheme = useComputedColorScheme('dark');
+  const [captchaState, setCaptchaState] = useState<CaptchaState>({
+    status: null,
+    token: null,
+    error: null,
+  });
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
 
-  const options: StripeElementsOptions = {
-    clientSecret,
-    appearance: {
-      theme: colorScheme === 'dark' ? 'night' : 'stripe',
-      variables: {
-        colorPrimary: 'rgb(var(--buzz-color))',
-        borderRadius: '8px',
-      },
+  const getPaymentIntentMutation = trpc.stripe.getPaymentIntent.useMutation({
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Could not create payment intent',
+        error: new Error(error.message),
+      });
     },
-    locale: 'en',
-  };
+    onSuccess: (result) => {
+      if (result.clientSecret) {
+        setClientSecret(result.clientSecret);
+      }
+    },
+  });
+
+  // Create payment intent when captcha is successful
+  useEffect(() => {
+    if (captchaState.status === 'success' && captchaState.token && !clientSecret) {
+      getPaymentIntentMutation.mutate({
+        unitAmount,
+        currency: Currency.USD,
+        metadata,
+        recaptchaToken: captchaState.token,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captchaState.status, captchaState.token, clientSecret, unitAmount, metadata]);
+
+  const options: StripeElementsOptions | undefined = clientSecret
+    ? {
+        clientSecret,
+        appearance: {
+          theme: colorScheme === 'dark' ? 'night' : 'stripe',
+          variables: {
+            colorPrimary: 'rgb(var(--buzz-color))',
+            borderRadius: '8px',
+          },
+        },
+        locale: 'en',
+      }
+    : undefined;
+
+  // Show loading state while waiting for captcha or payment intent
+  if (!clientSecret || getPaymentIntentMutation.isLoading) {
+    return (
+      <Modal {...dialog} size="lg" withCloseButton={false}>
+        <Stack gap="md">
+          <div>
+            <Title order={3} size="lg" mb="xs">
+              Complete Payment
+            </Title>
+            <Text c="dimmed" size="sm">
+              Secure payment powered by Stripe
+            </Text>
+          </div>
+
+          {message && (
+            <Card padding="md" radius="md" withBorder>
+              <div>{message}</div>
+            </Card>
+          )}
+
+          <Card padding="md" radius="md" withBorder>
+            <Stack gap="md">
+              <Group justify="space-between" align="flex-start">
+                <Text size="md" fw={600}>
+                  Payment Summary
+                </Text>
+                <div style={{ textAlign: 'right' }}>
+                  <Text size="xl" fw={700} c="green">
+                    ${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    For {numberWithCommas(buzzAmount)} Buzz
+                  </Text>
+                </div>
+              </Group>
+            </Stack>
+          </Card>
+
+          <Center py="md">
+            <Loader type="bars" size="md" />
+          </Center>
+
+          {captchaState.status === 'error' && captchaState.error && (
+            <Card padding="md" radius="md" withBorder>
+              <Group gap="sm">
+                <ThemeIcon size="sm" variant="light" color="red">
+                  <IconInfoCircle size={14} />
+                </ThemeIcon>
+                <Text c="red" size="sm" style={{ flex: 1 }}>
+                  {captchaState.error}
+                </Text>
+              </Group>
+            </Card>
+          )}
+
+          <TurnstilePrivacyNotice />
+          <TurnstileWidget
+            onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
+            onError={(error) =>
+              setCaptchaState({
+                status: 'error',
+                token: null,
+                error: `There was an error generating the captcha: ${error}`,
+              })
+            }
+            onExpire={(token) =>
+              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
+            }
+          />
+        </Stack>
+      </Modal>
+    );
+  }
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false}>
@@ -1239,7 +1321,7 @@ const StripeTransactionModal = ({
           </Stack>
         </Card>
 
-        {stripePromise && (
+        {stripePromise && options && (
           <Elements stripe={stripePromise} key={clientSecret} options={options}>
             <StripePaymentForm
               clientSecret={clientSecret}
