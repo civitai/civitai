@@ -1,4 +1,4 @@
-import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -8,6 +8,7 @@ import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import classes from './Feed.module.scss';
 
+const cutoff = new Date('10/13/2025').getTime();
 export function Feed() {
   const filters = useFiltersContext((state) => state.generation);
 
@@ -57,6 +58,10 @@ export function Feed() {
                   generating
                 </Text>{' '}
                 new images with our resources
+              </Text>
+              <Text size="sm" c="dimmed">
+                Images generated prior to 10/13/2025 are now visible on{' '}
+                <Anchor href="https://civitai.com/generate">civitai.com</Anchor>
               </Text>
             </Stack>
           )}

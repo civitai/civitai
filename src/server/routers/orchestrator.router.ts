@@ -233,6 +233,10 @@ export const orchestratorRouter = router({
         allowMatureContent: ctx.allowMatureContent,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
+
+      if (ctx.domain === 'green') {
+        args.tags = [...(args.tags ?? []), 'green'];
+      }
       // if ('sourceImage' in args.params && args.params.sourceImage) {
       //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
       //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
@@ -334,8 +338,12 @@ export const orchestratorRouter = router({
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       })
     ),
-  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
-    generate({
+  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) => {
+    if (ctx.domain === 'green') {
+      input.tags = [...(input.tags ?? []), 'green'];
+    }
+
+    return generate({
       ...input,
       userId: ctx.user.id,
       token: ctx.token,
@@ -345,8 +353,8 @@ export const orchestratorRouter = router({
       currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       isModerator: ctx.user.isModerator,
       track: ctx.track,
-    })
-  ),
+    });
+  }),
   // #endregion
 
   // #region [Image upload]
