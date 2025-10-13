@@ -35,6 +35,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -305,14 +306,23 @@ export const CancelMembershipBenefitsModal = () => {
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: mainBuzzType,
   });
-
+  const buzzConfig = useBuzzCurrencyConfig(mainBuzzType);
   const product = subscription?.product;
   const details = product ? getPlanDetails(product, features) : null;
   const benefits = details?.benefits ?? [];
   const hasUsedVaultStorage = !!vault && vault.usedStorageKb > 0;
 
   return (
-    <Modal {...dialog} size="md" title="You will lose the following if you cancel" radius="md">
+    <Modal
+      {...dialog}
+      size="md"
+      title="You will lose the following if you cancel"
+      radius="md"
+      style={{
+        '--buzz-color': buzzConfig.colorRgb,
+        '--buzz-gradient': buzzConfig.css?.gradient,
+      }}
+    >
       {vaultLoading || subscriptionLoading ? (
         <Center>
           <Loader />

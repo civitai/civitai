@@ -530,7 +530,7 @@ export const BuzzPurchaseImproved = ({
               </Card>
             )}
 
-            {liveFeatures.buzzGiftCards && (
+            {liveFeatures.buzzGiftCards && !features.isGreen && (
               <PromoBanner
                 icon={<IconGift size={24} />}
                 title="Buzz Gift Cards Available!"
