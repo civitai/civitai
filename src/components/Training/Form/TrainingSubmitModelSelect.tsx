@@ -23,7 +23,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import {
   trainingDetailsBaseModels15,
-  trainingDetailsBaseModels35,
+  // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsHunyuan,
@@ -229,11 +229,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsXL as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
-  const baseModel35 =
-    !!formBaseModel &&
-    (trainingDetailsBaseModels35 as ReadonlyArray<string>).includes(formBaseModel)
-      ? formBaseModel
-      : null;
+  // const baseModel35 =
+  //   !!formBaseModel &&
+  //   (trainingDetailsBaseModels35 as ReadonlyArray<string>).includes(formBaseModel)
+  //     ? formBaseModel
+  //     : null;
   const baseModelFlux =
     !!formBaseModel &&
     (trainingDetailsBaseModelsFlux as ReadonlyArray<string>).includes(formBaseModel)
@@ -298,7 +298,7 @@ export const ModelSelect = ({
                     baseType="sdxl"
                     makeDefaultParams={makeDefaultParams}
                   />
-                  <ModelSelector
+                  {/*<ModelSelector
                     selectedRun={selectedRun}
                     color="pink"
                     name="SD 3.5"
@@ -306,7 +306,7 @@ export const ModelSelect = ({
                     baseType="sd35"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-11-10')}
-                  />
+                  />*/}
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="red"

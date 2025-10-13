@@ -757,11 +757,18 @@ export const deleteBidsForModel = async ({
   };
 };
 
-export const deleteBidsForModelVersion = async ({ modelVersionId }: { modelVersionId: number }) => {
+export const deleteBidsForModelVersion = async ({
+  modelVersionId,
+  tx,
+}: {
+  modelVersionId: number;
+  tx?: Prisma.TransactionClient;
+}) => {
+  const dbClient = tx ?? dbWrite;
   // TODO combine this function with one above
   const now = new Date();
 
-  const aData = await dbWrite.auction.findMany({
+  const aData = await dbClient.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: {
       id: true,
@@ -779,7 +786,7 @@ export const deleteBidsForModelVersion = async ({ modelVersionId }: { modelVersi
 
   if (aIds.length > 0) {
     // we could reverse the logic here and refund first
-    const deleted = await dbWrite.bid.updateManyAndReturn({
+    const deleted = await dbClient.bid.updateManyAndReturn({
       where: { auctionId: { in: aIds }, entityId: modelVersionId },
       data: {
         deleted: true,
@@ -829,13 +836,13 @@ export const deleteBidsForModelVersion = async ({ modelVersionId }: { modelVersi
     }
   }
 
-  const recToDelete = await dbWrite.bidRecurring.findMany({
+  const recToDelete = await dbClient.bidRecurring.findMany({
     where: { entityId: modelVersionId },
     select: { id: true, userId: true },
   });
 
   if (recToDelete.length > 0) {
-    await dbWrite.bidRecurring.deleteMany({
+    await dbClient.bidRecurring.deleteMany({
       where: { id: { in: recToDelete.map((r) => r.id) } },
     });
     const details: DetailsCanceledBid = {
