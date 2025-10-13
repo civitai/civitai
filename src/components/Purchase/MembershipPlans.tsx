@@ -103,7 +103,8 @@ export function MembershipPlans({
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
     interval,
     buzzType: selectedBuzzType, // Filter plans by selected buzz type
-    paymentProvider,
+    paymentProvider:
+      features.disablePayments || selectedBuzzType === 'yellow' ? 'Civitai' : paymentProvider,
   });
 
   const isLoading = productsLoading;
