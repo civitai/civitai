@@ -231,8 +231,8 @@ export function DailyCreatorCompReward({
                 >
                   <p>
                     Compensation calculated before {dayjs('2025-10-13').format('MM/DD/YYYY')} was
-                    paid in <span className="inline text-yellow-500 font-bold">Yellow</span> Buzz. From this
-                    date forward, you will be compensated in the Buzz type used to
+                    paid in <span className="inline font-bold text-yellow-500">Yellow</span> Buzz.
+                    From this date forward, you will be compensated in the Buzz type used to
                     generate content.
                   </p>
                 </DismissibleAlert>
