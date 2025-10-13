@@ -181,6 +181,7 @@ export const orchestratorRouter = router({
       ...input,
       token: ctx.token,
       user: ctx.user,
+      tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,
       hideMatureContent: ctx.hideMatureContent,
     })
   ),
@@ -292,6 +293,7 @@ export const orchestratorRouter = router({
         }
 
         return {
+          transactions: workflow.transactions?.list,
           cost: workflow.cost,
           ready,
         };

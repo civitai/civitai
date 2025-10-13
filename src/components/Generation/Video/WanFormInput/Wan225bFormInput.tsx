@@ -5,6 +5,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import {
   wan225bResolutions,
   wan225bAspectRatios,
@@ -61,7 +62,7 @@ export function Wan225bFormInput() {
           limit={maxFalAdditionalResources}
         />
       )}
-      <InputTextArea
+      <InputPrompt
         required={isTxt2Img}
         name="prompt"
         label="Prompt"

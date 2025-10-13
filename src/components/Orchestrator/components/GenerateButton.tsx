@@ -6,7 +6,8 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { buzzSpendTypes, BuzzTypes } from '~/shared/constants/buzz.constants';
+import type { TransactionInfo } from '@civitai/client';
 
 export function GenerateButton({
   cost = 0,
@@ -15,8 +16,15 @@ export function GenerateButton({
   error,
   onClick,
   disabled,
+  transactions,
   ...buttonProps
-}: { cost?: number; loading?: boolean; error?: string; onClick?: () => void } & ButtonProps &
+}: {
+  cost?: number;
+  transactions?: TransactionInfo[];
+  loading?: boolean;
+  error?: string;
+  onClick?: () => void;
+} & ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
@@ -24,6 +32,9 @@ export function GenerateButton({
   const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   const { size = 'lg' } = buttonProps;
+  const accountTypes = transactions
+    ? transactions.filter((x) => x.accountType).map((x) => BuzzTypes.toSpendType(x.accountType!))
+    : [];
 
   return !status.charge || !currentUser ? (
     <LoginRedirect reason="image-gen">
@@ -47,7 +58,7 @@ export function GenerateButton({
       buzzAmount={cost}
       onPerformTransaction={onClick}
       error={error}
-      accountTypes={availableBuzzTypes}
+      accountTypes={accountTypes.length > 0 ? accountTypes : availableBuzzTypes}
       showPurchaseModal
       showTypePct
     />

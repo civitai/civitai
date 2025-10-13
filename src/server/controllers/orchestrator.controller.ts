@@ -9,15 +9,20 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '../redis/client';
 import { clickhouse } from '../clickhouse/client';
 
-
-type Ctx = { token: string; userId: number; experimental?: boolean; allowMatureContent?: boolean , currencies?: BuzzSpendType[]};
+type Ctx = {
+  token: string;
+  userId: number;
+  experimental?: boolean;
+  allowMatureContent?: boolean;
+  currencies?: BuzzSpendType[];
+};
 
 export async function generate({
   token,
@@ -63,7 +68,7 @@ export async function generate({
       },
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
-      // nsfwLevel: isGreen ? NsfwLevel.P_G13 : undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
     },
   });
@@ -100,6 +105,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
   }
 
   return {
+    transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
   };

@@ -100,6 +100,11 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
+  if (body.allowMatureContent === false) {
+    body.upgradeMode = 'manual';
+    body.tags = [...(body.tags ?? []), 'green'];
+  }
+
   if (isDev) {
     // console.log('------');
     // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));

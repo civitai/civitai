@@ -12,7 +12,7 @@ export type WorkflowQuerySchema = z.input<typeof workflowQuerySchema>;
 export const workflowQuerySchema = z.object({
   take: z.number().default(20),
   cursor: z.string().optional(),
-  tags: z.string().array().optional(),
+  tags: z.string().array().default([]),
   ascending: z.boolean().optional(),
 });
 
