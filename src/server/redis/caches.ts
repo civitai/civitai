@@ -256,21 +256,50 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   lookupFn: async (ids) => {
     if (ids.length === 0) return {};
 
+    // Get the highest tier subscription for each user
+    // Tier priority: founder > gold > silver > bronze > free
     const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
+      WITH ranked_subscriptions AS (
+        SELECT
+          cs."userId",
+          cs.status,
+          p.metadata,
+          CASE (p.metadata->>'tier')::text
+            WHEN 'gold' THEN 4
+            WHEN 'silver' THEN 3
+            WHEN 'bronze' THEN 2
+            WHEN 'founder' THEN 2
+            ELSE 1
+          END as tier_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY cs."userId"
+            ORDER BY
+              CASE (p.metadata->>'tier')::text
+                WHEN 'gold' THEN 4
+                WHEN 'silver' THEN 3
+                WHEN 'bronze' THEN 2
+                WHEN 'founder' THEN 2
+                ELSE 1
+              END DESC
+          ) as rn
+        FROM "CustomerSubscription" cs
+        JOIN "Product" p ON p.id = cs."productId"
+        WHERE cs."userId" IN (${Prisma.join(ids)})
+          AND cs.status NOT IN ('canceled')
+      )
       SELECT
         u.id as "userId",
         CASE
           WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
-          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
+          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
+          ELSE COALESCE((rs.metadata->>'rewardsMultiplier')::float, 1)
         END as "rewardsMultiplier",
         CASE
-          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((p.metadata->>'purchasesMultiplier')::float, 1)
+          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
+          ELSE COALESCE((rs.metadata->>'purchasesMultiplier')::float, 1)
         END as "purchasesMultiplier"
       FROM "User" u
-      LEFT JOIN "CustomerSubscription" cs ON u.id = cs."userId"
-      LEFT JOIN "Product" p ON p.id = cs."productId"
+      LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
       WHERE u.id IN (${Prisma.join(ids)});
     `;
 

@@ -5,22 +5,31 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
+  buzzType,
 }: {
   checkWhenInBadState?: boolean;
+  buzzType?: BuzzSpendType;
 } = {}) => {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
+  const [mainBuzzType] = useAvailableBuzz();
 
   const {
     data: subscription,
     isLoading,
     isFetching,
-  } = trpc.subscriptions.getUserSubscription.useQuery(undefined, {
-    enabled: !!currentUser && !!(isMember || checkWhenInBadState),
-  });
+  } = trpc.subscriptions.getUserSubscription.useQuery(
+    { buzzType: buzzType || mainBuzzType },
+    {
+      enabled: !!currentUser && !!(isMember || checkWhenInBadState),
+    }
+  );
 
   const meta = subscription?.product?.metadata as SubscriptionProductMetadata;
 
@@ -38,9 +47,10 @@ export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
     useActiveSubscription();
-  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
-    {}
-  );
+  const paymentProvider = usePaymentProvider();
+  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({
+    paymentProvider,
+  });
   const features = useFeatureFlags();
 
   if (!features.prepaidMemberships && features.disablePayments) {
@@ -67,15 +77,6 @@ export const useCanUpgrade = () => {
     constants.memberships.tierOrder.indexOf(metadata.tier) + 1 <
     constants.memberships.tierOrder.length
   );
-};
-
-export const appliesForFounderDiscount = (tier?: string) => {
-  const appliesForDiscount =
-    !!tier &&
-    tier === constants.memberships.founderDiscount.tier &&
-    new Date() < constants.memberships.founderDiscount.maxDiscountDate;
-
-  return appliesForDiscount;
 };
 
 export const useRefreshSession = (shouldReload = true) => {

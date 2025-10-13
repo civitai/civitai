@@ -1,5 +1,5 @@
 import type { WorkflowStepEvent } from '@civitai/client';
-import { applyPatch, JsonPatchFactory } from '@civitai/client';
+import { applyPatch, JsonPatchFactory, NsfwLevel } from '@civitai/client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -12,6 +12,7 @@ import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -39,6 +40,8 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { useAppContext } from '~/providers/AppProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -69,6 +72,8 @@ export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
   options?: { enabled?: boolean; includeTags?: boolean }
 ) {
+  const { allowMatureContent } = useAppContext();
+  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
 
   const filters = useFiltersContext((state) => state.generation);
@@ -110,12 +115,30 @@ export function useGetTextToImageRequests(
             if (!!tags.length && workflow.tags.every((tag) => !tags.includes(tag))) return false;
             return true;
           })
-          .map((response) => {
-            const steps = response.steps.map((step) => {
-              const images = imageFilter({ step, tags });
+          .map((workflow) => {
+            const steps = workflow.steps.map((step) => {
+              const isPrivateGeneration = ((step.metadata as any)?.isPrivateGeneration ??
+                false) as boolean;
+              const images = imageFilter({ step, tags }).map((image) => {
+                if (image.blockedReason === 'none') image.blockedReason = null;
+                const isMature = image.nsfwLevel && image.nsfwLevel !== NsfwLevel.PG;
+
+                if (isMature && !image.blockedReason) {
+                  if (isPrivateGeneration) {
+                    image.blockedReason = 'privateGen';
+                  } else if (!allowMatureContent) {
+                    image.blockedReason = 'siteRestricted';
+                  } else if (!showNsfw) {
+                    image.blockedReason = 'enableNsfw';
+                  } else if (workflow.allowMatureContent === false) {
+                    image.blockedReason = 'canUpgrade';
+                  }
+                }
+                return image;
+              });
               return { ...step, images };
             });
-            return { ...response, steps };
+            return { ...workflow, steps };
           })
       ) ?? [],
     [data]
@@ -195,6 +218,24 @@ export function useSubmitCreateImage() {
   });
 }
 
+export function useUpdateWorkflow() {
+  return trpc.orchestrator.updateWorkflow.useMutation({
+    onSuccess: (response, { workflowId }) => {
+      updateTextToImageRequests({
+        cb: (data) => {
+          for (const page of data.pages) {
+            const index = page.items.findIndex((x) => x.id === workflowId);
+            if (index > -1) {
+              page.items[index] = response;
+              break;
+            }
+          }
+        },
+      });
+    },
+  });
+}
+
 export function useGenerate(args?: { onError?: (e: any) => void }) {
   return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {
@@ -226,7 +267,7 @@ export function useGenerateWithCost(cost = 0) {
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
-    type: 'Generation',
+    accountTypes: buzzSpendTypes,
   });
 
   const generate = useGenerate();

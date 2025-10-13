@@ -18,7 +18,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
 import type { WorkflowStatus } from '@civitai/client';
 import React from 'react';
-import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './QueueSnackbar.module.scss';
@@ -32,7 +32,10 @@ export function QueueSnackbar() {
   const slots = Array(requestLimit).fill(0);
   const includeQueueLink = !router.pathname.includes('/generate');
 
-  const { balance } = useBuzz(undefined, 'generation');
+  const {
+    data: { accounts },
+  } = useQueryBuzz(['blue']);
+  const blueAccount = accounts.find((a) => a.type === 'blue');
 
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {
@@ -93,13 +96,13 @@ export function QueueSnackbar() {
               processing={processing}
               quantity={quantity}
             />
-          ) : balance ? (
+          ) : blueAccount?.balance ? (
             <Popover withinPortal withArrow>
               <Popover.Target>
                 <CurrencyBadge
                   currency="BUZZ"
                   size="sm"
-                  unitAmount={balance}
+                  unitAmount={blueAccount?.balance ?? 0}
                   displayCurrency={false}
                   formatter={abbreviateNumber}
                   textColor={theme.colors.blue[4]}

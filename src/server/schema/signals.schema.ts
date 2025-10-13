@@ -1,6 +1,6 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
-import { buzzAccountTypes } from '~/server/schema/buzz.schema';
+import { buzzAccountTypes } from '~/shared/constants/buzz.constants';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 
 export type GetSignalsAccessTokenResponse = z.infer<typeof getSignalsAccessTokenResponse>;
@@ -13,7 +13,7 @@ export const buzzUpdateSignalSchema = z.object({
   balance: z.number(),
   delta: z.number(),
   deltaSince: z.date().optional(),
-  accountType: z.enum(buzzAccountTypes),
+  accountType: z.string(),
 });
 
 export type TrainingUpdateSignalSchema = z.infer<typeof trainingUpdateSignalSchema>;

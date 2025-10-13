@@ -2,13 +2,14 @@ import { useFormContext } from 'react-hook-form';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSwitch, InputTextArea } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 
 export function MochiFormInput() {
   const form = useFormContext();
 
   return (
     <>
-      <InputTextArea
+      <InputPrompt
         required
         name="prompt"
         label="Prompt"

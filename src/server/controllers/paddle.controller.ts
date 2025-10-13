@@ -122,7 +122,12 @@ export const cancelEmailHandler = async ({ ctx }: { ctx: DeepNonNullable<Context
     // Cancel for them on our end
     const status = subscription.currentPeriodEnd < new Date() ? 'canceled' : subscription.status;
     await dbWrite.customerSubscription.update({
-      where: { userId: ctx.user.id },
+      where: {
+        userId_buzzType: {
+          buzzType: 'yellow',
+          userId: ctx.user.id,
+        },
+      },
       data: {
         status: subscription.currentPeriodEnd < new Date() ? 'canceled' : subscription.status,
         cancelAt: subscription.currentPeriodEnd ?? new Date(),

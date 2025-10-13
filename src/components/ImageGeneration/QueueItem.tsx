@@ -1,6 +1,5 @@
 import type { RingProgressProps, TooltipProps } from '@mantine/core';
 import {
-  ActionIcon,
   Alert,
   Badge,
   Card,
@@ -9,6 +8,7 @@ import {
   RingProgress,
   Text,
   Tooltip,
+  Anchor,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import {
@@ -20,12 +20,10 @@ import {
   IconInfoHexagon,
   IconTrash,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-
+import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -36,9 +34,9 @@ import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationSt
 import {
   useCancelTextToImageRequest,
   useDeleteTextToImageRequest,
+  useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-
-import type { WorkflowStatus } from '@civitai/client';
+import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
@@ -62,6 +60,10 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -73,15 +75,12 @@ const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
 export function QueueItem({
   request,
-  step,
   id,
-  filter,
 }: {
   request: NormalizedGeneratedImageResponse;
-  step: NormalizedGeneratedImageStep;
   id: string;
-  filter: { marker?: string } | undefined;
 }) {
+  const step = request.steps[0];
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
@@ -96,6 +95,7 @@ export function QueueItem({
   const { params, resources = [] } = step;
 
   const { images } = step;
+
   const failureReason = step.errors
     ? step.errors.join(',\n')
     : images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
@@ -203,7 +203,12 @@ export function QueueItem({
                 {formatDateMin(request.createdAt)}
               </Text>
               {!!request.cost?.total && (
-                <GenerationCostPopover workflowCost={request.cost} readOnly variant="badge" />
+                <GenerationCostPopover
+                  workflowCost={request.cost}
+                  transactions={request.transactions}
+                  readOnly
+                  variant="badge"
+                />
               )}
               {request.transactions.length > 0 && (
                 <TransactionsPopover data={request.transactions} />
@@ -285,9 +290,18 @@ export function QueueItem({
                 [classes.asSidebar]: !features.largerGenerationImages,
               })}
             >
-              {images.map((image, index) => (
-                <GeneratedImage key={index} image={image} request={request} step={step} />
-              ))}
+              {images
+                .filter((x) => !x.blockedReason)
+                .map((image, index) => (
+                  <GeneratedImage key={index} image={image} request={request} step={step} />
+                ))}
+              <BlockedBlocks
+                blockedReasons={images
+                  .filter((x) => !!x.blockedReason)
+                  .map((x) => x.blockedReason!)}
+                workflowId={request.id}
+                transactions={request.transactions}
+              />
 
               {(pending || processing) && (
                 <TwCard
@@ -512,5 +526,154 @@ function SubmitBlockedImagesForReviewButton({
         <IconFlagQuestion size={20} />
       </LegacyActionIcon>
     </ButtonTooltip>
+  );
+}
+
+const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> = {
+  ChildReference: 'An inappropriate child reference was detected.',
+  Bestiality: 'Bestiality detected.',
+  'Child Sexual - Anime': 'Inappropriate minor content detected.',
+  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
+  NsfwLevel: 'Mature content restriction.',
+  NSFWLevelSourceImageRestricted:
+    'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
+  // the following keys are managed in generationRequestHooks.ts
+  privateGen: 'Private Generation is limited to PG content.',
+  siteRestricted: 'Images with mature ratings are unavailable on this site',
+  enableNsfw: EnableNsfwBlock,
+  canUpgrade: CanUpgradeBlock,
+};
+
+function countOccurrences(arr: string[]): Record<string, number> {
+  return arr.reduce((acc, str) => {
+    acc[str] = (acc[str] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+}
+
+function BlockedBlocks(props: {
+  blockedReasons: string[];
+  workflowId: string;
+  transactions: TransactionInfo[];
+}) {
+  const map = countOccurrences(props.blockedReasons);
+  const items = Object.entries(map).map(([value, count]) => ({ value, count }));
+  if (!items.length) return null;
+  return (
+    <>
+      {items.map(({ value, count }) => {
+        const message = imageBlockedReasonMap[value];
+
+        return (
+          <TwCard
+            key={value}
+            className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3"
+          >
+            <Text c="red" fw="bold" align="center" size="sm">
+              {count} Items Hidden
+            </Text>
+            {message
+              ? renderBlockedReason(message, {
+                  workflowId: props.workflowId,
+                  transactions: props.transactions,
+                })
+              : null}
+          </TwCard>
+        );
+      })}
+    </>
+  );
+}
+
+function renderBlockedReason(
+  value: string | React.ComponentType<any>,
+  props?: Record<string, any>
+) {
+  if (typeof value === 'string') {
+    return (
+      <Text align="center" size="sm">
+        {value}
+      </Text>
+    );
+  } else {
+    const Component = value;
+    return <Component {...props} />;
+  }
+}
+
+function EnableNsfwBlock() {
+  return (
+    <Text align="center" size="sm">
+      To view this content, enable mature content in your{' '}
+      <Anchor component={NextLink} href="/user/account">
+        account settings
+      </Anchor>
+    </Text>
+  );
+}
+
+// TODO - show a separate message when the image is blocked for being green
+/*
+    ### Remove matureContentRestriction from a workflow
+    PUT {{host}}/v2/consumer/workflows/6-20250724193706680
+    Content-Type: application/json
+    Authorization: Bearer {{accessToken}}
+
+    {
+      "allowMatureContent": true
+    }
+  */
+
+function CanUpgradeBlock({
+  workflowId,
+  transactions,
+}: {
+  workflowId: string;
+  transactions: TransactionInfo[];
+}) {
+  const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
+    if (transaction.accountType === 'yellow') return acc;
+    if (transaction.type === 'credit') return acc - transaction.amount;
+    else return acc + transaction.amount;
+  }, 0);
+
+  const { mutate, isLoading } = useUpdateWorkflow();
+
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    accountTypes: ['yellow'],
+    message: (requiredBalance) =>
+      `You don't have enough yellow Buzz to perform this action. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy more Buzz to perform this action.`,
+    performTransactionOnPurchase: true,
+  });
+
+  function handleClick() {
+    if (isLoading) return;
+    function performTransaction() {
+      mutate({ workflowId, allowMatureContent: true });
+    }
+    conditionalPerformTransaction(yellowBuzzRequired, performTransaction);
+  }
+
+  return (
+    <>
+      <Text align="center" size="sm">
+        Unlock this content with{' '}
+        <Text component="span" c="yellow">
+          yellow
+        </Text>{' '}
+        Buzz!
+      </Text>
+      <CurrencyBadge
+        unitAmount={yellowBuzzRequired}
+        currency={Currency.BUZZ}
+        size="xs"
+        className="cursor-pointer"
+        type="yellow"
+        onClick={handleClick}
+        loading={isLoading}
+      />
+    </>
   );
 }

@@ -12,6 +12,7 @@ import {
   InputSelect,
   InputTextArea,
 } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import {
   klingAspectRatios,
   klingDuration,
@@ -37,7 +38,7 @@ export function KlingFormInput() {
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" warnOnMissingAiMetadata />
       )}
-      <InputTextArea
+      <InputPrompt
         required={isTxt2Vid}
         name="prompt"
         label="Prompt"

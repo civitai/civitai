@@ -22,7 +22,7 @@ import {
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
 import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { randomizeCollectionItems } from '~/server/services/collection.service';
@@ -529,7 +529,7 @@ async function reviewEntries() {
               amount: currentChallenge.entryPrize.buzz,
               description: `Challenge Entry Prize: ${dateStr}`,
               externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
-              toAccountType: 'generation',
+              toAccountType: 'blue',
             }))
           )
         );
@@ -687,7 +687,7 @@ ${outcome}
         amount: currentChallenge.prizes[i].buzz,
         description: `Challenge Winner Prize ${i + 1}: ${dateStr}`,
         externalTransactionId: `challenge-winner-prize-${dateStr}-${i + 1}`,
-        toAccountType: 'user',
+        toAccountType: 'yellow',
       }))
     )
   );

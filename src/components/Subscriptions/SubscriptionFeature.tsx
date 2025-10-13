@@ -7,9 +7,12 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
+import styles from './SubscriptionFeature.module.css';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 export const SubscriptionFeature = ({
   title,
@@ -17,6 +20,7 @@ export const SubscriptionFeature = ({
 }: {
   title: string | React.ReactNode;
   subtitle: string | ((className: string) => React.ReactNode);
+  buzzType?: BuzzSpendType;
 }) => {
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
@@ -31,10 +35,7 @@ export const SubscriptionFeature = ({
     : getPlanDetails(subscription.product, featureFlags);
 
   return (
-    <Paper
-      className="m-0 flex max-h-full w-full rounded-md border-yellow-6/30 bg-yellow-6/20 p-4"
-      py="xs"
-    >
+    <Paper className={styles.paper} py="xs">
       <Group wrap="nowrap">
         {image && <EdgeMedia src={image} style={{ width: 50 }} />}
         <Stack gap={2}>
@@ -52,16 +53,22 @@ export const SubscriptionFeature = ({
   );
 };
 
-export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: number }) => {
+export const BuzzPurchaseMultiplierFeature = ({
+  buzzAmount,
+  buzzType = 'yellow',
+}: {
+  buzzAmount: number;
+  buzzType?: BuzzSpendType;
+}) => {
   const { subscription } = useActiveSubscription();
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
-  const { yellowBuzzAdded, blueBuzzAdded, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+  const { mainBuzzAdded, blueBuzzAdded, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount,
     purchasesMultiplier,
   });
 
-  if (multipliersLoading || ((!subscription || yellowBuzzAdded === 0) && blueBuzzAdded === 0)) {
+  if (multipliersLoading || ((!subscription || mainBuzzAdded === 0) && blueBuzzAdded === 0)) {
     return null;
   }
 
@@ -69,11 +76,12 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
 
   return (
     <SubscriptionFeature
+      buzzType={buzzType}
       title={
         <Group wrap="nowrap" gap={2}>
-          <CurrencyIcon size={20} />
+          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={20} />
           <span>
-            {numberWithCommas(Math.floor(yellowBuzzAdded + blueBuzzAdded))} Bonus Buzz Free!
+            {numberWithCommas(Math.floor(mainBuzzAdded + blueBuzzAdded))} Bonus Buzz Free!
           </span>
         </Group>
       }
@@ -83,9 +91,9 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
             {subscription
               ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(
                   (purchasesMultiplier - 1) * 100
-                )}% bonus Buzz on each purchase (${numberWithCommas(
-                  yellowBuzzAdded
-                )} Yellow Buzz). ${
+                )}% bonus Buzz on each purchase (${numberWithCommas(mainBuzzAdded)} ${
+                  capitalize(buzzType) ?? 'Yellow'
+                } Buzz). ${
                   blueBuzzAdded > 0
                     ? `Buying in Bulk will also add ${numberWithCommas(
                         blueBuzzAdded

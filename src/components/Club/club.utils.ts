@@ -27,7 +27,6 @@ import type {
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 import type {
   AcceptClubAdminInviteInput,
   DeleteClubAdminInput,
@@ -38,6 +37,7 @@ import type {
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
 import { isDefined, isNumber } from '../../utils/type-guards';
+import type { ClubTransactionSchema } from '~/server/schema/buzz.schema';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -411,10 +411,7 @@ export const useMutateClub = () => {
 
   const withdrawClubFundsMutation = trpc.buzz.withdrawClubFunds.useMutation({
     async onSuccess(_, { clubId }) {
-      await queryUtils.buzz.getBuzzAccount.invalidate({
-        accountId: clubId,
-        accountType: 'club',
-      });
+      await queryUtils.buzz.getBuzzAccount.invalidate();
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
     onError(error) {
@@ -437,10 +434,7 @@ export const useMutateClub = () => {
 
   const depositClubFundsMutation = trpc.buzz.depositClubFunds.useMutation({
     async onSuccess(_, { clubId }) {
-      await queryUtils.buzz.getBuzzAccount.invalidate({
-        accountId: clubId,
-        accountType: 'club',
-      });
+      await queryUtils.buzz.getBuzzAccount.invalidate();
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
     onError(error) {

@@ -48,6 +48,8 @@ import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
+import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -103,6 +105,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
   const [enlargedBadge, setEnlargedBadge] = useState<number | null>(null);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
+  const [mainBuzzColor] = useAvailableBuzz();
+  const buzzColorConfig = useBuzzCurrencyConfig(mainBuzzColor);
 
   const badges = useMemo(
     () =>
@@ -149,7 +153,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       toUserId={user.id}
       size={sizeOpts.button}
       variant={isMobile ? 'filled' : 'light'}
-      color="yellow.7"
+      color={buzzColorConfig.color}
       label={label}
       style={{ fontSize: '14px', fontWeight: 590 }}
     />

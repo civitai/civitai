@@ -1,18 +1,6 @@
-import type { ButtonProps, ThemeIconVariant } from '@mantine/core';
+import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Center, Group, Select, Stack, Text, Title } from '@mantine/core';
-import {
-  IconBolt,
-  IconCategory,
-  IconChevronDown,
-  IconChristmasTree,
-  IconCloud,
-  IconHeartHandshake,
-  IconHexagon,
-  IconHexagon3d,
-  IconHexagonPlus,
-  IconList,
-  IconPhotoAi,
-} from '@tabler/icons-react';
+import { IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -21,23 +9,16 @@ import {
   DowngradeFeedbackModal,
   MembershipUpgradeModal,
 } from '~/components/Stripe/MembershipChangePrevention';
-import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
-import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
-import { isHolidaysTime } from '~/utils/date-helpers';
-import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { isDefined } from '~/utils/type-guards';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -113,13 +94,14 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     !!subscription && subscription.price.interval === 'year' && price.interval === 'month';
 
   const redirectToPrepaidPage = features.disablePayments && features.prepaidMemberships;
-  const ctaDisabled = disabledDueToProvider || disabledDueToYearlyPlan || !redirectToPrepaidPage;
+  const ctaDisabled =
+    disabledDueToProvider ||
+    disabledDueToYearlyPlan ||
+    (features.disablePayments && !redirectToPrepaidPage);
 
   const metadata = (subscription?.product?.metadata ?? {
     tier: 'free',
   }) as SubscriptionProductMetadata;
-  const appliesForDiscount =
-    !isActivePlan && appliesForFounderDiscount(metadata?.tier) && features.membershipsV2;
 
   return (
     <Card className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8">
@@ -137,34 +119,14 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
               </Center>
             )}
             <Stack gap={0} align="center">
-              {appliesForDiscount ? (
-                <Stack gap={0} align="center">
-                  <Text td="line-through" c="gray" component="span" align="center" lh={1}>
-                    {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
-                  </Text>
-                  <Group justify="center" gap={4} align="flex-end">
-                    <Text className="text-5xl font-bold" align="center" lh={1}>
-                      {getStripeCurrencyDisplay(
-                        price.unitAmount *
-                          (constants.memberships.founderDiscount.discountPercent / 100),
-                        price.currency
-                      )}
-                    </Text>
-                    <Text align="center" c="dimmed">
-                      / {shortenPlanInterval(price.interval)}
-                    </Text>
-                  </Group>
-                </Stack>
-              ) : (
-                <Group justify="center" gap={4} align="flex-end">
-                  <Text className="text-5xl font-bold" align="center" lh={1}>
-                    {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
-                  </Text>
-                  <Text align="center" c="dimmed">
-                    / {shortenPlanInterval(price.interval)}
-                  </Text>
-                </Group>
-              )}
+              <Group justify="center" gap={4} align="flex-end">
+                <Text className="text-5xl font-bold" align="center" lh={1}>
+                  {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                </Text>
+                <Text align="center" c="dimmed">
+                  / {shortenPlanInterval(price.interval)}
+                </Text>
+              </Group>
               <Select
                 data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
                 value={priceId}
@@ -235,7 +197,11 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     Upgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Annual)' : ''}
                   </Button>
                 ) : (
-                  <SubscribeButton priceId={priceId} disabled={ctaDisabled}>
+                  <SubscribeButton
+                    priceId={priceId}
+                    disabled={ctaDisabled}
+                    forceProvider={meta.buzzType === 'green' ? PaymentProvider.Stripe : undefined}
+                  >
                     <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
                     </Button>

@@ -14,6 +14,8 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const lipsum = `

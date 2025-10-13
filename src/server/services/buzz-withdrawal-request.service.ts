@@ -1,3 +1,6 @@
+// @deprecated This file is deprecated and will be removed in the future.
+// This file is part of the legacy buzz withdrawal request system.
+// Has been replaced by the creators program.
 import type { Prisma } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common/enums';
@@ -13,7 +16,6 @@ import {
   BuzzWithdrawalRequestStatus,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
-import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import type {
   BuzzWithdrawalRequestHistoryMetadataSchema,
@@ -22,7 +24,6 @@ import type {
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
-import { TransactionType } from '../schema/buzz.schema';
 import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
@@ -30,6 +31,7 @@ import {
 import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 import { getBuzzWithdrawalDetails } from '~/utils/buzz';
 
 export const createBuzzWithdrawalRequest = async ({
@@ -75,11 +77,13 @@ CreateBuzzWithdrawalRequestSchema & {
   // Check the user has enough funds:
 
   const userBuzzAccount = await getUserBuzzAccount({
+    // This is legacy. We could technically attempt to use green/red, but yellow is the main account type at the time.
+    // This is NOT used anymore.
     accountId: userId,
-    accountType: 'user',
+    accountType: 'yellow',
   });
 
-  if ((userBuzzAccount?.balance ?? 0) < amount) throw throwInsufficientFundsError();
+  if ((userBuzzAccount[0]?.balance ?? 0) < amount) throw throwInsufficientFundsError();
 
   // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
 
@@ -114,7 +118,7 @@ CreateBuzzWithdrawalRequestSchema & {
         userId,
         buzzWithdrawalTransactionId: transaction.transactionId,
         requestedBuzzAmount: amount,
-        platformFeeRate: constants.buzz.platformFeeRate,
+        platformFeeRate: buzzConstants.platformFeeRate,
         ...providerData,
       },
       select: buzzWithdrawalRequestDetails,

@@ -13,6 +13,7 @@ import {
   getPaginatedPurchasableRewardsModerator,
 } from '~/server/services/purchasable-reward.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export const purchasableRewardRouter = router({
   getPaged: publicProcedure.input(getPaginatedPurchasableRewardsSchema).query(({ input, ctx }) => {
@@ -27,7 +28,11 @@ export const purchasableRewardRouter = router({
     return purchasableRewardUpsert({ ...input, userId: ctx.user.id });
   }),
   purchase: protectedProcedure.input(purchasableRewardPurchaseSchema).mutation(({ input, ctx }) => {
-    return purchasableRewardPurchase({ ...input, userId: ctx.user.id });
+    return purchasableRewardPurchase({
+      ...input,
+      userId: ctx.user.id,
+      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
+    });
   }),
   getById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {
     return getPurchasableReward(input);

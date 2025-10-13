@@ -395,3 +395,11 @@ export enum ModReviewType {
   Appeals = 'appeal',
   RuleViolations = 'modRule',
 }
+
+export enum MarketplacePaymentMethod {
+  CashApp = 'CashApp',
+  Revolut = 'Revolut',
+  Venmo = 'Venmo',
+  Wise = 'Wise',
+  Zelle = 'Zelle',
+}

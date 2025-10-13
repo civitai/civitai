@@ -1,6 +1,6 @@
-import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box } from '@mantine/core';
+import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box, Alert } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconSettings } from '@tabler/icons-react';
+import { IconSettings, IconExternalLink } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
@@ -9,17 +9,30 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
+import { env } from '~/env/client';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export function SubscriptionCard() {
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const [mainBuzzType] = useAvailableBuzz();
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    buzzType: mainBuzzType,
+  });
   const features = useFeatureFlags();
+  const { classNames: greenClassNames } = useBuzzCurrencyConfig('green');
   const price = subscription?.price;
   const product = subscription?.product;
   const { image } = subscription
     ? getPlanDetails(subscription?.product, features)
     : { image: null };
 
+  // Don't show the card if there's no subscription
+  if (!subscriptionLoading && !subscription) {
+    return null;
+  }
+
+  // If user has subscription but is on red environment, show redirect message
   const isCivitaiProvider = subscription?.product?.provider === PaymentProvider.Civitai;
 
   return (
