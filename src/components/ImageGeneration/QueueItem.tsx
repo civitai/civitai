@@ -537,7 +537,7 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
     'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
   // the following keys are managed in generationRequestHooks.ts
   privateGen: 'Private Generation is limited to PG content.',
-  siteRestricted: 'This image received a mature rating and is unavailable on this site',
+  siteRestricted: 'Images with mature ratings are unavailable on this site',
   enableNsfw: EnableNsfwBlock,
   canUpgrade: CanUpgradeBlock,
 };
