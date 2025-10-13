@@ -62,6 +62,8 @@ import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -629,17 +631,29 @@ function CanUpgradeBlock({
   workflowId: string;
   transactions: TransactionInfo[];
 }) {
-  const { mutate, isLoading } = useUpdateWorkflow();
-
   const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
     if (transaction.accountType === 'yellow') return acc;
     if (transaction.type === 'credit') return acc - transaction.amount;
     else return acc + transaction.amount;
   }, 0);
 
+  const { mutate, isLoading } = useUpdateWorkflow();
+
+  const { conditionalPerformTransaction } = useBuzzTransaction({
+    accountTypes: ['yellow'],
+    message: (requiredBalance) =>
+      `You don't have enough yellow Buzz to perform this action. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy more Buzz to perform this action.`,
+    performTransactionOnPurchase: true,
+  });
+
   function handleClick() {
     if (isLoading) return;
-    mutate({ workflowId, allowMatureContent: true });
+    function performTransaction() {
+      mutate({ workflowId, allowMatureContent: true });
+    }
+    conditionalPerformTransaction(yellowBuzzRequired, performTransaction);
   }
 
   return (
