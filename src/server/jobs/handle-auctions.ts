@@ -575,7 +575,7 @@ const createRecurringBids = async (now: Dayjs) => {
         const data = await withRetries(() =>
           createMultiAccountBuzzTransaction({
             type: TransactionType.Bid,
-            fromAccountTypes: ['green', 'yellow', 'red'],
+            fromAccountTypes: ['yellow'],
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,
