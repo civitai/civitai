@@ -673,6 +673,7 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
+  // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
   // if (!isProd || !callbackUrl) {
   //   console.log('skip ingest');
   //   await dbClient.image.updateMany({
@@ -696,22 +697,6 @@ export const ingestImageBulk = async ({
     for (const image of images) image.prompt = promptMap[image.id];
   }
 
-  console.log('doing fetch on image scanning endpoint');
-  console.log(
-    JSON.stringify(
-      images.map((image) => ({
-        imageId: image.id,
-        imageKey: image.url,
-        type: image.type,
-        width: image.width,
-        height: image.height,
-        prompt: image.prompt,
-        scans: scans ?? imageScanTypes,
-        callbackUrl,
-      }))
-    )
-  );
-
   const response = await fetch(
     env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
     {
@@ -732,13 +717,13 @@ export const ingestImageBulk = async ({
     }
   );
   if (response.status === 202) {
-    console.log('ingestion accepted');
     await dbClient.image.updateMany({
       where: { id: { in: imageIds } },
       data: { scanRequestedAt },
     });
     return true;
   }
+
   return false;
 };
 

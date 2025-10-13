@@ -1124,7 +1124,7 @@ export async function linkArticleContentImages({
           url: media.url,
           userId,
           type: media.type,
-          ingestion: 'Pending' as const,
+          ingestion: ImageIngestionStatus.Pending,
           scanRequestedAt: new Date(),
         })),
         select: { id: true, url: true },
@@ -1132,7 +1132,7 @@ export async function linkArticleContentImages({
       });
 
       newImages.forEach((img) => {
-        existingUrlMap.set(img.url, { ...img, ingestion: 'Pending' as const });
+        existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
         newlyCreatedImages.push(img);
       });
     }
@@ -1171,6 +1171,7 @@ export async function linkArticleContentImages({
 
     // Queue newly created images for immediate ingestion
     if (imagesToIngest.length > 0) {
+      // TODO.articleImageScan: remove the lowPriority flag
       await ingestImageBulk({ images: imagesToIngest, lowPriority: false, tx }).catch((error) => {
         // Log error but don't fail the article operation
         handleLogError(error, 'article-image-ingestion', {

@@ -832,3 +832,4 @@ upsertArticle = async ({ content, ...data }) => {
 - [ ] Add index on ImageConnection in prod
 - [ ] Test all possible scenarios
 - [ ] Put everything behind feature flag
+- [ ] Send article notification after scan results

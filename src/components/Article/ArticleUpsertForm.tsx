@@ -177,10 +177,10 @@ export function ArticleUpsertForm({ article }: Props) {
       );
     };
 
-    // Check if publishing with embedded images
+    // Check if publishing or updating published article with embedded images
     const contentImages = extractImagesFromArticle(content);
 
-    if (contentImages.length > 0 && publishing) {
+    if (contentImages.length > 0 && (publishing || article?.status === ArticleStatus.Published)) {
       // Check if images are already in the database
       const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
       const newImages = contentImages.filter((img) => !existingImageUrls.has(img.url));
@@ -207,8 +207,9 @@ export function ArticleUpsertForm({ article }: Props) {
               </Text>
             )}
             <Text>
-              It will be set to <strong>Processing</strong> status while images are being scanned.
-              This could take some time, and your article will automatically publish when complete.
+              This article will be set to <strong>Processing</strong> status while images are being
+              scanned. This could take some time, and your article will automatically publish when
+              complete.
             </Text>
             <Text size="sm" c="dimmed">
               You&apos;ll receive a notification when your article is published.
