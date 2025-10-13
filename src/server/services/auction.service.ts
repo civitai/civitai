@@ -389,7 +389,7 @@ export const createBid = async ({
   }
 
   // - Check if entityId is valid for this auction type
-  const accountTypes: BuzzSpendType[] = ['green', 'yellow', 'red'];
+  const accountTypes: BuzzSpendType[] = ['yellow'];
   if (auctionData.auctionBase.type === AuctionType.Model) {
     // TODO switch back to dbRead
     const mv = await dbWrite.modelVersion.findFirst({
