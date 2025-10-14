@@ -1187,7 +1187,7 @@ export async function linkArticleContentImages({
  * Get article image scan status for real-time progress tracking
  *
  * @param articleId - Article ID to get scan status for
- * @returns Object with scan progress counts and completion status
+ * @returns Object with scan progress counts, completion status, and detailed image lists
  */
 export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   total: number;
@@ -1196,36 +1196,48 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   error: number;
   pending: number;
   allComplete: boolean;
+  images: {
+    blocked: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+    error: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+    pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+  };
 }> {
   const connections = await dbRead.imageConnection.findMany({
     where: {
       entityId: id,
       entityType: 'Article',
     },
-    include: { image: { select: { ingestion: true } } },
+    include: { image: { select: { id: true, url: true, ingestion: true } } },
   });
 
   const total = connections.length;
-  const scanned = connections.filter(
+  const scannedImages = connections.filter(
     (c) => c.image.ingestion === ImageIngestionStatus.Scanned
-  ).length;
-  const blocked = connections.filter(
+  );
+  const blockedImages = connections.filter(
     (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-  ).length;
-  const error = connections.filter(
+  );
+  const errorImages = connections.filter(
     (c) =>
       c.image.ingestion === ImageIngestionStatus.Error ||
       c.image.ingestion === ImageIngestionStatus.NotFound
-  ).length;
-  const pending = total - scanned - blocked - error;
+  );
+  const pendingImages = connections.filter(
+    (c) => c.image.ingestion === ImageIngestionStatus.Pending
+  );
 
   return {
     total,
-    scanned,
-    blocked,
-    error,
-    pending,
-    allComplete: pending === 0,
+    scanned: scannedImages.length,
+    blocked: blockedImages.length,
+    error: errorImages.length,
+    pending: pendingImages.length,
+    allComplete: pendingImages.length === 0,
+    images: {
+      blocked: blockedImages.map((c) => c.image),
+      error: errorImages.map((c) => c.image),
+      pending: pendingImages.map((c) => c.image),
+    },
   };
 }
 
@@ -1264,10 +1276,14 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
             c.image.ingestion === ImageIngestionStatus.NotFound
         ).length;
 
-        // Treat errors as "complete" so article can publish
-        const allComplete = scannedImages + blockedImages + errorImages === totalImages;
+        // Check if all images have been processed (scanned, blocked, or error)
+        const allProcessed = scannedImages + blockedImages + errorImages === totalImages;
 
-        if (allComplete) {
+        // Only publish if ALL images scanned successfully (no blocked or error images)
+        const allScannedSuccessfully = scannedImages === totalImages;
+        const hasProblematicImages = blockedImages > 0 || errorImages > 0;
+
+        if (allProcessed) {
           await updateArticleNsfwLevels([articleId]);
 
           const article = await tx.article.findUnique({
@@ -1276,31 +1292,41 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
           });
 
           if (article?.status === ArticleStatus.Processing) {
-            // Set publishedAt based on whether this is a new article or re-scan
-            // - If article already has publishedAt: preserve it (re-scan scenario)
-            // - If article has no publishedAt: set to now (new article scenario)
-            await tx.article.update({
-              where: { id: articleId },
-              data: {
-                status: ArticleStatus.Published,
-                publishedAt: article.publishedAt || new Date(),
-              },
-            });
+            if (allScannedSuccessfully && !hasProblematicImages) {
+              // All images scanned successfully - safe to publish
+              await tx.article.update({
+                where: { id: articleId },
+                data: {
+                  status: ArticleStatus.Published,
+                  publishedAt: article.publishedAt || new Date(),
+                },
+              });
 
-            // Notify user if there were errors/blocked images
-            if (blockedImages > 0 || errorImages > 0) {
+              // Success notification
               await createNotification({
                 userId: article.userId,
                 category: NotificationCategory.System,
                 type: 'system-message',
-                key: `article-images-${articleId}`,
+                key: `article-published-${articleId}`,
                 details: {
-                  message: `Your article has been published, but ${
-                    blockedImages > 0
-                      ? `${blockedImages} image(s) were blocked`
-                      : `${errorImages} image(s) failed to scan`
-                  }`,
+                  message: `Your article has been published successfully!`,
                   url: `/articles/${articleId}`,
+                },
+              });
+            } else if (hasProblematicImages) {
+              // Has blocked or error images - keep in Processing, notify user
+              await createNotification({
+                userId: article.userId,
+                category: NotificationCategory.System,
+                type: 'system-message',
+                key: `article-images-blocked-${articleId}`,
+                details: {
+                  message: `Your article cannot be published: ${
+                    blockedImages > 0
+                      ? `${blockedImages} image(s) blocked (policy violation)`
+                      : `${errorImages} image(s) failed to scan`
+                  }. Please remove or replace these images and resubmit.`,
+                  url: `/articles/${articleId}/edit`,
                 },
               });
             }

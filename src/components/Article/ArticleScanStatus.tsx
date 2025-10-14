@@ -9,6 +9,7 @@ import { IconAlertCircle, IconCheck, IconShield } from '@tabler/icons-react';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
 import { useEffect } from 'react';
 import clsx from 'clsx';
+import { ArticleProblematicImages } from './ArticleProblematicImages';
 
 interface ArticleScanStatusProps {
   articleId: number;
@@ -59,8 +60,25 @@ export function ArticleScanStatus({
     return null;
   }
 
-  // All complete - success state
+  // All processing complete - check for issues
   if (isComplete) {
+    const hasBlockedImages = status.blocked > 0;
+    const hasErrorImages = status.error > 0;
+    const hasIssues = hasBlockedImages || hasErrorImages;
+
+    // Action required state - blocked or error images
+    if (hasIssues) {
+      return (
+        <Stack gap="md">
+          <ArticleProblematicImages
+            blockedImages={status.images?.blocked || []}
+            errorImages={status.images?.error || []}
+          />
+        </Stack>
+      );
+    }
+
+    // Success state - all images scanned successfully
     return (
       <Alert
         icon={<IconCheck size={16} />}
