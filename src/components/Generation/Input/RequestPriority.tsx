@@ -40,11 +40,18 @@ export function RequestPriority({
   const selected = value ? priorityOptionsMap[value] : undefined;
 
   // Auto-select High priority for members if Standard is selected or no value
+  // useEffect(() => {
+  //   if (isMember && (!value || value === 'low')) {
+  //     onChange?.('normal' as Priority);
+  //   }
+  // }, [value, isMember]);
+
+  // Temp disable priority
   useEffect(() => {
-    if (isMember && (!value || value === 'low')) {
-      onChange?.('normal' as Priority);
-    }
-  }, [value, isMember]);
+    if (value !== 'low') onChange?.('low' as Priority);
+  }, [value]);
+
+  return null;
 
   return (
     <Input.Wrapper label={label}>
