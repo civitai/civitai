@@ -281,7 +281,7 @@ export default WebhookEndpoint(async (req, res) => {
               userId,
               details: {
                 message:
-                  'Your models using deprecated base models (SD 3, SD 3.5, SDXL Turbo, SVD) have been removed from the site due to the termination of our Enterprise Agreement with Stability AI. As a result, all Stability AI Core Models are now not permitted on Civitai.',
+                  'One or more of your models used Stability AI core models (SD3, SD3.5, SDXL Turbo, SVD) and have been removed from Civitai. These models are no longer permitted due to the end of our Enterprise agreement with Stability AI.',
                 url: '/changelog?id=100',
               },
             })
