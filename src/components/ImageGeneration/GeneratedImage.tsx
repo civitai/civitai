@@ -96,12 +96,12 @@ export type GeneratedImageProps = {
   step: NormalizedGeneratedImageStep;
 };
 
-const matureDictionary: Record<string, boolean> = {
-  [NsfwLevel.P_G13]: true,
-  [NsfwLevel.R]: true,
-  [NsfwLevel.X]: true,
-  [NsfwLevel.XXX]: true,
-};
+// const matureDictionary: Record<string, boolean> = {
+//   [NsfwLevel.P_G13]: true,
+//   [NsfwLevel.R]: true,
+//   [NsfwLevel.X]: true,
+//   [NsfwLevel.XXX]: true,
+// };
 
 export function GeneratedImage({
   image,

@@ -1,5 +1,5 @@
 import type { WorkflowStepEvent } from '@civitai/client';
-import { applyPatch, JsonPatchFactory, NsfwLevel } from '@civitai/client';
+import { applyPatch, JsonPatchFactory } from '@civitai/client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -42,6 +42,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -121,19 +122,20 @@ export function useGetTextToImageRequests(
                 false) as boolean;
               const images = imageFilter({ step, tags }).map((image) => {
                 if (image.blockedReason === 'none') image.blockedReason = null;
-                const isMature = image.nsfwLevel && image.nsfwLevel !== NsfwLevel.PG;
-
-                if (isMature && !image.blockedReason) {
-                  if (isPrivateGeneration) {
+                if (!image.blockedReason) {
+                  if (isPrivateGeneration && isPrivateMature(image.nsfwLevel)) {
                     image.blockedReason = 'privateGen';
-                  } else if (!allowMatureContent) {
-                    image.blockedReason = 'siteRestricted';
-                  } else if (!showNsfw) {
-                    image.blockedReason = 'enableNsfw';
-                  } else if (workflow.allowMatureContent === false) {
-                    image.blockedReason = 'canUpgrade';
+                  } else if (isMature(image.nsfwLevel)) {
+                    if (!allowMatureContent) {
+                      image.blockedReason = 'siteRestricted';
+                    } else if (!showNsfw) {
+                      image.blockedReason = 'enableNsfw';
+                    } else if (workflow.allowMatureContent === false) {
+                      image.blockedReason = 'canUpgrade';
+                    }
                   }
                 }
+
                 return image;
               });
               return { ...step, images };
