@@ -14,5 +14,6 @@ export default AuthedEndpoint(async function handler(
     tier: user.tier,
     status: user.bannedAt ? 'banned' : user.muted ? 'muted' : 'active',
     isMember: user.tier ? user.tier !== 'free' : false,
+    subscriptions: Object.keys(user.subscriptions ?? {}),
   });
 });
