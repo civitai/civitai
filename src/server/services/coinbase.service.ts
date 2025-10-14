@@ -13,7 +13,13 @@ const log = async (data: MixedObject) => {
 };
 
 export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number }) => {
-  const orderId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
+  const orderId = `${input.userId}-${input.buzzAmount}-${input.unitAmount}-${new Date().getTime()}`;
+
+  if (input.unitAmount !== input.buzzAmount / 10) {
+    // Safeguard against tampering with the amount on the client side
+    throw new Error('There was an error while creating your order. Please try again later.');
+  }
+
   const successUrl =
     `${env.NEXTAUTH_URL || ''}/payment/coinbase?` + new URLSearchParams([['orderId', orderId]]);
 
@@ -40,7 +46,6 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
 
   return charge;
 };
-
 
 export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['event']['data']) => {
   try {
@@ -100,4 +105,3 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     throw error; // Re-throw to handle it upstream if needed
   }
 };
-
