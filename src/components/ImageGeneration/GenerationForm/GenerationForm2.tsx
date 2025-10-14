@@ -32,7 +32,7 @@ import clsx from 'clsx';
 import { clone } from 'lodash-es';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { useBuyBuzz, useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -258,6 +258,7 @@ export function GenerationFormContent() {
   });
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
+  const buyBuzz = useBuyBuzz();
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
@@ -330,6 +331,9 @@ export function GenerationFormContent() {
         ) {
           setPromptWarning(error.message);
           currentUser?.refresh();
+        }
+        if (error?.message === 'insufficientBuzz') {
+          buyBuzz({});
         } else
           setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
       });
