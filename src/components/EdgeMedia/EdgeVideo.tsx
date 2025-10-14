@@ -178,6 +178,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       skip: thumbnailUrl ? undefined : options?.skip,
       anim: thumbnailUrl ? undefined : false,
       transcode: thumbnailUrl ? undefined : true,
+      original: thumbnailUrl ? undefined : false,
     });
 
     const node = useScrollAreaRef();

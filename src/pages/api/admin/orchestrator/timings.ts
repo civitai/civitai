@@ -38,7 +38,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     token,
     take: 1000,
     tags: ['gen'],
-    allowMatureContent: true,
+    hideMatureContent: false,
   });
 
   const dictionary: Record<string, any> = {};

@@ -5,6 +5,7 @@ import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InputSegmentedControl, InputSwitch, InputTextArea } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 
 export function HaiperFormInput() {
@@ -18,7 +19,7 @@ export function HaiperFormInput() {
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
       )}
-      <InputTextArea
+      <InputPrompt
         required={isTxt2Vid}
         name="prompt"
         label="Prompt"

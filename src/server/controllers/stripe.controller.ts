@@ -18,7 +18,7 @@ import type { Context } from '~/server/createContext';
 import type * as Schema from '../schema/stripe.schema';
 
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { createRecaptchaAssesment } from '../recaptcha/client';
+import { createRecaptchaAssesment, verifyCaptchaToken } from '../recaptcha/client';
 import { RECAPTCHA_ACTIONS } from '../common/constants';
 
 export const createCustomerHandler = async ({
@@ -140,20 +140,8 @@ export const getPaymentIntentHandler = async ({
 
     if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-    const { score, reasons } = await createRecaptchaAssesment({
-      token: recaptchaToken,
-      recaptchaAction: RECAPTCHA_ACTIONS.STRIPE_TRANSACTION,
-    });
-
-    if ((score || 0) < 0.7) {
-      if (reasons.length) {
-        throw throwAuthorizationError(
-          `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
-        );
-      } else {
-        throw throwAuthorizationError('We could not verify the authenticity of your request.');
-      }
-    }
+    const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
+    if (!validCaptcha) throw throwAuthorizationError('Captcha Failed. Please try again.');
 
     const result = await getPaymentIntent({
       ...input,

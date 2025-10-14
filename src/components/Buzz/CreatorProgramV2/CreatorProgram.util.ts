@@ -6,6 +6,7 @@ import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
 import type { CompensationPool } from '~/types/router';
 import { handleTRPCError, trpc } from '~/utils/trpc';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const useCreatorProgramRequirements = () => {
   const currentUser = useCurrentUser();
@@ -19,11 +20,11 @@ export const useCreatorProgramRequirements = () => {
   };
 };
 
-export const useCompensationPool = () => {
+export const useCompensationPool = (buzzType?: BuzzSpendType) => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(
-    {},
-    { enabled: !!currentUser }
+    { buzzType },
+    { enabled: !!currentUser && !!buzzType }
   );
 
   return {
@@ -32,8 +33,11 @@ export const useCompensationPool = () => {
   };
 };
 
-export const usePrevMonthStats = () => {
-  const { data, isLoading } = trpc.creatorProgram.getPrevMonthStats.useQuery();
+export const usePrevMonthStats = (buzzType?: BuzzSpendType) => {
+  const { data, isLoading } = trpc.creatorProgram.getPrevMonthStats.useQuery(
+    { buzzType: buzzType! },
+    { enabled: !!buzzType }
+  );
 
   return {
     prevMonthStats: data,
@@ -41,11 +45,14 @@ export const usePrevMonthStats = () => {
   };
 };
 
-export const useBankedBuzz = () => {
+export const useBankedBuzz = (buzzType?: BuzzSpendType) => {
   const currentUser = useCurrentUser();
-  const { data, isLoading } = trpc.creatorProgram.getBanked.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
+  const { data, isLoading } = trpc.creatorProgram.getBanked.useQuery(
+    { buzzType: buzzType! },
+    {
+      enabled: !!currentUser && !!buzzType,
+    }
+  );
 
   return {
     banked: data,
@@ -78,8 +85,8 @@ export const useWithdrawalHistory = () => {
   };
 };
 
-export const useCreatorProgramPhase = () => {
-  const { compensationPool, isLoading } = useCompensationPool();
+export const useCreatorProgramPhase = (buzzType?: BuzzSpendType) => {
+  const { compensationPool, isLoading } = useCompensationPool(buzzType);
 
   const phase = useMemo(() => {
     const now = dayjs.utc().toDate();
@@ -157,14 +164,17 @@ export const useCreatorProgramMutate = () => {
     },
   });
   const bankBuzzMutation = trpc.creatorProgram.bankBuzz.useMutation({
-    onSuccess(_, { amount }) {
-      utils.creatorProgram.getCompensationPool.setData({}, (old) => {
+    onSuccess(_, { amount, accountType }) {
+      utils.creatorProgram.getCompensationPool.setData({ buzzType: accountType }, (old) => {
         if (!old) return old;
         return { ...old, size: { ...old.size, current: old.size.current + amount } };
       });
-      utils.creatorProgram.getBanked.setData(undefined, (old) => {
+      utils.creatorProgram.getBanked.setData({ buzzType: accountType }, (old) => {
         if (!old) return old;
-        return { ...old, total: old.total + amount };
+        return {
+          ...old,
+          total: old.total + amount,
+        };
       });
     },
     onError(error) {
@@ -187,8 +197,8 @@ export const useCreatorProgramMutate = () => {
     },
   });
   const extractBuzzMutation = trpc.creatorProgram.extractBuzz.useMutation({
-    onSuccess() {
-      utils.creatorProgram.getBanked.setData(undefined, (old) => {
+    onSuccess(_, { buzzType }) {
+      utils.creatorProgram.getBanked.setData({ buzzType }, (old) => {
         if (!old) return old;
         // Unbank all
         return { ...old, total: 0 };
@@ -211,8 +221,8 @@ export const useCreatorProgramMutate = () => {
     return withdrawCashMutation.mutateAsync(input);
   };
 
-  const handleExtractBuzz = async () => {
-    return extractBuzzMutation.mutateAsync();
+  const handleExtractBuzz = async (buzzType: BuzzSpendType) => {
+    return extractBuzzMutation.mutateAsync({ buzzType });
   };
 
   return {
@@ -227,13 +237,15 @@ export const useCreatorProgramMutate = () => {
   };
 };
 
-export const useCreatorPoolListener = () => {
+export const useCreatorPoolListener = (buzzType?: BuzzSpendType) => {
   const utils = trpc.useUtils();
   useSignalTopic(SignalTopic.CreatorProgram);
   useSignalConnection(SignalMessages.CompensationPoolUpdate, (data: any) => {
-    utils.creatorProgram.getCompensationPool.setData({}, (old) => {
-      return { ...(old ?? {}), ...(data as CompensationPool) };
-    });
+    if (buzzType) {
+      utils.creatorProgram.getCompensationPool.setData({ buzzType }, (old) => {
+        return { ...(old ?? {}), ...(data as CompensationPool) };
+      });
+    }
   });
   useSignalConnection(SignalMessages.CashInvalidator, (data: any) => {
     utils.creatorProgram.getCash.invalidate();

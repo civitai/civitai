@@ -13,9 +13,10 @@ import type {
   GetDailyBuzzCompensationInput,
   GetTransactionsReportSchema,
   GetUserBuzzTransactionsSchema,
+  PreviewMultiAccountTransactionInput,
   UserBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
@@ -25,6 +26,7 @@ import {
   getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
+  previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
@@ -59,30 +61,7 @@ export async function getBuzzAccountHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
-    const { accountId, accountType } = input;
-
-    switch (accountType) {
-      case 'club':
-        const [userClub] = await userContributingClubs({
-          userId: ctx.user.id,
-          clubIds: [accountId],
-        });
-        if (!userClub) throw throwBadRequestError("You cannot view this club's transactions");
-
-        if (
-          userClub.userId !== ctx.user.id &&
-          !ctx.user.isModerator &&
-          !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.ViewRevenue)
-        )
-          throw throwBadRequestError("You cannot view this club's transactions");
-        break;
-      case 'user':
-      case 'generation':
-        if (accountId !== ctx.user.id)
-          throw throwBadRequestError("You cannot view this user's transactions");
-        break;
-      default:
-    }
+    input.accountId = ctx.user.id;
 
     return getUserBuzzAccount({ ...input });
   } catch (error) {
@@ -132,6 +111,10 @@ export async function createBuzzTipTransactionHandler({
 }) {
   try {
     const { id: fromAccountId } = ctx.user;
+    if (input.fromAccountType !== input.toAccountType) {
+      throw throwBadRequestError('You cannot tip Buzz between different account types');
+    }
+
     if (fromAccountId === input.toAccountId)
       throw throwBadRequestError('You cannot send Buzz to the same account');
 
@@ -211,12 +194,16 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('Could not split the amount between users');
     }
     // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId, accountType: 'user' });
-    if ((userAccount.balance ?? 0) < finalAmount) {
+    const userAccount = await getUserBuzzAccount({
+      accountId: fromAccountId,
+      accountType: input.fromAccountType ?? 'yellow',
+    });
+
+    if ((userAccount[0]?.balance ?? 0) < finalAmount) {
       throw throwInsufficientFundsError();
     }
 
-    const sharedId = `tip-${uuid()}-${entityType}-${entityId}-by-${ctx.user.id}`;
+    const sharedId = `tip-${uuid()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
       ...input,
       fromAccountId: ctx.user.id,
@@ -264,6 +251,7 @@ export async function createBuzzTipTransactionHandler({
             user: fromUser?.username,
             fromUserId: fromAccountId,
             message: description,
+            toAccountType: input.toAccountType,
           },
         });
       }
@@ -294,32 +282,7 @@ export async function getBuzzAccountTransactionsHandler({
 }) {
   try {
     input.limit ??= DEFAULT_PAGE_SIZE;
-
-    const { accountId, accountType } = input;
-
-    switch (accountType) {
-      case 'club':
-        const [userClub] = await userContributingClubs({
-          userId: ctx.user.id,
-          clubIds: [accountId],
-        });
-
-        if (!userClub) throw throwBadRequestError("You cannot view this club's transactions");
-
-        if (
-          userClub.userId !== ctx.user.id &&
-          !ctx.user.isModerator &&
-          !(userClub.admin?.permissions ?? []).includes(ClubAdminPermission.ViewRevenue)
-        )
-          throw throwBadRequestError("You cannot view this club's transactions");
-        break;
-      case 'user':
-      case 'generation':
-        if (accountId !== ctx.user.id)
-          throw throwBadRequestError("You cannot view this user's transactions");
-        break;
-      default:
-    }
+    input.accountId = ctx.user.id;
 
     const result = await getUserBuzzTransactions({ ...input });
     return result;
@@ -354,9 +317,9 @@ export async function withdrawClubFundsHandler({
 
     return createBuzzTransaction({
       toAccountId: id,
-      toAccountType: 'user',
+      toAccountType: 'yellow',
       fromAccountId: input.clubId,
-      fromAccountType: 'club',
+      // fromAccountType: 'club',
       amount: input.amount,
       type: TransactionType.ClubWithdrawal,
       description: `Club withdrawal from ${club.name}`,
@@ -390,9 +353,9 @@ export async function depositClubFundsHandler({
 
     return createBuzzTransaction({
       fromAccountId: id,
-      fromAccountType: 'user',
+      fromAccountType: 'yellow',
       toAccountId: input.clubId,
-      toAccountType: 'club',
+      // toAccountType: 'club',
       amount: input.amount,
       type: TransactionType.ClubDeposit,
       description: `Club deposit on ${club.name}`,
@@ -449,6 +412,23 @@ export function getTransactionsReportHandler({
 }) {
   try {
     return getTransactionsReport({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function previewMultiAccountTransactionHandler({
+  input,
+  ctx,
+}: {
+  input: Omit<PreviewMultiAccountTransactionInput, 'fromAccountId'>;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return previewMultiAccountTransaction({
+      ...input,
+      fromAccountId: ctx.user.id,
+    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

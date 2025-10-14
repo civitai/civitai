@@ -36,7 +36,11 @@ import type {
   GeneratedImageWorkflow,
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
-import { getWorkflow, queryWorkflows } from '~/server/services/orchestrator/workflows';
+import {
+  getWorkflow,
+  queryWorkflows,
+  updateWorkflow as clientUpdateWorkflow,
+} from '~/server/services/orchestrator/workflows';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -65,6 +69,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
+import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -447,6 +452,7 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
       transactions,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
+      allowMatureContent: workflow.allowMatureContent,
       duration:
         workflow.startedAt && workflow.completedAt
           ? Math.round(
@@ -692,7 +698,7 @@ export async function queryGeneratedImageWorkflows({
 }: Parameters<typeof queryWorkflows>[0] & {
   token: string;
   user?: SessionUser;
-  allowMatureContent: boolean;
+  hideMatureContent: boolean;
 }) {
   const { nextCursor, items } = await queryWorkflows(props);
 
@@ -700,6 +706,15 @@ export async function queryGeneratedImageWorkflows({
     items: await formatGenerationResponse(items as GeneratedImageWorkflow[], user),
     nextCursor,
   };
+}
+
+export async function updateWorkflow({
+  user,
+  ...props
+}: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
+  const workflow = await clientUpdateWorkflow(props);
+  const [formatted] = await formatGenerationResponse([workflow] as GeneratedImageWorkflow[], user);
+  return formatted;
 }
 
 // const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {

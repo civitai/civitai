@@ -1,7 +1,7 @@
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { constants } from '../common/constants';
@@ -85,7 +85,7 @@ export const processClubMembershipRecurringPayments = createJob(
           // Check if the user has buzz and can pay with buzz.
           const account = await getUserBuzzAccount({ accountId: clubMembership.userId });
 
-          if (!account) {
+          if (!account || !account[0]) {
             // TODO: Send email to user that they need to add a payment method.
             logger({
               data: {
@@ -102,7 +102,7 @@ export const processClubMembershipRecurringPayments = createJob(
           const downgradeClubTierId = clubMembership.downgradeClubTier?.id ?? undefined;
 
           if (chargedAmount > 0) {
-            if ((account?.balance ?? 0) >= chargedAmount) {
+            if ((account[0]?.balance ?? 0) >= chargedAmount) {
               // Pay with buzz.
               await dbWrite.$transaction(async (tx) => {
                 try {
@@ -115,16 +115,16 @@ export const processClubMembershipRecurringPayments = createJob(
                     },
                   });
 
-                  await createBuzzTransaction({
-                    fromAccountId: clubMembership.userId,
-                    toAccountId: clubMembership.clubId,
-                    toAccountType: 'club',
-                    amount: chargedAmount,
-                    type: TransactionType.ClubMembership,
-                    details: {
-                      clubMembershipId: clubMembership.id,
-                    },
-                  });
+                  // await createBuzzTransaction({
+                  //   fromAccountId: clubMembership.userId,
+                  //   toAccountId: clubMembership.clubId,
+                  //   toAccountType: 'club',
+                  //   amount: chargedAmount,
+                  //   type: TransactionType.ClubMembership,
+                  //   details: {
+                  //     clubMembershipId: clubMembership.id,
+                  //   },
+                  // });
                 } catch (e) {
                   logger({
                     data: {
@@ -200,7 +200,7 @@ export const processClubMembershipRecurringPayments = createJob(
             }
 
             const purchasedUnitAmount = Math.max(
-              chargedAmount - (account?.balance ?? 0),
+              chargedAmount - (account[0]?.balance ?? 0),
               constants.clubs.minStripeCharge
             );
 

@@ -135,6 +135,7 @@ export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
   user,
+  currencies,
 }: ImageTrainingWorkflowSchema) => {
   const { id: userId, isModerator } = user;
 
@@ -229,6 +230,8 @@ export const createTrainingWorkflow = async ({
           type: ['workflow:*'],
         },
       ],
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
   });
 
@@ -239,6 +242,7 @@ export const createTrainingWorkflow = async ({
 
 export const createTrainingWhatIfWorkflow = async ({
   token,
+  currencies,
   ...input
 }: ImageTraininWhatIfWorkflowSchema) => {
   const { model, priority, engine, trainingDataImagesCount, ...trainingParams } = input;
@@ -267,6 +271,8 @@ export const createTrainingWhatIfWorkflow = async ({
     token,
     body: {
       steps: [stepRun],
+      // @ts-ignore - BuzzSpendType is properly supported.
+      currencies,
     },
     query: { whatif: true },
   });

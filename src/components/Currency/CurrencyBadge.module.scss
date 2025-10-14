@@ -1,12 +1,16 @@
 .badgeWithDistrib {
+  // Pseudo-element overlay with border-image
+  // Doesn't interfere with Badge's own styling
+
   &::after {
     content: '';
     position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 1px solid;
+    border-image-source: var(--border-image);
+    border-image-slice: 1;
     pointer-events: none;
-    inset: 1px;
-    border: 1px solid var(--mantine-color-yellow-7);
-    border-radius: 50%;
-    border-image: var(--border-image);
-    clip-path: inset(0% round 1px);
+    margin: 1px;
   }
 }

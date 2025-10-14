@@ -5,6 +5,7 @@ import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImag
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { InputNumberSlider, InputSegmentedControl, InputTextArea } from '~/libs/form';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import {
   lightricksAspectRatios,
   lightricksDuration,
@@ -23,7 +24,7 @@ export function LightricksFormInput() {
       {process === 'img2vid' && (
         <InputSourceImageUpload name="sourceImage" className="flex-1" warnOnMissingAiMetadata />
       )}
-      <InputTextArea
+      <InputPrompt
         required={isTxt2Img}
         name="prompt"
         minRows={2}

@@ -120,11 +120,11 @@ import { isUUID } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { verifyCaptchaToken } from '../recaptcha/client';
-import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import type { FeatureAccess } from '../services/feature-flags.service';
 import { toggleableFeatures } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -343,7 +343,7 @@ export const completeOnboardingHandler = async ({
             description: 'Onboarding bonus',
             type: TransactionType.Reward,
             externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
-            toAccountType: 'generation',
+            toAccountType: 'blue',
           })
         ).catch(handleLogError);
         break;

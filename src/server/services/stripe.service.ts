@@ -17,7 +17,7 @@ import { refreshSession } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { TransactionType } from '../schema/buzz.schema';
+
 import * as Schema from '../schema/stripe.schema';
 import type { PaymentMethodDeleteInput } from '../schema/stripe.schema';
 import {
@@ -29,6 +29,7 @@ import { getOrCreateVault } from '~/server/services/vault.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
+import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -398,17 +399,21 @@ export const upsertSubscription = async (
     select: {
       id: true,
       customerId: true,
-      subscriptionId: true,
-      subscription: {
-        select: { updatedAt: true, status: true },
+      subscriptions: {
+        where: {
+          // Stripe only deals with green but user may have multiple subscriptions for different colors
+          buzzType: 'green',
+        },
+        select: { id: true, updatedAt: true, status: true },
       },
     },
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
 
-  const userHasSubscription = !!user.subscriptionId;
-  const isSameSubscriptionItem = user.subscriptionId === subscription.id;
+  const mainSubscription = user.subscriptions[0];
+  const userHasSubscription = !!mainSubscription;
+  const isSameSubscriptionItem = userHasSubscription && mainSubscription?.id === subscription.id;
   const isCreatingSubscription = eventType === 'customer.subscription.created';
   const isCancelingSubscription = eventType === 'customer.subscription.deleted';
 
@@ -420,7 +425,7 @@ export const upsertSubscription = async (
   if (isCancelingSubscription && subscription.cancel_at === null) {
     // immediate cancel:
     log('Subscription canceled immediately');
-    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+    await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     await getMultipliersForUser(user.id, true);
     await refreshSession(user.id);
     return;
@@ -428,23 +433,32 @@ export const upsertSubscription = async (
 
   if (startingNewSubscription) {
     log('Subscription id changed, deleting old subscription');
-    if (user.subscriptionId) {
-      await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+    if (mainSubscription) {
+      await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     }
-    await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
   } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
     return;
   }
 
+  // Get product to determine buzzType
+  const productId = subscription.items.data[0].price.product as string;
+  const product = await dbRead.product.findFirst({
+    where: { id: productId },
+  });
+
+  const productMeta = product?.metadata as any;
+  const buzzType = (productMeta?.buzzType ?? 'green') as string;
+
   const data = {
     id: subscription.id,
     userId: user.id,
+    buzzType,
     metadata: subscription.metadata,
     status: subscription.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: subscription.items.data[0].price.id,
-    productId: subscription.items.data[0].price.product as string,
+    productId,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
     canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
@@ -456,18 +470,23 @@ export const upsertSubscription = async (
   };
 
   await dbWrite.$transaction([
-    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
-    dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
+    dbWrite.customerSubscription.upsert({
+      where: {
+        userId_buzzType: {
+          userId: user.id,
+          buzzType,
+        },
+      },
+      update: data,
+      create: data,
+    }),
   ]);
 
   const userVault = await dbRead.vault.findFirst({
     where: { userId: user.id },
   });
 
-  // Get Stripe details on the vault:
-  const product = await dbRead.product.findFirst({
-    where: { id: data.productId },
-  });
+  // Product already fetched above for buzzType
 
   if (data.status === 'canceled' && userVault) {
     await dbWrite.vault.update({
@@ -643,6 +662,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: user.id,
+        toAccountType: (billedProductMeta.buzzType as any) ?? 'yellow', // Default to yellow if not specified
         type: TransactionType.Purchase,
         externalTransactionId: invoice.id,
         amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
@@ -729,15 +749,21 @@ export const getPaymentIntent = async ({
     customerId = await createCustomer(user);
   }
 
-  if (unitAmount < constants.buzz.minChargeAmount) {
+  if (unitAmount < buzzConstants.minChargeAmount) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount / 100)}`
+      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount / 100)}`
     );
   }
-  if (unitAmount > constants.buzz.maxChargeAmount) {
+
+  if (unitAmount > buzzConstants.maxChargeAmount) {
     throw throwBadRequestError(
-      `Maximum purchase amount is $${formatPriceForDisplay(constants.buzz.maxChargeAmount / 100)}`
+      `Maximum purchase amount is $${formatPriceForDisplay(buzzConstants.maxChargeAmount / 100)}`
     );
+  }
+
+  if (unitAmount !== metadata.buzzAmount / 10) {
+    // Safeguard against tampering with the amount on the client side
+    throw new Error('There was an error while creating your order. Please try again later.');
   }
 
   const stripe = await getServerStripe();

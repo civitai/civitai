@@ -10,20 +10,22 @@ import {
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
+  previewMultiAccountTransactionHandler,
   withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
 import {
+  claimWatchedAdRewardSchema,
+  clubTransactionSchema,
   completeStripeBuzzPurchaseTransactionInput,
   getBuzzAccountSchema,
   getBuzzAccountTransactionsSchema,
-  getUserBuzzTransactionsSchema,
-  userBuzzTransactionInputSchema,
-  clubTransactionSchema,
-  getEarnPotentialSchema,
   getDailyBuzzCompensationInput,
-  claimWatchedAdRewardSchema,
+  getEarnPotentialSchema,
   getTransactionsReportSchema,
+  getUserBuzzTransactionsSchema,
+  previewMultiAccountTransactionInput,
+  userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
 import {
   claimBuzz,
@@ -31,6 +33,7 @@ import {
   getClaimStatus,
   getEarnPotential,
   getPoolForecast,
+  getUserBuzzAccounts,
 } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
@@ -38,7 +41,8 @@ const buzzProcedure = protectedProcedure.use(isFlagProtected('buzz'));
 
 export const buzzRouter = router({
   getUserAccount: buzzProcedure.query(getUserAccountHandler),
-  getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
+  // getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
+  getBuzzAccount: buzzProcedure.query(({ ctx }) => getUserBuzzAccounts({ userId: ctx.user.id })),
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure
     .input(getUserBuzzTransactionsSchema)
@@ -89,4 +93,8 @@ export const buzzRouter = router({
   getTransactionsReport: protectedProcedure
     .input(getTransactionsReportSchema)
     .query(getTransactionsReportHandler),
+  // Multi-account transaction endpoints
+  previewMultiAccountTransaction: buzzProcedure
+    .input(previewMultiAccountTransactionInput.omit({ fromAccountId: true }))
+    .query(previewMultiAccountTransactionHandler),
 });

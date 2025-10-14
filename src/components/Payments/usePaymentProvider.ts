@@ -5,12 +5,21 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 export const usePaymentProvider = () => {
   const featureFlags = useFeatureFlags();
 
+  // Force Stripe for green environments
+  if (featureFlags.isGreen) {
+    return PaymentProvider.Stripe;
+  }
+
   if (
     env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === PaymentProvider.Paddle &&
     !env.NEXT_PUBLIC_PADDLE_TOKEN
   ) {
-    return PaymentProvider.Stripe; // Fallback to Stripe if Paddle is not setup.
+    return PaymentProvider.Civitai; // Fallback to Civitai if Paddle is not setup.
   }
 
-  return env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER;
+  if (false) {
+    return PaymentProvider.Paddle; // For type checking
+  }
+
+  return PaymentProvider.Civitai;
 };

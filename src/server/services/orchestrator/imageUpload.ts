@@ -2,7 +2,6 @@ import { NsfwLevel, handleError, invokeImageUploadStepTemplate } from '@civitai/
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
-const matureNsfwLevels: NsfwLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 export async function imageUpload({
   sourceImage,
   token,
@@ -36,7 +35,7 @@ export async function imageUpload({
 
   const { nsfwLevel } = data.blob;
 
-  if (!allowMatureContent && nsfwLevel && matureNsfwLevels.includes(nsfwLevel))
+  if (allowMatureContent === false && nsfwLevel !== NsfwLevel.PG)
     throw new Error('mature content not allowed');
 
   return data;
