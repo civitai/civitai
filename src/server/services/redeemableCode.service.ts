@@ -152,7 +152,7 @@ export async function consumeRedeemableCode({
         // Do membership stuff:
         // First, fetch user membership and see their status:
         const userMembership = await tx.customerSubscription.findFirst({
-          where: { userId },
+          where: { userId, buzzType: 'yellow' }, // Redeemable codes only work with yellow buzz memberships
           select: {
             status: true,
             id: true,

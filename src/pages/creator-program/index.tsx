@@ -167,7 +167,8 @@ const HowItWorks: { text: string; icon: React.ReactNode }[] = [
 ];
 
 const HowItWorksSection = () => {
-  const { colorRgb: greenColorRgb } = useBuzzCurrencyConfig(buzzBankTypes[0]);
+  const [mainBuzzType] = useAvailableBuzz();
+  const { colorRgb: greenColorRgb } = useBuzzCurrencyConfig(mainBuzzType);
   return (
     <Stack className={classes.section}>
       <Stack gap={0} mb="sm">
@@ -293,7 +294,7 @@ const FunStatsSection = () => {
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type="green" size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={16} />
                   <span>
                     {numberWithCommas(
                       prevMonthStats.totalBankedBuzz + prevMonthStats.totalExtractedBuzz
@@ -318,7 +319,7 @@ const FunStatsSection = () => {
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type="green" size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalExtractedBuzz)}</span>
                 </div>
               </Table.Td>
@@ -332,7 +333,7 @@ const FunStatsSection = () => {
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type="green" size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
                 </div>{' '}
               </Table.Td>
