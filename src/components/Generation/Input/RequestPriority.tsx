@@ -1,4 +1,4 @@
-import { Priority } from '@civitai/client';
+import type { Priority } from '@civitai/client';
 import { Input } from '@mantine/core';
 import { useEffect } from 'react';
 import { IconBolt, IconDiamond } from '@tabler/icons-react';
@@ -53,113 +53,113 @@ export function RequestPriority({
 
   return null;
 
-  return (
-    <Input.Wrapper label={label}>
-      <Listbox value={value} onChange={handleChange}>
-        <div className="relative mt-2">
-          <ListboxButton
-            className={clsx(
-              'grid w-full cursor-default grid-cols-1 rounded-md py-1.5 pl-3 pr-2 text-left outline outline-1 -outline-offset-1 focus:outline focus:outline-2 focus:-outline-offset-2  sm:text-sm/6',
-              'bg-white text-dark-9 outline-gray-4 focus:outline-blue-5',
-              'dark:bg-dark-6 dark:text-dark-0 dark:outline-dark-4 dark:focus:outline-blue-8'
-            )}
-          >
-            <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
-              {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
-              {!selected ? (
-                placeholder
-              ) : (
-                <PriorityLabel
-                  {...selected}
-                  modifier={modifier}
-                  isFreeForMember={isMember && value === 'normal'}
-                />
-              )}
-            </span>
-            <IconSelector
-              aria-hidden="true"
-              className={clsx(
-                'col-start-1 row-start-1 size-5 self-center justify-self-end sm:size-4',
-                'text-gray-6'
-              )}
-            />
-          </ListboxButton>
+  // return (
+  //   <Input.Wrapper label={label}>
+  //     <Listbox value={value} onChange={handleChange}>
+  //       <div className="relative mt-2">
+  //         <ListboxButton
+  //           className={clsx(
+  //             'grid w-full cursor-default grid-cols-1 rounded-md py-1.5 pl-3 pr-2 text-left outline outline-1 -outline-offset-1 focus:outline focus:outline-2 focus:-outline-offset-2  sm:text-sm/6',
+  //             'bg-white text-dark-9 outline-gray-4 focus:outline-blue-5',
+  //             'dark:bg-dark-6 dark:text-dark-0 dark:outline-dark-4 dark:focus:outline-blue-8'
+  //           )}
+  //         >
+  //           <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
+  //             {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
+  //             {!selected ? (
+  //               placeholder
+  //             ) : (
+  //               <PriorityLabel
+  //                 {...selected}
+  //                 modifier={modifier}
+  //                 isFreeForMember={isMember && value === 'normal'}
+  //               />
+  //             )}
+  //           </span>
+  //           <IconSelector
+  //             aria-hidden="true"
+  //             className={clsx(
+  //               'col-start-1 row-start-1 size-5 self-center justify-self-end sm:size-4',
+  //               'text-gray-6'
+  //             )}
+  //           />
+  //         </ListboxButton>
 
-          <ListboxOptions
-            transition
-            anchor="bottom start"
-            portal
-            className={clsx(
-              'z-[1000] mt-1 max-h-56 w-[var(--button-width)] overflow-auto rounded-md py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none data-[closed]:data-[leave]:opacity-0 data-[leave]:transition data-[leave]:duration-100 data-[leave]:ease-in sm:text-sm',
-              'bg-white',
-              'dark:bg-dark-6'
-            )}
-          >
-            {Object.values(Priority)
-              .reverse()
-              .filter((priority) => {
-                // Hide Standard option for members
-                if (isMember && priority === 'low') return false;
-                return true;
-              })
-              .map((priority) => {
-                const options = priorityOptionsMap[priority];
-                const disabled = options.memberOnly && !currentUser?.isPaidMember;
+  //         <ListboxOptions
+  //           transition
+  //           anchor="bottom start"
+  //           portal
+  //           className={clsx(
+  //             'z-[1000] mt-1 max-h-56 w-[var(--button-width)] overflow-auto rounded-md py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none data-[closed]:data-[leave]:opacity-0 data-[leave]:transition data-[leave]:duration-100 data-[leave]:ease-in sm:text-sm',
+  //             'bg-white',
+  //             'dark:bg-dark-6'
+  //           )}
+  //         >
+  //           {Object.values(Priority)
+  //             .reverse()
+  //             .filter((priority) => {
+  //               // Hide Standard option for members
+  //               if (isMember && priority === 'low') return false;
+  //               return true;
+  //             })
+  //             .map((priority) => {
+  //               const options = priorityOptionsMap[priority];
+  //               const disabled = options.memberOnly && !currentUser?.isPaidMember;
 
-                if (disabled)
-                  return (
-                    <div key={priority} className="px-1 pt-1">
-                      <RequireMembership>
-                        <SupportButtonPolymorphic
-                          icon={IconDiamond}
-                          position="right"
-                          className="w-full !py-2 !pl-5 !pr-3"
-                        >
-                          <PriorityLabel {...options} modifier={modifier} />
-                        </SupportButtonPolymorphic>
-                      </RequireMembership>
-                    </div>
-                  );
+  //               if (disabled)
+  //                 return (
+  //                   <div key={priority} className="px-1 pt-1">
+  //                     <RequireMembership>
+  //                       <SupportButtonPolymorphic
+  //                         icon={IconDiamond}
+  //                         position="right"
+  //                         className="w-full !py-2 !pl-5 !pr-3"
+  //                       >
+  //                         <PriorityLabel {...options} modifier={modifier} />
+  //                       </SupportButtonPolymorphic>
+  //                     </RequireMembership>
+  //                   </div>
+  //                 );
 
-                return (
-                  <ListboxOption
-                    key={priority}
-                    value={priority}
-                    disabled={disabled}
-                    className={clsx(
-                      'group relative cursor-default select-none justify-between py-2 pl-6 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
-                      'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
-                      'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
-                    )}
-                  >
-                    <div className="flex items-center">
-                      {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
-                      <span className="block truncate group-data-[selected]:font-semibold">
-                        <PriorityLabel
-                          {...options}
-                          modifier={modifier}
-                          isFreeForMember={isMember && priority === 'normal'}
-                        />
-                      </span>
-                    </div>
+  //               return (
+  //                 <ListboxOption
+  //                   key={priority}
+  //                   value={priority}
+  //                   disabled={disabled}
+  //                   className={clsx(
+  //                     'group relative cursor-default select-none justify-between py-2 pl-6 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
+  //                     'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
+  //                     'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
+  //                   )}
+  //                 >
+  //                   <div className="flex items-center">
+  //                     {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
+  //                     <span className="block truncate group-data-[selected]:font-semibold">
+  //                       <PriorityLabel
+  //                         {...options}
+  //                         modifier={modifier}
+  //                         isFreeForMember={isMember && priority === 'normal'}
+  //                       />
+  //                     </span>
+  //                   </div>
 
-                    <span
-                      className={clsx(
-                        'absolute inset-y-0 right-0 flex items-center pr-4 group-[&:not([data-selected])]:hidden ',
-                        'text-blue-5 group-data-[focus]:text-white',
-                        'dark:text-blue-8'
-                      )}
-                    >
-                      <IconCheck aria-hidden="true" className="size-5" />
-                    </span>
-                  </ListboxOption>
-                );
-              })}
-          </ListboxOptions>
-        </div>
-      </Listbox>
-    </Input.Wrapper>
-  );
+  //                   <span
+  //                     className={clsx(
+  //                       'absolute inset-y-0 right-0 flex items-center pr-4 group-[&:not([data-selected])]:hidden ',
+  //                       'text-blue-5 group-data-[focus]:text-white',
+  //                       'dark:text-blue-8'
+  //                     )}
+  //                   >
+  //                     <IconCheck aria-hidden="true" className="size-5" />
+  //                   </span>
+  //                 </ListboxOption>
+  //               );
+  //             })}
+  //         </ListboxOptions>
+  //       </div>
+  //     </Listbox>
+  //   </Input.Wrapper>
+  // );
 }
 
 function PriorityLabel({
