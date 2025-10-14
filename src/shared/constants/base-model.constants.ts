@@ -616,6 +616,7 @@ export function getBaseModelsByModelType(args: { modelType: ModelType; baseModel
 // Base models that are deprecated and should not be published or updated
 export const DEPRECATED_BASE_MODELS = [
   'SD 3',
+  'SD 3.5',
   'SD 3.5 Medium',
   'SD 3.5 Large',
   'SD 3.5 Large Turbo',
