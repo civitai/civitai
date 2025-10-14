@@ -105,6 +105,8 @@ export function EnhanceVideoModal({
             loading={whatIf.isInitialLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
             disabled={whatIf.isError}
+            allowMatureContent={whatIf.data?.allowMatureContent}
+            transactions={whatIf.data?.transactions}
           >
             Upscale
           </GenerateButton>

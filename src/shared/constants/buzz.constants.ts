@@ -80,7 +80,7 @@ export const BuzzType = createBuzzTypes({
 const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
   blue: { type: 'spend', value: 'Generation' },
   green: { type: 'spend', value: 'Green', bankable: true, purchasable: true },
-  yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true },
+  yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true, purchasable: true },
   red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true, disabled: true },
   creatorprogrambank: { type: 'bank', value: 'CreatorProgramBank' },
   creatorprogrambankgreen: { type: 'bank', value: 'CreatorProgramBankGreen' },

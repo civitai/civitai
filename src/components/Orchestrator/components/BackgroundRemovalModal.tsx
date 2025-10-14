@@ -70,6 +70,8 @@ export function BackgroundRemovalModal({
             loading={whatIf.isInitialLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
             disabled={whatIf.isError}
+            allowMatureContent={whatIf.data?.allowMatureContent}
+            transactions={whatIf.data?.transactions}
           >
             Remove Background
           </GenerateButton>

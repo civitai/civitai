@@ -151,6 +151,7 @@ import {
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 let total = 0;
 const tips = {
@@ -248,6 +249,7 @@ export function GenerationFormContent() {
 
   // #endregion
 
+  // const availableBuzz = useAvailableBuzz();
   const { conditionalPerformTransaction } = useBuzzTransaction({
     accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
@@ -1706,6 +1708,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
         if (running) helpers?.next();
       }}
       transactions={data?.transactions}
+      allowMatureContent={data?.allowMatureContent}
     />
   );
 

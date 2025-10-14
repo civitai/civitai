@@ -304,6 +304,7 @@ export const orchestratorRouter = router({
         }
 
         return {
+          allowMatureContent: workflow.allowMatureContent,
           transactions: workflow.transactions?.list,
           cost: workflow.cost,
           ready,

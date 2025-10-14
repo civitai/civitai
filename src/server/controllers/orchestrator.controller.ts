@@ -105,6 +105,7 @@ export async function whatIf(args: GenerationSchema & Ctx) {
   }
 
   return {
+    allowMatureContent: workflow.allowMatureContent,
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,

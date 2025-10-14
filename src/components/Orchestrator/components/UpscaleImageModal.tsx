@@ -80,6 +80,8 @@ export function UpscaleImageModal({
             loading={whatIf.isInitialLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
             disabled={whatIf.isError}
+            allowMatureContent={whatIf.data?.allowMatureContent}
+            transactions={whatIf.data?.transactions}
           >
             Upscale
           </GenerateButton>
@@ -176,6 +178,8 @@ function UpscalImageForm({
           loading={whatIf.isInitialLoading || generateImage.isLoading}
           cost={whatIf.data?.cost?.total ?? 0}
           disabled={whatIf.isError}
+          allowMatureContent={whatIf.data?.allowMatureContent}
+          transactions={whatIf.data?.transactions}
         >
           Upscale
         </GenerateButton>

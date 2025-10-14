@@ -20,6 +20,7 @@ export {
 } from './comfy/comfy.types';
 
 export type GenerationWhatIfResponse = {
+  allowMatureContent?: boolean | null;
   transactions?: TransactionInfo[];
   cost?: WorkflowCost;
   ready: boolean;

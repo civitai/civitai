@@ -262,6 +262,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
         loading={isFetching || loading}
         cost={totalCost}
         transactions={data?.transactions}
+        allowMatureContent={data?.allowMatureContent}
       >
         Generate
       </GenerateButton>
