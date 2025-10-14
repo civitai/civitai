@@ -534,30 +534,16 @@ export async function refundTransaction(
     details,
   });
 
-  const response = await buzzApiFetch(`/transactions/${transactionId}/refund`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
-
-  // TODO.buzz make this reusable
-  if (!response.ok) {
-    switch (response.status) {
-      case 400:
-        throw throwBadRequestError('Invalid transaction');
-      case 409:
-        throw throwBadRequestError('There is a conflict with the transaction');
-      default:
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'An unexpected error ocurred, please try again later',
-        });
+  const data: { transactionId: string } = await buzzApiFetch(
+    `/transactions/${transactionId}/refund`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
     }
-  }
+  );
 
-  const resp: { transactionId: string } = await response.json();
-
-  return resp;
+  return data;
 }
 
 export async function createMultiAccountBuzzTransaction(

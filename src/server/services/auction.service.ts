@@ -632,10 +632,10 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
         });
 
         return;
+      } else {
+        await refundTransaction(transactionId, 'Deleted bid.');
+        return;
       }
-
-      await refundTransaction(transactionId, 'Deleted bid.');
-      return;
     });
   }
 
