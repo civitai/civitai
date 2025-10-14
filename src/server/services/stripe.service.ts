@@ -754,10 +754,16 @@ export const getPaymentIntent = async ({
       `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount / 100)}`
     );
   }
+
   if (unitAmount > buzzConstants.maxChargeAmount) {
     throw throwBadRequestError(
       `Maximum purchase amount is $${formatPriceForDisplay(buzzConstants.maxChargeAmount / 100)}`
     );
+  }
+
+  if (unitAmount !== metadata.buzzAmount / 10) {
+    // Safeguard against tampering with the amount on the client side
+    throw new Error('There was an error while creating your order. Please try again later.');
   }
 
   const stripe = await getServerStripe();

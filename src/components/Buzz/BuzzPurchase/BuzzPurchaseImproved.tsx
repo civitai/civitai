@@ -422,7 +422,7 @@ export const BuzzPurchaseImproved = ({
   // const onValidate = () => {
 
   useEffect(() => {
-    if (packages.length && !selectedPrice && !minBuzzAmount) {
+    if (packages.length && !selectedPrice && !minBuzzAmount && !customAmount) {
       setSelectedPrice(packages[0]);
     }
 
@@ -635,6 +635,7 @@ export const BuzzPurchaseImproved = ({
                                     max={buzzConstants.maxChargeAmount * 10}
                                     onChange={(value) => {
                                       setError('');
+                                      setSelectedPrice(null);
                                       const newCustomBuzzAmount = value ? Number(value) : undefined;
                                       setCustomBuzzAmount(newCustomBuzzAmount);
                                       if (newCustomBuzzAmount) {
@@ -666,6 +667,7 @@ export const BuzzPurchaseImproved = ({
                                     currency="USD"
                                     onChange={(value) => {
                                       setError('');
+                                      setSelectedPrice(null);
                                       const newCustomAmount = value ? Number(value) : undefined;
                                       setCustomAmount(newCustomAmount);
                                       if (newCustomAmount) {
