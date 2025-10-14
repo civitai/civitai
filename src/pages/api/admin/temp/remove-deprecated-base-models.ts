@@ -14,10 +14,10 @@ import { bustMvCache } from '~/server/services/model-version.service';
 import { deleteBidsForModel, deleteBidsForModelVersion } from '~/server/services/auction.service';
 
 const log = createLogger('remove-deprecated-base-models', 'red');
-const NOTIFICATION_BATCH_SIZE = 100;
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
+  batchSize: z.coerce.number().min(1).max(1000).default(100),
 });
 
 export default WebhookEndpoint(async (req, res) => {
@@ -26,9 +26,13 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(400).json({ ok: false, error: z.treeifyError(result.error) });
   }
 
-  const { dryRun } = result.data;
+  const { dryRun, batchSize } = result.data;
   const startTime = Date.now();
-  log(`Starting bulk base model removal process${dryRun ? ' (DRY RUN)' : ''}`);
+  log(
+    `Starting bulk base model removal process${
+      dryRun ? ' (DRY RUN)' : ''
+    } with batch size ${batchSize}`
+  );
 
   try {
     const result = await dbWrite.$transaction(
@@ -41,7 +45,6 @@ export default WebhookEndpoint(async (req, res) => {
             baseModel: { in: [...DEPRECATED_BASE_MODELS] },
             status: { not: ModelStatus.Deleted },
           },
-          take: 10,
           select: {
             id: true,
             name: true,
@@ -171,7 +174,7 @@ export default WebhookEndpoint(async (req, res) => {
     if (!dryRun) {
       log(`Sending notifications to ${result.affectedUserIds.length} users in batches...`);
 
-      const userBatches = chunk(result.affectedUserIds, NOTIFICATION_BATCH_SIZE);
+      const userBatches = chunk(result.affectedUserIds, batchSize);
       let successCount = 0;
       let failCount = 0;
 
