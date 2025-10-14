@@ -184,7 +184,6 @@ export const createBounty = async ({
     throw new Error('When using Green Buzz, you are not allowed to create NSFW content');
   }
 
-
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
@@ -218,7 +217,7 @@ export const createBounty = async ({
         },
       });
 
-      await tx.bountyBenefactor.create({
+      const bountyBenefactor = await tx.bountyBenefactor.create({
         data: {
           userId,
           bountyId: bounty.id,
@@ -267,7 +266,7 @@ export const createBounty = async ({
             },
           });
 
-          await dbWrite.bountyBenefactor.update({
+          await tx.bountyBenefactor.update({
             where: { bountyId_userId: { userId, bountyId: bounty.id } },
             data: { buzzTransactionId: prefix },
           });
@@ -315,12 +314,11 @@ export const updateBountyById = async ({
           id: true,
           entryLimit: true,
           complete: true,
-          _count: { select: { entries: true, } },
+          _count: { select: { entries: true } },
         },
       });
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
-
 
       if (
         entryLimit &&
