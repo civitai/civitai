@@ -893,6 +893,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         meta: userMeta,
         banDetails: getUserBanDetails({ meta: userMeta }),
         subscriptionId: primarySubscriptionId ?? undefined,
+        subscriptions: subscriptionsByBuzzType,
       };
 
       const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
