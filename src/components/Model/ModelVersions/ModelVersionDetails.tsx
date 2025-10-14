@@ -292,11 +292,16 @@ export function ModelVersionDetails({
         // Just publish the version and its posts
         await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
       }
+
+      await queryUtils.model.getById.invalidate({ id: model.id });
+      await queryUtils.modelVersion.getById.invalidate({ id: version.id });
+      await queryUtils.image.getInfinite.invalidate();
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
       const reason = error?.message?.includes('Insufficient funds')
         ? 'You do not have enough funds to publish this model. You can remove early access or purchase more Buzz in order to publish.'
-        : 'Something went wrong while publishing your model. Please try again later.';
+        : error.message ??
+          'Something went wrong while publishing your model. Please try again later.';
 
       showErrorNotification({
         error: new Error(error.message),
@@ -304,10 +309,6 @@ export function ModelVersionDetails({
         reason,
       });
     }
-
-    await queryUtils.model.getById.invalidate({ id: model.id });
-    await queryUtils.modelVersion.getById.invalidate({ id: version.id });
-    await queryUtils.image.getInfinite.invalidate();
   };
 
   const handleRequestReviewClick = async () => {

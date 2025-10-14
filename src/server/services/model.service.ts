@@ -15,6 +15,7 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
+import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -1791,6 +1792,23 @@ export const publishModelById = async ({
         if (hasRestrictedBaseModel) {
           throw throwBadRequestError(
             `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
+              ', '
+            )}`
+          );
+        }
+      }
+
+      // Check if any of the versions being published use deprecated base models
+      if (includeVersions) {
+        const versionsToPublish = model.modelVersions.filter((version) =>
+          versionIds.includes(version.id)
+        );
+        const hasDeprecatedBaseModel = versionsToPublish.some((version) =>
+          DEPRECATED_BASE_MODELS.includes(version.baseModel as any)
+        );
+        if (hasDeprecatedBaseModel) {
+          throw throwBadRequestError(
+            `Cannot publish models with versions using deprecated base models: ${DEPRECATED_BASE_MODELS.join(
               ', '
             )}`
           );
