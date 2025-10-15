@@ -191,7 +191,7 @@ export const creatorsProgramSettleCash = createJob(
     const participants = await getPoolParticipantsV2(month, true, 'yellow');
     const balances = await getAccountsBalances({
       accountIds: participants.map((p) => p.userId),
-      accountTypes: ['cashsettled'],
+      accountTypes: ['cashpending'],
     });
 
     const positiveBalances = balances.filter((b) => b.balance > 0);
@@ -229,7 +229,7 @@ export const creatorsProgramSettleCash = createJob(
         await logToAxiom({
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
-          balances,
+          positiveBalances,
           status: 'success',
           message: 'Settled cash transactions successfully',
         });
@@ -238,13 +238,14 @@ export const creatorsProgramSettleCash = createJob(
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
           error: e,
-          balances,
+          positiveBalances,
         });
 
         throw e;
       }
     });
-    const affectedUsers = balances.map((p) => p.accountId);
+
+    const affectedUsers = positiveBalances.map((p) => p.accountId);
 
     // Notify users of cash settlement
     await createNotification({
@@ -263,7 +264,7 @@ export const creatorsProgramSettleCash = createJob(
       data: {},
     });
 
-    return balances;
+    return positiveBalances;
   }
 );
 

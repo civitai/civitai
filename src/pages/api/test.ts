@@ -21,7 +21,7 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
   const participants = await getPoolParticipantsV2(month, true, 'yellow');
   const balances = await getAccountsBalances({
     accountIds: participants.map((p) => p.userId),
-    accountTypes: ['cashsettled'],
+    accountTypes: ['cashpending'],
   });
 
   return res.status(200).json({
