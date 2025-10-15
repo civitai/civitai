@@ -1,8 +1,13 @@
 import dayjs from 'dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createBuzzTransactionMany, getAccountsBalances } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getAccountsBalances,
+  getTopContributors,
+} from '~/server/services/buzz.service';
 import {
   getCompensationPool,
+  getMonthAccount,
   getPoolParticipants,
   getPoolParticipantsV2,
 } from '~/server/services/creator-program.service';
@@ -12,6 +17,18 @@ import { withRetries } from '~/utils/errorHandling';
 
 export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const month = dayjs().subtract(1, 'months').toDate();
+  const monthAccount = getMonthAccount(month);
+  const contributors = await getTopContributors({
+    accountIds: [monthAccount],
+    accountType: 'creatorprogrambank',
+    limit: 10000,
+    all: true,
+  });
+  const contributors2 = await getTopContributors({
+    accountIds: [monthAccount],
+    accountType: 'creatorprogrambank',
+    limit: 10000,
+  });
   const participants = await getPoolParticipantsV2(month, true, 'yellow');
   const balances = await getAccountsBalances({
     accountIds: participants.map((p) => p.userId),
@@ -22,5 +39,7 @@ export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiR
     month,
     balances,
     participants,
+    contributors,
+    contributors2,
   });
 });
