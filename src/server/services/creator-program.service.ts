@@ -877,7 +877,7 @@ export async function getPoolParticipantsV2(
   const monthAccount = getMonthAccount(month);
   const data = await getTopContributors({
     accountIds: [monthAccount],
-    accountType: accountType === 'green' ? 'creatorprogrambank' : 'creatorprogrambankgreen',
+    accountType: accountType === 'yellow' ? 'creatorprogrambank' : 'creatorprogrambankgreen',
     limit: 10000,
     all: true,
   });
