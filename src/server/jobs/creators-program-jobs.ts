@@ -211,7 +211,7 @@ export const creatorsProgramSettleCash = createJob(
               toAccountId: 0,
               amount,
               description: `Move from pending ${monthStr}`,
-              externalTransactionId: `settlement-bank-${monthStr}-${userId}`,
+              externalTransactionId: `settlement-bank-v2-${monthStr}-${userId}`,
             },
             {
               type: TransactionType.Compensation,
@@ -221,7 +221,7 @@ export const creatorsProgramSettleCash = createJob(
               toAccountId: userId,
               amount,
               description: `Cash settlement for ${monthStr}`,
-              externalTransactionId: `settlement-${monthStr}-${userId}`,
+              externalTransactionId: `settlement-v2-${monthStr}-${userId}`,
             },
           ])
         );
