@@ -22,6 +22,7 @@ import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 import { showErrorNotification } from '~/utils/notifications';
 import { IconX } from '@tabler/icons-react';
 import { GenForm } from '~/components/Generation/Form/GenForm';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -79,6 +80,8 @@ export function UpscaleImageModal({
             loading={whatIf.isInitialLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
             disabled={whatIf.isError}
+            allowMatureContent={whatIf.data?.allowMatureContent}
+            transactions={whatIf.data?.transactions}
           >
             Upscale
           </GenerateButton>
@@ -133,7 +136,7 @@ function UpscalImageForm({
         requiredBalance
       )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
-    type: 'Generation',
+    accountTypes: buzzSpendTypes,
   });
 
   function handleSubmit(formData: z.infer<typeof schema>) {
@@ -175,6 +178,8 @@ function UpscalImageForm({
           loading={whatIf.isInitialLoading || generateImage.isLoading}
           cost={whatIf.data?.cost?.total ?? 0}
           disabled={whatIf.isError}
+          allowMatureContent={whatIf.data?.allowMatureContent}
+          transactions={whatIf.data?.transactions}
         >
           Upscale
         </GenerateButton>

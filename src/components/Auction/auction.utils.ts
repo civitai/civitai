@@ -1,7 +1,11 @@
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import {
+  activeBaseModels,
+  getBaseModelConfig,
+  getGenerationBaseModelResourceOptions,
+} from '~/shared/constants/base-model.constants';
 import { miscModelTypes } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import nsfwWords from '~/utils/metadata/lists/words-nsfw-soft.json';
@@ -23,7 +27,13 @@ export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'
   if (!ab) return [] as ResourceOptions;
 
   if (ab.ecosystem === null) {
-    return [{ type: ModelType.Checkpoint }] as ResourceOptions;
+    // For featured-checkpoints, allow all active base models except Qwen
+    const allowedBaseModels = activeBaseModels.filter((baseModel) => {
+      const config = getBaseModelConfig(baseModel);
+      return config.group !== 'Qwen';
+    }) as BaseModel[];
+
+    return [{ type: ModelType.Checkpoint, baseModels: allowedBaseModels }] as ResourceOptions;
   }
 
   if (ab.ecosystem === miscAuctionName) {

@@ -17,20 +17,23 @@ import { DatePickerInput } from '@mantine/dates';
 import { IconBolt } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/router';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type {
-  BuzzTransactionDetails,
-  GetUserBuzzTransactionsSchema,
-} from '~/server/schema/buzz.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { capitalize } from '~/utils/string-helpers';
+import type {
+  BuzzTransactionDetails,
+  GetUserBuzzTransactionsSchema,
+} from '~/server/schema/buzz.schema';
 
 const transactionTypes = [
   TransactionType[TransactionType.Tip],
@@ -46,7 +49,7 @@ const transactionTypes = [
 ];
 
 const defaultFilters = {
-  accountType: 'user' as const,
+  accountType: 'yellow' as const,
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
 };
@@ -62,8 +65,19 @@ export const getServerSideProps = createServerSideProps({
 
 export default function UserTransactions() {
   const currentUser = useCurrentUser();
+  const router = useRouter();
 
-  const [filters, setFilters] = useState<GetUserBuzzTransactionsSchema>({ ...defaultFilters });
+  // Get account type from query parameter
+  const queryAccountType = router.query.accountType as BuzzSpendType | undefined;
+  const initialAccountType =
+    queryAccountType && buzzSpendTypes.includes(queryAccountType)
+      ? queryAccountType
+      : defaultFilters.accountType;
+
+  const [filters, setFilters] = useState<GetUserBuzzTransactionsSchema>({
+    ...defaultFilters,
+    accountType: initialAccountType,
+  });
   const { data, isLoading, fetchNextPage, isFetchingNextPage, hasNextPage } =
     trpc.buzz.getUserTransactions.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.cursor,
@@ -85,11 +99,8 @@ export default function UserTransactions() {
         <Title order={1}>Transaction History</Title>
         <SegmentedControl
           value={filters.accountType}
-          onChange={(v) => setFilters({ accountType: v as 'user' | 'generation' })}
-          data={[
-            { label: 'Yellow', value: 'user' },
-            { label: 'Blue', value: 'generation' },
-          ]}
+          onChange={(v) => setFilters({ accountType: v as BuzzSpendType })}
+          data={buzzSpendTypes.map((type) => ({ label: capitalize(type), value: type }))}
         />
         <Group gap="sm">
           <DatePickerInput

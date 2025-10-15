@@ -18,6 +18,7 @@ import {
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { useEffect, useMemo } from 'react';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 
 export function Veo3FormInput() {
   const form = useFormContext();
@@ -73,7 +74,7 @@ export function Veo3FormInput() {
           onChange={(air) => setCheckpoint(air)}
         ></SegmentedControl>
       </div>
-      <InputTextArea
+      <InputPrompt
         required={isTxt2Vid}
         name="prompt"
         label="Prompt"

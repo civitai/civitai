@@ -1,4 +1,9 @@
-import type { GetWorkflowData, Options, SubmitWorkflowData } from '@civitai/client';
+import type {
+  GetWorkflowData,
+  Options,
+  SubmitWorkflowData,
+  UpdateWorkflowRequest,
+} from '@civitai/client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
@@ -30,7 +35,7 @@ import {
 export async function queryWorkflows({
   token,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string; allowMatureContent: boolean }) {
+}: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
   const { data, error } = await clientQueryWorkflows({
@@ -100,10 +105,14 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
+  if (body.allowMatureContent === false) {
+    body.upgradeMode = 'manual';
+  }
+
   if (isDev) {
-    // console.log('------');
-    // console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
-    // console.log('------');
+    console.log('------');
+    console.log(JSON.stringify({ ...body, tags: ['civitai', ...(body.tags ?? [])] }));
+    console.log('------');
   }
 
   const { data, error, response } = await clientSubmitWorkflow({
@@ -179,12 +188,13 @@ export async function deleteManyWorkflows({
 
 export async function updateWorkflow({
   workflowId,
-  metadata,
   token,
-}: z.infer<typeof workflowUpdateSchema> & { token: string }) {
+  ...body
+}: UpdateWorkflowRequest & { token: string; workflowId: string }) {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } });
+  await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  return await getWorkflow({ token, path: { workflowId } });
 }
 
 export async function updateManyWorkflows({

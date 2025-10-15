@@ -365,6 +365,8 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
     return [];
   }
 
+  // TODO.resourceCompensations: we should use the new `resourceCompensations` table instead of this,
+  // But because we did not back-fill, won't be replacing yet.
   const data = await ctx.ch.$query<{ modelVersionId: number }>`
       WITH affected AS (
         SELECT DISTINCT modelVersionId

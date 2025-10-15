@@ -144,10 +144,12 @@ export const VaultStorageDowngrade = () => {
               <Text component="span" fw="bold">
                 {pagination?.totalItems?.toLocaleString() ?? 0} models
               </Text>{' '}
-              stored on your Vault. After downgrading, your Vault will be frozen.
+              stored on your Vault. Canceling this membership may reduce your available Vault
+              storage, and if the new storage limit is exceeded, your Vault will be frozen.
             </Text>
             <Text c="dimmed" align="center">
-              You will have a 7 day grace period to download models from your Vault.
+              You will have a 7 day grace period to download models from your Vault if it becomes
+              frozen.
             </Text>
           </div>
 

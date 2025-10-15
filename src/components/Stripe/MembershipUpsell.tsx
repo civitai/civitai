@@ -27,6 +27,7 @@ import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import classes from './MembershipUpsell.module.scss';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 export const MembershipUpsell = ({
   buzzAmount,
@@ -37,8 +38,9 @@ export const MembershipUpsell = ({
 }) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const paymentProvider = usePaymentProvider();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
-    {},
+    { paymentProvider },
     { enabled: !!currentUser }
   );
 

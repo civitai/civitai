@@ -2,7 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,
@@ -14,7 +14,7 @@ import type {
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
@@ -152,7 +152,7 @@ export async function consumeRedeemableCode({
         // Do membership stuff:
         // First, fetch user membership and see their status:
         const userMembership = await tx.customerSubscription.findFirst({
-          where: { userId },
+          where: { userId, buzzType: 'yellow' }, // Redeemable codes only work with yellow buzz memberships
           select: {
             status: true,
             id: true,
@@ -354,6 +354,7 @@ export async function consumeRedeemableCode({
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: userId,
+            toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
             type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id
@@ -383,7 +384,7 @@ export async function consumeRedeemableCode({
   );
 
   if (consumedCode.type === RedeemableCodeType.Membership) {
-    await invalidateSession(userId);
+    await refreshSession(userId);
     await getMultipliersForUser(userId, true);
     await setVaultFromSubscription({
       userId,

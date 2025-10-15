@@ -63,11 +63,11 @@ const baseModelConfig = [
   { name: 'SD 2.1', type: 'image', group: 'SD2' },
   { name: 'SD 2.1 768', type: 'image', group: 'SD2', hidden: true },
   { name: 'SD 2.1 Unclip', type: 'image', group: 'SD2', hidden: true },
-  { name: 'SD 3', type: 'image', group: 'SD3' },
-  { name: 'SD 3.5', type: 'image', group: 'SD3' },
-  { name: 'SD 3.5 Large', type: 'image', group: 'SD3' },
-  { name: 'SD 3.5 Large Turbo', type: 'image', group: 'SD3' },
-  { name: 'SD 3.5 Medium', type: 'image', group: 'SD3_5M', ecosystem: 'sd3' },
+  { name: 'SD 3', type: 'image', group: 'SD3', hidden: true },
+  { name: 'SD 3.5', type: 'image', group: 'SD3', hidden: true },
+  { name: 'SD 3.5 Large', type: 'image', group: 'SD3', hidden: true },
+  { name: 'SD 3.5 Large Turbo', type: 'image', group: 'SD3', hidden: true },
+  { name: 'SD 3.5 Medium', type: 'image', group: 'SD3_5M', ecosystem: 'sd3', hidden: true },
   { name: 'SDXL 0.9', type: 'image', group: 'SDXL', hidden: true },
   { name: 'SDXL 1.0', type: 'image', group: 'SDXL' },
   { name: 'SDXL 1.0 LCM', type: 'image', group: 'SDXL', hidden: true },
@@ -81,7 +81,7 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
-  { name: 'SVD', type: 'image', group: 'SVD' },
+  { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
   { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true, engine: 'wan' },
@@ -136,7 +136,7 @@ export function getBaseModelConfig(baseModel: string) {
 }
 
 export function getBaseModelGroup(baseModel: string) {
-  return getBaseModelConfig(baseModel)?.group;
+  return getBaseModelConfig(baseModel).group;
 }
 
 export function getBaseModelSeoName(baseModel?: string) {
@@ -612,3 +612,14 @@ export function getBaseModelsByModelType(args: { modelType: ModelType; baseModel
     {} as Record<ModelType, BaseModel[]>
   );
 }
+
+// Base models that are deprecated and should not be published or updated
+export const DEPRECATED_BASE_MODELS = [
+  'SD 3',
+  'SD 3.5',
+  'SD 3.5 Medium',
+  'SD 3.5 Large',
+  'SD 3.5 Large Turbo',
+  'SDXL Turbo',
+  'SVD',
+] as const satisfies BaseModel[];

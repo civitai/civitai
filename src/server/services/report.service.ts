@@ -10,7 +10,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
@@ -25,7 +25,12 @@ import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
 import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -459,13 +464,18 @@ export async function getAppealDetails({ id }: GetByIdInput) {
   return { ...appeal, entityDetails };
 }
 
+const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
+const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
+
 export async function createEntityAppeal({
   entityId,
   entityType,
   message,
   userId,
-}: CreateEntityAppealInput & { userId: number }) {
+  buzzType,
+}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType }) {
   let buzzTransactionId: string | null = null;
+
   // check if user has more than 3 pending or rejected appeal in the last 30 days
   const appealsCount = await getAppealCount({
     userId,
@@ -474,17 +484,24 @@ export async function createEntityAppeal({
   });
 
   if (appealsCount >= 3) {
-    const transaction = await withRetries(() =>
-      createBuzzTransaction({
+    const prefix = getAppealPrefix(userId);
+    const data = await withRetries(() =>
+      createMultiAccountBuzzTransaction({
         amount: 100,
         fromAccountId: userId,
         toAccountId: 0,
         type: TransactionType.Appeal,
-        fromAccountType: BuzzAccountType.user,
+        fromAccountTypes: [buzzType],
         description: `Appeal fee for ${entityType} ${entityId}`,
+        externalTransactionIdPrefix: prefix,
       })
     );
-    buzzTransactionId = transaction.transactionId;
+
+    if (data.transactionCount === 0) {
+      throw new Error('There was an error creating the appeal transaction.');
+    }
+
+    buzzTransactionId = prefix;
   }
 
   try {
@@ -509,7 +526,12 @@ export async function createEntityAppeal({
 
     return appeal;
   } catch (error) {
-    await refundTransaction(buzzTransactionId as string, 'Refund appeal fee');
+    if (buzzTransactionId) {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: buzzTransactionId ?? '',
+        description: 'Refund appeal fee',
+      });
+    }
     throw error;
   }
 }
@@ -573,12 +595,21 @@ export async function resolveEntityAppeal({
     }
 
     if (approved && appeal.buzzTransactionId) {
-      await withRetries(() =>
-        refundTransaction(
-          appeal.buzzTransactionId as string,
-          `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-        )
-      );
+      await withRetries(async () => {
+        if (isAppealPrefix(appeal.buzzTransactionId as string)) {
+          await refundMultiAccountTransaction({
+            externalTransactionIdPrefix: appeal.buzzTransactionId as string,
+            description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
+          });
+        } else {
+          await refundTransaction(
+            appeal.buzzTransactionId as string,
+            `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+          );
+        }
+
+        return;
+      });
     }
 
     // Notify the user that their appeal has been resolved

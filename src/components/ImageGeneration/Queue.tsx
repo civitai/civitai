@@ -1,4 +1,4 @@
-import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
@@ -66,7 +66,7 @@ export function Queue() {
             </Stack>
           )}
           {!filters.marker && (
-            <Stack gap={0}>
+            <div className="flex flex-col items-center">
               <Text size="md" align="center">
                 The queue is empty
               </Text>
@@ -82,7 +82,11 @@ export function Queue() {
                 </Text>{' '}
                 new images with our resources
               </Text>
-            </Stack>
+              <Text size="sm" c="dimmed">
+                Images generated prior to 10/13/2025 are now visible on{' '}
+                <Anchor href="https://civitai.com/generate">civitai.com</Anchor>
+              </Text>
+            </div>
           )}
         </Stack>
       </div>
@@ -105,12 +109,7 @@ export function Queue() {
                 {index !== 0 && (index + 4) % 5 === 0 && (
                   <KontextAd key={index} index={index} className="p-3" />
                 )}
-                <QueueItem
-                  id={request.id.toString()}
-                  request={request}
-                  step={request.steps[0]}
-                  filter={{ marker }}
-                />
+                <QueueItem id={request.id.toString()} request={request} />
               </Fragment>
             );
           })}

@@ -23,10 +23,14 @@ import {
   patchSchema,
   workflowIdSchema,
   workflowQuerySchema,
+  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
-import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import {
+  queryGeneratedImageWorkflows,
+  updateWorkflow,
+} from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
@@ -72,14 +76,22 @@ import {
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
 import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const token = await getOrchestratorToken(user.id, ctx);
-  const allowMatureContent = user.showNsfw;
-  // const allowMatureContent = ctx.domain === 'blue' && user.showNsfw;
-  return next({ ctx: { ...ctx, user, token, allowMatureContent } });
+  const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+  return next({
+    ctx: {
+      ...ctx,
+      user,
+      token,
+      allowMatureContent,
+      hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+    },
+  });
   // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
 });
 
@@ -110,6 +122,9 @@ export const orchestratorRouter = router({
   cancelWorkflow: orchestratorProcedure
     .input(workflowIdSchema)
     .mutation(({ ctx, input }) => cancelWorkflow({ ...input, token: ctx.token })),
+  updateWorkflow: orchestratorProcedure
+    .input(workflowUpdateSchema)
+    .mutation(({ ctx, input }) => updateWorkflow({ ...input, token: ctx.token })),
   // #endregion
 
   // #region [steps]
@@ -173,7 +188,8 @@ export const orchestratorRouter = router({
       ...input,
       token: ctx.token,
       user: ctx.user,
-      allowMatureContent: ctx.allowMatureContent,
+      tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,
+      hideMatureContent: ctx.hideMatureContent,
     })
   ),
   generateImage: orchestratorGuardedProcedure
@@ -192,14 +208,20 @@ export const orchestratorRouter = router({
         });
       }
 
+      delete input.params.experimental;
       const group = getBaseModelGroup(input.params.baseModel);
       if (
         EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group) &&
-        !input.params.enhancedCompatibility
+        input.params.enhancedCompatibility
       ) {
         input.params.engine = 'comfyui';
+      } else {
+        if (input.params.engine === 'comfyui') {
+          delete input.params.engine;
+        }
+        delete input.params.enhancedCompatibility;
       }
-      const experimental = true; // ctx.experimental;
+      const experimental = ctx.experimental;
 
       const args = {
         ...input,
@@ -209,7 +231,12 @@ export const orchestratorRouter = router({
         batchAll: ctx.batchAll,
         isGreen: ctx.features.isGreen,
         allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
+
+      if (ctx.domain === 'green') {
+        args.tags = [...(args.tags ?? []), 'green'];
+      }
       // if ('sourceImage' in args.params && args.params.sourceImage) {
       //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
       //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
@@ -238,6 +265,7 @@ export const orchestratorRouter = router({
           token: ctx.token,
           batchAll: ctx.batchAll,
           allowMatureContent: ctx.allowMatureContent,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
@@ -255,6 +283,8 @@ export const orchestratorRouter = router({
             steps: [step],
             tips: args.tips,
             experimental: ctx.experimental,
+            // @ts-ignore - BuzzSpendType is properly supported.
+            currencies: args.currencies,
           },
           query: {
             whatif: true,
@@ -274,6 +304,8 @@ export const orchestratorRouter = router({
         }
 
         return {
+          allowMatureContent: workflow.allowMatureContent,
+          transactions: workflow.transactions?.list,
           cost: workflow.cost,
           ready,
         };
@@ -296,7 +328,7 @@ export const orchestratorRouter = router({
     }),
   whatIf: orchestratorGuardedProcedure
     .input(generationSchema)
-    .use(edgeCacheIt({ ttl: 60 }))
+    // .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) =>
       whatIf({
         ...input,
@@ -304,20 +336,26 @@ export const orchestratorRouter = router({
         token: ctx.token,
         experimental: ctx.experimental,
         allowMatureContent: ctx.allowMatureContent,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       })
     ),
-  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) =>
-    generate({
+  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) => {
+    if (ctx.domain === 'green') {
+      input.tags = [...(input.tags ?? []), 'green'];
+    }
+
+    return generate({
       ...input,
       userId: ctx.user.id,
       token: ctx.token,
       experimental: ctx.experimental,
       isGreen: ctx.features.isGreen,
       allowMatureContent: ctx.allowMatureContent,
+      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       isModerator: ctx.user.isModerator,
       track: ctx.track,
-    })
-  ),
+    });
+  }),
   // #endregion
 
   // #region [Image upload]
@@ -332,13 +370,22 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token, user: ctx.user };
+      const args = {
+        ...input,
+        token: ctx.token,
+        user: ctx.user,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWorkflow(args);
     }),
   createTrainingWhatif: orchestratorProcedure
     .input(imageTrainingRouterWhatIfSchema)
     .query(async ({ ctx, input }) => {
-      const args = { ...input, token: ctx.token };
+      const args = {
+        ...input,
+        token: ctx.token,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      };
       return await createTrainingWhatIfWorkflow(args);
     }),
   // #endregion

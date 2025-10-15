@@ -14,6 +14,8 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const lipsum = `
@@ -276,15 +278,15 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+  supporterBadge: '514e9489-a734-4ea9-b223-ff9833abb3fd',
   memberships: {
     tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
-      free: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
-      founder: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
-      bronze: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
-      silver: 'c06c4d84-11f1-49ca-824c-2d7371c23366',
-      gold: 'eae8457a-8b18-41a5-8ee7-2b99a1c663c6',
+      free: '514e9489-a734-4ea9-b223-ff9833abb3fd',
+      founder: '514e9489-a734-4ea9-b223-ff9833abb3fd',
+      bronze: '514e9489-a734-4ea9-b223-ff9833abb3fd',
+      silver: '9dec8ea0-1cde-4c6c-ac5f-0f97c5b448e4',
+      gold: 'b98074e1-883f-46d9-a290-812bb19ec706',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -506,6 +508,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://seed.bytedance.com/en/user-agreement',
     name: 'Seedream',
   },
+  ponyV7: {
+    url: 'https://purplesmart.ai/license',
+    name: 'Pony',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -541,7 +547,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
-  'Pony V7': baseLicenses['openrail++'],
+  'Pony V7': baseLicenses['ponyV7'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],

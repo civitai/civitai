@@ -44,6 +44,7 @@ import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvan
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -74,6 +75,7 @@ import {
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
 
@@ -86,6 +88,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
   const thisNumImages = thisMetadata?.numImages;
   const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs } = useTrainingImageStore(
@@ -126,7 +129,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
-    type: 'Generation',
+    accountTypes: availableBuzzTypes,
   });
 
   const thisStep = 3;
@@ -562,7 +565,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Stack
         className={clsx(
-          'dark:bg-dark-7 sticky top-0 z-10 mb-[-5px] bg-white pb-[5px]',
+          'sticky top-0 z-10 mb-[-5px] bg-white pb-[5px] dark:bg-dark-7',
           !multiMode && 'hidden'
         )}
       >
@@ -769,7 +772,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             w="fit-content"
             px="md"
             py="xs"
-            className="bg-gray-0 dark:bg-dark-6 self-end"
+            className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
               <Badge>
@@ -848,7 +851,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={totalBuzzCost}
-          transactionType="Generation"
+          accountTypes={availableBuzzTypes}
           onPerformTransaction={handleSubmit}
           error={hasIssue ? 'Error computing cost' : undefined}
           showTypePct

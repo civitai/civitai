@@ -5,13 +5,15 @@ import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
-import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchaseImproved';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';
 
 export type BuyBuzzModalProps = {
   message?: string;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
+  initialBuzzType?: BuzzSpendType;
 };
 
 export default function BuyBuzzModal({
@@ -19,6 +21,7 @@ export default function BuyBuzzModal({
   purchaseSuccessMessage,
   onPurchaseSuccess,
   minBuzzAmount,
+  initialBuzzType,
 }: BuyBuzzModalProps) {
   const dialog = useDialogContext();
   const { trackAction } = useTrackEvent();
@@ -27,6 +30,7 @@ export default function BuyBuzzModal({
     dialog.onClose();
   };
   const isMobile = isMobileDevice();
+
   return (
     <Modal
       {...dialog}
@@ -51,7 +55,7 @@ export default function BuyBuzzModal({
           content={
             <Anchor
               size="sm"
-              href="/user/buzz-dashboard#rewards"
+              href="/user/buzz-dashboard?buzzType=blue#rewards"
               target="_blank"
               td="underline"
               inherit
@@ -72,6 +76,7 @@ export default function BuyBuzzModal({
             minBuzzAmount={minBuzzAmount}
             purchaseSuccessMessage={purchaseSuccessMessage}
             onCancel={handleClose}
+            initialBuzzType={initialBuzzType}
           />
         </Group>
       </Stack>

@@ -3,7 +3,10 @@ import { z } from 'zod';
 
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbRead } from '~/server/db/client';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import {
+  getAllUserSubscriptions,
+  getUserSubscription,
+} from '~/server/services/subscriptions.service';
 import { env } from '~/env/server';
 import type { UserTier } from '~/server/schema/user.schema';
 
@@ -37,10 +40,10 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const subscription = await getUserSubscription({ userId });
+    const subscriptions = await getAllUserSubscriptions(userId);
     const tier: UserTier | undefined =
-      subscription && ['active', 'trialing'].includes(subscription.status)
-        ? ((subscription.product.metadata as Record<string, unknown>)[
+      subscriptions.length > 0
+        ? ((subscriptions[0].product.metadata as Record<string, unknown>)[
             env.TIER_METADATA_KEY
           ] as UserTier)
         : undefined;
@@ -51,6 +54,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       tier,
       status: targetUser.bannedAt ? 'banned' : targetUser.muted ? 'muted' : 'active',
       isMember: tier ? tier !== 'free' : false,
+      subscriptions: subscriptions.map((sub) => sub.buzzType),
     });
   } catch (error) {
     console.error('Error fetching user:', error);

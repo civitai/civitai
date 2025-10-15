@@ -103,24 +103,24 @@ export const trainingModelInfo: {
     isNew: false,
   },
   //
-  sd3_medium: {
-    label: 'Medium',
-    pretty: 'SD 3.5 M',
-    type: 'sd35',
-    description: 'Designed for a balance of quality and efficiency.',
-    air: 'urn:air:sd3:checkpoint:civitai:896953@1003708',
-    baseModel: 'SD 3.5 Medium',
-    isNew: false,
-  },
-  sd3_large: {
-    label: 'Large',
-    pretty: 'SD 3.5 L',
-    type: 'sd35',
-    description: 'Designed for high-quality images across diverse styles.',
-    air: 'urn:air:sd3:checkpoint:civitai:878387@983309',
-    baseModel: 'SD 3.5 Large',
-    isNew: false,
-  },
+  // sd3_medium: {
+  //   label: 'Medium',
+  //   pretty: 'SD 3.5 M',
+  //   type: 'sd35',
+  //   description: 'Designed for a balance of quality and efficiency.',
+  //   air: 'urn:air:sd3:checkpoint:civitai:896953@1003708',
+  //   baseModel: 'SD 3.5 Medium',
+  //   isNew: false,
+  // },
+  // sd3_large: {
+  //   label: 'Large',
+  //   pretty: 'SD 3.5 L',
+  //   type: 'sd35',
+  //   description: 'Designed for high-quality images across diverse styles.',
+  //   air: 'urn:air:sd3:checkpoint:civitai:878387@983309',
+  //   baseModel: 'SD 3.5 Large',
+  //   isNew: false,
+  // },
   //
   flux_dev: {
     label: 'Dev',

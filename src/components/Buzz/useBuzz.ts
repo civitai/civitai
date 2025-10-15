@@ -1,26 +1,44 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import type { BuzzAccountType, GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
+import { getBuzzTypeDistribution } from '~/utils/buzz';
+import { useAvailableBuzz } from './useAvailableBuzz';
 
-export const useBuzz = (accountId?: number, accountType?: BuzzAccountType | null) => {
+export function useQueryBuzz(buzzTypes?: BuzzSpendType[]) {
+  const defaultTypes = useAvailableBuzz(buzzTypes);
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
-  const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
-    { accountId: accountId ?? (currentUser?.id as number), accountType: accountType },
-    { enabled: !!currentUser && features.buzz }
-  );
+  const { data: initialData, isLoading } = trpc.buzz.getBuzzAccount.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+  const data = useMemo(() => {
+    if (!initialData) return { accounts: [], total: 0, nsfwTotal: 0 };
+    let total = 0;
+    let nsfwTotal = 0;
+    const accountTypes = buzzTypes ?? defaultTypes;
+    const accounts = accountTypes
+      .map((type) => {
+        const config = BuzzTypes.getConfig(type);
+        if (!config || config.type !== 'spend') return null;
+        const balance = initialData[type];
+        total += balance;
+        if (config.nsfw) nsfwTotal += balance;
+        return { ...config, balance, type };
+      })
+      .filter(isDefined);
 
-  return {
-    balanceLoading: isLoading,
-    balance: data?.balance ?? 0,
-    lifetimeBalance: data?.lifetimeBalance ?? 0,
-  };
-};
+    return { accounts, total, nsfwTotal };
+  }, [initialData, buzzTypes, defaultTypes]);
+
+  return { data, isLoading };
+}
 
 export const useBuzzSignalUpdate = () => {
   const queryUtils = trpc.useUtils();
@@ -29,22 +47,14 @@ export const useBuzzSignalUpdate = () => {
   const onBalanceUpdate = useCallback(
     (updated: BuzzUpdateSignalSchema) => {
       if (!currentUser) return;
-
-      queryUtils.buzz.getBuzzAccount.setData(
-        { accountId: currentUser.id as number, accountType: updated.accountType },
-        (old) => {
-          if (!old) return old;
-          return { ...old, balance: updated.balance };
-        }
-      );
-
-      queryUtils.buzz.getBuzzAccount.setData(
-        { accountId: currentUser.id as number, accountType: null },
-        (old) => {
-          if (!old || !old.balance) return old;
-          return { ...old, balance: (old.balance ?? 0) + updated.delta };
-        }
-      );
+      const type = BuzzTypes.toClientType(updated.accountType) as BuzzSpendType;
+      queryUtils.buzz.getBuzzAccount.setData(undefined, (old) => {
+        if (!old) return undefined;
+        let balance = old[type];
+        if (typeof balance !== 'number') balance = updated.balance;
+        else balance += updated.delta;
+        return { ...old, [type]: balance };
+      });
     },
     [queryUtils, currentUser]
   );
@@ -92,7 +102,7 @@ export const useBuzzTransactions = (
 export const useTransactionsReport = (
   filters: GetTransactionsReportSchema = {
     window: 'hour',
-    accountType: ['User', 'Generation'],
+    accountType: 'yellow',
   },
   opts: { enabled: boolean }
 ) => {
@@ -107,4 +117,27 @@ export const useTransactionsReport = (
     isLoading: opts.enabled ? isLoading : false,
     ...rest,
   };
+};
+
+export const useMainBuzzAccountType = (
+  accountTypes: BuzzSpendType[],
+  cost: number
+): BuzzSpendType | undefined => {
+  const {
+    data: { accounts },
+  } = useQueryBuzz(accountTypes);
+
+  const buzzTypeDistribution = getBuzzTypeDistribution({
+    accounts,
+    buzzAmount: cost,
+  });
+  const baseType = accounts[0]?.type;
+
+  const mainBuzzAccountType = Object.entries(buzzTypeDistribution.amt).reduce(
+    (max, [key, amount]) =>
+      amount > (buzzTypeDistribution.amt[max as BuzzSpendType] || 0) ? key : max,
+    Object.keys(buzzTypeDistribution.amt)[0] || baseType
+  ) as BuzzSpendType;
+
+  return mainBuzzAccountType;
 };

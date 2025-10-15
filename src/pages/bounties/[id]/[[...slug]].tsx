@@ -65,7 +65,6 @@ import {
   useQueryBounty,
 } from '~/components/Bounty/bounty.utils';
 import { constants } from '~/server/common/constants';
-import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -98,6 +97,8 @@ import { useDidUpdate } from '@mantine/hooks';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { Page } from '~/components/AppLayout/Page';
 import classes from './[[...slug]].module.scss';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -375,6 +376,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const [addToBountyModalOpen, setAddToBountyModalOpen] = useState<boolean>(false);
   const [addToBountyAmount, setAddToBountyAmount] = useState<number>(minUnitAmount);
   const isOwner = bounty?.user && bounty?.user?.id === currentUser?.id;
+  const features = useFeatureFlags();
 
   const { trackAction } = useTrackEvent();
 
@@ -517,6 +519,8 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     },
   ];
 
+  const config = getCurrencyConfig({ currency });
+
   const benefactorDetails: DescriptionTableProps['items'] = bounty.benefactors.map((b) => ({
     label: (
       <Group gap={4} justify="space-between">
@@ -524,11 +528,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           user={b.user}
           badge={
             isMainBenefactor(bounty, b.user) ? (
-              <IconStar
-                color={CurrencyConfig[currency].color(theme)}
-                fill={CurrencyConfig[currency].color(theme)}
-                size={18}
-              />
+              <IconStar color={config.color} fill={config.color} size={18} />
             ) : null
           }
           withUsername
@@ -536,11 +536,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         />
         {b.awardedToId && (
           <Tooltip label="This supporter has already awarded an entry" color="dark" withinPortal>
-            <IconTrophy
-              color={CurrencyConfig[currency].color(theme)}
-              fill={CurrencyConfig[currency].color(theme)}
-              size={18}
-            />
+            <IconTrophy color={config.color} fill={config.color} size={18} />
           </Tooltip>
         )}
       </Group>
@@ -642,7 +638,6 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
                     type="submit"
                     label="Continue"
                     buzzAmount={addToBountyAmount}
-                    color="yellow.7"
                     onPerformTransaction={() => {
                       if (addToBountyAmount < minUnitAmount) {
                         return;

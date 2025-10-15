@@ -32,7 +32,7 @@ import clsx from 'clsx';
 import { clone } from 'lodash-es';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { useBuyBuzz, useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -137,6 +137,7 @@ import {
 import classes from './GenerationForm2.module.scss';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 import {
   getGenerationBaseModelResourceOptions,
@@ -150,6 +151,7 @@ import {
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 let total = 0;
 const tips = {
@@ -201,7 +203,6 @@ export function GenerationFormContent() {
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
-  const subscriptionMismatch = subscription ? subscriptionMeta?.tier !== status.tier : false;
 
   const { errors } = form.formState;
 
@@ -248,8 +249,9 @@ export function GenerationFormContent() {
 
   // #endregion
 
+  // const availableBuzz = useAvailableBuzz();
   const { conditionalPerformTransaction } = useBuzzTransaction({
-    type: 'Generation',
+    accountTypes: buzzSpendTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
@@ -258,6 +260,7 @@ export function GenerationFormContent() {
   });
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
+  const buyBuzz = useBuyBuzz();
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
@@ -330,6 +333,9 @@ export function GenerationFormContent() {
         ) {
           setPromptWarning(error.message);
           currentUser?.refresh();
+        }
+        if (error?.message === 'insufficientBuzz') {
+          buyBuzz({});
         } else
           setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
       });
@@ -1357,6 +1363,11 @@ export function GenerationFormContent() {
                                         <InputNumberSlider
                                           name="steps"
                                           disabled={stepsDisabled}
+                                          description={
+                                            isPonyV7
+                                              ? 'This model works best when using 40 steps or more.'
+                                              : undefined
+                                          }
                                           label={
                                             <div className="flex items-center gap-1">
                                               <Input.Label>Steps</Input.Label>
@@ -1458,25 +1469,24 @@ export function GenerationFormContent() {
                                 }}
                               />
                             )}
-                            {getBaseModelGroup(baseModel) &&
-                              EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
-                                getBaseModelGroup(baseModel)!
-                              ) && (
-                                <InputSwitch
-                                  name="enhancedCompatibility"
-                                  labelPosition="left"
-                                  label={
-                                    <div className="relative flex items-center gap-1">
-                                      <Input.Label>Enhanced Compatibility</Input.Label>
-                                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                                        Increases compatibility with a wider range of resources by
-                                        using an alternative generation engine. This may result in
-                                        slightly different outputs.
-                                      </InfoPopover>
-                                    </div>
-                                  }
-                                />
-                              )}
+                            {EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
+                              getBaseModelGroup(baseModel)
+                            ) && (
+                              <InputSwitch
+                                name="enhancedCompatibility"
+                                labelPosition="left"
+                                label={
+                                  <div className="relative flex items-center gap-1">
+                                    <Input.Label>Enhanced Compatibility</Input.Label>
+                                    <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                                      {`We've updated our generation engine for better performance,
+                                        but older prompts may look different. Turn this on to make
+                                        new generations look more like your originals.`}
+                                    </InfoPopover>
+                                  </div>
+                                }
+                              />
+                            )}
                           </div>
                           {/* <Text variant="link" onClick={() => {
                           const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};
@@ -1493,19 +1503,6 @@ export function GenerationFormContent() {
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                   <DailyBoostRewardClaim />
-                  {subscriptionMismatch && (
-                    <DismissibleAlert
-                      id="subscription-mismatch-generator-alert"
-                      color="red"
-                      title="Subscription Mismatch"
-                    >
-                      <Text size="xs">
-                        Looks like we&rsquo;re having trouble correctly applying your membership
-                        bonuses, try to <RefreshSessionButton />, if that doesn&rsquo;t work please
-                        contact us here <Anchor href="https://civitai.com/support">here</Anchor>
-                      </Text>
-                    </DismissibleAlert>
-                  )}
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
@@ -1683,7 +1680,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream && !isPonyV7) ||
+    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
@@ -1710,6 +1707,8 @@ function SubmitButton(props: { isLoading?: boolean }) {
       onClick={() => {
         if (running) helpers?.next();
       }}
+      transactions={data?.transactions}
+      allowMatureContent={data?.allowMatureContent}
     />
   );
 

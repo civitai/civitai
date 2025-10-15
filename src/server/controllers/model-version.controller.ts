@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { BaseModelType } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
+import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
 import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -73,6 +74,7 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { WorkflowStatus } from '@civitai/client';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -229,6 +231,15 @@ export const upsertModelVersionHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+
+    // Check if using deprecated base model
+    if (input.baseModel && DEPRECATED_BASE_MODELS.includes(input.baseModel as any)) {
+      throw throwBadRequestError(
+        `Cannot create or update model versions using deprecated base models: ${DEPRECATED_BASE_MODELS.join(
+          ', '
+        )}`
+      );
+    }
 
     if (!ctx.features.generationOnlyModels && input.usageControl !== ModelUsageControl.Download) {
       // People without access to thje generationOnlyModels feature can only create download models
@@ -387,12 +398,22 @@ export const publishModelVersionHandler = async ({
         meta: true,
         status: true,
         modelId: true,
+        baseModel: true,
         earlyAccessConfig: true,
         model: { select: { userId: true, nsfw: true } },
       },
     });
 
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
+
+    // Check if using deprecated base model
+    if (DEPRECATED_BASE_MODELS.includes(version.baseModel as any)) {
+      throw throwBadRequestError(
+        `Cannot publish model versions using deprecated base models: ${DEPRECATED_BASE_MODELS.join(
+          ', '
+        )}`
+      );
+    }
 
     const versionMeta = version.meta as ModelVersionMeta | null;
     const republishing =
@@ -666,6 +687,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
     return earlyAccessPurchase({
       ...input,
       userId: ctx.user.id,
+      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
     });
   } catch (error) {
     if (error instanceof TRPCError) error;

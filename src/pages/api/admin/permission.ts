@@ -5,7 +5,7 @@ import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { addSystemPermission, removeSystemPermission } from '~/server/services/system-cache';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/utils/session-helpers';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -33,7 +33,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   // Invalidate their sessions
-  for (const user of users) await invalidateSession(user.id);
+  for (const user of users) await refreshSession(user.id);
 
   return res.status(200).json({
     key,

@@ -1,9 +1,12 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 
@@ -25,6 +28,16 @@ export const donationGoalById = async ({
       userId: true,
       createdAt: true,
       modelVersionId: true,
+      modelVersion: {
+        select: {
+          model: {
+            select: {
+              id: true,
+              nsfw: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -46,10 +59,16 @@ export const donateToGoal = async ({
   donationGoalId,
   amount,
   userId,
+  buzzType,
 }: DonateToGoalInput & {
   userId: number;
+  buzzType: BuzzSpendType;
 }) => {
   const goal = await donationGoalById({ id: donationGoalId, userId });
+
+  if (buzzType === 'blue') {
+    throw new Error('You cannot use Blue Buzz to make donations.');
+  }
 
   if (!goal) {
     throw new Error('Goal not found');
@@ -63,26 +82,30 @@ export const donateToGoal = async ({
     throw new Error('User cannot donate to their own goal');
   }
 
-  let buzzTransactionId;
+  let performedTransaction = false;
+  const externalTransactionIdPrefix = `donation-${donationGoalId}-${Date.now()}`;
 
   try {
-    const transaction = await createBuzzTransaction({
+    const transaction = await createMultiAccountBuzzTransaction({
       amount,
       fromAccountId: userId,
+      fromAccountTypes: [buzzType],
       toAccountId: goal.userId,
+      externalTransactionIdPrefix,
       description: `Donation to ${goal.title}`,
       type: TransactionType.Donation,
     });
-    if (!transaction.transactionId) {
+
+    if (!transaction.transactionIds || transaction.transactionIds.length === 0) {
       throw new Error('There was an error creating the transaction.');
     }
 
-    buzzTransactionId = transaction.transactionId;
+    performedTransaction = true;
 
     await dbWrite.donation.create({
       data: {
         amount,
-        buzzTransactionId,
+        buzzTransactionId: externalTransactionIdPrefix, // Store primary transaction ID
         donationGoalId,
         userId,
       },
@@ -92,16 +115,16 @@ export const donateToGoal = async ({
     const updatedDonationGoal = await checkDonationGoalComplete({ donationGoalId });
     return updatedDonationGoal;
   } catch (e) {
-    if (buzzTransactionId) {
-      // Refund:
-      await createBuzzTransaction({
-        amount,
-        fromAccountId: goal.userId,
-        toAccountId: userId,
-        description: `Refund for failed donation to ${goal.title}`,
-        type: TransactionType.Refund,
-        externalTransactionId: buzzTransactionId,
-      });
+    if (performedTransaction) {
+      // Refund using multi-account transaction
+      try {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix,
+          description: `Refund for failed donation to ${goal.title}`,
+        });
+      } catch (refundError) {
+        console.error('Failed to refund donation transaction:', refundError);
+      }
     }
     throw new Error('Failed to create donation');
   }

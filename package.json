@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1102",
+  "version": "5.0.1139",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -63,7 +63,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.2.0-beta.8",
+    "@civitai/client": "^0.2.0-beta.9",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",

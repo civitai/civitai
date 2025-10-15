@@ -167,7 +167,7 @@ declare global {
 
 const log = createLogger('redis', 'green');
 
-function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
+function getBaseClient(type: 'cache' | 'system') {
   log(`Creating Redis client (${type})`);
 
   const REDIS_URL = type === 'system' ? env.REDIS_SYS_URL : env.REDIS_URL;
@@ -181,7 +181,6 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
       },
       connectTimeout: env.REDIS_TIMEOUT,
     },
-    legacyMode,
     pingInterval: 4 * 60 * 1000,
     disableClientInfo: true, // this is for twemproxy, DONT REMOVE
   });
@@ -189,14 +188,13 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
   baseClient.on('connect', () => log('Redis connected'));
   baseClient.on('reconnecting', () => log('Redis reconnecting'));
   baseClient.on('ready', () => log('Redis ready!'));
-  // TODO should connect be here? it won't be ready yet, and is not awaited
   baseClient.connect();
 
   return baseClient;
 }
 
-function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacyMode = false) {
-  const client = getBaseClient(type, legacyMode) as unknown as CustomRedisClient<K>;
+function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
+  const client = getBaseClient(type) as unknown as CustomRedisClient<K>;
 
   client.packed = {
     async get<T>(key: K): Promise<T | null> {
@@ -306,8 +304,8 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
   return client;
 }
 
-function getCacheClient(legacyMode = false) {
-  const client = getClient<RedisKeyTemplateCache>('cache', legacyMode) as CustomRedisClientCache;
+function getCacheClient() {
+  const client = getClient<RedisKeyTemplateCache>('cache') as CustomRedisClientCache;
 
   client.purgeTags = async (tag: string | string[]) => {
     const tags = Array.isArray(tag) ? tag : [tag];
@@ -323,8 +321,8 @@ function getCacheClient(legacyMode = false) {
   return client;
 }
 
-function getSysClient(legacyMode = false) {
-  return getClient<RedisKeyTemplateSys>('system', legacyMode) as CustomRedisClientSys;
+function getSysClient() {
+  return getClient<RedisKeyTemplateSys>('system') as CustomRedisClientSys;
 }
 
 export let redis: CustomRedisClientCache;
@@ -396,7 +394,7 @@ export const REDIS_SYS_KEYS = {
   EVENT: 'event', // special case
   SESSION: {
     ALL: 'session:all',
-    INVALID_TOKENS: 'session:invalid-tokens',
+    TOKEN_STATE: 'session:token-state',
   },
   JOB: 'job',
   BUZZ_WITHDRAWAL_REQUEST: {
@@ -482,7 +480,7 @@ export const REDIS_KEYS = {
   },
   EMAIL_VERIFICATION: 'email:verification',
   SESSION: {
-    BASE: 'session',
+    USER_TOKENS: 'session:user-tokens2',
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
