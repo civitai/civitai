@@ -1250,3 +1250,30 @@ export async function getMultiAccountTransactionsByPrefix(externalTransactionIdP
     accountType: BuzzTypes.toClientType(item.accountType),
   }));
 }
+
+export async function getAccountsBalances({
+  accountIds,
+  accountTypes,
+}: {
+  accountIds: number[];
+  accountTypes: BuzzAccountType[];
+}) {
+  const queryParams: [string, string][] = [];
+  if (accountIds.length === 0) return [];
+  if (accountTypes.length === 0) return [];
+
+  accountIds.forEach((id) => queryParams.push(['accountId', id.toString()]));
+  accountTypes.forEach((type) => queryParams.push(['accountType', BuzzTypes.toApiType(type)]));
+  const queryString = new URLSearchParams(queryParams);
+
+  const data: {
+    accountId: number;
+    accountType: BuzzApiAccountType;
+    balance: number;
+  }[] = await buzzApiFetch(`/account-balances?${queryString.toString()}`);
+
+  return data.map((item) => ({
+    ...item,
+    accountType: BuzzTypes.toClientType(item.accountType),
+  }));
+}

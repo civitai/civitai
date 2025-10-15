@@ -868,12 +868,16 @@ export async function getPoolParticipants(
   return participants.filter((p) => !bannedParticipants.some((b) => b.userId === p.userId));
 }
 
-export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts = false, accountType: 'yellow' | 'green' = 'yellow') {
+export async function getPoolParticipantsV2(
+  month?: Date,
+  includeNegativeAmounts = false,
+  accountType: 'yellow' | 'green' = 'yellow'
+) {
   month ??= new Date();
   const monthAccount = getMonthAccount(month);
   const data = await getTopContributors({
     accountIds: [monthAccount],
-    accountType: accountType === 'green'  ? 'creatorprogrambank' : 'creatorprogrambankgreen',
+    accountType: accountType === 'green' ? 'creatorprogrambank' : 'creatorprogrambankgreen',
     limit: 10000,
     all: true,
   });

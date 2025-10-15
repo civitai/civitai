@@ -3,7 +3,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { createBuzzTransactionMany, getAccountsBalances } from '~/server/services/buzz.service';
 import {
   bustCompensationPoolCache,
   flushBankedCache,
@@ -55,7 +55,11 @@ export const creatorsProgramDistribute = createJob(
       // Get pool data
       const pool = await getCompensationPool({ month, buzzType });
       // Get totals for all participants in bank
-      const participants = await getPoolParticipantsV2(month, false, buzzType as 'green' | 'yellow');
+      const participants = await getPoolParticipantsV2(
+        month,
+        false,
+        buzzType as 'green' | 'yellow'
+      );
 
       // Allocate pool value based on participant portion
       let availablePoolValue = Math.floor(pool.value * 100);
@@ -183,33 +187,22 @@ export const creatorsProgramSettleCash = createJob(
     const availability = getCreatorProgramAvailability();
     if (!availability) return;
 
-    const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
-      SELECT
-        toAccountId as "userId",
-        SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
-      FROM buzzTransactions
-      -- Ensure we only check compensation as we don't care for refunds.
-      WHERE type = 'compensation' AND (
-        (
-          -- To Settlements
-          fromAccountId = 0
-          AND toAccountType = 'cash-settled'
-        ) OR (
-          -- Deposits
-          fromAccountId = 0
-          AND toAccountType = 'cash-pending'
-        )
-      )
-      GROUP BY "userId"
-      HAVING amount > 0
-    `;
+    const month = dayjs().subtract(1, 'months').toDate();
+    const participants = await getPoolParticipantsV2(month, true, 'yellow');
+    const balances = await getAccountsBalances({
+      accountIds: participants.map((p) => p.userId),
+      accountTypes: ['cashsettled'],
+    });
+
+    const positiveBalances = balances.filter((b) => b.balance > 0);
+    if (positiveBalances.length === 0) return;
 
     // Settle pending cash transactions from bank with retry
     const monthStr = dayjs().format('YYYY-MM');
     await withRetries(async () => {
       try {
         await createBuzzTransactionMany(
-          pendingCash.flatMap(({ userId, amount }) => [
+          positiveBalances.flatMap(({ accountId: userId, balance: amount }) => [
             {
               type: TransactionType.Compensation,
               fromAccountType: 'cashpending',
@@ -236,7 +229,7 @@ export const creatorsProgramSettleCash = createJob(
         await logToAxiom({
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
-          pendingCash,
+          balances,
           status: 'success',
           message: 'Settled cash transactions successfully',
         });
@@ -245,7 +238,7 @@ export const creatorsProgramSettleCash = createJob(
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
           error: e,
-          pendingCash,
+          balances,
         });
 
         throw e;

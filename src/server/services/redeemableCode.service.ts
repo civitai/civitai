@@ -102,33 +102,31 @@ export async function consumeRedeemableCode({
 
   const consumedCode = await dbWrite.$transaction(
     async (tx) => {
-      const consumedCode = await tx.redeemableCode
-        .update({
-          where: {
-            code,
-            redeemedAt: null,
-            OR: [{ expiresAt: { gt: new Date() } }, { expiresAt: null }],
-          },
-          data: { redeemedAt: new Date(), userId },
-          select: {
-            code: true,
-            unitValue: true,
-            type: true,
-            userId: true,
-            priceId: true,
-            price: {
-              select: {
-                id: true,
-                currency: true,
-                interval: true,
-                product: {
-                  select: { id: true, name: true, metadata: true, provider: true },
-                },
+      const consumedCode = await tx.redeemableCode.update({
+        where: {
+          code,
+          redeemedAt: null,
+          OR: [{ expiresAt: { gt: new Date() } }, { expiresAt: null }],
+        },
+        data: { redeemedAt: new Date(), userId },
+        select: {
+          code: true,
+          unitValue: true,
+          type: true,
+          userId: true,
+          priceId: true,
+          price: {
+            select: {
+              id: true,
+              currency: true,
+              interval: true,
+              product: {
+                select: { id: true, name: true, metadata: true, provider: true },
               },
             },
           },
-        })
-        .catch(throwDbCustomError('Code does not exist, has been redeemed, or has expired'));
+        },
+      });
 
       if (consumedCode.type === RedeemableCodeType.Buzz) {
         const transactionId = `redeemable-code-${consumedCode.code}`;
