@@ -61,13 +61,18 @@ const checkFns = {
     });
   },
   async redis() {
-    return await redis
-      .ping()
-      .then((res) => res === 'PONG')
-      .catch((e) => {
-        logError({ error: e, name: 'redis', details: null });
+    try {
+      // For cluster, we need to check if it's ready first
+      const baseClient = redis as any;
+      if (baseClient.isReady === false) {
         return false;
-      });
+      }
+      const res = await redis.ping();
+      return res === 'PONG';
+    } catch (e) {
+      logError({ error: e as Error, name: 'redis', details: null });
+      return false;
+    }
   },
   async sysRedis() {
     return await sysRedis

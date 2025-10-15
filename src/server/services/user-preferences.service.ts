@@ -260,15 +260,15 @@ const getAllHiddenForUsersCached = async ({
     cachedImplicitHiddenImages,
     cachedBlockedUsers,
     cachedBlockedByUsers,
-  ] = await redis.packed.mGet([
-    REDIS_KEYS.SYSTEM.MODERATED_TAGS,
-    HiddenTags.getKey({ userId }),
-    HiddenImages.getKey({ userId }),
-    HiddenModels.getKey({ userId }),
-    HiddenUsers.getKey({ userId }),
-    ImplicitHiddenImages.getKey({ userId }),
-    BlockedUsers.getKey({ userId }),
-    BlockedByUsers.getKey({ userId }),
+  ] = await Promise.all([
+    redis.packed.get(REDIS_KEYS.SYSTEM.MODERATED_TAGS),
+    redis.packed.get(HiddenTags.getKey({ userId })),
+    redis.packed.get(HiddenImages.getKey({ userId })),
+    redis.packed.get(HiddenModels.getKey({ userId })),
+    redis.packed.get(HiddenUsers.getKey({ userId })),
+    redis.packed.get(ImplicitHiddenImages.getKey({ userId })),
+    redis.packed.get(BlockedUsers.getKey({ userId })),
+    redis.packed.get(BlockedByUsers.getKey({ userId })),
   ]);
 
   const getModerationTags = async () =>
