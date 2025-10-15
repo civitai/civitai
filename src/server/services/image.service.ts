@@ -206,10 +206,10 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
   const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
-  const kv: Record<string, string> = {};
-  for (const id of ids) kv[`${cachePrefix}${id}`] = 'false';
-  await sysRedis.packed.mSet(kv, { EX: 60 * 5 });
-  await Promise.all(Object.keys(kv).map((key) => sysRedis.expire(key as any, 600)));
+  // Set keys individually to avoid CROSSSLOT errors
+  await Promise.all(
+    ids.map((id) => sysRedis.packed.set(`${cachePrefix}${id}` as any, 'false', { EX: 60 * 5 }))
+  );
 };
 
 export const deleteImageById = async ({
@@ -2265,12 +2265,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
           cachedMap.set(id, exists);
         }
 
-        if (Object.keys(cacheUpdates).length > 0) {
-          await sysRedis.packed.mSet(cacheUpdates);
-          await Promise.all(
-            Object.keys(cacheUpdates).map((key) => sysRedis.expire(key as any, 600))
-          );
-        }
+        await Promise.all(
+          Object.entries(cacheUpdates).map(([key, value]) =>
+            sysRedis.packed.set(key as any, value, { EX: 600 })
+          )
+        );
       }
 
       // Filter hits based on existence check while preserving order
@@ -2914,12 +2913,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
           cachedMap.set(id, exists);
         }
 
-        if (Object.keys(cacheUpdates).length > 0) {
-          await sysRedis.packed.mSet(cacheUpdates);
-          await Promise.all(
-            Object.keys(cacheUpdates).map((key) => sysRedis.expire(key as any, 600))
-          );
-        }
+        await Promise.all(
+          Object.entries(cacheUpdates).map(([key, value]) =>
+            sysRedis.packed.set(key as any, value, { EX: 600 })
+          )
+        );
       }
 
       // Filter hits based on existence check while preserving order
