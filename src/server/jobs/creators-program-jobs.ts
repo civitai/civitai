@@ -244,7 +244,7 @@ export const creatorsProgramSettleCash = createJob(
         throw e;
       }
     });
-    const affectedUsers = pendingCash.map((p) => p.userId);
+    const affectedUsers = balances.map((p) => p.accountId);
 
     // Notify users of cash settlement
     await createNotification({
@@ -263,7 +263,7 @@ export const creatorsProgramSettleCash = createJob(
       data: {},
     });
 
-    return pendingCash;
+    return balances;
   }
 );
 
