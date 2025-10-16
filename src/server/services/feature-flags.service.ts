@@ -139,7 +139,7 @@ const featureFlags = createFeatureFlags({
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
-  articleImageScanning: ['dev'],
+  articleImageScanning: ['mod'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

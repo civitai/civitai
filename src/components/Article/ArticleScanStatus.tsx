@@ -10,21 +10,17 @@ import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
 import { useEffect } from 'react';
 import clsx from 'clsx';
 import { ArticleProblematicImages } from './ArticleProblematicImages';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 interface ArticleScanStatusProps {
   articleId: number;
-  enabled?: boolean;
   onComplete?: () => void;
 }
 
-export function ArticleScanStatus({
-  articleId,
-  enabled = true,
-  onComplete,
-}: ArticleScanStatusProps) {
+export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusProps) {
+  const features = useFeatureFlags();
   const { status, isLoading, error, isComplete, hasImages, progress } = useArticleScanStatus({
     articleId,
-    enabled,
   });
 
   // Call onComplete callback when scanning finishes
@@ -33,6 +29,8 @@ export function ArticleScanStatus({
       onComplete();
     }
   }, [isComplete]);
+
+  if (!features.articleImageScanning) return null;
 
   // Error state
   if (error) {

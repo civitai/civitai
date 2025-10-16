@@ -1842,6 +1842,7 @@ export interface Article {
   coverId: number | null;
   coverImage?: Image | null;
   publishedAt: Date | null;
+  contentScannedAt: Date | null;
   userId: number;
   user?: User;
   availability: Availability;

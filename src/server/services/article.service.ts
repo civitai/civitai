@@ -690,12 +690,14 @@ export const upsertArticle = async ({
   attachments,
   coverImage,
   isModerator,
+  scanContent,
   ...data
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
   nsfw?: boolean;
   metadata?: ArticleMetadata;
+  scanContent?: boolean;
 }) => {
   try {
     await throwOnBlockedLinkDomain(data.content);
@@ -789,12 +791,18 @@ export const upsertArticle = async ({
       });
 
       // Link content images for new article (creates Image entities and ImageConnections)
-      if (result.content) {
+      if (result.content && scanContent) {
         try {
           await linkArticleContentImages({
             articleId: result.id,
             content: result.content,
             userId,
+          });
+
+          // Mark article as scanned after successfully linking images
+          await dbWrite.article.update({
+            where: { id: result.id },
+            data: { contentScannedAt: new Date() },
           });
         } catch (e) {
           // Non-blocking: continue even if image linking fails, but log the error
@@ -824,12 +832,35 @@ export const upsertArticle = async ({
         status: true,
         nsfwLevel: true,
         metadata: true,
+        content: true, // Add content for change detection
       },
     });
     if (!article) throw throwNotFoundError();
 
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+    // SECURITY: Validate image scan status before allowing publish
+    // Prevent publishing articles with blocked or failed images
+    // Note: Pending images are allowed - article will remain in Processing status until scan completes
+    if (!isModerator && data.status === ArticleStatus.Published && scanContent) {
+      const scanStatus = await getArticleScanStatus({ id });
+      const hasProblematicImages = scanStatus.blocked > 0 || scanStatus.error > 0;
+
+      if (hasProblematicImages) {
+        const errorParts: string[] = [];
+        if (scanStatus.blocked > 0) {
+          errorParts.push(`${scanStatus.blocked} image(s) blocked (policy violation)`);
+        }
+        if (scanStatus.error > 0) {
+          errorParts.push(`${scanStatus.error} image(s) failed to scan`);
+        }
+
+        throw throwBadRequestError(
+          `Cannot publish article: ${errorParts.join(', ')}. Please remove or replace these images.`
+        );
+      }
+    }
 
     const republishing =
       (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
@@ -840,7 +871,7 @@ export const upsertArticle = async ({
     // Set publishedAt based on status
     // - Published: Set to now for new articles, preserve for republishing
     // - Processing: Preserve existing publishedAt if article was already published (re-scan scenario)
-    // - Unpublished: Preserve publishedAt so republishing keeps original date
+    // - Unpublished: Preserve publishedAt so republish keeps original date
     // - Draft: Clear publishedAt (never been published)
     let publishedAt: Date | null | undefined = undefined;
     if (data.status === ArticleStatus.Published) {
@@ -932,23 +963,34 @@ export const upsertArticle = async ({
 
     // Link content images (creates Image entities and ImageConnections)
     if (data.content) {
-      try {
-        await linkArticleContentImages({
-          articleId: id,
-          content: data.content,
-          userId,
-        });
-      } catch (e) {
-        // Non-blocking: continue even if image linking fails, but log the error
-        const error = e as Error;
-        logToAxiom({
-          type: 'error',
-          name: 'article-image-linking',
-          message: error.message,
-          cause: error.cause,
-          stack: error.stack,
-          articleId: result.id,
-        }).catch();
+      // OPTIMIZATION: Only process images if content actually changed
+      const hasContentChanged = article.content !== data.content;
+
+      if (hasContentChanged) {
+        try {
+          await linkArticleContentImages({
+            articleId: id,
+            content: data.content,
+            userId,
+          });
+
+          // Mark article as scanned after successfully linking images
+          await dbWrite.article.update({
+            where: { id },
+            data: { contentScannedAt: new Date() },
+          });
+        } catch (e) {
+          // Non-blocking: continue even if image linking fails, but log the error
+          const error = e as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'article-image-linking',
+            message: error.message,
+            cause: error.cause,
+            stack: error.stack,
+            articleId: result.id,
+          }).catch();
+        }
       }
     }
 
@@ -1115,7 +1157,6 @@ export async function linkArticleContentImages({
 
     // Batch create: Missing images (upsert with unique constraint handles races)
     const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
-
     const newlyCreatedImages: { id: number; url: string }[] = [];
 
     if (missingMedia.length > 0) {
@@ -1124,6 +1165,7 @@ export async function linkArticleContentImages({
           url: media.url,
           userId,
           type: media.type,
+          name: media.alt,
           ingestion: ImageIngestionStatus.Pending,
           scanRequestedAt: new Date(),
         })),
@@ -1156,13 +1198,36 @@ export async function linkArticleContentImages({
     }
 
     // Remove orphaned connections (images deleted from content)
+    const contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
+    // First, get the orphaned image IDs so we can delete the images too
+    const orphanedConnections = await tx.imageConnection.findMany({
+      where: {
+        entityType: 'Article',
+        entityId: articleId,
+        imageId: { notIn: contentImageIds },
+      },
+      select: { imageId: true },
+    });
+
+    const orphanedImageIds = orphanedConnections.map((conn) => conn.imageId);
+
+    // Delete the orphaned connections
     await tx.imageConnection.deleteMany({
       where: {
         entityType: 'Article',
         entityId: articleId,
-        imageId: { notIn: Array.from(existingUrlMap.values()).map((img) => img.id) },
+        imageId: { notIn: contentImageIds },
       },
     });
+
+    // Delete the orphaned images (no longer referenced by this article)
+    if (orphanedImageIds.length > 0) {
+      await tx.image.deleteMany({
+        where: {
+          id: { in: orphanedImageIds },
+        },
+      });
+    }
 
     const pendingExistingImages = existingImages.filter(
       (img) => img.ingestion === ImageIngestionStatus.Pending

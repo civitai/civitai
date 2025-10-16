@@ -261,8 +261,10 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
       WITH level AS (
         SELECT
           a.id,
-          bit_or(COALESCE(cover."nsfwLevel", 0)) |
-          bit_or(COALESCE(content_imgs."nsfwLevel", 0)) AS "nsfwLevel"
+          GREATEST(
+            COALESCE(cover."nsfwLevel", 0),
+            COALESCE(content_imgs."nsfwLevel", 0)
+          ) AS "nsfwLevel"
         FROM "Article" a
 
         -- Cover image (left join - may not exist)

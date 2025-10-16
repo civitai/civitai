@@ -284,15 +284,23 @@ WHERE "ingestion" = 'Scanned';
 3. Update Prisma schema to reflect existing indexes
 4. Confirm all constraints are in place before continuing implementation
 
-**1.3 Metadata Storage - Compute, Don't Cache**
+**1.3 Add Content Scanned Timestamp**
 ```prisma
 model Article {
-  metadata Json? @default("{}")
+  publishedAt      DateTime?
+  contentScannedAt DateTime?  // Last time article content was scanned for embedded images
+  metadata         Json? @default("{}")
   // ⚠️ ARCHITECTURE NOTE: Don't cache derived state (imagesPending, imagesScanned)
   // Instead, compute real-time from ImageConnection to avoid inconsistency
   // Use metadata only for non-derived info (error messages, user notes)
 }
 ```
+
+**Purpose**: The `contentScannedAt` field enables idempotent migration and prevents redundant HTML parsing:
+- **Migration Idempotency**: Filter `WHERE contentScannedAt IS NULL` to only process unscanned articles
+- **Performance**: Avoid expensive JSDOM HTML parsing on already-processed articles
+- **Consistency**: Updated on every article save (not just migration) to maintain data integrity
+- **Resume Capability**: If migration fails partway, can resume from last checkpoint
 
 ### Phase 2: HTML Image Extraction
 
@@ -677,6 +685,8 @@ upsertArticle = async ({ content, ...data }) => {
 - [x] Migration: Add enum value to database
 - [x] Update Prisma schema
 - [x] Generate new Prisma client
+- [x] Add `contentScannedAt` field to Article model
+- [ ] Run Prisma migration for `contentScannedAt` field
 
 ### Utilities
 - [ ] Create `src/utils/article-helpers.ts`
@@ -687,10 +697,10 @@ upsertArticle = async ({ content, ...data }) => {
 ### Services
 - [ ] Update `src/server/services/nsfwLevels.service.ts`
   - [ ] Modify `updateArticleNsfwLevels()` to include content images
-- [ ] Update `src/server/services/article.service.ts`
+- [x] Update `src/server/services/article.service.ts`
   - [ ] Add `updateArticleImageScanStatus()`
-  - [ ] Modify `upsertArticle()` for image linking
-  - [ ] Add `linkArticleContentImages()`
+  - [x] Modify `upsertArticle()` to set `contentScannedAt` after image linking
+  - [x] Add `linkArticleContentImages()` call with `contentScannedAt` update
 
 ### Webhooks
 - [ ] Update `src/pages/api/webhooks/image-scan-result.ts`
@@ -706,11 +716,14 @@ upsertArticle = async ({ content, ...data }) => {
   - [ ] Tooltip explaining scan wait
 
 ### Migration
-- [ ] Create `scripts/migrate-article-images.ts`
-  - [ ] Extract images from existing articles
-  - [ ] Create Image entities
-  - [ ] Create ImageConnections
-  - [ ] Trigger scans for unscanned images
+- [x] Create `scripts/migrate-article-images.ts`
+  - [x] Extract images from existing articles
+  - [x] Create Image entities
+  - [x] Create ImageConnections
+  - [x] Trigger scans for unscanned images
+  - [x] Add idempotency support with `contentScannedAt`
+  - [x] Convert to admin webhook endpoint
+  - [x] Add concurrency and batching support
 - [ ] Run migration on staging
 - [ ] Validate results
 - [ ] Run migration on production
@@ -833,4 +846,4 @@ upsertArticle = async ({ content, ...data }) => {
 - [ ] Test all possible scenarios
 - [ ] Put everything behind feature flag
 - [x] Send article notification after scan results
-- [ ] Show problematic images on article
+- [x] Show problematic images on article

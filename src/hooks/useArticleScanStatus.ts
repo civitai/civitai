@@ -5,6 +5,7 @@
  *   const { status, isLoading } = useArticleScanStatus({ articleId: 123, enabled: true });
  */
 
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 interface UseArticleScanStatusParams {
@@ -18,10 +19,11 @@ export function useArticleScanStatus({
   enabled = true,
   refetchInterval = 15000,
 }: UseArticleScanStatusParams) {
+  const features = useFeatureFlags();
   const { data, isLoading, error, refetch } = trpc.article.getScanStatus.useQuery(
     { id: articleId },
     {
-      enabled,
+      enabled: enabled && !!features.articleImageScanning,
       refetchInterval: (data) => {
         // Stop polling when all images are complete
         if (data?.allComplete) return false;
