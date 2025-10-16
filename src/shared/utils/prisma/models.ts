@@ -1628,6 +1628,7 @@ export interface Thread {
   clubPostId: number | null;
   clubPost?: ClubPost | null;
   metadata: JsonValue;
+  commentCount: number;
   comments?: CommentV2[];
   directChildren?: Thread[];
   children?: Thread[];

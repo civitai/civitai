@@ -37,7 +37,7 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
   // },
   thread: {
     select: {
-      _count: { select: { comments: true } },
+      commentCount: true,
     },
   },
 });
