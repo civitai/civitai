@@ -189,7 +189,7 @@ export default function UserBuzzDashboard() {
             .
           </Text>
           <GeneratedImagesReward />
-          {(features.creatorComp || true) && (
+          {features.creatorComp && (
             <DismissibleAlert
               title="Compensation Under Review"
               color="yellow"
