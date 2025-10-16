@@ -1199,7 +1199,8 @@ export async function linkArticleContentImages({
 
     // Remove orphaned connections (images deleted from content)
     const contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
-    // First, get the orphaned image IDs so we can delete the images too
+
+    // Get orphaned connections for this article
     const orphanedConnections = await tx.imageConnection.findMany({
       where: {
         entityType: 'Article',
@@ -1211,7 +1212,7 @@ export async function linkArticleContentImages({
 
     const orphanedImageIds = orphanedConnections.map((conn) => conn.imageId);
 
-    // Delete the orphaned connections
+    // Delete the orphaned connections (safe - only affects this article)
     await tx.imageConnection.deleteMany({
       where: {
         entityType: 'Article',
@@ -1220,13 +1221,24 @@ export async function linkArticleContentImages({
       },
     });
 
-    // Delete the orphaned images (no longer referenced by this article)
+    // SAFETY: Only delete images that have NO remaining connections to ANY entity
+    // This prevents data loss when images are shared across multiple articles/entities
     if (orphanedImageIds.length > 0) {
-      await tx.image.deleteMany({
+      const trulyOrphanedImages = await tx.image.findMany({
         where: {
           id: { in: orphanedImageIds },
+          connections: { none: {} }, // Critical check: no connections to ANY entity
         },
+        select: { id: true },
       });
+
+      if (trulyOrphanedImages.length > 0) {
+        await tx.image.deleteMany({
+          where: {
+            id: { in: trulyOrphanedImages.map((img) => img.id) },
+          },
+        });
+      }
     }
 
     const pendingExistingImages = existingImages.filter(
