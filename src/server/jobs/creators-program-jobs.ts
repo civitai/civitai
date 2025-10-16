@@ -165,7 +165,7 @@ export const creatorsProgramInviteTipalti = createJob(
       type: 'creator-program-invite-tipalti',
       invited: usersWithoutTipalti,
       status: 'success',
-      message: 'Settled cash transactions successfully',
+      message: 'Tipalti users invited successfully',
     });
   }
 );
