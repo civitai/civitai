@@ -165,7 +165,13 @@ export async function consumeRedeemableCode({
         // Do membership stuff:
         // First, fetch user membership and see their status:
         const userMembership = await tx.customerSubscription.findFirst({
-          where: { userId, buzzType: 'yellow' }, // Redeemable codes only work with yellow buzz memberships
+          where: {
+            userId,
+            buzzType: 'yellow',
+            status: {
+              in: ['active', 'trialing'],
+            },
+          }, // Redeemable codes only work with yellow buzz memberships
           select: {
             status: true,
             id: true,
@@ -338,6 +344,7 @@ export async function consumeRedeemableCode({
               [consumedProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
             },
           };
+
           await tx.customerSubscription.create({
             data: {
               id: `redeemable-code-${consumedCode.code}`,
@@ -392,7 +399,7 @@ export async function consumeRedeemableCode({
     },
     {
       // In prod it should hopefully be fast enough but better save than sorry
-      timeout: 10000, // 10 seconds timeout for the transaction
+      timeout: 30000, // 30 seconds timeout for the transaction
     }
   );
 
