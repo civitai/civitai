@@ -14,21 +14,24 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     MATCH: req.query.pattern as string,
     COUNT: 10000,
   });
-  for await (const key_ of stream) {
-    const key = key_ as RedisKeyTemplateCache;
+  for await (const keys of stream) {
+    // scanIterator yields arrays of keys in v5
+    for (const key_ of keys) {
+      const key = key_ as RedisKeyTemplateCache;
 
-    stats.total++;
+      stats.total++;
 
-    const [keyType, memoryUsage, ttl] = await Promise.all([
-      redis.type(key),
-      redis.memoryUsage(key),
-      redis.ttl(key),
-    ]);
-    if (ttl === -1) stats.no_ttl++;
+      const [keyType, memoryUsage, ttl] = await Promise.all([
+        redis.type(key),
+        redis.memoryUsage(key),
+        redis.ttl(key),
+      ]);
+      if (ttl === -1) stats.no_ttl++;
 
-    // Accumulate memory usage by type
-    if (!memoryByType[keyType]) memoryByType[keyType] = 0;
-    memoryByType[keyType] += memoryUsage ?? 0;
+      // Accumulate memory usage by type
+      if (!memoryByType[keyType]) memoryByType[keyType] = 0;
+      memoryByType[keyType] += memoryUsage ?? 0;
+    }
   }
 
   return res.status(200).json({

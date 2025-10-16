@@ -1,7 +1,8 @@
 import chunk from 'lodash-es/chunk';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
-import { commandOptions, createClient } from 'redis';
+import { createClient, createCluster } from 'redis';
+import { RESP_TYPES } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
@@ -67,11 +68,20 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     | 'type'
     | 'sCard'
   > {
+  // Cluster doesn't have scanIterator natively, we implement it manually
+  scanIterator(options?: {
+    TYPE?: string;
+    MATCH?: string;
+    COUNT?: number;
+    cursor?: string;
+  }): AsyncGenerator<string[], void, unknown>;
   packed: {
     get<T>(key: K): Promise<T | null>;
+    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     mGet<T>(keys: K[]): Promise<(T | null)[]>;
     set<T>(key: K, value: T, setOptions?: SetOptions): Promise<void>;
-    mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
+    // mSet still disabled - sets are more complex with different argument formats
+    // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
     setNX<T>(key: K, value: T): Promise<void>;
     sAdd<T>(key: K, values: T[]): Promise<void>;
     sRemove<T>(key: K, value: T): Promise<void>;
@@ -90,15 +100,16 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
       | [options: CommandType, key: K, value: T, setOptions?: SetOptions]
   ): Promise<T | null>;
   get<T = string>(...args: [key: K] | [options: CommandType, key: K]): Promise<T | null>;
+  // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
   mGet<T = string>(...args: [keys: K[]] | [options: CommandType, keys: K[]]): Promise<(T | null)[]>;
-  mSet<T = string>(
-    ...args:
-      | [records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>]
-      | [
-          options: CommandType,
-          records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>
-        ]
-  ): Promise<T>;
+  // mSet<T = string>(
+  //   ...args:
+  //     | [records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>]
+  //     | [
+  //         options: CommandType,
+  //         records: [K, RedisCommandArgument][] | K[] | Record<K, RedisCommandArgument>
+  //       ]
+  // ): Promise<T>;
   setNX<T>(key: K, value: T): Promise<boolean>;
   sAdd<T>(key: K, values: T | T[]): Promise<number>;
   sRem<T>(key: K, values: T | T[]): Promise<number>;
@@ -126,6 +137,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
       | [key: K, hashKeys: RedisCommandArgument | RedisCommandArgument[]]
       | [options: CommandType, key: K, hashKeys: RedisCommandArgument | RedisCommandArgument[]]
   ): Promise<T[]>;
+  // Wrapped to avoid CROSSSLOT errors - deletes keys individually with Promise.all when array
   del(key: K | K[]): Promise<number>;
   exists(key: K | K[]): Promise<number>;
   expire(key: K, seconds: number, mode?: 'NX' | 'XX' | 'GT' | 'LT'): Promise<boolean>;
@@ -150,6 +162,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
   ttl(key: K): Promise<number>;
   type(key: K): Promise<string>;
   setNxKeepTtlWithEx(key: K, value: string, ttl: number): Promise<boolean>;
+  withTypeMapping(mapping: Record<number, any>): any;
 }
 
 interface CustomRedisClientCache extends CustomRedisClient<RedisKeyTemplateCache> {
@@ -171,24 +184,57 @@ function getBaseClient(type: 'cache' | 'system') {
   log(`Creating Redis client (${type})`);
 
   const REDIS_URL = type === 'system' ? env.REDIS_SYS_URL : env.REDIS_URL;
+  const url = new URL(REDIS_URL);
+  const connectionUrl = `${url.protocol}//${url.host}`;
 
-  const baseClient = createClient({
-    url: REDIS_URL,
-    socket: {
-      reconnectStrategy(retries) {
-        log(`Redis reconnecting, retry ${retries}`);
-        return Math.min(retries * 100, 3000);
-      },
-      connectTimeout: env.REDIS_TIMEOUT,
+  // Shared configuration
+  const socketConfig = {
+    reconnectStrategy(retries: number) {
+      log(`Redis reconnecting, retry ${retries}`);
+      return Math.min(retries * 100, 3000);
     },
-    pingInterval: 4 * 60 * 1000,
-    disableClientInfo: true, // this is for twemproxy, DONT REMOVE
-  });
+    connectTimeout: env.REDIS_TIMEOUT,
+  };
+
+  const authConfig = {
+    username: url.username === '' ? undefined : url.username,
+    password: url.password,
+  };
+
+  const pingInterval = 4 * 60 * 1000;
+
+  // System redis is always a single node
+  // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
+  const isCluster = type === 'cache' && env.REDIS_CLUSTER;
+
+  const baseClient = isCluster
+    ? createCluster({
+        rootNodes: [
+          {
+            url: connectionUrl,
+            socket: socketConfig,
+            pingInterval,
+          },
+        ],
+        defaults: authConfig,
+      })
+    : createClient({
+        url: connectionUrl,
+        ...authConfig,
+        socket: socketConfig,
+        pingInterval,
+      });
+
   baseClient.on('error', (err: Error) => log(`Redis Error`, err));
   baseClient.on('connect', () => log('Redis connected'));
   baseClient.on('reconnecting', () => log('Redis reconnecting'));
   baseClient.on('ready', () => log('Redis ready!'));
-  baseClient.connect();
+
+  // Don't await here - let connection happen in background
+  // The client will queue commands until connected
+  baseClient.connect().catch((err) => {
+    log(`Redis connection failed`, err);
+  });
 
   return baseClient;
 }
@@ -196,29 +242,27 @@ function getBaseClient(type: 'cache' | 'system') {
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   const client = getBaseClient(type) as unknown as CustomRedisClient<K>;
 
+  // Create a separate client instance with Buffer type mapping for packed operations
+  // `withTypeMapping` creates a NEW client instance - it doesn't modify the original client.
+  // So `bufferClient` returns Buffers, while `client` still returns strings.
+  const bufferClient = client.withTypeMapping({
+    [RESP_TYPES.BLOB_STRING]: Buffer,
+  }) as CustomRedisClient<K>;
+
   client.packed = {
     async get<T>(key: K): Promise<T | null> {
-      const result = await client.get<Buffer>(commandOptions({ returnBuffers: true }), key);
+      const result = await bufferClient.get<Buffer>(key);
       return result ? unpack(result) : null;
     },
 
+    // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     async mGet<T>(keys: K[]): Promise<(T | null)[]> {
-      const results = await client.mGet<Buffer>(commandOptions({ returnBuffers: true }), keys);
+      const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
       return results.map((result) => (result ? unpack(result) : null));
     },
 
-    // TODO can i get rid of types?
-    // async set(key, value, options) {
     async set<T>(key: K, value: T, options?: SetOptions): Promise<void> {
       await client.set(key, pack(value), options);
-    },
-
-    async mSet(records: Record<K, unknown>): Promise<void> {
-      const packedRecords: [K, Buffer][] = Object.entries(records).map(([k, v]) => [
-        k as K,
-        pack(v),
-      ]);
-      await client.mSet(packedRecords);
     },
 
     async setNX<T>(key: K, value: T): Promise<void> {
@@ -230,11 +274,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     },
 
     async sPop<T>(key: K, count: number): Promise<T[]> {
-      const packedValues = await client.sPop<Buffer>(
-        commandOptions({ returnBuffers: true }),
-        key,
-        count
-      );
+      const packedValues = await bufferClient.sPop<Buffer>(key, count);
       return packedValues.map((value) => unpack(value));
     },
 
@@ -243,24 +283,17 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     },
 
     async sMembers<T>(key: K): Promise<T[]> {
-      const packedValues = await client.sMembers<Buffer>(
-        commandOptions({ returnBuffers: true }),
-        key
-      );
+      const packedValues = await bufferClient.sMembers<Buffer>(key);
       return packedValues.map((value) => unpack(value));
     },
 
     async hGet<T>(key: K, hashKey: string): Promise<T | null> {
-      const result = await client.hGet<Buffer>(
-        commandOptions({ returnBuffers: true }),
-        key,
-        hashKey
-      );
+      const result = await bufferClient.hGet<Buffer>(key, hashKey);
       return result ? unpack(result) : null;
     },
 
     async hGetAll<T>(key: K): Promise<{ [x: string]: T }> {
-      const results = await client.hGetAll<Buffer>(commandOptions({ returnBuffers: true }), key);
+      const results = await bufferClient.hGetAll<Buffer>(key);
       return Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v ? unpack(v) : null]));
     },
 
@@ -277,11 +310,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     },
 
     async hmGet<T>(key: K, hashKeys: string[]): Promise<(T | null)[]> {
-      const results = await client.hmGet<Buffer>(
-        commandOptions({ returnBuffers: true }),
-        key,
-        hashKeys
-      );
+      const results = await bufferClient.hmGet<Buffer>(key, hashKeys);
       return results.map((result) => (result ? unpack(result) : null));
     },
   };
@@ -299,6 +328,47 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       arguments: [value, ttl.toString()],
     });
     return result === 1; // 1 if set, 0 if not set
+  };
+
+  // Implement scanIterator for cluster - it doesn't exist natively on RedisCluster
+  // We need to scan each master node and yield results from all of them
+  const baseClient = client as any;
+
+  // Save reference to the original scanIterator (exists on single client, not on cluster)
+  const originalScanIterator = baseClient.scanIterator?.bind(baseClient);
+
+  client.scanIterator = async function* (options) {
+    // Check if this is a cluster client (has masters property)
+    if (baseClient.masters) {
+      // Cluster mode: iterate through all master nodes
+      const masters = await baseClient.masters;
+      for (const master of masters) {
+        const nodeClient = await baseClient.nodeClient(master);
+        yield* nodeClient.scanIterator(options);
+      }
+    } else {
+      // Single node mode: use original native scanIterator
+      yield* originalScanIterator(options);
+    }
+  };
+
+  // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually
+  const originalMGet = baseClient.mGet?.bind(baseClient);
+  client.mGet = async function (...args: any[]): Promise<any> {
+    const keys = args[0] as K[];
+    if (!Array.isArray(keys)) return originalMGet(...args);
+
+    const results = await Promise.all(keys.map((key) => client.get(key)));
+    return results;
+  };
+
+  // Wrap del to avoid CROSSSLOT errors - delete keys individually when array
+  const originalDel = baseClient.del?.bind(baseClient);
+  client.del = async function (key: K | K[]): Promise<number> {
+    if (!Array.isArray(key)) key = [key];
+
+    const results = await Promise.all(key.map((k) => originalDel(k)));
+    return results.reduce((sum, count) => sum + count, 0);
   };
 
   return client;
