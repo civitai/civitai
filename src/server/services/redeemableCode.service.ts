@@ -126,6 +126,7 @@ export async function consumeRedeemableCode({
         select: {
           code: true,
           unitValue: true,
+          redeemedAt: true,
           type: true,
           userId: true,
           priceId: true,
