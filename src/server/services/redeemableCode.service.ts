@@ -69,24 +69,38 @@ export async function consumeRedeemableCode({
   userId,
 }: ConsumeRedeemableCodeInput & { userId: number }) {
   const codeRecord = await dbWrite.redeemableCode.findUnique({
-    where: { code, redeemedAt: null },
+    where: { code },
     select: {
       code: true,
+      unitValue: true,
       type: true,
+      userId: true,
+      priceId: true,
       price: {
         select: {
+          id: true,
+          currency: true,
+          interval: true,
           product: {
-            select: {
-              provider: true,
-            },
+            select: { id: true, name: true, metadata: true, provider: true },
           },
         },
       },
+      redeemedAt: true,
     },
   });
 
   if (!codeRecord) {
     throw new Error('Code does not exist or has been redeemed');
+  }
+
+  if (codeRecord.redeemedAt) {
+    if (codeRecord.userId !== userId) {
+      throw new Error('Code does not exist or has been redeemed');
+    }
+    // let's clear user session just in case.
+    await refreshSession(userId);
+    return codeRecord; // Already redeemed by this user, return the record and do nothing.
   }
 
   if (codeRecord.type === RedeemableCodeType.Membership && !codeRecord.price) {
@@ -112,6 +126,7 @@ export async function consumeRedeemableCode({
         select: {
           code: true,
           unitValue: true,
+          redeemedAt: true,
           type: true,
           userId: true,
           priceId: true,
