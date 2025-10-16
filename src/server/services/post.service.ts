@@ -289,7 +289,10 @@ export const getPostsInfinite = async ({
   const [cursorProp, cursorDirection] = orderBy?.split(' ');
   if (cursor) {
     const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    const cursorValue = cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"' ? new Date(cursor) : Number(cursor);
+    const cursorValue =
+      cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"'
+        ? new Date(cursor)
+        : Number(cursor);
     if (cursorProp)
       AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
   }
@@ -717,7 +720,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   return result;
 };
 
-type PostQueryResult = { id: number; name: string; isCategory: boolean; postCount: number }[];
+type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
 export const getPostTags = async ({
   query,
   limit,
@@ -734,12 +737,8 @@ export const getPostTags = async ({
                              JOIN "Tag" pt ON tot."fromTagId" = pt.id
                       WHERE tot."toTagId" = t.id), t."nsfwLevel") "nsfwLevel") "nsfwLevel",
            t."isCategory",
-           COALESCE(${
-             showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
-           }, 0)::int AS                                                       "postCount"
     FROM "Tag" t
-           LEFT JOIN "TagStat" s ON s."tagId" = t.id
-           LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE ${
       showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`
     }
@@ -750,9 +749,7 @@ export const getPostTags = async ({
     LIMIT ${limit}
   `;
 
-  return (
-    !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags
-  ).sort((a, b) => b.postCount - a.postCount);
+  return !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags;
 };
 
 export const addPostTag = async ({ id: postId, name: initialName }: AddPostTagInput) => {
