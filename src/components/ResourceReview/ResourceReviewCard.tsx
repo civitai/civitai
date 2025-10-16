@@ -59,7 +59,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
           <Button radius="xl" variant="subtle" size="compact-xs">
             <Group gap={2} wrap="nowrap">
               <IconMessageCircle2 size={14} />
-              {data.thread && <Text>{abbreviateNumber(data.thread._count.comments)}</Text>}
+              {data.thread && <Text>{abbreviateNumber(data.thread.commentCount)}</Text>}
             </Group>
           </Button>
         </Group>

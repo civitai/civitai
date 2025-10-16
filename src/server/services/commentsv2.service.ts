@@ -81,14 +81,12 @@ export const deleteComment = ({ id }: { id: number }) => {
 };
 
 export const getCommentCount = async ({ entityId, entityType, hidden }: CommentConnectorInput) => {
-  return await dbRead.commentV2.count({
-    where: {
-      thread: {
-        [`${entityType}Id`]: entityId,
-      },
-      hidden,
-    },
+  const thread = await dbRead.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+    select: { commentCount: true },
   });
+
+  return thread?.commentCount ?? 0;
 };
 
 export async function getCommentsThreadDetails2({
