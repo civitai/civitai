@@ -110,6 +110,7 @@ export function RedeemCodeCard({
       await Promise.all([
         queryUtils.buzz.getAccountTransactions.invalidate(),
         queryUtils.buzz.getBuzzAccount.invalidate(),
+        queryUtils.subscriptions.getUserSubscription.invalidate(),
       ]);
 
       // Reset state after 3 seconds
@@ -133,6 +134,7 @@ export function RedeemCodeCard({
           errorMessage ||
             'There was an error processing your code. Please check the code and try again.'
         ),
+        autoClose: false,
       });
     },
   });
