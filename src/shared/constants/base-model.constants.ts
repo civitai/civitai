@@ -68,6 +68,7 @@ const baseModelConfig = [
   { name: 'SD 3.5 Large', type: 'image', group: 'SD3', hidden: true },
   { name: 'SD 3.5 Large Turbo', type: 'image', group: 'SD3', hidden: true },
   { name: 'SD 3.5 Medium', type: 'image', group: 'SD3_5M', ecosystem: 'sd3', hidden: true },
+  { name: 'Sora 2', type: 'video', group: 'Sora2', hidden: true },
   { name: 'SDXL 0.9', type: 'image', group: 'SDXL', hidden: true },
   { name: 'SDXL 1.0', type: 'image', group: 'SDXL' },
   { name: 'SDXL 1.0 LCM', type: 'image', group: 'SDXL', hidden: true },

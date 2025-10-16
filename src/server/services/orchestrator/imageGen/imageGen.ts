@@ -7,7 +7,7 @@ import type { generateImageSchema } from '~/server/schema/orchestrator/textToIma
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { imageGenConfig } from '~/shared/orchestrator/ImageGen/imageGen.config';
 
@@ -73,7 +73,7 @@ export async function createImageGen(
       nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
+      currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },
   })) as TextToImageResponse;
 

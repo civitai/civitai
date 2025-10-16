@@ -1,3 +1,4 @@
+import { openai } from './../services/ai/openai';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -578,6 +579,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
+  'Sora 2': baseLicenses['openai'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

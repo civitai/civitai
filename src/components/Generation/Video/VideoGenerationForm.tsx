@@ -37,6 +37,7 @@ import { useDebouncer } from '~/utils/debouncer';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
+import { SoraFormInput } from '~/components/Generation/Video/SoraFormInput';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -286,4 +287,5 @@ const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
   haiper: HaiperFormInput,
   mochi: MochiFormInput,
   lightricks: LightricksFormInput,
+  sora: SoraFormInput,
 };
