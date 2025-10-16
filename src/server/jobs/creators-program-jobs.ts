@@ -121,24 +121,21 @@ export const creatorsProgramInviteTipalti = createJob(
   async () => {
     const availability = getCreatorProgramAvailability();
     if (!availability) return;
-    // Send tipalti invite to users with $50+ in cash without a tipalti account
-    const usersOverThreshold = await clickhouse!.$query<{ userId: number; balance: number }>`
-      WITH affected AS (
-        SELECT DISTINCT toAccountId as id
-        FROM buzzTransactions
-        WHERE toAccountType = 'cash-pending'
-        AND date > subtractDays(now(), 1)
-      )
-      SELECT
-        toAccountId as "userId",
-        SUM(if(toAccountType = 'cash-pending' OR (toAccountType = 'cash-settled' AND fromAccountType != 'cash-pending'), amount, 0)) as balance
-      FROM buzzTransactions
-      WHERE toAccountType IN ('cash-pending', 'cash-settled')
-        AND toAccountId IN (SELECT id FROM affected)
-      GROUP BY toAccountId
-      HAVING balance > ${MIN_WITHDRAWAL_AMOUNT};
-    `;
-    const userIdsOverThreshold = usersOverThreshold.map((u) => u.userId);
+    const participants = await getPoolParticipantsV2(
+      dayjs().subtract(1, 'months').toDate(),
+      true,
+      'yellow'
+    );
+    if (participants.length === 0) return;
+    const balances = await getAccountsBalances({
+      accountIds: participants.map((p) => p.userId),
+      accountTypes: ['cashsettled'],
+    });
+
+    const userIdsOverThreshold = balances
+      .filter((b) => b.balance > MIN_WITHDRAWAL_AMOUNT)
+      .map((u) => u.accountId);
+
     const usersWithTipalti = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT
         "userId"
@@ -161,6 +158,14 @@ export const creatorsProgramInviteTipalti = createJob(
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},
+    });
+
+    await logToAxiom({
+      name: 'creator-program-invite-tipalti',
+      type: 'creator-program-invite-tipalti',
+      invited: usersWithoutTipalti,
+      status: 'success',
+      message: 'Tipalti users invited successfully',
     });
   }
 );

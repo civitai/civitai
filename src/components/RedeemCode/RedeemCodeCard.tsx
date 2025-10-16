@@ -9,6 +9,7 @@ import classes from './RedeemCodeCard.module.scss';
 import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
+import { formatDate } from '~/utils/date-helpers';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -53,6 +54,7 @@ interface RedeemState {
   code: string;
   successMessage?: string;
   showSuccessModal?: boolean;
+  redeemedAt?: Date;
 }
 
 export function RedeemCodeCard({
@@ -105,15 +107,17 @@ export function RedeemCodeCard({
         code: '',
         successMessage: message,
         showSuccessModal: true,
+        redeemedAt: consumedCode.redeemedAt ?? new Date(),
       });
 
       await Promise.all([
         queryUtils.buzz.getAccountTransactions.invalidate(),
         queryUtils.buzz.getBuzzAccount.invalidate(),
+        queryUtils.subscriptions.getUserSubscription.invalidate(),
       ]);
 
       // Reset state after 3 seconds
-      setTimeout(() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }), 3000);
+      setTimeout(() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }), 5000);
     },
     onError: (error) => {
       setRedeemState((prev) => ({ ...prev, status: 'idle' }));
@@ -133,6 +137,7 @@ export function RedeemCodeCard({
           errorMessage ||
             'There was an error processing your code. Please check the code and try again.'
         ),
+        autoClose: false,
       });
     },
   });
@@ -246,9 +251,16 @@ export function RedeemCodeCard({
             align="center"
             justify="center"
           >
-            <Text size="xl" fw={500} ta="center">
-              {redeemState.successMessage || 'Code redeemed successfully'}
-            </Text>
+            <Stack>
+              <Text size="xl" fw={500} ta="center">
+                {redeemState.successMessage || 'Code redeemed successfully'}
+              </Text>
+              {redeemState.redeemedAt && (
+                <Text size="sm" c="dimmed" ta="center">
+                  Redeemed on {formatDate(redeemState.redeemedAt)}
+                </Text>
+              )}
+            </Stack>
           </SuccessAnimation>
         </div>
       </Modal>

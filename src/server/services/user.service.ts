@@ -816,7 +816,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
       const allSubscriptions = await dbWrite.customerSubscription.findMany({
         where: {
           userId,
-          status: { notIn: ['canceled'] },
+          status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
         },
         include: {
           product: true,

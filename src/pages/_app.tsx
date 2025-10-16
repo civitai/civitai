@@ -74,6 +74,7 @@ import 'mantine-react-table/styles.css'; //import MRT styles
 import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
+import { type ColorDomain, getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 applyNodeOverrides();
 
@@ -89,7 +90,7 @@ type CustomAppProps = {
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
-  allowMatureContent: boolean;
+  domain: ColorDomain;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -105,7 +106,7 @@ function MyApp(props: CustomAppProps) {
       hasAuthCookie,
       settings,
       region,
-      allowMatureContent,
+      domain,
       ...pageProps
     },
   } = props;
@@ -138,7 +139,7 @@ function MyApp(props: CustomAppProps) {
       canIndex={canIndex}
       settings={settings}
       region={region}
-      allowMatureContent={allowMatureContent}
+      domain={domain}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -289,8 +290,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
   }
-  const allowMatureContent =
-    appContext.ctx.req?.headers.host !== env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN && !flags.isGreen;
+  const domain = getRequestDomainColor(request);
 
   return {
     pageProps: {
@@ -305,7 +305,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       seed: Date.now(),
       hasAuthCookie,
       region,
-      allowMatureContent,
+      domain,
       // @ts-ignore
       host: appContext.ctx.req?.headers.host,
     },

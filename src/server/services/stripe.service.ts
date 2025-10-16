@@ -31,7 +31,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
-const baseUrl = getBaseUrl();
+const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
 
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {

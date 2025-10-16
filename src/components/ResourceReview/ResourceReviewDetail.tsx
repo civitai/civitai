@@ -67,7 +67,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     );
   if (!data || isBlocked) return <NoContent />;
 
-  const commentCount = data.thread?._count.comments ?? 0;
+  const commentCount = data.thread?.commentCount ?? 0;
 
   const isThumbsUp = data.recommended === true;
   const isThumbsDown = data.recommended === false;

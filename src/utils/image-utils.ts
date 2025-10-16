@@ -56,7 +56,10 @@ export async function createImageElement(src: string | Blob | File) {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.addEventListener('load', () => resolve(img));
-    img.addEventListener('error', (error) => reject(error));
+    img.addEventListener('error', (error) => {
+      console.error('failed to get image properties');
+      reject(error);
+    });
     img.src = objectUrl;
   });
 }

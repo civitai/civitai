@@ -150,7 +150,7 @@ export const getResourceReviewsInfinite = async ({
       id: true,
       thread: {
         select: {
-          _count: { select: { comments: true } },
+          commentCount: true,
         },
       },
       modelId: true,
@@ -413,13 +413,9 @@ export const getPagedResourceReviews = async ({
       --   FROM "ResourceReviewHelper" rrh
       --   WHERE rrh."resourceReviewId" = rr.id
       -- ) "imageCount",
-      (
-        SELECT COUNT(*)::int
-        FROM "Thread" t
-        JOIN "CommentV2" c ON c."threadId" = t.id
-        WHERE t."reviewId" = rr.id
-      ) "commentCount"
+      COALESCE(t."commentCount", 0)::int as "commentCount"
     FROM "ResourceReview" rr
+    LEFT JOIN "Thread" t ON t."reviewId" = rr.id
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC
     LIMIT ${limit}

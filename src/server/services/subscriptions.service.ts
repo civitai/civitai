@@ -131,7 +131,11 @@ export const getUserSubscription = async ({
     },
   });
 
-  if (!subscription || subscription.status === 'canceled') return null;
+  if (
+    !subscription ||
+    ['canceled', 'incomplete_expired', 'past_due', 'unpaid'].some((s) => s === subscription.status)
+  )
+    return null;
 
   const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
 
@@ -163,7 +167,7 @@ export const getAllUserSubscriptions = async (userId: number) => {
   const subscriptions = await dbWrite.customerSubscription.findMany({
     where: {
       userId,
-      status: { notIn: ['canceled'] },
+      status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
     },
     select: {
       id: true,
