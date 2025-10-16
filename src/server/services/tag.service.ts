@@ -218,13 +218,17 @@ export const getTags = async ({
       models: withModels ? models[t.id] ?? [] : undefined,
     })
   );
-  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
-    SELECT COUNT(*)::int count
-    FROM "Tag" t
-    WHERE ${Prisma.join(AND, ' AND ')}
-  `;
 
-  return { items, count };
+  // Removed 2025/10/16 because this is super expensive and
+  // Nothing actually supports paging tags anyway...
+
+  // const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+  //   SELECT COUNT(*)::int count
+  //   FROM "Tag" t
+  //   WHERE ${Prisma.join(AND, ' AND ')}
+  // `;
+
+  return { items };
 };
 
 // #region [tag voting]
@@ -712,7 +716,7 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
 
   // Bust cache for affected images
   if (affectedImages.length > 0) {
-    const imageIds = affectedImages.map(x => x.imageId);
+    const imageIds = affectedImages.map((x) => x.imageId);
     await imageTagsCache.bust(imageIds);
   }
 };
