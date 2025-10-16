@@ -42,20 +42,9 @@ export const getHomeBlocksHandler = async ({
 
   try {
     const _homeBlocks = await getHomeBlocks({
-      select: {
-        id: true,
-        metadata: true,
-        type: true,
-        userId: true,
-        sourceId: true,
-        source: {
-          select: {
-            userId: true,
-          },
-        },
-      },
       userId: ctx.user?.id,
       ownedOnly,
+      includeSource: true,
     });
 
     let homeBlocks = _homeBlocks.filter((homeBlock) => {
@@ -78,19 +67,8 @@ export const getHomeBlocksHandler = async ({
     // User might be on a diff. domain that doesn't allow their blocks and we should be able to figure this one out on our end:
     if (homeBlocks.length === 0 && systemHomeBlockIds) {
       homeBlocks = await getHomeBlocks({
-        select: {
-          id: true,
-          metadata: true,
-          type: true,
-          userId: true,
-          sourceId: true,
-          source: {
-            select: {
-              userId: true,
-            },
-          },
-        },
         ids: systemHomeBlockIds,
+        includeSource: true,
       });
     }
 
@@ -137,7 +115,10 @@ export const getSystemHomeBlocksHandler = async ({
       // Now check if it's a system home block and the domain allows to show it:
       return (systemHomeBlockIds ?? []).includes(homeBlock.id);
     });
-    return homeBlocks;
+    return homeBlocks.map((homeBlock) => ({
+      ...homeBlock,
+      metadata: homeBlock.metadata as HomeBlockMetaSchema,
+    }));
   } catch (error) {
     throw throwDbError(error);
   }

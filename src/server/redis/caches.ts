@@ -708,6 +708,52 @@ export const imageMetricsCache: Pick<
   },
 };
 
+type ArticleStatLookup = {
+  articleId: number;
+  favoriteCount: number;
+  collectedCount: number;
+  commentCount: number;
+  likeCount: number;
+  dislikeCount: number;
+  heartCount: number;
+  laughCount: number;
+  cryCount: number;
+  viewCount: number;
+  tippedAmountCount: number;
+};
+
+export const articleStatCache = createCachedObject<ArticleStatLookup>({
+  key: REDIS_KEYS.CACHES.ARTICLE_STATS,
+  idKey: 'articleId',
+  ttl: CacheTTL.hour,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const articleIds = Array.isArray(ids) ? ids : [ids];
+    if (articleIds.length === 0) return {};
+
+    // Query ArticleMetric table directly for AllTime metrics
+    const stats = await db.$queryRaw<ArticleStatLookup[]>`
+      SELECT
+        "articleId",
+        "favoriteCount",
+        "collectedCount",
+        "commentCount",
+        "likeCount",
+        "dislikeCount",
+        "heartCount",
+        "laughCount",
+        "cryCount",
+        "viewCount",
+        "tippedAmountCount"
+      FROM "ArticleMetric"
+      WHERE "articleId" IN (${Prisma.join(articleIds)})
+        AND "timeframe" = 'AllTime'::"MetricTimeframe"
+    `;
+
+    return Object.fromEntries(stats.map((x) => [x.articleId, x]));
+  },
+});
+
 type UserFollowsCacheItem = {
   userId: number;
   follows: number[];

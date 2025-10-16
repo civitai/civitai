@@ -6,7 +6,8 @@ import { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { userContentOverviewCache, articleStatCache } from '~/server/redis/caches';
+import { logToAxiom } from '~/server/logging/client';
 import type {
   ArticleMetadata,
   GetInfiniteArticlesSchema,
@@ -66,20 +67,6 @@ type ArticleRaw = {
   availability: Availability;
   userId: number | null;
   status: ArticleStatus;
-  stats:
-    | {
-        favoriteCount: number;
-        collectedCount: number;
-        commentCount: number;
-        likeCount: number;
-        dislikeCount: number;
-        heartCount: number;
-        laughCount: number;
-        cryCount: number;
-        viewCount: number;
-        tippedAmountCount: number;
-      }
-    | undefined;
   tags: {
     tag: {
       id: number;
@@ -105,6 +92,25 @@ type ArticleRaw = {
     };
   }[];
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+};
+
+const getArticleStatsObject = async (data: { id: number }[]) => {
+  try {
+    return await articleStatCache.fetch(data.map((d) => d.id));
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getArticleStats',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'article-stats'
+    ).catch();
+    return {};
+  }
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
@@ -352,7 +358,6 @@ export const getArticles = async ({
     const queryFrom = Prisma.sql`
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
-      LEFT JOIN "ArticleStat" stats ON stats."articleId" = a.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
       ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
       WHERE ${Prisma.join(AND, ' AND ')}
@@ -374,19 +379,6 @@ export const getArticles = async ({
         a."availability",
         a."userId",
         a.status,
-        ${Prisma.raw(`
-        jsonb_build_object(
-          'favoriteCount', stats."favoriteCount${period}",
-          'collectedCount', stats."collectedCount${period}",
-          'commentCount', stats."commentCount${period}",
-          'likeCount', stats."likeCount${period}",
-          'dislikeCount', stats."dislikeCount${period}",
-          'heartCount', stats."heartCount${period}",
-          'cryCount', stats."cryCount${period}",
-          'viewCount', stats."viewCount${period}",
-          'tippedAmountCount', stats."tippedAmountCount${period}"
-        ) as "stats",
-        `)}
         (
           SELECT COALESCE(
             jsonb_agg(
@@ -460,6 +452,9 @@ export const getArticles = async ({
       ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
       : {};
 
+    // Fetch article stats separately
+    const articleStats = await getArticleStatsObject(articles);
+
     const items = articles
       .filter((a) => {
         // This take prio over mod status just so mods can see the same as users.
@@ -468,10 +463,11 @@ export const getArticles = async ({
 
         return true;
       })
-      .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
+      .map(({ tags, user, userCosmetics, cursorId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const coverImage = coverImages.find((x) => x.id === article.coverId);
+        const match = articleStats[article.id];
 
         return {
           ...article,
@@ -479,7 +475,18 @@ export const getArticles = async ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
           })),
-          stats,
+          stats: {
+            favoriteCount: match?.favoriteCount ?? 0,
+            collectedCount: match?.collectedCount ?? 0,
+            commentCount: match?.commentCount ?? 0,
+            likeCount: match?.likeCount ?? 0,
+            dislikeCount: match?.dislikeCount ?? 0,
+            heartCount: match?.heartCount ?? 0,
+            laughCount: match?.laughCount ?? 0,
+            cryCount: match?.cryCount ?? 0,
+            viewCount: match?.viewCount ?? 0,
+            tippedAmountCount: match?.tippedAmountCount ?? 0,
+          },
           user: {
             ...u,
             profilePicture,

@@ -12,6 +12,7 @@ import {
   getMetricJson,
   snippets,
 } from '~/server/metrics/metric-helpers';
+import { articleStatCache } from '~/server/redis/caches';
 
 const log = createLogger('metrics:article');
 
@@ -40,6 +41,11 @@ export const articleMetrics = createMetricProcessor({
         action: SearchIndexUpdateQueueAction.Update,
       }))
     );
+
+    // Bust article stat cache for all affected articles
+    //---------------------------------------
+    log('bust article stat cache', ctx.affected.size, 'articles');
+    await articleStatCache.bust([...ctx.affected]);
   },
   async clearDay(ctx) {
     await executeRefresh(ctx)`
