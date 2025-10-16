@@ -344,6 +344,7 @@ export async function consumeRedeemableCode({
               [consumedProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
             },
           };
+
           await tx.customerSubscription.create({
             data: {
               id: `redeemable-code-${consumedCode.code}`,
@@ -398,7 +399,7 @@ export async function consumeRedeemableCode({
     },
     {
       // In prod it should hopefully be fast enough but better save than sorry
-      timeout: 10000, // 10 seconds timeout for the transaction
+      timeout: 30000, // 30 seconds timeout for the transaction
     }
   );
 
