@@ -1,3 +1,5 @@
+import { BuzzClientAccount } from '@civitai/client';
+
 export enum TransactionType {
   Tip = 0,
   Dues = 1,
@@ -77,6 +79,13 @@ export const BuzzType = createBuzzTypes({
   red: 'red',
 });
 
+const BuzzClientAccountMap: Record<BuzzSpendType, BuzzClientAccount> = {
+  blue: BuzzClientAccount.BLUE,
+  green: BuzzClientAccount.GREEN,
+  yellow: BuzzClientAccount.YELLOW,
+  red: BuzzClientAccount.FAKE_RED,
+};
+
 const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
   blue: { type: 'spend', value: 'Generation' },
   green: { type: 'spend', value: 'Green', bankable: true, purchasable: true },
@@ -135,6 +144,15 @@ export class BuzzTypes {
       throw new Error(`unsupported buzz type: ${value}`);
     return type as BuzzSpendType;
   }
+  static toOrchestratorType(value: BuzzSpendType): BuzzClientAccount;
+  static toOrchestratorType(value: BuzzSpendType[]): BuzzClientAccount[];
+  static toOrchestratorType(
+    value: BuzzSpendType | BuzzSpendType[]
+  ): BuzzClientAccount | BuzzClientAccount[] {
+    if (Array.isArray(value)) return value.map((x) => BuzzClientAccountMap[x]);
+    return BuzzClientAccountMap[value];
+  }
+
   static getApiTransaction<
     T extends { fromAccountType?: BuzzAccountType; toAccountType?: BuzzAccountType }
   >(transaction: T) {

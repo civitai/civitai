@@ -562,7 +562,7 @@ function BlockedBlocks(props: {
   return (
     <>
       {items.map(({ value, count }) => {
-        const message = imageBlockedReasonMap[value];
+        const message = imageBlockedReasonMap[value] ?? value;
 
         return (
           <TwCard

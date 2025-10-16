@@ -12,7 +12,7 @@ import {
 } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -143,7 +143,7 @@ export async function createTextToImage(
       nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent: allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
+      currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },
   })) as TextToImageResponse;
 
