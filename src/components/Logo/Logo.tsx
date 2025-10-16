@@ -6,6 +6,7 @@ import { getThanksgivingDate } from '~/utils/date-helpers';
 import { NextLink } from '~/components/NextLink/NextLink';
 import clsx from 'clsx';
 import styles from './Logo.module.scss';
+import { useAppContext } from '~/providers/AppProvider';
 
 const gradients = {
   blue: {
@@ -45,9 +46,10 @@ const day = today.getDate();
 const thanksgivingDay = getThanksgivingDate(year).getDate();
 
 export function Logo() {
+  const { domain } = useAppContext();
   const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
   const holiday = useMemo(() => {
-    if (!showHoliday) return null;
+    if (!showHoliday || domain.green) return null;
 
     // Halloween
     if (month === 9) return 'halloween';

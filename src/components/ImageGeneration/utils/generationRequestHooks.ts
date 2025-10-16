@@ -122,17 +122,18 @@ export function useGetTextToImageRequests(
                 false) as boolean;
               const images = imageFilter({ step, tags }).map((image) => {
                 if (image.blockedReason === 'none') image.blockedReason = null;
-                if (!image.blockedReason) {
-                  if (isPrivateGeneration && isPrivateMature(image.nsfwLevel)) {
-                    image.blockedReason = 'privateGen';
-                  } else if (isMature(image.nsfwLevel)) {
-                    if (!allowMatureContent) {
-                      image.blockedReason = 'siteRestricted';
-                    } else if (!showNsfw) {
-                      image.blockedReason = 'enableNsfw';
-                    } else if (workflow.allowMatureContent === false) {
-                      image.blockedReason = 'canUpgrade';
-                    }
+
+                if (image.blockedReason) return image;
+
+                if (isPrivateGeneration && isPrivateMature(image.nsfwLevel)) {
+                  image.blockedReason = 'privateGen';
+                } else if (isMature(image.nsfwLevel)) {
+                  if (!allowMatureContent) {
+                    image.blockedReason = 'siteRestricted';
+                  } else if (!showNsfw) {
+                    image.blockedReason = 'enableNsfw';
+                  } else if (workflow.allowMatureContent === false) {
+                    image.blockedReason = 'canUpgrade';
                   }
                 }
 
