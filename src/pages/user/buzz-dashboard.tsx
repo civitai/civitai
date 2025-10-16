@@ -194,8 +194,8 @@ export default function UserBuzzDashboard() {
               title="Compensation Under Review"
               color="yellow"
               id="compensation-issues-10-15-2025"
-              my="md"
               storage="sessionStorage"
+              mb="-md"
             >
               <p>
                 We&rsquo;re actively reviewing reports related to creator compensation for October
