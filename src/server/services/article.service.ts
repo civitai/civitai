@@ -475,18 +475,20 @@ export const getArticles = async ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
           })),
-          stats: {
-            favoriteCount: match?.favoriteCount ?? 0,
-            collectedCount: match?.collectedCount ?? 0,
-            commentCount: match?.commentCount ?? 0,
-            likeCount: match?.likeCount ?? 0,
-            dislikeCount: match?.dislikeCount ?? 0,
-            heartCount: match?.heartCount ?? 0,
-            laughCount: match?.laughCount ?? 0,
-            cryCount: match?.cryCount ?? 0,
-            viewCount: match?.viewCount ?? 0,
-            tippedAmountCount: match?.tippedAmountCount ?? 0,
-          },
+          stats: match
+            ? {
+                favoriteCount: match.favoriteCount ?? 0,
+                collectedCount: match.collectedCount ?? 0,
+                commentCount: match.commentCount ?? 0,
+                likeCount: match.likeCount ?? 0,
+                dislikeCount: match.dislikeCount ?? 0,
+                heartCount: match.heartCount ?? 0,
+                laughCount: match.laughCount ?? 0,
+                cryCount: match.cryCount ?? 0,
+                viewCount: match.viewCount ?? 0,
+                tippedAmountCount: match.tippedAmountCount ?? 0,
+              }
+            : undefined,
           user: {
             ...u,
             profilePicture,
