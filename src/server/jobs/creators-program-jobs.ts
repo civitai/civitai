@@ -159,6 +159,14 @@ export const creatorsProgramInviteTipalti = createJob(
       target: SignalMessages.CashInvalidator,
       data: {},
     });
+
+    await logToAxiom({
+      name: 'creator-program-invite-tipalti',
+      type: 'creator-program-invite-tipalti',
+      invited: usersWithoutTipalti,
+      status: 'success',
+      message: 'Settled cash transactions successfully',
+    });
   }
 );
 
