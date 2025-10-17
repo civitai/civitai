@@ -108,6 +108,11 @@ export async function getSystemTags() {
   return tags;
 }
 
+export async function getReplacedTagIds(): Promise<number[]> {
+  const tagRules = await getTagRules();
+  return tagRules.filter((rule) => rule.type === 'Replace').map((rule) => rule.toId);
+}
+
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
   const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
   if (cachedPermissions) return JSON.parse(cachedPermissions);

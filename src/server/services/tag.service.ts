@@ -18,7 +18,7 @@ import type {
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
 import { modelTagCompositeSelect } from '~/server/selectors/tag.selector';
-import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
+import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   HiddenImages,
@@ -99,7 +99,10 @@ export const getTags = async ({
 
   // Exclude replaced tags
   // Yeah, it's a little weird that the toTagId is what we exclude, but it's for a consistent hierarchy elsewhere...
-  AND.push(Prisma.sql`t.id NOT IN (SELECT "toTagId" FROM "TagsOnTags" WHERE type = 'Replace')`);
+  const replacedTagIds = await getReplacedTagIds();
+  if (replacedTagIds.length > 0) {
+    AND.push(Prisma.sql`t.id NOT IN (${Prisma.join(replacedTagIds)})`);
+  }
 
   if (query) AND.push(Prisma.sql`t."name" LIKE ${query + '%'}`);
   else {
@@ -660,6 +663,9 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
             : `AND "fromTagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
         }
     `);
+
+    // Bust cache for tag rules (since we can't easily check the type)
+    await redis.del(REDIS_KEYS.SYSTEM.TAG_RULES);
   }
 };
 
