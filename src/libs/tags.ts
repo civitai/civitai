@@ -57,6 +57,7 @@ export const tagsNeedingReview = [
   'female child',
   'male child',
   'oppai loli',
+  'child on child',
 ];
 export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
   Rekognition: [
