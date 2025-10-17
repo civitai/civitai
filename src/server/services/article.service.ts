@@ -1249,7 +1249,7 @@ export async function linkArticleContentImages({
     // Queue newly created images for immediate ingestion
     if (imagesToIngest.length > 0) {
       // TODO.articleImageScan: remove the lowPriority flag
-      await ingestImageBulk({ images: imagesToIngest, lowPriority: false, tx }).catch((error) => {
+      await ingestImageBulk({ images: imagesToIngest, tx }).catch((error) => {
         // Log error but don't fail the article operation
         handleLogError(error, 'article-image-ingestion', {
           articleId,
@@ -1274,7 +1274,12 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   pending: number;
   allComplete: boolean;
   images: {
-    blocked: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+    blocked: Array<{
+      id: number;
+      url: string;
+      ingestion: ImageIngestionStatus;
+      blockedFor: string | null;
+    }>;
     error: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
     pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
   };
@@ -1284,7 +1289,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       entityId: id,
       entityType: 'Article',
     },
-    include: { image: { select: { id: true, url: true, ingestion: true } } },
+    include: { image: { select: { id: true, url: true, ingestion: true, blockedFor: true } } },
   });
 
   const total = connections.length;

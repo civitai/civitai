@@ -10,7 +10,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 interface ArticleProblematicImagesProps {
-  blockedImages: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+  blockedImages: Array<{
+    id: number;
+    url: string;
+    ingestion: ImageIngestionStatus;
+    blockedFor: string | null;
+  }>;
   errorImages: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
 }
 
@@ -42,9 +47,6 @@ export function ArticleProblematicImages({
                 Blocked Images ({blockedImages.length}) - Policy Violation
               </Text>
             </Group>
-            <Text size="xs" c="dimmed">
-              These images violate content policies (NSFW/inappropriate content detected)
-            </Text>
             <Stack gap="sm">
               {blockedImages.map((image) => (
                 <Paper key={image.id} p="xs" withBorder className="bg-red-1 dark:bg-red-9/20">
@@ -57,9 +59,14 @@ export function ArticleProblematicImages({
                         alt="Blocked image (removed for policy violation)"
                       />
                     </div>
-                    <Text size="xs" c="dimmed">
-                      Image ID: {image.id}
-                    </Text>
+                    <Stack gap={4} className="flex-1">
+                      <Text size="xs" fw={500} c="red.7">
+                        Blocked: {image.blockedFor || 'Policy violation'}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Image ID: {image.id}
+                      </Text>
+                    </Stack>
                   </Group>
                 </Paper>
               ))}
