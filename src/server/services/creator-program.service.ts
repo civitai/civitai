@@ -98,15 +98,22 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
-      // Get tiers for the specific buzz type
+      // Get the highest tier for each user across all active subscriptions (regardless of buzzType)
       const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
-        SELECT
+        SELECT DISTINCT ON (cs."userId")
           cs."userId",
           (p.metadata->>'tier') as tier
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
         WHERE cs."userId" IN (${ids.join(',')})
-          AND cs."buzzType" = '${buzzType}';
+        ORDER BY cs."userId",
+          CASE (p.metadata->>'tier')
+            WHEN 'gold' THEN 4
+            WHEN 'silver' THEN 3
+            WHEN 'bronze' THEN 2
+            WHEN 'founder' THEN 1
+            ELSE 0
+          END DESC;
       `);
 
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
