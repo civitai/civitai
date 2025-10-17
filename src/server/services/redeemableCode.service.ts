@@ -168,9 +168,6 @@ export async function consumeRedeemableCode({
           where: {
             userId,
             buzzType: 'yellow',
-            status: {
-              in: ['active', 'trialing'],
-            },
           }, // Redeemable codes only work with yellow buzz memberships
           select: {
             status: true,
