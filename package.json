@@ -30,6 +30,7 @@
     "db:pull": "prisma db pull",
     "db:push": "prisma db push",
     "db:migrate": "node scripts/prisma-migrate-with-views-workaround.mjs",
+    "db:migrate:empty": "node scripts/create-empty-migration.mjs",
     "db:applied": "node scripts/prisma-mark-migration-applied.mjs",
     "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p && npm run db:program",
     "db:program": "node scripts/prisma-prepare-programmability.mjs",
