@@ -1262,11 +1262,7 @@ export const getAllImages = async (
       -- Images with nsfwLevel >= 4 (R-XXX) cannot use base models with restricted licenses
       AND (
         (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-        OR NOT EXISTS (
-          SELECT 1
-          FROM "RestrictedImagesByBaseModel" ribm
-          WHERE ribm."imageId" = i.id
-        )
+        OR NOT i."modelRestricted"
       )
   `;
 
@@ -3365,11 +3361,7 @@ export const getImagesForModelVersion = async ({
           AND ${Prisma.join(imageWhere, ' AND ')}
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT EXISTS (
-              SELECT 1
-              FROM "RestrictedImagesByBaseModel" ribm
-              WHERE ribm."imageId" = i.id
-            )
+            OR NOT i."modelRestricted"
           )
         ORDER BY i."postId", i.index
         LIMIT ${imagesPerVersion}
@@ -3640,11 +3632,7 @@ export const getImagesForPosts = async ({
     WHERE ${Prisma.join(imageWhere, ' AND ')}
       AND (
         (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-        OR NOT EXISTS (
-          SELECT 1
-          FROM "RestrictedImagesByBaseModel" ribm
-          WHERE ribm."imageId" = i.id
-        )
+        OR NOT i."modelRestricted"
       )
     ORDER BY i.index ASC
   `;
@@ -4142,11 +4130,7 @@ export const getEntityCoverImage = async ({
           AND i."needsReview" IS NULL
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT EXISTS (
-              SELECT 1
-              FROM "RestrictedImagesByBaseModel" ribm
-              WHERE ribm."imageId" = i.id
-            )
+            OR NOT i."modelRestricted"
           )
           ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
@@ -4172,11 +4156,7 @@ export const getEntityCoverImage = async ({
           AND i."needsReview" IS NULL
           AND (
             (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT EXISTS (
-              SELECT 1
-              FROM "RestrictedImagesByBaseModel" ribm
-              WHERE ribm."imageId" = i.id
-            )
+            OR NOT i."modelRestricted"
           )
           ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
@@ -4232,11 +4212,7 @@ export const getEntityCoverImage = async ({
             AND i."needsReview" IS NULL
             AND (
               (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-              OR NOT EXISTS (
-                SELECT 1
-                FROM "RestrictedImagesByBaseModel" ribm
-                WHERE ribm."imageId" = i.id
-              )
+              OR NOT i."modelRestricted"
             )
           ORDER BY e."entityId", i."postId", i.index
         ) t
