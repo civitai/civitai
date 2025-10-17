@@ -85,3 +85,5 @@ src/pages/api/dev-local/*
 
 # LLM
 /.serena/
+
+docs/working/
