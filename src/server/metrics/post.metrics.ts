@@ -12,6 +12,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getJobDate } from '~/server/jobs/job';
 import { capitalize } from '~/utils/string-helpers';
 import type { Dayjs } from 'dayjs';
+import { postStatCache } from '~/server/redis/caches';
 
 const log = createLogger('metrics:post');
 
@@ -132,6 +133,14 @@ export const postMetrics = createMetricProcessor({
       });
 
       await limitConcurrency(ageGroupTasks, 10);
+    }
+
+    // Bust post stat cache for all affected posts
+    //---------------------------------------
+    const affectedPostIds = Object.keys(ctx.updates).map((id) => parseInt(id, 10));
+    log('bust post stat cache', affectedPostIds.length, 'posts');
+    if (affectedPostIds.length > 0) {
+      await postStatCache.bust(affectedPostIds);
     }
   },
   async clearDay() {

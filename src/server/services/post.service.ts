@@ -8,7 +8,7 @@ import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
+import { postStatCache, thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
@@ -93,17 +93,38 @@ type GetAllPostsRaw = {
   collectionId: number | null;
   availability: Availability;
   detail?: string | null;
-  stats: {
+  stats?: {
     commentCount: number;
     likeCount: number;
     dislikeCount: number;
     heartCount: number;
     laughCount: number;
     cryCount: number;
+    collectedCount: number;
   } | null;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
+
+const getPostStatsObject = async (data: { id: number }[]) => {
+  try {
+    return await postStatCache.fetch(data.map((d) => d.id));
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getPostStats',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'civitai-prod'
+    );
+    return {};
+  }
+};
+
 export const getPostsInfinite = async ({
   limit,
   cursor,
@@ -341,14 +362,6 @@ export const getPostsInfinite = async ({
       p."collectionId",
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
       p."availability",
-      jsonb_build_object(
-        'cryCount', COALESCE(pm."cryCount", 0),
-        'laughCount', COALESCE(pm."laughCount", 0),
-        'likeCount', COALESCE(pm."likeCount", 0),
-        'dislikeCount', COALESCE(pm."dislikeCount", 0),
-        'heartCount', COALESCE(pm."heartCount", 0),
-        'commentCount', COALESCE(pm."commentCount", 0)
-      ) "stats",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     JOIN "User" u ON u.id = p."userId"
@@ -378,6 +391,9 @@ export const getPostsInfinite = async ({
     const nextItem = postsRaw.pop();
     nextCursor = nextItem?.cursorId;
   }
+
+  // Fetch post stats from cache
+  const postStats = postsRaw.length > 0 ? await getPostStatsObject(postsRaw) : {};
 
   const images = postsRaw.length
     ? await getImagesForPosts({
@@ -460,7 +476,7 @@ export const getPostsInfinite = async ({
 
         return true;
       })
-      .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
+      .map(({ username, userId: creatorId, userImage, deletedAt, ...post }) => {
         const _images = images.filter((x) => x.postId === post.id);
 
         return {
@@ -474,7 +490,7 @@ export const getPostsInfinite = async ({
             cosmetics: userCosmetics?.[creatorId] ?? [],
             profilePicture: profilePictures[creatorId] ?? null,
           },
-          stats,
+          stats: postStats[post.id] ?? null,
           images: _images,
           cosmetic: cosmetics[post.id] ?? null,
         };

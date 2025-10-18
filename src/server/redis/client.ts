@@ -597,6 +597,7 @@ export const REDIS_KEYS = {
     THUMBNAILS: 'packed:caches:thumbnails',
     IMAGE_METRICS: 'packed:caches:image-metrics',
     ARTICLE_STATS: 'packed:caches:article-stats',
+    POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
     IMAGE_TAGS: 'packed:caches:image-tags',

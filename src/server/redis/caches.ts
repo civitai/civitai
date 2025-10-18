@@ -725,7 +725,7 @@ type ArticleStatLookup = {
 export const articleStatCache = createCachedObject<ArticleStatLookup>({
   key: REDIS_KEYS.CACHES.ARTICLE_STATS,
   idKey: 'articleId',
-  ttl: CacheTTL.hour,
+  ttl: CacheTTL.day,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
     const articleIds = Array.isArray(ids) ? ids : [ids];
@@ -751,6 +751,46 @@ export const articleStatCache = createCachedObject<ArticleStatLookup>({
     `;
 
     return Object.fromEntries(stats.map((x) => [x.articleId, x]));
+  },
+});
+
+type PostStatLookup = {
+  postId: number;
+  commentCount: number;
+  likeCount: number;
+  dislikeCount: number;
+  heartCount: number;
+  laughCount: number;
+  cryCount: number;
+  collectedCount: number;
+};
+
+export const postStatCache = createCachedObject<PostStatLookup>({
+  key: REDIS_KEYS.CACHES.POST_STATS,
+  idKey: 'postId',
+  ttl: CacheTTL.day,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const postIds = Array.isArray(ids) ? ids : [ids];
+    if (postIds.length === 0) return {};
+
+    // Query PostMetric table directly for AllTime metrics
+    const stats = await db.$queryRaw<PostStatLookup[]>`
+      SELECT
+        "postId",
+        "commentCount",
+        "likeCount",
+        "dislikeCount",
+        "heartCount",
+        "laughCount",
+        "cryCount",
+        "collectedCount"
+      FROM "PostMetric"
+      WHERE "postId" IN (${Prisma.join(postIds)})
+        AND "timeframe" = 'AllTime'::"MetricTimeframe"
+    `;
+
+    return Object.fromEntries(stats.map((x) => [x.postId, x]));
   },
 });
 
