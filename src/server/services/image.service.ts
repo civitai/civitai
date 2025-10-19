@@ -42,6 +42,7 @@ import {
   imageMetadataCache,
   imageMetricsCache,
   imagesForModelVersionsCache,
+  imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
@@ -211,6 +212,23 @@ export const invalidateManyImageExistence = async (ids: number[]) => {
     ids.map((id) => sysRedis.packed.set(`${cachePrefix}${id}` as any, 'false', { EX: 60 * 5 }))
   );
 };
+
+async function getImageTagsForImages(
+  imageIds: number[]
+): Promise<(VotableTagModel & { imageId: number })[]> {
+  const tagsByImage = await imageTagsCache.fetch(imageIds);
+  return imageIds.flatMap(
+    (imageId) =>
+      tagsByImage[imageId]?.tags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
+        ...tag,
+        imageId,
+        id: tagId,
+        type: tagType,
+        nsfwLevel: tagNsfwLevel as NsfwLevel,
+        name: tagName,
+      })) ?? []
+  );
+}
 
 export const deleteImageById = async ({
   id,
@@ -1387,29 +1405,7 @@ export const getAllImages = async (
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
   if (include?.includes('tags')) {
-    const rawTags = await dbRead.imageTag.findMany({
-      where: { imageId: { in: imageIds } },
-      select: {
-        imageId: true,
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        tagNsfwLevel: true,
-        score: true,
-        automated: true,
-        upVotes: true,
-        downVotes: true,
-        needsReview: true,
-      },
-    });
-
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfwLevel: tagNsfwLevel as NsfwLevel,
-      name: tagName,
-    }));
+    tagsVar = await getImageTagsForImages(imageIds);
 
     if (userId) {
       const userVotes = await dbRead.tagsOnImageVote.findMany({
@@ -3907,29 +3903,7 @@ export const getImagesByEntity = async ({
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
-    const rawTags = await dbRead.imageTag.findMany({
-      where: { imageId: { in: imageIds } },
-      select: {
-        imageId: true,
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        tagNsfwLevel: true,
-        score: true,
-        automated: true,
-        upVotes: true,
-        downVotes: true,
-        needsReview: true,
-      },
-    });
-
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfwLevel: tagNsfwLevel as NsfwLevel,
-      name: tagName,
-    }));
+    tagsVar = await getImageTagsForImages(imageIds);
   }
 
   return images.map((i) => ({
@@ -4247,29 +4221,7 @@ export const getEntityCoverImage = async ({
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
-    const rawTags = await dbRead.imageTag.findMany({
-      where: { imageId: { in: imageIds } },
-      select: {
-        imageId: true,
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        tagNsfwLevel: true,
-        score: true,
-        automated: true,
-        upVotes: true,
-        downVotes: true,
-        needsReview: true,
-      },
-    });
-
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfwLevel: tagNsfwLevel as NsfwLevel,
-      name: tagName,
-    }));
+    tagsVar = await getImageTagsForImages(imageIds);
   }
 
   const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
@@ -4609,29 +4561,7 @@ export const getImageModerationReviewQueue = async ({
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
 
   if (tagReview) {
-    const rawTags = await dbRead.imageTag.findMany({
-      where: { imageId: { in: imageIds } },
-      select: {
-        imageId: true,
-        tagId: true,
-        tagName: true,
-        tagType: true,
-        tagNsfwLevel: true,
-        score: true,
-        automated: true,
-        upVotes: true,
-        downVotes: true,
-        needsReview: true,
-      },
-    });
-
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfwLevel: tagNsfwLevel as NsfwLevel,
-      name: tagName,
-    }));
+    tagsVar = await getImageTagsForImages(imageIds);
   }
 
   const reviewTags =

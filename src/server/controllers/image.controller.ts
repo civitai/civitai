@@ -9,6 +9,7 @@ import {
 } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -121,15 +122,10 @@ export const deleteImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const imageTags = await dbRead.imageTag.findMany({
-      where: {
-        imageId: input.id,
-        concrete: true,
-      },
-      select: {
-        tagName: true,
-      },
-    });
+    const tagsByImage = await imageTagsCache.fetch(input.id);
+    const imageTags = (tagsByImage[input.id]?.tags ?? [])
+      .filter((tag) => tag.concrete)
+      .map((tag) => ({ tagName: tag.tagName }));
 
     const image = await deleteImageById(input);
 
