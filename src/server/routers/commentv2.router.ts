@@ -3,12 +3,17 @@ import {
   deleteCommentV2Handler,
   getCommentCountV2Handler,
   getCommentsThreadDetailsHandler,
+  getCommentsPaginatedHandler,
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
   toggleHideCommentHandler,
 } from './../controllers/commentv2.controller';
-import { commentConnectorSchema, upsertCommentv2Schema } from './../schema/commentv2.schema';
+import {
+  commentConnectorSchema,
+  upsertCommentv2Schema,
+  getCommentsPaginatedSchema,
+} from './../schema/commentv2.schema';
 import {
   middleware,
   router,
@@ -59,6 +64,9 @@ export const commentv2Router = router({
   getThreadDetails: publicProcedure
     .input(commentConnectorSchema)
     .query(getCommentsThreadDetailsHandler),
+  getCommentsPaginated: publicProcedure
+    .input(getCommentsPaginatedSchema)
+    .query(getCommentsPaginatedHandler),
   toggleLockThread: moderatorProcedure
     .input(commentConnectorSchema)
     .mutation(toggleLockThreadDetailsHandler),

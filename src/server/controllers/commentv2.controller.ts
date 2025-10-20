@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import type { Context } from '~/server/createContext';
-import type { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
+import type {
+  ToggleHideCommentInput,
+  GetCommentsPaginatedInput,
+} from '~/server/schema/commentv2.schema';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -23,6 +26,7 @@ import {
   getComment,
   getCommentCount,
   getCommentsThreadDetails2,
+  getCommentsPaginated,
   toggleHideComment,
   toggleLockCommentsThread,
   upsertComment,
@@ -243,6 +247,27 @@ export const toggleHideCommentHandler = async ({
     return updatedComment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getCommentsPaginatedHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetCommentsPaginatedInput;
+}) => {
+  try {
+    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
+      (x) => x.id
+    );
+    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+
+    return await getCommentsPaginated({ ...input, excludedUserIds });
+  } catch (error) {
     throw throwDbError(error);
   }
 };

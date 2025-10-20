@@ -329,7 +329,7 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
         badges={badges}
         level={(level ?? 0) + 1}
       >
-        {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
+        {({ data, created, isLoading, isFetching, showMore, toggleShowMore }) =>
           isLoading ? (
             <Center>
               <Loader type="bars" />
@@ -339,18 +339,12 @@ function CommentReplies({ commentId, userId }: { commentId: number; userId?: num
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} />
               ))}
-              {!!remaining && !showMore && (
-                <Divider
-                  label={
-                    <Group gap="xs" align="center">
-                      <Text c="blue.4" sx={{ cursor: 'pointer' }} onClick={toggleShowMore} inherit>
-                        Show {remaining} More
-                      </Text>
-                    </Group>
-                  }
-                  labelPosition="center"
-                  variant="dashed"
-                />
+              {showMore && (
+                <Center>
+                  <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
+                    Load More Comments
+                  </Button>
+                </Center>
               )}
               {created.map((comment) => (
                 <Comment key={comment.id} comment={comment} />

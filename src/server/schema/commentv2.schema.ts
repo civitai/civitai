@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
+import { ThreadSort } from '~/server/common/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
@@ -54,4 +55,11 @@ export const toggleHideCommentSchema = z.object({
     'bountyEntry',
     'clubPost',
   ]),
+});
+
+export type GetCommentsPaginatedInput = z.infer<typeof getCommentsPaginatedSchema>;
+export const getCommentsPaginatedSchema = commentConnectorSchema.extend({
+  page: z.number().min(1).default(1),
+  limit: z.number().min(1).max(100).default(20),
+  sort: z.enum(ThreadSort).default(ThreadSort.Oldest),
 });

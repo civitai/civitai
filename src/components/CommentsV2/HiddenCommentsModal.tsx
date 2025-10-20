@@ -1,4 +1,4 @@
-import { Center, Divider, Group, Loader, LoadingOverlay, Modal, Stack, Text } from '@mantine/core';
+import { Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -69,29 +69,22 @@ function HiddenCommentsContent({
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : undefined}
       hidden
     >
-      {({ data, isLoading, isFetching, remaining, showMore, toggleShowMore }) =>
+      {({ data, isLoading, isFetching, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center mt="xl">
             <Loader type="bars" />
           </Center>
         ) : !!data?.length ? (
           <Stack className="relative" gap="xl">
-            <LoadingOverlay visible={isFetching} />
             {data?.map((comment) => (
               <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
             ))}
-            {!!remaining && !showMore && (
-              <Divider
-                label={
-                  <Group gap="xs" align="center">
-                    <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={toggleShowMore} inherit>
-                      Show {remaining} More
-                    </Text>
-                  </Group>
-                }
-                labelPosition="center"
-                variant="dashed"
-              />
+            {showMore && (
+              <Center>
+                <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
+                  Load More Comments
+                </Button>
+              </Center>
             )}
           </Stack>
         ) : (
