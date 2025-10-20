@@ -125,34 +125,38 @@ export function RootThreadProvider({
         const allThreads = [data, ...(data.children ?? [])];
         const maxDepth = constants.comments.getMaxDepth({ entityType: entity.entityType });
 
-        for (const thread of allThreads) {
-          for (const comment of thread.comments ?? []) {
-            const childThread = allThreads.find((x) => x.commentId === comment.id) ?? null;
-            const childThreadDepth = childThread?.depth ?? 0;
-            if (childThreadDepth < maxDepth) {
-              utils.commentv2.getThreadDetails.setData(
-                {
-                  entityId: comment.id,
-                  entityType: 'comment',
-                  hidden,
-                },
-                childThread
-              );
-            }
-
-            utils.commentv2.getCount.setData(
-              { entityId: comment.id, entityType: 'comment' },
-              childThread?.count ?? 0
-            );
-          }
-        }
-
+        // Set expanded immediately (needed for UI)
         const expandedCommentIds =
           data?.children
             ?.filter((c) => c.depth < maxDepth)
             .map((c) => c.commentId)
             .filter(isDefined) ?? [];
         setExpanded(expandedCommentIds);
+
+        // Defer cache operations to next tick to prevent main thread blocking
+        setTimeout(() => {
+          for (const thread of allThreads) {
+            for (const comment of thread.comments ?? []) {
+              const childThread = allThreads.find((x) => x.commentId === comment.id) ?? null;
+              const childThreadDepth = childThread?.depth ?? 0;
+              if (childThreadDepth < maxDepth) {
+                utils.commentv2.getThreadDetails.setData(
+                  {
+                    entityId: comment.id,
+                    entityType: 'comment',
+                    hidden,
+                  },
+                  childThread
+                );
+              }
+
+              utils.commentv2.getCount.setData(
+                { entityId: comment.id, entityType: 'comment' },
+                childThread?.count ?? 0
+              );
+            }
+          }
+        }, 0);
       },
     }
   );
@@ -236,15 +240,6 @@ export function CommentsProvider({
     }
   );
   const hiddenCount = thread?.hidden ?? 0;
-  const initialComments = useMemo(() => {
-    const comments = thread?.comments ?? [];
-
-    if (sort === ThreadSort.Newest) return [...comments].reverse();
-    if (sort === ThreadSort.MostReactions)
-      return [...comments].sort((a, b) => b.reactions.length - a.reactions.length);
-
-    return comments;
-  }, [thread?.comments, sort]);
 
   const highlighted = parseNumericString(router.query.highlight);
   const getLimit = (data: { id: number }[] = []) => {
@@ -255,14 +250,35 @@ export function CommentsProvider({
 
     return initialLimit;
   };
-  const [limit, setLimit] = useState(getLimit(initialComments));
 
+  // Initialize limit state
+  const [limit, setLimit] = useState(() => getLimit(thread?.comments ?? []));
+
+  // Optimized: Single-pass sorting combining sort mode and pinned logic
   const comments = useMemo(() => {
-    const data = initialComments.sort(
-      (a, b) => new Date(b.pinnedAt ?? 0).getTime() - new Date(a.pinnedAt ?? 0).getTime()
-    );
-    return !showMore ? data.slice(0, limit) : data;
-  }, [initialComments, showMore, limit]);
+    const rawComments = thread?.comments ?? [];
+
+    // Clone once and apply combined sorting logic
+    const sorted = rawComments.slice().sort((a, b) => {
+      // Pinned comments always first
+      const pinnedA = new Date(a.pinnedAt ?? 0).getTime();
+      const pinnedB = new Date(b.pinnedAt ?? 0).getTime();
+      const pinnedDiff = pinnedB - pinnedA;
+      if (pinnedDiff !== 0) return pinnedDiff;
+
+      // Then apply sort mode
+      if (sort === ThreadSort.Newest) {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      if (sort === ThreadSort.MostReactions) {
+        return b.reactions.length - a.reactions.length;
+      }
+      // Oldest (default)
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+
+    return !showMore ? sorted.slice(0, limit) : sorted;
+  }, [thread?.comments, sort, showMore, limit]);
 
   const createdComments = useMemo(
     () => created.filter((x) => !comments?.some((comment) => comment.id === x.id)),
@@ -272,7 +288,7 @@ export function CommentsProvider({
   const isLocked = thread?.locked ?? false;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
-  let remaining = initialComments.length - limit;
+  let remaining = (thread?.comments?.length ?? 0) - limit;
   remaining = remaining > 0 ? remaining : 0;
 
   return (
