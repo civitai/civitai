@@ -1,6 +1,5 @@
 import type { MenuItemProps } from '@mantine/core';
 import {
-  Anchor,
   Checkbox,
   Menu,
   Modal,
@@ -76,8 +75,6 @@ import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import classes from './GeneratedImage.module.css';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
-import { capitalize } from '~/utils/string-helpers';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
@@ -85,23 +82,13 @@ import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imag
 import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { NsfwLevel } from '@civitai/client';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
-import { useAppContext } from '~/providers/AppProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: NormalizedGeneratedImageStep;
 };
-
-// const matureDictionary: Record<string, boolean> = {
-//   [NsfwLevel.P_G13]: true,
-//   [NsfwLevel.R]: true,
-//   [NsfwLevel.X]: true,
-//   [NsfwLevel.XXX]: true,
-// };
 
 export function GeneratedImage({
   image,
@@ -114,10 +101,7 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
-  const { allowMatureContent } = useAppContext();
-  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
   const [ref, inView] = useInViewDynamic({ id: image.id });
-  const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
     stepName: step.name,
@@ -125,11 +109,10 @@ export function GeneratedImage({
   });
   const isSelecting = orchestratorImageSelect.useIsSelecting();
 
-  const [nsfwLevelError, setNsfwLevelError] = useState(false);
-
   const { updateImages } = useUpdateImageStepMetadata();
 
   const { running, helpers } = useTourContext();
+  const available = image.status === 'succeeded';
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -138,7 +121,7 @@ export function GeneratedImage({
     );
 
   const handleImageClick = () => {
-    if (!image || !available || isLightbox || nsfwLevelError) return;
+    if (!image || !available || isLightbox) return;
 
     if (isSelecting) {
       handleToggleSelect();
@@ -150,10 +133,6 @@ export function GeneratedImage({
       });
     }
   };
-
-  const feedback = step.metadata?.images?.[image.id]?.feedback;
-  const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-  const available = image.status === 'succeeded';
 
   const [state, setState] = useGeneratedItemStore({
     id: `${request.id}_${step.name}_${image.id}`,
@@ -221,22 +200,7 @@ export function GeneratedImage({
     );
   }
 
-  if (!available) return <></>;
-
-  function handleLoad() {
-    setLoaded(true);
-  }
-
-  function handleError() {
-    if (
-      step.metadata &&
-      step.metadata.hasOwnProperty('isPrivateGeneration') &&
-      // @ts-ignore This value can exist and we confirmed above.
-      step.metadata.isPrivateGeneration
-    ) {
-      setNsfwLevelError(true);
-    }
-  }
+  if (image.status !== 'succeeded') return <></>;
 
   function handleDataTransfer(e: DragEvent<HTMLVideoElement> | DragEvent<HTMLImageElement>) {
     const url = e.currentTarget.currentSrc;
@@ -257,8 +221,6 @@ export function GeneratedImage({
     toggleSelect(value);
     if (running && value) helpers?.next();
   }
-
-  if (image.blockedReason || nsfwLevelError) return null;
 
   return (
     <TwCard
@@ -291,14 +253,10 @@ export function GeneratedImage({
               controls={isLightbox}
               disableWebm
               disablePoster
-              onLoad={handleLoad}
-              onError={handleError}
               imageProps={{
                 onDragStart: handleDragImage,
               }}
               videoProps={{
-                onLoadedData: handleLoad,
-                onError: handleError,
                 onDragStart: handleDragVideo,
                 draggable: true,
                 autoPlay: true,
@@ -594,7 +552,7 @@ function GeneratedImageWorkflowMenuItems({
     (!!step.params.workflow && !(step.params.workflow in notSelectableMap)) ||
     !!(step.params as any).engine;
 
-  async function handleRemix(seed?: number) {
+  async function handleRemix(seed?: number | null) {
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources as any,

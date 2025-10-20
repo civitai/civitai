@@ -10,7 +10,8 @@ import {
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const soraAspectRatios = ['16:9', '9:16'] as const;
-export const soraDurations = [4, 8, 12] as const;
+// export const soraDurations = [4, 8, 12] as const;
+export const soraDurations = [4, 8] as const;
 export const soraResolutions = ['720p', '1080p'];
 
 const schema = baseVideoGenerationSchema.extend({

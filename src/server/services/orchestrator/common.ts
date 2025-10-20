@@ -1,20 +1,15 @@
 import type {
-  ComfyOutput,
   ComfyStep,
-  HaiperVideoGenOutput,
-  ImageBlob,
-  ImageGenOutput,
   ImageGenStep,
-  TextToImageOutput,
   TextToImageStep,
-  VideoBlob,
-  VideoGenOutput,
   VideoGenStep,
   Workflow,
   WorkflowStatus,
   VideoEnhancementStep,
   WorkflowStep,
-  WorkflowStepJob,
+  ImageBlob,
+  VideoBlob,
+  NsfwLevel,
 } from '@civitai/client';
 import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
@@ -529,6 +524,7 @@ function formatImageGenStep({
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -596,6 +592,7 @@ function formatVideoGenStep({
     metadata,
     resources: combinedResources,
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -650,6 +647,7 @@ function formatTextToImageStep({
     metadata: metadata,
     resources: resources.filter((x) => !injectableIds.includes(x.id)),
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -685,6 +683,7 @@ export function formatComfyStep({
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -742,9 +741,22 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
   }
 }
 
-export type NormalizedWorkflowStepOutput = ReturnType<
-  typeof formatWorkflowStepOutput
->['images'][number];
+export interface NormalizedWorkflowStepOutput {
+  url: string;
+  workflowId: string;
+  stepName: string;
+  seed?: number | null;
+  status: WorkflowStatus;
+  aspect: number;
+  type: 'image' | 'video';
+  id: string;
+  available: boolean;
+  urlExpiresAt?: string | null;
+  jobId?: string | null;
+  nsfwLevel?: NsfwLevel;
+  blockedReason?: string | null;
+}
+
 function formatWorkflowStepOutput({
   workflowId,
   step,
@@ -755,7 +767,7 @@ function formatWorkflowStepOutput({
   const items = normalizeOutput(step) ?? [];
   const seed = 'seed' in step.input ? step.input.seed : undefined;
 
-  const images = items.map((item, index) => {
+  const images: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
     const job = step.jobs?.find((x) => x.id === item.jobId);
     // eslint-disable-next-line prefer-const
     let { width, height, ...restItem } = item;
@@ -818,7 +830,6 @@ function formatWorkflowStepOutput({
       stepName: step.name,
       seed: seed ? seed + index : undefined,
       status: item.available ? 'succeeded' : job?.status ?? ('unassignend' as WorkflowStatus),
-      queuePosition: job?.queuePosition,
       aspect,
     };
   });
