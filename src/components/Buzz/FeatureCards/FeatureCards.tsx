@@ -34,65 +34,67 @@ const RedeemCodeModal = dynamic(() =>
 const getEarnings = (
   accountType: BuzzAccountType,
   buzzConfig?: ReturnType<typeof useBuzzCurrencyConfig>
-): (FeatureCardProps & { key: string })[] => [
-  // {
-  //   key: 'referrals',
-  //   icon: <IconUsers size={32} />,
-  //   title: 'Referrals',
-  //   description: 'You & your friends can earn more Buzz!',
-  //   btnProps: {
-  //     href: '/user/account#referrals',
-  //     children: 'Invite a friend',
-  //   },
-  // },
-  {
-    key: 'bounties',
-    icon: <IconMoneybag size={32} />,
-    title: 'Bounties',
-    description: 'Submit work to a bounty to win Buzz',
-    btnProps: {
-      href: '/bounties',
-      children: 'Learn more',
-      color: buzzConfig?.color,
-    },
-  },
-  {
-    key: 'purchase',
-    icon: <IconCoin size={32} />,
-    title: 'Purchase',
-    description: 'Purchase Buzz directly',
-    btnProps: {
-      href: '/purchase/buzz',
-      children: 'Buy now',
-      color: buzzConfig?.color,
-    },
-  },
-  {
-    key: 'tips',
-    icon: <IconCoins size={32} />,
-    title: 'Get tipped',
-    description: 'Create awesome content!',
-    btnProps: {
-      href: '/posts/create',
-      children: 'Create post',
-      color: buzzConfig?.color,
-    },
-  },
-  {
-    disabled: accountType !== 'yellow',
-    key: 'redeem',
-    icon: <IconBarcode size={32} />,
-    title: 'Redeem a code',
-    description: 'Purchased a Buzz card? Redeem it to get your Buzz!',
-    btnProps: {
-      onClick: () => {
-        dialogStore.trigger({ component: RedeemCodeModal });
+): (FeatureCardProps & { key: string })[] =>
+  [
+    // {
+    //   key: 'referrals',
+    //   icon: <IconUsers size={32} />,
+    //   title: 'Referrals',
+    //   description: 'You & your friends can earn more Buzz!',
+    //   btnProps: {
+    //     href: '/user/account#referrals',
+    //     children: 'Invite a friend',
+    //   },
+    // },
+    {
+      key: 'bounties',
+      icon: <IconMoneybag size={32} />,
+      title: 'Bounties',
+      description: 'Submit work to a bounty to win Buzz',
+      btnProps: {
+        href: '/bounties',
+        children: 'Learn more',
+        color: buzzConfig?.color,
       },
-      children: 'Redeem code',
-      color: buzzConfig?.color,
     },
-  },
-].filter((item) => !item.disabled);
+    {
+      key: 'purchase',
+      icon: <IconCoin size={32} />,
+      title: 'Purchase',
+      description: 'Purchase Buzz directly',
+      btnProps: {
+        href: '/purchase/buzz',
+        children: 'Buy now',
+        color: buzzConfig?.color,
+      },
+    },
+    {
+      key: 'tips',
+      icon: <IconCoins size={32} />,
+      title: 'Get tipped',
+      description: 'Create awesome content!',
+      btnProps: {
+        href: '/posts/create',
+        children: 'Create post',
+        color: buzzConfig?.color,
+      },
+      disabled: accountType === 'blue',
+    },
+    {
+      disabled: accountType !== 'yellow',
+      key: 'redeem',
+      icon: <IconBarcode size={32} />,
+      title: 'Redeem a code',
+      description: 'Purchased a Buzz card? Redeem it to get your Buzz!',
+      btnProps: {
+        onClick: () => {
+          dialogStore.trigger({ component: RedeemCodeModal });
+        },
+        children: 'Redeem code',
+        color: buzzConfig?.color,
+      },
+    },
+  ].filter((item) => !item.disabled);
 
 export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow' }: Props) => {
   const buzzConfig = useBuzzCurrencyConfig(accountType);
