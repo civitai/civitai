@@ -177,7 +177,7 @@ export default function ImageSelectModal({
     () =>
       steps.flatMap((step) =>
         step.images
-          .filter((x) => x.status === 'succeeded' && x.available)
+          .filter((x) => x.status === 'succeeded' && x.available && !x.blockedReason)
           .map((asset) => {
             if (!asset.available || asset.status !== 'succeeded') return null;
             return {

@@ -38,7 +38,7 @@ export function GeneratedImageActions({
   const router = useRouter();
   const { images, data } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
-  const selectableImages = images.filter((x) => x.status === 'succeeded');
+  const selectableImages = images.filter((x) => x.status === 'succeeded' && !x.blockedReason);
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
   const selected = orchestratorImageSelect
