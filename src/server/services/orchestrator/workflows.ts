@@ -105,9 +105,7 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
-  if (body.allowMatureContent === false) {
-    body.upgradeMode = 'manual';
-  }
+  body.upgradeMode = 'manual';
 
   if (isDev) {
     console.log('------');

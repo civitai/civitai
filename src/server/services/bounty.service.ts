@@ -454,7 +454,6 @@ export const deleteBountyById = async ({
     id,
     select: { userId: true, expiresAt: true, complete: true, refunded: true },
   });
-
   if (!bounty) throw throwNotFoundError('Bounty not found');
 
   if (!isModerator) {
@@ -471,27 +470,29 @@ export const deleteBountyById = async ({
       throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
   }
 
+  // Fetch benefactor data BEFORE deletion to avoid cascade delete issues
+  const bountyCreator =
+    bounty.userId && !bounty.complete && !bounty.refunded
+      ? await dbRead.bountyBenefactor.findUnique({
+          where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
+          select: { unitAmount: true, currency: true, buzzTransactionId: true },
+        })
+      : null;
+
   const deletedBounty = await dbWrite.$transaction(async (tx) => {
     const deletedBounty = await tx.bounty.delete({ where: { id } });
     if (!deletedBounty) return null;
 
     await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
-
     return deletedBounty;
   });
-
   if (!deletedBounty) return null;
 
-  // Refund the bounty creator
-  if (bounty.userId && !bounty.complete && !bounty.refunded) {
-    const bountyCreator = await dbRead.bountyBenefactor.findUnique({
-      where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
-      select: { unitAmount: true, currency: true, buzzTransactionId: true },
-    });
-
-    switch (bountyCreator?.currency) {
+  // Refund the bounty creator using pre-fetched data
+  if (bounty.userId && !bounty.complete && !bounty.refunded && bountyCreator) {
+    switch (bountyCreator.currency) {
       case Currency.BUZZ: {
-        if (bountyCreator?.buzzTransactionId) {
+        if (bountyCreator.buzzTransactionId) {
           await refundMultiAccountTransaction({
             externalTransactionIdPrefix: bountyCreator.buzzTransactionId,
             description: 'Refund reason: owner deleted bounty',

@@ -16,6 +16,7 @@ import {
   IconBolt,
   IconLock,
   IconReplace,
+  IconShield,
   IconWeight,
   IconX,
 } from '@tabler/icons-react';
@@ -28,6 +29,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
+import { useAppContext } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
@@ -95,6 +97,7 @@ function CheckpointInfo({
 }: Props) {
   const features = useFeatureFlags();
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
+  const { domain } = useAppContext();
 
   return (
     <Group
@@ -130,18 +133,32 @@ function CheckpointInfo({
           </Paper>
         ) : null}
         <Stack gap={2}>
-          <Text
-            component={Link}
-            className="cursor-pointer text-black dark:text-white"
-            style={{ overflowWrap: 'anywhere' }}
-            href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
-            rel="nofollow noindex"
-            lineClamp={1}
-            fw={590}
-            data-testid="selected-gen-resource-name"
-          >
-            {resource.model.name}
-          </Text>
+          <div className="flex items-center gap-2">
+            <Text
+              component={Link}
+              className="cursor-pointer text-black dark:text-white"
+              style={{ overflowWrap: 'anywhere' }}
+              href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
+              rel="nofollow noindex"
+              lineClamp={1}
+              fw={590}
+              data-testid="selected-gen-resource-name"
+            >
+              {resource.model.name}
+            </Text>
+            {!domain.green && (resource.model.sfwOnly || resource.model.minor) && (
+              <HoverCard position="bottom" withArrow>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="green.5" variant="filled">
+                    <IconShield size={14} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            )}
+          </div>
           {!hideVersion && (
             <Text size="sm" c="dimmed">
               {resource.name}
@@ -184,6 +201,7 @@ function ResourceInfoCard({
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
+  const { domain } = useAppContext();
 
   return (
     <Group
@@ -217,6 +235,18 @@ function ResourceInfoCard({
             >
               {resource.model.name}
             </Text>
+            {!domain.green && (resource.model.sfwOnly || resource.model.minor) && (
+              <HoverCard position="bottom" withArrow>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="green.5" variant="filled">
+                    <IconShield size={14} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            )}
           </Group>
           <div className="flex gap-1">
             {resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (

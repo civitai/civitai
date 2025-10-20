@@ -8,7 +8,6 @@ import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import classes from './Feed.module.scss';
 
-const cutoff = new Date('10/13/2025').getTime();
 export function Feed() {
   const filters = useFiltersContext((state) => state.generation);
 
@@ -77,8 +76,6 @@ export function Feed() {
           step.images
             .filter((x) => x.status === 'succeeded')
             .map((image) => {
-              if (image.status !== 'succeeded') return null;
-
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
 

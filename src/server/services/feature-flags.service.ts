@@ -98,7 +98,7 @@ const featureFlags = createFeatureFlags({
   draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
-  impersonation: ['granted'],
+  impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
   experimentalGen: ['mod'],
