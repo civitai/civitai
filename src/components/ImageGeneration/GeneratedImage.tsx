@@ -265,7 +265,7 @@ export function GeneratedImage({
           }
           <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
 
-          {!isLightbox && (
+          {!isLightbox && !image.blockedReason && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
@@ -274,85 +274,93 @@ export function GeneratedImage({
               />
             </label>
           )}
-          <Menu zIndex={400} withinPortal>
-            <Menu.Target>
-              <div className="absolute right-3 top-3">
-                <LegacyActionIcon variant="transparent">
-                  <IconDotsVertical
-                    size={26}
-                    color="#fff"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  />
-                </LegacyActionIcon>
-              </div>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <GeneratedImageWorkflowMenuItems step={step} image={image} workflowId={request.id} />
-            </Menu.Dropdown>
-          </Menu>
-
-          <div
-            className={clsx(
-              classes.actionsWrapper,
-              isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
-              'absolute flex flex-wrap items-center gap-1 p-1'
-            )}
-          >
-            <LegacyActionIcon
-              size="md"
-              className={state.favorite ? classes.favoriteButton : undefined}
-              variant={state.favorite ? 'light' : 'subtle'}
-              color={state.favorite ? 'red' : 'gray'}
-              onClick={() => handleToggleFavorite(!state.favorite)}
-            >
-              <IconHeart size={16} />
-            </LegacyActionIcon>
-
-            <Menu
-              zIndex={400}
-              trigger="hover"
-              openDelay={100}
-              closeDelay={100}
-              transitionProps={{
-                transition: 'fade',
-                duration: 150,
-              }}
-              withinPortal
-              position="top"
-            >
+          {!image.blockedReason && (
+            <Menu zIndex={400} withinPortal>
               <Menu.Target>
-                <LegacyActionIcon size="md">
-                  <IconWand size={16} />
-                </LegacyActionIcon>
+                <div className="absolute right-3 top-3">
+                  <LegacyActionIcon variant="transparent">
+                    <IconDotsVertical
+                      size={26}
+                      color="#fff"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    />
+                  </LegacyActionIcon>
+                </div>
               </Menu.Target>
-              <Menu.Dropdown className={classes.improveMenu}>
+              <Menu.Dropdown>
                 <GeneratedImageWorkflowMenuItems
                   step={step}
                   image={image}
                   workflowId={request.id}
-                  workflowsOnly
                 />
               </Menu.Dropdown>
             </Menu>
+          )}
 
-            <LegacyActionIcon
-              size="md"
-              variant={state.feedback === 'liked' ? 'light' : 'subtle'}
-              color={state.feedback === 'liked' ? 'green' : 'gray'}
-              onClick={() => handleToggleFeedback('liked')}
+          {!image.blockedReason && (
+            <div
+              className={clsx(
+                classes.actionsWrapper,
+                isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+                'absolute flex flex-wrap items-center gap-1 p-1'
+              )}
             >
-              <IconThumbUp size={16} />
-            </LegacyActionIcon>
+              <LegacyActionIcon
+                size="md"
+                className={state.favorite ? classes.favoriteButton : undefined}
+                variant={state.favorite ? 'light' : 'subtle'}
+                color={state.favorite ? 'red' : 'gray'}
+                onClick={() => handleToggleFavorite(!state.favorite)}
+              >
+                <IconHeart size={16} />
+              </LegacyActionIcon>
 
-            <LegacyActionIcon
-              size="md"
-              variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
-              color={state.feedback === 'disliked' ? 'red' : 'gray'}
-              onClick={() => handleToggleFeedback('disliked')}
-            >
-              <IconThumbDown size={16} />
-            </LegacyActionIcon>
-          </div>
+              <Menu
+                zIndex={400}
+                trigger="hover"
+                openDelay={100}
+                closeDelay={100}
+                transitionProps={{
+                  transition: 'fade',
+                  duration: 150,
+                }}
+                withinPortal
+                position="top"
+              >
+                <Menu.Target>
+                  <LegacyActionIcon size="md">
+                    <IconWand size={16} />
+                  </LegacyActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown className={classes.improveMenu}>
+                  <GeneratedImageWorkflowMenuItems
+                    step={step}
+                    image={image}
+                    workflowId={request.id}
+                    workflowsOnly
+                  />
+                </Menu.Dropdown>
+              </Menu>
+
+              <LegacyActionIcon
+                size="md"
+                variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+                color={state.feedback === 'liked' ? 'green' : 'gray'}
+                onClick={() => handleToggleFeedback('liked')}
+              >
+                <IconThumbUp size={16} />
+              </LegacyActionIcon>
+
+              <LegacyActionIcon
+                size="md"
+                variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+                color={state.feedback === 'disliked' ? 'red' : 'gray'}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </LegacyActionIcon>
+            </div>
+          )}
           {!isLightbox && (
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover

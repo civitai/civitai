@@ -58,7 +58,7 @@ export function GeneratedImageActions({
     const grouped = data.flatMap((workflow) =>
       workflow.steps.flatMap((step) =>
         step.images
-          .filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id))
+          .filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id) && !x.blockedReason)
           .map((image, index) => ({ ...image, createdAt: workflow.createdAt, index: index + 1 }))
       )
     );
