@@ -14,6 +14,7 @@ import {
   addImageTechniques,
   addImageTools,
   get404Images,
+  getDownleveledImages,
   getImageDetail,
   getImageGenerationData,
   getImageRatingRequests,
@@ -56,6 +57,7 @@ import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
+  downleveledReviewInput,
   getEntitiesCoverImage,
   getImageSchema,
   getInfiniteImagesSchema,
@@ -152,6 +154,9 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+  getDownleveledImages: moderatorProcedure
+    .input(downleveledReviewInput)
+    .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .input(getByIdSchema)
     // TODO: Add edgeCacheIt back after fixing the cache invalidation.

@@ -28,6 +28,7 @@ export function ModerationNav() {
         { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
+        { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         {
           label: 'Paddle Adjustments',
