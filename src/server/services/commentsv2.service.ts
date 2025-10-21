@@ -228,99 +228,184 @@ export async function togglePinComment({ id }: GetByIdInput) {
   });
 }
 
-// Helper function for fetching comments sorted by reaction count
-async function fetchByReactionCount({
-  threadId,
-  limit,
-  offset,
-  excludedUserIds = [],
-  hidden = false,
-}: {
-  threadId: number;
-  limit: number;
-  offset: number;
-  excludedUserIds: number[];
-  hidden: boolean | null;
-}) {
-  // Step 1: Get sorted comment IDs with reaction counts using raw SQL
-  const sortedIds = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT c.id
-    FROM "CommentV2" c
-    LEFT JOIN "CommentV2Reaction" r
-      ON c.id = r."commentId"
-      AND (${excludedUserIds.length} = 0 OR r."userId" NOT IN (${Prisma.join(excludedUserIds)}))
-    WHERE
-      c."threadId" = ${threadId}
-      AND c."pinnedAt" IS NULL
-      AND (${excludedUserIds.length} = 0 OR c."userId" NOT IN (${Prisma.join(excludedUserIds)}))
-      AND c.hidden = ${hidden}
-    GROUP BY c.id
-    ORDER BY COUNT(r.id) DESC, c.id DESC
-    LIMIT ${limit + 1}
-    OFFSET ${offset}
-  `;
-
-  const hasMore = sortedIds.length > limit;
-  const ids = (hasMore ? sortedIds.slice(0, limit) : sortedIds).map((x) => x.id);
-
-  // Step 2: Fetch full comments with relations using Prisma
-  const comments = await dbRead.commentV2.findMany({
-    where: { id: { in: ids } },
-    select: commentV2Select,
-  });
-
-  // Step 3: Maintain sort order from the query
-  const commentMap = new Map(comments.map((c) => [c.id, c]));
-  const sortedComments = ids.map((id) => commentMap.get(id)).filter(isDefined);
-
-  return { comments: sortedComments, hasMore };
-}
-
-// Helper function for cursor-based reaction sorting
-async function fetchByReactionCountCursor({
+/**
+ * Unified pagination function for comments supporting all sort modes.
+ *
+ * Uses a single raw SQL query that fetches all comment data including user and reactions,
+ * following the pattern from article.service.ts. Dynamic ORDER BY construction and adaptive
+ * cursor logic based on sort type.
+ *
+ * **Sort Modes:**
+ * - Oldest: Simple cursor pagination by id ASC
+ * - Newest: Simple cursor pagination by id DESC
+ * - MostReactions: Keyset pagination by reactionCount DESC, id DESC (composite)
+ *
+ * **Cursor Strategy:**
+ * - For simple sorts (Oldest/Newest): Use id-based cursor (id < cursor or id > cursor)
+ * - For composite sorts (MostReactions): Use keyset pagination with reactionCount + id
+ *
+ * @param threadId - The thread to paginate comments from
+ * @param limit - Maximum comments to return
+ * @param cursor - Comment ID to paginate from (exclusive)
+ * @param sort - Sort mode (Oldest, Newest, MostReactions)
+ * @param excludedUserIds - User IDs to filter out (blocked/hidden users)
+ * @param hidden - Whether to show hidden comments
+ * @returns Array of comments in requested sort order
+ */
+async function fetchCommentsPaginated({
   threadId,
   limit,
   cursor,
+  sort,
   excludedUserIds = [],
   hidden = false,
 }: {
   threadId: number;
   limit: number;
   cursor?: number;
+  sort: ThreadSort;
   excludedUserIds: number[];
   hidden: boolean | null;
-}) {
-  // Use strict < for cursor to avoid duplication
-  const cursorCondition = cursor ? Prisma.sql`AND c.id < ${cursor}` : Prisma.empty;
+}): Promise<CommentV2Model[]> {
+  // Build dynamic ORDER BY based on sort mode
+  let orderBy: string;
+  switch (sort) {
+    case ThreadSort.MostReactions:
+      orderBy = 'c."reactionCount" DESC, c.id DESC';
+      break;
+    case ThreadSort.Newest:
+      orderBy = 'c.id DESC';
+      break;
+    case ThreadSort.Oldest:
+    default:
+      orderBy = 'c.id ASC';
+      break;
+  }
 
-  const sortedIds = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT c.id
+  // Build cursor condition based on sort mode
+  let cursorCondition = Prisma.empty;
+  if (cursor) {
+    if (sort === ThreadSort.MostReactions) {
+      // For composite sort, use CTE-based keyset pagination
+      cursorCondition = Prisma.sql`
+        AND EXISTS (
+          SELECT 1 FROM "CommentV2" cursor_c 
+          WHERE cursor_c.id = ${cursor}
+          AND (
+            c."reactionCount" < cursor_c."reactionCount"
+            OR (c."reactionCount" = cursor_c."reactionCount" AND c.id < ${cursor})
+          )
+        )
+      `;
+    } else {
+      // For simple sorts (date-based), use simple cursor condition
+      const cursorOperator = sort === ThreadSort.Newest ? '<' : '>';
+      cursorCondition = Prisma.sql`AND c.id ${Prisma.raw(cursorOperator)} ${cursor}`;
+    }
+  }
+
+  // Single unified query that fetches all data
+  type CommentRaw = {
+    id: number;
+    content: string;
+    createdAt: Date;
+    nsfw: boolean;
+    tosViolation: boolean;
+    hidden: boolean | null;
+    threadId: number;
+    pinnedAt: Date | null;
+    reactionCount: number;
+    user: any; // Will be parsed as JSON
+    reactions: any; // Will be parsed as JSON
+  };
+
+  const comments = await dbRead.$queryRaw<CommentRaw[]>`
+    SELECT
+      c.id,
+      c.content,
+      c."createdAt",
+      c.nsfw,
+      c."tosViolation",
+      c.hidden,
+      c."threadId",
+      c."pinnedAt",
+      c."reactionCount",
+      jsonb_build_object(
+        'id', u.id,
+        'username', u.username,
+        'deletedAt', u."deletedAt",
+        'image', u.image,
+        'profilePicture', CASE 
+          WHEN pp.id IS NOT NULL THEN jsonb_build_object(
+            'id', pp.id,
+            'name', pp.name,
+            'url', pp.url,
+            'nsfw', pp.nsfw,
+            'width', pp.width,
+            'height', pp.height,
+            'hash', pp.hash,
+            'type', pp.type,
+            'metadata', pp.metadata,
+            'ingestion', pp.ingestion,
+            'needsReview', pp."needsReview"
+          )
+          ELSE NULL
+        END,
+        'cosmetics', COALESCE(
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'data', uc.data,
+                'cosmetic', jsonb_build_object(
+                  'id', cos.id,
+                  'data', cos.data,
+                  'type', cos.type,
+                  'source', cos.source,
+                  'name', cos.name
+                )
+              )
+            )
+            FROM "UserCosmetic" uc
+            JOIN "Cosmetic" cos ON cos.id = uc."cosmeticId"
+            WHERE uc."userId" = u.id 
+              AND uc."equippedAt" IS NOT NULL 
+              AND uc."equippedToId" IS NULL
+          ),
+          '[]'::jsonb
+        )
+      ) as "user",
+      COALESCE(
+        (
+          SELECT jsonb_agg(
+            jsonb_build_object(
+              'userId', r."userId",
+              'reaction', r.reaction
+            )
+          )
+          FROM "CommentV2Reaction" r
+          WHERE r."commentId" = c.id
+        ),
+        '[]'::jsonb
+      ) as "reactions"
     FROM "CommentV2" c
-    LEFT JOIN "CommentV2Reaction" r
-      ON c.id = r."commentId"
-      AND (${excludedUserIds.length} = 0 OR r."userId" NOT IN (${Prisma.join(excludedUserIds)}))
+    JOIN "User" u ON c."userId" = u.id
+    LEFT JOIN "Image" pp ON u."profilePictureId" = pp.id
     WHERE
       c."threadId" = ${threadId}
       AND c."pinnedAt" IS NULL
       AND (${excludedUserIds.length} = 0 OR c."userId" NOT IN (${Prisma.join(excludedUserIds)}))
       AND c.hidden = ${hidden}
       ${cursorCondition}
-    GROUP BY c.id
-    ORDER BY COUNT(r.id) DESC, c.id DESC
+    ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit}
   `;
 
-  const ids = sortedIds.map((x) => x.id);
-
-  if (ids.length === 0) return [];
-
-  const comments = await dbRead.commentV2.findMany({
-    where: { id: { in: ids } },
-    select: commentV2Select,
-  });
-
-  const commentMap = new Map(comments.map((c) => [c.id, c]));
-  return ids.map((id) => commentMap.get(id)).filter(isDefined);
+  // Map raw results to CommentV2Model type
+  return comments.map((comment) => ({
+    ...comment,
+    user: comment.user,
+    reactions: comment.reactions,
+  })) as CommentV2Model[];
 }
 
 // Cursor-based infinite pagination for comments
@@ -354,41 +439,15 @@ export async function getCommentsInfinite({
       })
     : [];
 
-  // 3. Fetch regular comments with cursor
-  let regularComments: CommentV2Model[];
-
-  if (sort === ThreadSort.MostReactions) {
-    // Use cursor-based reaction sorting
-    regularComments = await fetchByReactionCountCursor({
-      threadId: mainThread.id,
-      limit,
-      cursor,
-      excludedUserIds,
-      hidden,
-    });
-  } else {
-    // Use Prisma for date-based sorting with cursor
-    const orderBy: Prisma.CommentV2OrderByWithRelationInput[] =
-      sort === ThreadSort.Newest
-        ? [{ id: 'desc' }] // Use id DESC for newest (maintains consistency with createdAt)
-        : [{ id: 'asc' }]; // Use id ASC for oldest
-
-    const allComments = await dbRead.commentV2.findMany({
-      where: {
-        threadId: mainThread.id,
-        pinnedAt: null,
-        userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-        hidden,
-      },
-      cursor: cursor ? { id: cursor } : undefined,
-      skip: cursor ? 1 : 0, // Skip the cursor item to avoid duplication
-      orderBy,
-      take: limit,
-      select: commentV2Select,
-    });
-
-    regularComments = allComments;
-  }
+  // 3. Fetch regular comments using unified pagination
+  const regularComments = await fetchCommentsPaginated({
+    threadId: mainThread.id,
+    limit,
+    cursor,
+    sort,
+    excludedUserIds,
+    hidden,
+  });
 
   // 4. Determine next cursor and hasMore
   const nextCursor =
