@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import { UploadType } from '~/server/common/enums';
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
@@ -36,6 +37,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   count,
   onComplete,
 }: UseMediaUploadProps<TContext>) {
+  const currentUser = useCurrentUser();
   // #region [state]
   const [error, setError] = useState<Error>();
   const [loading, setLoading] = useState(false);
@@ -86,7 +88,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           sliced.map(async ({ file, meta: fileMeta }) => {
             let data: PreprocessFileReturnType | null;
             try {
-              data = await preprocessFile(file);
+              data = await preprocessFile(file, { allowAnimatedWebP: currentUser?.isModerator });
             } catch (e: any) {
               data = null;
               showErrorNotification({

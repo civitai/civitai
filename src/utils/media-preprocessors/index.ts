@@ -13,7 +13,10 @@ type ProcessedVideo = { type: 'video'; meta?: Record<string, unknown> } & AsyncR
 
 export type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
 
-export async function preprocessFile(file: File): Promise<PreprocessFileReturnType> {
+export async function preprocessFile(
+  file: File,
+  options?: { allowAnimatedWebP?: boolean }
+): Promise<PreprocessFileReturnType> {
   const fileType = file.type;
   const type = MEDIA_TYPE[fileType];
   const data = {
@@ -23,7 +26,7 @@ export async function preprocessFile(file: File): Promise<PreprocessFileReturnTy
 
   switch (type) {
     case 'image':
-      const imageData = await preprocessImage(file);
+      const imageData = await preprocessImage(file, options);
       return { type, ...data, ...imageData };
     case 'video':
       const videoData = await preprocessVideo(file);
