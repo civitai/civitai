@@ -54,6 +54,7 @@ import type { CollectionMetadataSchema } from '~/server/schema/collection.schema
 import type {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
+  DownleveledReviewOutput,
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
@@ -5131,6 +5132,110 @@ export async function getImageRatingRequests({
   return {
     nextCursor,
     items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
+  };
+}
+
+type DownleveledImageRecord = {
+  imageId: number;
+  originalLevel: number;
+  createdAt: string;
+};
+
+type DownleveledImageResponse = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  type: MediaType;
+  width: number | null;
+  height: number | null;
+  originalLevel: number;
+};
+
+export async function getDownleveledImages({
+  cursor,
+  limit,
+  originalLevel,
+  user,
+}: DownleveledReviewOutput & { user: SessionUser }) {
+  if (!clickhouse) {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'ClickHouse is not available',
+    });
+  }
+
+  // Build WHERE conditions for ClickHouse query
+  const whereConditions: string[] = [];
+  if (cursor) {
+    whereConditions.push(`createdAt <= '${cursor}'`);
+  }
+  if (originalLevel !== undefined) {
+    whereConditions.push(`originalLevel = ${originalLevel}`);
+  }
+
+  const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+  // Query ClickHouse for downleveled images
+  const query = `
+    SELECT imageId, originalLevel, createdAt
+    FROM knights_new_order_downleveled
+    ${whereClause}
+    ORDER BY createdAt DESC
+    LIMIT ${limit + 1}
+  `;
+
+  const clickhouseResults = await clickhouse.$query<DownleveledImageRecord>(query);
+
+  let nextCursor: string | undefined;
+  if (limit && clickhouseResults.length > limit) {
+    const nextItem = clickhouseResults.pop();
+    nextCursor = nextItem?.createdAt;
+  }
+
+  if (clickhouseResults.length === 0) {
+    return {
+      nextCursor,
+      items: [],
+    };
+  }
+
+  // Get image data from PostgreSQL
+  const imageIds = clickhouseResults.map((x) => x.imageId);
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: {
+      id: true,
+      url: true,
+      nsfwLevel: true,
+      type: true,
+      width: true,
+      height: true,
+    },
+  });
+
+  // Create a map for quick lookup
+  const imageMap = new Map(images.map((img) => [img.id, img]));
+
+  // Combine data
+  const items: DownleveledImageResponse[] = clickhouseResults
+    .map((chRecord) => {
+      const image = imageMap.get(chRecord.imageId);
+      if (!image) return null;
+      return {
+        id: image.id,
+        url: image.url,
+        nsfwLevel: image.nsfwLevel,
+        type: image.type,
+        width: image.width,
+        height: image.height,
+        originalLevel: chRecord.originalLevel,
+      };
+    })
+    .filter((item): item is DownleveledImageResponse => item !== null);
+
+  return {
+    nextCursor,
+    items,
   };
 }
 
