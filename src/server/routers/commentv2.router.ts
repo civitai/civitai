@@ -3,7 +3,7 @@ import {
   deleteCommentV2Handler,
   getCommentCountV2Handler,
   getCommentsThreadDetailsHandler,
-  getCommentsPaginatedHandler,
+  getCommentsInfiniteHandler,
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
@@ -12,7 +12,7 @@ import {
 import {
   commentConnectorSchema,
   upsertCommentv2Schema,
-  getCommentsPaginatedSchema,
+  getCommentsInfiniteSchema,
 } from './../schema/commentv2.schema';
 import {
   middleware,
@@ -64,9 +64,7 @@ export const commentv2Router = router({
   getThreadDetails: publicProcedure
     .input(commentConnectorSchema)
     .query(getCommentsThreadDetailsHandler),
-  getCommentsPaginated: publicProcedure
-    .input(getCommentsPaginatedSchema)
-    .query(getCommentsPaginatedHandler),
+  getInfinite: publicProcedure.input(getCommentsInfiniteSchema).query(getCommentsInfiniteHandler),
   toggleLockThread: moderatorProcedure
     .input(commentConnectorSchema)
     .mutation(toggleLockThreadDetailsHandler),

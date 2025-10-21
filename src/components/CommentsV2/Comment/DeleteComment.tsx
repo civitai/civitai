@@ -33,7 +33,7 @@ export function DeleteComment({
       if (created.some((x) => x.id === request.id)) {
         useNewCommentStore.getState().deleteComment(entityType, entityId, id);
       } else {
-        await queryUtils.commentv2.getThreadDetails.setData(
+        queryUtils.commentv2.getThreadDetails.setData(
           { entityType, entityId },
           produce((old) => {
             if (!old) return;

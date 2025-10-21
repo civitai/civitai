@@ -18,8 +18,17 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
       limit={20}
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
-      {({ data, created, isLoading, isFetching, showMore, toggleShowMore, activeComment }) =>
-        isLoading ? (
+      {({
+        data,
+        created,
+        isLoading,
+        isFetching,
+        isFetchingNextPage,
+        showMore,
+        toggleShowMore,
+        activeComment,
+      }) =>
+        isLoading || isFetching ? (
           <Center>
             <Loader type="bars" />
           </Center>
@@ -46,7 +55,7 @@ export function BountyDiscussion({ bountyId, userId }: Props) {
                     <Center>
                       <Button
                         onClick={toggleShowMore}
-                        loading={isFetching}
+                        loading={isFetchingNextPage}
                         variant="subtle"
                         size="md"
                       >

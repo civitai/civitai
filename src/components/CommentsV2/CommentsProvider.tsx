@@ -32,6 +32,7 @@ type ChildProps = {
   data?: CommentV2Model[];
   isLoading: boolean;
   isFetching: boolean;
+  isFetchingNextPage: boolean;
   isLocked: boolean;
   isMuted: boolean;
   isReadonly: boolean;
@@ -172,46 +173,27 @@ export function CommentsProvider({
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
   );
 
-  const [page, setPage] = useState(1);
-  const [accumulatedComments, setAccumulatedComments] = useState<CommentV2Model[]>([]);
-
-  // Use standard query with page-based pagination
-  const { data, isLoading, isFetching } = trpc.commentv2.getCommentsPaginated.useQuery(
-    {
-      entityId,
-      entityType,
-      limit: initialLimit,
-      sort,
-      hidden: hidden ?? false,
-      page,
-    },
-    {
-      enabled: initialCount === undefined || initialCount > 0,
-      keepPreviousData: true,
-      onSuccess: (newData) => {
-        if (!newData) return;
-        if (page === 1) {
-          // Reset for first page or sort change
-          setAccumulatedComments(newData.comments);
-        } else {
-          // Append for subsequent pages
-          setAccumulatedComments((prev) => [...prev, ...newData.comments]);
-        }
+  // Use infinite query with cursor-based pagination
+  const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.commentv2.getInfinite.useInfiniteQuery(
+      {
+        entityId,
+        entityType,
+        limit: initialLimit,
+        sort,
+        hidden: hidden ?? false,
       },
-    }
-  );
+      {
+        enabled: initialCount === undefined || initialCount > 0,
+        getNextPageParam: (lastPage) => lastPage?.nextCursor,
+      }
+    );
 
-  // Reset accumulated comments when sort changes
-  useEffect(() => {
-    setPage(1);
-    setAccumulatedComments([]);
-  }, [sort, entityId, entityType]);
+  // Flatten all pages into single comments array
+  const comments = useMemo(() => data?.pages.flatMap((page) => page?.comments ?? []) ?? [], [data]);
 
-  const comments = accumulatedComments;
-  const threadMeta = data?.threadMeta;
-  const total = data?.total ?? 0;
-  const hasMore = data?.hasMore ?? false;
-  const hiddenCount = data?.hiddenCount ?? 0;
+  const threadMeta = data?.pages[0]?.threadMeta;
+  const hiddenCount = data?.pages[0]?.hiddenCount ?? 0;
   const highlighted = parseNumericString(router.query.highlight);
 
   const createdComments = useMemo(
@@ -222,21 +204,20 @@ export function CommentsProvider({
   const isLocked = threadMeta?.locked ?? false;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
-  let remaining = total - comments.length;
-  remaining = remaining > 0 ? remaining : 0;
 
   const loadMore = useCallback(() => {
-    if (hasMore && !isFetching) {
-      setPage((p) => p + 1);
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
     }
-  }, [hasMore, isFetching]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   return (
     <CommentsCtx.Provider
       value={{
         data: comments,
         isLoading,
-        isFetching,
+        isFetching: isRefetching,
+        isFetchingNextPage,
         entityId,
         entityType,
         isLocked,
@@ -245,8 +226,7 @@ export function CommentsProvider({
         created,
         badges,
         limit: initialLimit,
-        remaining,
-        showMore: hasMore,
+        showMore: hasNextPage ?? false,
         toggleShowMore: loadMore,
         highlighted,
         hiddenCount,
@@ -260,15 +240,15 @@ export function CommentsProvider({
       {children({
         data: comments,
         isLoading,
-        isFetching,
+        isFetching: isRefetching,
+        isFetchingNextPage,
         isLocked,
         isMuted,
         isReadonly,
         created: createdComments,
         badges,
         limit: initialLimit,
-        remaining,
-        showMore: hasMore,
+        showMore: hasNextPage ?? false,
         toggleShowMore: loadMore,
         highlighted,
         hiddenCount,

@@ -29,6 +29,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           created,
           isLoading,
           isFetching,
+          isFetchingNextPage,
           showMore,
           hiddenCount,
           toggleShowMore,
@@ -73,7 +74,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
               </Group>
               <ReturnToRootThread />
             </Stack>
-            {isLoading ? (
+            {isLoading || isFetching ? (
               <Center mt="xl">
                 <Loader type="bars" />
               </Center>
@@ -102,7 +103,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                     <Center>
                       <Button
                         onClick={toggleShowMore}
-                        loading={isFetching}
+                        loading={isFetchingNextPage}
                         variant="subtle"
                         size="md"
                       >

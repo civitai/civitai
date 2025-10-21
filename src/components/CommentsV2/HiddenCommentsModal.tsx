@@ -69,8 +69,8 @@ function HiddenCommentsContent({
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : undefined}
       hidden
     >
-      {({ data, isLoading, isFetching, showMore, toggleShowMore }) =>
-        isLoading ? (
+      {({ data, isLoading, isFetching, isFetchingNextPage, showMore, toggleShowMore }) =>
+        isLoading || isFetching ? (
           <Center mt="xl">
             <Loader type="bars" />
           </Center>
@@ -81,7 +81,12 @@ function HiddenCommentsContent({
             ))}
             {showMore && (
               <Center>
-                <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
+                <Button
+                  onClick={toggleShowMore}
+                  loading={isFetchingNextPage}
+                  variant="subtle"
+                  size="md"
+                >
                   Load More Comments
                 </Button>
               </Center>

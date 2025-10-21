@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Center,
-  Divider,
   Group,
   Loader,
   Menu,
@@ -14,6 +13,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowBackUp,
+  IconCaretDownFilled,
   IconDotsVertical,
   IconEdit,
   IconEye,
@@ -298,17 +298,18 @@ export function CommentContent({
           </Box>
         )}
         {replyCount > 0 && !viewOnly && !isExpanded && (
-          <Divider
-            label={
-              <Group gap="xs" align="center">
-                <Text c="blue.4" style={{ cursor: 'pointer' }} onClick={onToggleReplies} inherit>
-                  Show {replyCount} More
-                </Text>
-              </Group>
-            }
-            labelPosition="center"
-            variant="dashed"
-          />
+          <Group align="flex-start" mt="xs">
+            <Button
+              variant="subtle"
+              radius="xl"
+              color="blue"
+              size="sm"
+              onClick={onToggleReplies}
+              rightSection={<IconCaretDownFilled size={16} />}
+            >
+              Show {replyCount} More
+            </Button>
+          </Group>
         )}
       </Stack>
       {replyCount > 0 && !viewOnly && (

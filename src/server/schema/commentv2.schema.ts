@@ -57,9 +57,9 @@ export const toggleHideCommentSchema = z.object({
   ]),
 });
 
-export type GetCommentsPaginatedInput = z.infer<typeof getCommentsPaginatedSchema>;
-export const getCommentsPaginatedSchema = commentConnectorSchema.extend({
-  page: z.number().min(1).default(1),
+export type GetCommentsInfiniteInput = z.infer<typeof getCommentsInfiniteSchema>;
+export const getCommentsInfiniteSchema = commentConnectorSchema.extend({
   limit: z.number().min(1).max(100).default(20),
   sort: z.enum(ThreadSort).default(ThreadSort.Oldest),
+  cursor: z.number().optional(),
 });

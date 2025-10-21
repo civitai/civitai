@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { Context } from '~/server/createContext';
 import type {
   ToggleHideCommentInput,
-  GetCommentsPaginatedInput,
+  GetCommentsInfiniteInput,
 } from '~/server/schema/commentv2.schema';
 import {
   BlockedByUsers,
@@ -26,7 +26,7 @@ import {
   getComment,
   getCommentCount,
   getCommentsThreadDetails2,
-  getCommentsPaginated,
+  getCommentsInfinite,
   toggleHideComment,
   toggleLockCommentsThread,
   upsertComment,
@@ -251,12 +251,12 @@ export const toggleHideCommentHandler = async ({
   }
 };
 
-export const getCommentsPaginatedHandler = async ({
+export const getCommentsInfiniteHandler = async ({
   ctx,
   input,
 }: {
   ctx: Context;
-  input: GetCommentsPaginatedInput;
+  input: GetCommentsInfiniteInput;
 }) => {
   try {
     const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
@@ -266,7 +266,7 @@ export const getCommentsPaginatedHandler = async ({
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
 
-    return await getCommentsPaginated({ ...input, excludedUserIds });
+    return await getCommentsInfinite({ ...input, excludedUserIds });
   } catch (error) {
     throw throwDbError(error);
   }

@@ -7,7 +7,7 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import type {
   UpsertCommentV2Input,
   CommentConnectorInput,
-  GetCommentsPaginatedInput,
+  GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { constants } from '~/server/common/constants';
@@ -276,16 +276,63 @@ async function fetchByReactionCount({
   return { comments: sortedComments, hasMore };
 }
 
-// Main paginated comments function with unified pagination strategy
-export async function getCommentsPaginated({
+// Helper function for cursor-based reaction sorting
+async function fetchByReactionCountCursor({
+  threadId,
+  limit,
+  cursor,
+  excludedUserIds = [],
+  hidden = false,
+}: {
+  threadId: number;
+  limit: number;
+  cursor?: number;
+  excludedUserIds: number[];
+  hidden: boolean | null;
+}) {
+  // Use strict < for cursor to avoid duplication
+  const cursorCondition = cursor ? Prisma.sql`AND c.id < ${cursor}` : Prisma.empty;
+
+  const sortedIds = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id
+    FROM "CommentV2" c
+    LEFT JOIN "CommentV2Reaction" r
+      ON c.id = r."commentId"
+      AND (${excludedUserIds.length} = 0 OR r."userId" NOT IN (${Prisma.join(excludedUserIds)}))
+    WHERE
+      c."threadId" = ${threadId}
+      AND c."pinnedAt" IS NULL
+      AND (${excludedUserIds.length} = 0 OR c."userId" NOT IN (${Prisma.join(excludedUserIds)}))
+      AND c.hidden = ${hidden}
+      ${cursorCondition}
+    GROUP BY c.id
+    ORDER BY COUNT(r.id) DESC, c.id DESC
+    LIMIT ${limit}
+  `;
+
+  const ids = sortedIds.map((x) => x.id);
+
+  if (ids.length === 0) return [];
+
+  const comments = await dbRead.commentV2.findMany({
+    where: { id: { in: ids } },
+    select: commentV2Select,
+  });
+
+  const commentMap = new Map(comments.map((c) => [c.id, c]));
+  return ids.map((id) => commentMap.get(id)).filter(isDefined);
+}
+
+// Cursor-based infinite pagination for comments
+export async function getCommentsInfinite({
   entityId,
   entityType,
-  page = 1,
   limit = 20,
   sort = ThreadSort.Oldest,
   hidden = false,
+  cursor,
   excludedUserIds = [],
-}: GetCommentsPaginatedInput & { excludedUserIds?: number[] }) {
+}: GetCommentsInfiniteInput & { excludedUserIds?: number[] }) {
   // 1. Get thread metadata
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -293,44 +340,38 @@ export async function getCommentsPaginated({
   });
   if (!mainThread) return null;
 
-  const offset = (page - 1) * limit;
+  // 2. Fetch pinned comments (only when no cursor = first page)
+  const pinnedComments = !cursor
+    ? await dbRead.commentV2.findMany({
+        where: {
+          threadId: mainThread.id,
+          pinnedAt: { not: null },
+          userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+          hidden,
+        },
+        orderBy: { pinnedAt: 'desc' },
+        select: commentV2Select,
+      })
+    : [];
 
-  // 2. Fetch pinned comments (only on first page)
-  const pinnedComments =
-    page === 1
-      ? await dbRead.commentV2.findMany({
-          where: {
-            threadId: mainThread.id,
-            pinnedAt: { not: null },
-            userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-            hidden,
-          },
-          orderBy: { pinnedAt: 'desc' },
-          select: commentV2Select,
-        })
-      : [];
-
-  // 3. Fetch regular comments with unified sorting
+  // 3. Fetch regular comments with cursor
   let regularComments: CommentV2Model[];
-  let hasMore: boolean;
 
   if (sort === ThreadSort.MostReactions) {
-    // Use raw SQL for reaction-based sorting
-    const result = await fetchByReactionCount({
+    // Use cursor-based reaction sorting
+    regularComments = await fetchByReactionCountCursor({
       threadId: mainThread.id,
       limit,
-      offset,
+      cursor,
       excludedUserIds,
       hidden,
     });
-    regularComments = result.comments;
-    hasMore = result.hasMore;
   } else {
-    // Use Prisma for date-based sorting
+    // Use Prisma for date-based sorting with cursor
     const orderBy: Prisma.CommentV2OrderByWithRelationInput[] =
       sort === ThreadSort.Newest
-        ? [{ createdAt: 'desc' }, { id: 'desc' }]
-        : [{ createdAt: 'asc' }, { id: 'asc' }];
+        ? [{ id: 'desc' }] // Use id DESC for newest (maintains consistency with createdAt)
+        : [{ id: 'asc' }]; // Use id ASC for oldest
 
     const allComments = await dbRead.commentV2.findMany({
       where: {
@@ -339,27 +380,22 @@ export async function getCommentsPaginated({
         userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
         hidden,
       },
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0, // Skip the cursor item to avoid duplication
       orderBy,
-      take: limit + 1, // Fetch one extra to check for more
-      skip: offset,
+      take: limit,
       select: commentV2Select,
     });
 
-    hasMore = allComments.length > limit;
-    regularComments = hasMore ? allComments.slice(0, limit) : allComments;
+    regularComments = allComments;
   }
 
-  // 4. Get total count
-  const totalCount = await dbRead.commentV2.count({
-    where: {
-      threadId: mainThread.id,
-      userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      hidden,
-    },
-  });
+  // 4. Determine next cursor and hasMore
+  const nextCursor =
+    regularComments.length === limit ? regularComments[regularComments.length - 1].id : undefined;
 
-  // 5. Get hidden count (only when fetching non-hidden comments)
-  const hiddenCount = !hidden
+  // 5. Get counts (only on first page for performance)
+  const hiddenCount = !cursor
     ? await dbRead.commentV2.count({
         where: {
           threadId: mainThread.id,
@@ -367,16 +403,12 @@ export async function getCommentsPaginated({
           hidden: true,
         },
       })
-    : 0;
+    : undefined;
 
   return {
-    comments: page === 1 ? [...pinnedComments, ...regularComments] : regularComments,
-    page,
-    limit,
-    hasMore,
-    totalPages: Math.ceil(totalCount / limit),
-    total: totalCount,
-    hiddenCount,
-    threadMeta: { id: mainThread.id, locked: mainThread.locked },
+    comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments.slice(0, limit),
+    nextCursor,
+    threadMeta: mainThread,
+    hiddenCount: hiddenCount ?? 0,
   };
 }

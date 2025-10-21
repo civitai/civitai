@@ -19,8 +19,17 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
       limit={3}
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
-      {({ data, created, isLoading, isFetching, showMore, toggleShowMore, activeComment }) =>
-        isLoading ? (
+      {({
+        data,
+        created,
+        isLoading,
+        isFetching,
+        isFetchingNextPage,
+        showMore,
+        toggleShowMore,
+        activeComment,
+      }) =>
+        isLoading || isFetching ? (
           <Center>
             <Loader type="bars" />
           </Center>
@@ -43,7 +52,12 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
               ))}
               {showMore && (
                 <Center>
-                  <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
+                  <Button
+                    onClick={toggleShowMore}
+                    loading={isFetchingNextPage}
+                    variant="subtle"
+                    size="md"
+                  >
                     Load More Comments
                   </Button>
                 </Center>
