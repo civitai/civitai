@@ -114,6 +114,7 @@ import type {
   UserTier,
 } from './../schema/user.schema';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -1272,6 +1273,15 @@ export const toggleBan = async ({
     // Cancel their subscription
     await cancelSubscriptionPlan({ userId: id }).catch((error) =>
       logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+    );
+
+    await removeUserContentFromSearchIndex(id).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'ban-user-remove-content-search-index',
+        message: error.message,
+        error,
+      })
     );
   }
 
