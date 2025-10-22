@@ -225,12 +225,12 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
         {
           userId: number;
           unitAmount: number;
-          transactionId?: string | null;
+          buzzTransactionId?: string | null;
         }[]
       >`SELECT
             bf."userId",
             bf."unitAmount",
-            bf."transactionId"
+            bf."buzzTransactionId"
         FROM "BountyBenefactor" bf
         WHERE bf."bountyId" = ${id}
           AND bf.currency = ${currency}::"Currency"
@@ -238,20 +238,20 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       `;
 
       // Now refund each of them:
-      for (const { userId, unitAmount, transactionId } of benefactors) {
+      for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
         if (unitAmount > 0) {
           switch (currency) {
             case Currency.BUZZ:
               {
-                if (transactionId) {
-                  if (isBountyTransactionPrefix(transactionId)) {
+                if (buzzTransactionId) {
+                  if (isBountyTransactionPrefix(buzzTransactionId)) {
                     await refundMultiAccountTransaction({
-                      externalTransactionIdPrefix: transactionId,
+                      externalTransactionIdPrefix: buzzTransactionId,
                       description: 'Reason: Bounty refund, no entries found on bounty',
                     });
                   } else {
                     await refundTransaction(
-                      transactionId,
+                      buzzTransactionId,
                       'Reason: Bounty refund, no entries found on bounty'
                     );
                   }
@@ -308,12 +308,12 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       {
         userId: number;
         unitAmount: number;
-        transactionId?: string | null;
+        buzzTransactionId?: string | null;
       }[]
     >`SELECT
           bf."userId",
           bf."unitAmount",
-          bf."transactionId"
+          bf."buzzTransactionId"
       FROM "BountyBenefactor" bf
       WHERE bf."bountyId" = ${id}
         AND bf.currency = ${currency}::"Currency"
@@ -322,10 +322,10 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
 
     const awardedAmounts: Partial<Record<BuzzSpendType, number>> = {};
     await Promise.all(
-      benefactors.map(async ({ unitAmount, transactionId }) => {
-        if (transactionId && isBountyTransactionPrefix(transactionId)) {
-          // If transactionId is a prefix, we need to refund all transactions with this prefix
-          const data = await getMultiAccountTransactionsByPrefix(transactionId);
+      benefactors.map(async ({ unitAmount, buzzTransactionId }) => {
+        if (buzzTransactionId && isBountyTransactionPrefix(buzzTransactionId)) {
+          // If buzzTransactionId is a prefix, we need to refund all transactions with this prefix
+          const data = await getMultiAccountTransactionsByPrefix(buzzTransactionId);
           data.forEach((d) => {
             const accountType = d.accountType as BuzzSpendType;
             // Makes it so we can pay exact amounts.

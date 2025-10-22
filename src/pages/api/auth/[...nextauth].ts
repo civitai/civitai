@@ -116,7 +116,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
     },
     callbacks: {
       async signIn({ account, email, user }) {
-        // console.log(new Date().toISOString() + ' ::', 'signIn', { account, email, user });
         if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
         if (
           account?.provider === 'email' &&
@@ -145,11 +144,8 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         return true;
       },
       async jwt({ token, user, trigger }) {
-        // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
-
         // Handle manual session update (e.g., when user clicks "refresh session")
         if (trigger === 'update') {
-          console.log('this triggers an update');
           // Clear cache first, then fetch fresh user data to avoid getting stale cached data
           // Also mark all user's tokens for refresh in case they have multiple sessions
           await refreshSession(Number(token.sub));
@@ -167,7 +163,25 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
         // Handle initial token setup (not update trigger)
         token.sub = Number(token.sub) as any; //eslint-disable-line
-        if (user) token.user = user;
+
+        // If we have a user object from initial sign-in, we need to enrich it with full session data
+        // because OAuth providers only return basic user fields from the database adapter
+        if (user) {
+          // For OAuth providers, the user object doesn't have tier/subscription data
+          // We need to fetch the full session user to get that information
+          if (!(user as any).tier && !(user as any).subscriptions) {
+            const fullUser = await getSessionUser({ userId: Number(user.id) });
+            if (fullUser) {
+              token.user = fullUser;
+            } else {
+              token.user = user;
+            }
+          } else {
+            // Credentials provider already has full data
+            token.user = user;
+          }
+        }
+
         const { deletedAt, ...restUser } = token.user as User;
         token.user = { ...restUser };
 
@@ -483,7 +497,7 @@ async function sendVerificationRequest({
   try {
     await verificationEmail.send({ to, url, theme });
     await emailLimiter.increment(to).catch(() => null);
-    
+
   } catch (error) {
     logToAxiom({
       name: 'verification-email',
