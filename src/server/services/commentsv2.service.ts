@@ -11,8 +11,9 @@ import type {
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { constants } from '~/server/common/constants';
-import { isDefined } from '~/utils/type-guards';
 import { ThreadSort } from '~/server/common/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 
 export type CommentThread = {
   id: number;
@@ -315,8 +316,36 @@ async function fetchCommentsPaginated({
     threadId: number;
     pinnedAt: Date | null;
     reactionCount: number;
-    user: any; // Will be parsed as JSON
-    reactions: any; // Will be parsed as JSON
+    user: {
+      id: number;
+      username: string | null;
+      deletedAt: Date | null;
+      image: string | null;
+      profilePicture?: {
+        id: number;
+        name: string;
+        url: string;
+        nsfw: boolean;
+        width: number;
+        height: number;
+        hash: string;
+        type: string;
+        metadata: ImageMetadata | null;
+        ingestion: string | null;
+        needsReview: boolean;
+      } | null;
+      cosmetics: {
+        data: string;
+        cosmetic: {
+          id: number;
+          data: string;
+          type: string;
+          source: string;
+          name: string;
+        };
+      }[];
+    };
+    reactions: { userId: number; reaction: ReviewReactions }[];
   };
 
   const comments = await dbRead.$queryRaw<CommentRaw[]>`
@@ -465,7 +494,7 @@ export async function getCommentsInfinite({
     : undefined;
 
   return {
-    comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments.slice(0, limit),
+    comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments,
     nextCursor,
     threadMeta: mainThread,
     hiddenCount: hiddenCount ?? 0,

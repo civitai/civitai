@@ -109,7 +109,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   // Intersection observer for lazy loading comments
   const { ref: commentsRef, inView: commentsInView } = useInView({
     triggerOnce: true,
-    rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px for better performance)
+    rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px; this delays loading and may worsen perceived performance)
     threshold: 0.1, // Trigger when 10% of the element is visible
   });
 

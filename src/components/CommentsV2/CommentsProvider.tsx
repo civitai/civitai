@@ -109,8 +109,6 @@ export function RootThreadProvider({
     });
   }, [initialEntityType, initialEntityId]);
 
-  // Note: Removed eager cache pre-population for performance - child threads now load on-demand
-
   useEffect(() => {
     if (queryType && queryId) {
       setRootThread(queryType, queryId);
