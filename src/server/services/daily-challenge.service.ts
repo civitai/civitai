@@ -95,7 +95,9 @@ const customChallengeSchema = z.object({
   engine: z.string().optional(),
   collectionId: z.number(),
   title: z.string(),
+  /** should have been called description */
   invitation: z.string(),
+  /** the guid of the image url */
   coverUrl: z.string(),
 });
 
@@ -103,7 +105,8 @@ export async function getCustomChallenge() {
   const data = await sysRedis.get(REDIS_SYS_KEYS.GENERATION.CUSTOM_CHALLENGE);
   if (!data) return null;
   const challenge = customChallengeSchema.parse(JSON.parse(data));
-  return { ...challenge, endsAtDate: new Date(`${challenge.endsAtDate}T23:59:59.999Z`) };
+  const date = new Date(challenge.endsAtDate).toISOString().split('T')[0];
+  return { ...challenge, endsAtDate: new Date(`${date}T23:59:59.999Z`) };
 }
 
 export async function setCustomChallenge(data: Record<string, unknown>) {
