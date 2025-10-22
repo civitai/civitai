@@ -752,7 +752,7 @@ export const getPostTags = async ({
                       FROM "TagsOnTags" tot
                              JOIN "Tag" pt ON tot."fromTagId" = pt.id
                       WHERE tot."toTagId" = t.id), t."nsfwLevel") "nsfwLevel") "nsfwLevel",
-           t."isCategory",
+           t."isCategory"
     FROM "Tag" t
     LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE ${
