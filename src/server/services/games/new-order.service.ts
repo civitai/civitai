@@ -789,16 +789,29 @@ export async function updatePendingImageRatings({
 
   await clickhouse.exec({
     query: `
-      ALTER TABLE knights_new_order_image_rating
-      UPDATE
-        status = CASE
-          WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
-          ELSE '${NewOrderImageRatingStatus.Failed}'
-        END,
-        multiplier = CASE
-          WHEN rating = ${rating} THEN 1
-          ELSE -1
-        END
+      -- Instead of ALTER TABLE UPDATE
+      INSERT INTO knights_new_order_image_rating
+      SELECT
+          userId,
+          imageId,
+          rating,
+          damnedReason,
+          CASE
+              WHEN rating = ${rating} THEN 'Correct'
+              ELSE 'Failed'
+          END as status,
+          grantedExp,
+          CASE
+              WHEN rating = ${rating} THEN 1
+              ELSE -1
+          END as multiplier,
+          now() as createdAt,  -- Important: new timestamp
+          ip,
+          userAgent,
+          deviceId,
+          rank,
+          originalLevel
+      FROM knights_new_order_image_rating FINAL
       WHERE "imageId" = ${imageId}
         AND status = '${NewOrderImageRatingStatus.Pending}'
         AND rank != '${NewOrderRankType.Acolyte}'
