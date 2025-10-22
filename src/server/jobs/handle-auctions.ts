@@ -439,11 +439,18 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
                 const res = await refundMultiAccountTransaction({
                   externalTransactionIdPrefix: tid,
                   description: 'Refund for lost bid',
+                  details: {
+                    bidId: lostBid.id,
+                    auctionId: lostBid.auctionId,
+                  },
                 });
 
                 transactionId = res.refundedTransactions[0]?.originalTransactionId ?? null;
               } else {
-                const res = await refundTransaction(tid, 'Lost bid.');
+                const res = await refundTransaction(tid, 'Lost bid.', {
+                  bidId: lostBid.id,
+                  auctionId: lostBid.auctionId,
+                });
                 transactionId = res.transactionId;
               }
 
