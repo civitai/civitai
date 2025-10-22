@@ -19,6 +19,10 @@ const log = createLogger('remove-deprecated-base-models', 'red');
 const querySchema = z.object({
   dryRun: booleanString().default(true),
   batchSize: z.coerce.number().min(1).max(1000).default(100),
+  modelIds: z
+    .string()
+    .optional()
+    .transform((val) => (val ? val.split(',').map((id) => parseInt(id.trim(), 10)) : undefined)),
 });
 
 export default WebhookEndpoint(async (req, res) => {
@@ -27,22 +31,33 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(400).json({ ok: false, error: z.treeifyError(result.error) });
   }
 
-  const { dryRun, batchSize } = result.data;
+  const { dryRun, batchSize, modelIds } = result.data;
   const startTime = Date.now();
   log(
     `Starting bulk base model removal process${
       dryRun ? ' (DRY RUN)' : ''
-    } with batch size ${batchSize}`
+    } with batch size ${batchSize}${
+      modelIds ? ` for specific model IDs: ${modelIds.join(', ')}` : ''
+    }`
   );
 
   // Step 1: Find all affected ModelVersions
   const step1Start = Date.now();
   log('Finding affected ModelVersions...');
+
+  // Build where clause based on whether modelIds is provided
+  const whereClause = modelIds
+    ? {
+        modelId: { in: modelIds },
+        status: { not: ModelStatus.Deleted },
+      }
+    : {
+        baseModel: { in: [...DEPRECATED_BASE_MODELS] },
+        status: { not: ModelStatus.Deleted },
+      };
+
   const affectedVersions = await dbWrite.modelVersion.findMany({
-    where: {
-      baseModel: { in: [...DEPRECATED_BASE_MODELS] },
-      status: { not: ModelStatus.Deleted },
-    },
+    where: whereClause,
     select: {
       id: true,
       name: true,

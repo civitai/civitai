@@ -623,4 +623,5 @@ export const DEPRECATED_BASE_MODELS = [
   'SD 3.5 Large Turbo',
   'SDXL Turbo',
   'SVD',
+  'SVD XT',
 ] as const satisfies BaseModel[];
