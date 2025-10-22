@@ -242,7 +242,8 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
 
 type AuctionRow = Awaited<ReturnType<typeof _fetchAuctionsWithBids>>[number];
 const _fetchAuctionsWithBids = async (now: Dayjs) => {
-  const canFetchFinalizedAuctions = now.isBefore(dayjs.utc().startOf('day'));
+  // Disable temporarily to avoid issues with refunds.
+  const canFetchFinalizedAuctions = false && now.isBefore(dayjs.utc().startOf('day'));
   log('canFetchFinalizedAuctions:', canFetchFinalizedAuctions);
   return dbWrite.auction.findMany({
     where: { finalized: canFetchFinalizedAuctions, endAt: { lte: now.toDate() } },
