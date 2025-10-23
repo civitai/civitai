@@ -49,7 +49,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -71,6 +70,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
+import { useInView } from 'react-intersection-observer';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -105,6 +105,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
+
+  // Intersection observer for lazy loading comments
+  const { ref: commentsRef, inView: commentsInView } = useInView({
+    triggerOnce: true,
+    rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px; this delays loading and may worsen perceived performance)
+    threshold: 0.1, // Trigger when 10% of the element is visible
+  });
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
@@ -407,9 +414,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
             </ContainerGrid2.Col>
           </ContainerGrid2>
-          {article.id !== 13632 && (
-            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-          )}
+          <div ref={commentsRef}>
+            {commentsInView && (
+              <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+            )}
+          </div>
         </Container>
       </SensitiveShield>
     </>

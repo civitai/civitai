@@ -86,22 +86,30 @@ export const CommentForm = ({
       if (request.id) {
         // Response is minimally different but key components remain the same so any is used.
         queryUtils.commentv2.getSingle.setData({ id: request.id }, response);
-        queryUtils.commentv2.getThreadDetails.setData(
+        queryUtils.commentv2.getInfinite.setInfiniteData(
           { entityType, entityId },
           produce((old) => {
-            if (!old) {
-              return;
-            }
-            const item = old.comments?.find((x) => x.id === request.id);
-            if (!item) {
+            if (!old) return;
+
+            // Find and update the comment across all pages
+            let found = false;
+            old.pages.forEach((page) => {
+              if (page?.comments) {
+                const item = page.comments.find((x) => x.id === request.id);
+                if (item) {
+                  item.content = request.content as string;
+                  found = true;
+                }
+              }
+            });
+
+            if (!found) {
               store.editComment(entityType, entityId, response);
-            } else {
-              item.content = request.content as string;
             }
           })
         );
       } else {
-        const hasThreadData = queryUtils.commentv2.getThreadDetails.getData({
+        const hasThreadData = queryUtils.commentv2.getInfinite.getInfiniteData({
           entityType,
           entityId,
         });
@@ -109,7 +117,7 @@ export const CommentForm = ({
         // If we don't have thread data, child comments will not get a proper parent
         // and convos will be lost.
         if (!hasThreadData) {
-          await queryUtils.commentv2.getThreadDetails.invalidate({
+          await queryUtils.commentv2.getInfinite.invalidate({
             entityType,
             entityId,
           });

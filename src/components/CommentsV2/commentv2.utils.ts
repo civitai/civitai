@@ -5,15 +5,12 @@ import { trpc } from '~/utils/trpc';
 export const useMutateComment = () => {
   const queryUtils = trpc.useUtils();
   const toggleHideCommentMutation = trpc.commentv2.toggleHide.useMutation({
-    async onSuccess(response, { entityType, entityId }) {
-      await queryUtils.commentv2.getThreadDetails.invalidate({ entityType, entityId });
-      await queryUtils.commentv2.getThreadDetails.invalidate({
-        entityType,
-        entityId,
-        hidden: true,
-      });
-      await queryUtils.commentv2.getCount.invalidate({ entityType, entityId });
-      await queryUtils.commentv2.getCount.invalidate({ entityType, entityId, hidden: true });
+    async onSuccess(_, { entityType, entityId }) {
+      await Promise.all([
+        queryUtils.commentv2.getInfinite.invalidate(),
+        queryUtils.commentv2.getCount.invalidate({ entityType, entityId }),
+        queryUtils.commentv2.getCount.invalidate({ entityType, entityId, hidden: true }),
+      ]);
     },
     onError(error) {
       showErrorNotification({ title: 'Unable to hide comment', error: new Error(error.message) });
@@ -33,14 +30,11 @@ export const useMutateComment = () => {
 
   async function handleTogglePinned({ id, entityType, entityId }: ToggleHideCommentInput) {
     togglePinnedMutation.mutateAsync({ id }).then(async () => {
-      await queryUtils.commentv2.getThreadDetails.invalidate({ entityType, entityId });
-      await queryUtils.commentv2.getThreadDetails.invalidate({
-        entityType,
-        entityId,
-        hidden: true,
-      });
-      await queryUtils.commentv2.getCount.invalidate({ entityType, entityId });
-      await queryUtils.commentv2.getCount.invalidate({ entityType, entityId, hidden: true });
+      await Promise.all([
+        queryUtils.commentv2.getInfinite.invalidate(),
+        queryUtils.commentv2.getCount.invalidate({ entityType, entityId }),
+        queryUtils.commentv2.getCount.invalidate({ entityType, entityId, hidden: true }),
+      ]);
     });
   }
 

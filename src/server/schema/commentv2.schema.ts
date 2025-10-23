@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
+import { ThreadSort } from '~/server/common/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
@@ -54,4 +55,11 @@ export const toggleHideCommentSchema = z.object({
     'bountyEntry',
     'clubPost',
   ]),
+});
+
+export type GetCommentsInfiniteInput = z.infer<typeof getCommentsInfiniteSchema>;
+export const getCommentsInfiniteSchema = commentConnectorSchema.extend({
+  limit: z.number().min(1).max(100).default(20),
+  sort: z.enum(ThreadSort).default(ThreadSort.Oldest),
+  cursor: z.number().optional(),
 });
