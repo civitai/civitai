@@ -791,37 +791,9 @@ export async function updatePendingImageRatings({
   if (await isFlipt('new-order-inserts')) {
     await clickhouse.exec({
       query: `
-        -- Instead of ALTER TABLE UPDATE
-        INSERT INTO knights_new_order_image_rating
-        SELECT
-            userId,
-            imageId,
-            rating,
-            damnedReason,
-            CASE
-                WHEN rating = ${rating} THEN 'Correct'
-                ELSE 'Failed'
-            END as status,
-            grantedExp,
-            CASE
-                WHEN rating = ${rating} THEN 1
-                ELSE -1
-            END as multiplier,
-            now() as createdAt,  -- Important: new timestamp
-            ip,
-            userAgent,
-            deviceId,
-            rank,
-            originalLevel
-        FROM knights_new_order_image_rating FINAL
-        WHERE "imageId" = ${imageId}
-          AND status = '${NewOrderImageRatingStatus.Pending}'
-          AND rank != '${NewOrderRankType.Acolyte}'
+        INSERT INTO knights_rating_updates_buffer (imageId, rating)
+        VALUES (${imageId}, ${rating});
       `,
-      clickhouse_settings: {
-        async_insert: 1,
-        wait_for_async_insert: 0,
-      },
     });
   } else {
     await clickhouse.exec({
