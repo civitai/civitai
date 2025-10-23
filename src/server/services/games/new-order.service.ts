@@ -3,14 +3,13 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
 import {
   NewOrderImageRatingStatus,
-  NsfwLevel,
-  SignalTopic,
-  SignalMessages,
   NewOrderSignalActions,
   NotificationCategory,
+  NsfwLevel,
+  SignalMessages,
+  SignalTopic,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   acolyteFailedJudgments,
   allJudgmentsCounter,
@@ -39,6 +38,7 @@ import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image
 import { createNotification } from '~/server/services/notification.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   handleLogError,
   throwBadRequestError,
@@ -51,7 +51,6 @@ import { MediaType, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
-import { isFlipt } from '~/server/flipt/client';
 
 type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
@@ -788,31 +787,11 @@ export async function updatePendingImageRatings({
       AND status = '${NewOrderImageRatingStatus.Pending}'
   `;
 
-  if (await isFlipt('new-order-inserts')) {
-    await clickhouse.$exec`
-      INSERT INTO knights_rating_updates_buffer (imageId, rating)
-      VALUES (${imageId}, ${rating});
-    `;
-    await processFinalRatings();
-  } else {
-    await clickhouse.exec({
-      query: `
-        ALTER TABLE knights_new_order_image_rating
-        UPDATE
-          status = CASE
-            WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
-            ELSE '${NewOrderImageRatingStatus.Failed}'
-          END,
-          multiplier = CASE
-            WHEN rating = ${rating} THEN 1
-            ELSE -1
-          END
-        WHERE "imageId" = ${imageId}
-          AND status = '${NewOrderImageRatingStatus.Pending}'
-          AND rank != '${NewOrderRankType.Acolyte}'
-      `,
-    });
-  }
+  await clickhouse.$exec`
+    INSERT INTO knights_rating_updates_buffer (imageId, rating)
+    VALUES (${imageId}, ${rating});
+  `;
+  await processFinalRatings();
 
   const correctVotes = votes.filter((v) => v.rating === rating);
   // Doing raw query cause I want 1 smite per player :shrug:
