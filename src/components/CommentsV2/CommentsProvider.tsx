@@ -171,7 +171,13 @@ export function CommentsProvider({
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
   );
 
-  // Use infinite query with cursor-based pagination
+  // Fetch thread metadata separately (only metadata, no comments)
+  const { data: threadDetails } = trpc.commentv2.getThreadDetails.useQuery({
+    entityId,
+    entityType,
+  });
+
+  // Use infinite query with cursor-based pagination for comments
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.commentv2.getInfinite.useInfiniteQuery(
       {
@@ -190,8 +196,9 @@ export function CommentsProvider({
   // Flatten all pages into single comments array
   const comments = useMemo(() => data?.pages.flatMap((page) => page?.comments ?? []) ?? [], [data]);
 
-  const threadMeta = data?.pages[0]?.threadMeta;
-  const hiddenCount = data?.pages[0]?.hiddenCount ?? 0;
+  // Get thread metadata from dedicated query (includes locked status and hiddenCount)
+  const threadMeta = threadDetails;
+  const hiddenCount = threadMeta?.hiddenCount ?? 0;
   const highlighted = parseNumericString(router.query.highlight);
 
   const createdComments = useMemo(

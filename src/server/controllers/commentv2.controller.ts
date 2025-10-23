@@ -185,6 +185,7 @@ export const getCommentsThreadDetailsHandler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
+    // Fetch thread metadata including hiddenCount (needs excludedUserIds for accurate count)
     const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (x) => x.id

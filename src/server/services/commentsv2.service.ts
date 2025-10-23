@@ -96,104 +96,33 @@ export const getCommentCount = async ({ entityId, entityType, hidden }: CommentC
   return thread?.commentCount ?? 0;
 };
 
+// Get thread metadata including hidden comment count - optimized for separate thread meta queries
 export async function getCommentsThreadDetails2({
   entityId,
   entityType,
-  hidden = false,
-  excludedUserIds,
-}: CommentConnectorInput): Promise<CommentThread | null> {
+  excludedUserIds = [],
+}: CommentConnectorInput & {
+  excludedUserIds?: number[];
+}): Promise<{ id: number; locked: boolean; hiddenCount: number } | null> {
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: {
-      id: true,
-      locked: true,
-    },
+    select: { id: true, locked: true },
   });
   if (!mainThread) return null;
 
-  const maxDepth = constants.comments.getMaxDepth({ entityType });
-
-  const childThreads = await dbRead.$queryRaw<
-    {
-      id: number;
-      locked: boolean;
-      commentId: number | null;
-      depth: number;
-    }[]
-  >`
-    WITH RECURSIVE generation AS (
-      SELECT
-          id,
-          "parentThreadId",
-          1 AS depth,
-          "commentId",
-          locked
-      FROM "Thread" t
-      WHERE t."parentThreadId" = ${mainThread.id}
-
-      UNION ALL
-
-      SELECT
-          ct.id,
-          ct."parentThreadId",
-          depth+1 AS depth,
-          ct."commentId",
-          ct.locked
-      FROM "Thread" ct
-      JOIN generation g
-        ON g.id = ct."parentThreadId"
-    )
-    SELECT
-      g.id,
-      g.locked,
-      g."commentId",
-      g.depth
-    FROM generation g
-    JOIN "Thread" t
-    ON g."parentThreadId" = t.id
-    WHERE depth < ${maxDepth + 1}
-    ORDER BY depth;
-  `;
-
-  const threadIds = [mainThread.id, ...childThreads.map((x) => x.id)];
-  const comments = await dbRead.commentV2.findMany({
-    orderBy: { createdAt: 'asc' },
+  // Get hidden comment count for this thread
+  const hiddenCount = await dbRead.commentV2.count({
     where: {
-      threadId: { in: threadIds },
-      userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
+      threadId: mainThread.id,
+      userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+      hidden: true,
     },
-    select: commentV2Select,
   });
 
-  function combineThreadWithComments(thread: {
-    id: number;
-    locked: boolean;
-    commentId?: number | null;
-    depth?: number;
-  }): CommentThread {
-    const allComments = comments.filter(
-      (comment) => comment.threadId === thread.id // && !excludedUserIds?.includes(comment.user.id)
-    );
-    const filtered = allComments.filter((comment) => comment.hidden === hidden);
-    const hiddenCount = !hidden ? allComments.length - filtered.length : 0;
-
-    return {
-      ...thread,
-      depth: thread.depth ?? 0,
-      hidden: hiddenCount,
-      comments: filtered,
-      count: filtered.length,
-    };
-  }
-
-  const result = {
-    ...combineThreadWithComments(mainThread),
-    children: childThreads.map(combineThreadWithComments),
+  return {
+    ...mainThread,
+    hiddenCount,
   };
-
-  // console.log(result);
-
-  return result;
 }
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
@@ -454,7 +383,7 @@ export async function getCommentsInfinite({
   // 1. Get thread metadata
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
-    select: { id: true, locked: true },
+    select: { id: true },
   });
   if (!mainThread) return null;
 
@@ -486,21 +415,8 @@ export async function getCommentsInfinite({
   const nextCursor =
     regularComments.length === limit ? regularComments[regularComments.length - 1].id : undefined;
 
-  // 5. Get counts (only on first page for performance)
-  const hiddenCount = !cursor
-    ? await dbRead.commentV2.count({
-        where: {
-          threadId: mainThread.id,
-          userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-          hidden: true,
-        },
-      })
-    : undefined;
-
   return {
     comments: !cursor ? [...pinnedComments, ...regularComments] : regularComments,
     nextCursor,
-    threadMeta: mainThread,
-    hiddenCount: hiddenCount ?? 0,
   };
 }
