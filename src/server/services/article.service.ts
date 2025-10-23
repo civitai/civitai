@@ -11,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type {
   ArticleMetadata,
   GetInfiniteArticlesSchema,
+  GetModeratorArticlesSchema,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
@@ -1097,4 +1098,49 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   await userContentOverviewCache.bust(article.userId);
 
   return updated;
+}
+
+export async function getModeratorArticles({
+  limit,
+  cursor,
+  username,
+  status,
+}: GetModeratorArticlesSchema & { limit: number }) {
+  const AND: Prisma.ArticleWhereInput[] = [
+    {
+      status: {
+        in: status ? [status] : [ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation],
+      },
+    },
+  ];
+
+  if (username) {
+    AND.push({
+      user: {
+        username: { contains: username, mode: 'insensitive' },
+      },
+    });
+  }
+
+  const items = await dbRead.article.findMany({
+    take: limit + 1,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: { AND },
+    select: articleDetailSelect,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let nextCursor: number | undefined;
+  if (items.length > limit) {
+    const nextItem = items.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: items.map((article) => ({
+      ...article,
+      metadata: article.metadata as ArticleMetadata | null,
+    })),
+  };
 }

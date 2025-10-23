@@ -44,9 +44,8 @@ export function ArticleContextMenu({ article, ...props }: Props) {
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
   const showUnpublish = atDetailsPage && article.status === ArticleStatus.Published;
   const showRestore =
-    atDetailsPage &&
     isModerator &&
-    (article.status === ArticleStatus.Unpublished ||
+    ((atDetailsPage && article.status === ArticleStatus.Unpublished) ||
       article.status === ArticleStatus.UnpublishedViolation);
   const features = useFeatureFlags();
 
