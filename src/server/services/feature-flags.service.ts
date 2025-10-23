@@ -262,6 +262,7 @@ const hasFeature = (
         return true;
       return host === domain;
     });
+
     // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;
   }

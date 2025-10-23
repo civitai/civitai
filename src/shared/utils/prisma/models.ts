@@ -104,7 +104,7 @@ export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
 export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
-export type ArticleStatus = "Draft" | "Published" | "Unpublished";
+export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "UnpublishedViolation";
 
 export type ArticleEngagementType = "Favorite" | "Hide";
 

@@ -15,6 +15,10 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { imageSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
+import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
+
+const UnpublishReasons = Object.keys(unpublishReasons) as [UnpublishReason, ...UnpublishReason[]];
 
 export const articleRateLimits: RateLimit[] = [
   {
@@ -102,4 +106,22 @@ export type ArticleMetadata = {
   challengeType?: string;
   entryPrizeRequirements?: number;
   profanityMatches?: string[];
+  unpublishedReason?: string;
+  customMessage?: string;
+  unpublishedAt?: string;
+  unpublishedBy?: number;
 };
+
+export const unpublishArticleSchema = z.object({
+  id: z.number(),
+  reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as any)).optional(),
+  customMessage: z.string().optional(),
+});
+
+export type UnpublishArticleSchema = z.infer<typeof unpublishArticleSchema>;
+
+export const restoreArticleSchema = z.object({
+  id: z.number(),
+});
+
+export type RestoreArticleSchema = z.infer<typeof restoreArticleSchema>;

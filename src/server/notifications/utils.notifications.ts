@@ -1,4 +1,5 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
+import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
@@ -32,6 +33,7 @@ export const notificationProcessors = {
   ...userJourneyNotifications,
   ...unpublishNotifications,
   ...articleNotifications,
+  ...articleUnpublishNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
