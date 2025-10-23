@@ -422,7 +422,11 @@ async function fetchCommentsPaginated({
     WHERE
       c."threadId" = ${threadId}
       AND c."pinnedAt" IS NULL
-      AND (${excludedUserIds.length} = 0 OR c."userId" NOT IN (${Prisma.join(excludedUserIds)}))
+      ${
+        excludedUserIds.length
+          ? Prisma.sql`AND c."userId" NOT IN (${Prisma.join(excludedUserIds)})`
+          : Prisma.empty
+      }
       AND c.hidden = ${hidden}
       ${cursorCondition}
     ORDER BY ${Prisma.raw(orderBy)}
