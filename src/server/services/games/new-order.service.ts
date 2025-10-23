@@ -24,7 +24,7 @@ import {
   smitesCounter,
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { InfiniteQueryInput } from '~/server/schema/base.schema';
 import type {
   AddImageRatingInput,
@@ -789,12 +789,11 @@ export async function updatePendingImageRatings({
   `;
 
   if (await isFlipt('new-order-inserts')) {
-    await clickhouse.exec({
-      query: `
-        INSERT INTO knights_rating_updates_buffer (imageId, rating)
-        VALUES (${imageId}, ${rating});
-      `,
-    });
+    await clickhouse.$exec`
+      INSERT INTO knights_rating_updates_buffer (imageId, rating)
+      VALUES (${imageId}, ${rating});
+    `;
+    await processFinalRatings();
   } else {
     await clickhouse.exec({
       query: `
@@ -849,6 +848,144 @@ export async function updatePendingImageRatings({
       })
     )
   );
+}
+
+const PROCESS_MIN = 100; // number of items that will trigger early processing
+const PROCESS_INTERVAL = 30; // seconds
+async function processFinalRatings() {
+  if (!clickhouse || !redis) throw throwInternalServerError('Not supported');
+
+  // Increment process requests
+  const [pendingCount, lastProcessedString, cutoffString] = await Promise.all([
+    sysRedis.incr(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.PENDING_COUNT),
+    sysRedis.get(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.LAST_PROCESSED_AT),
+    sysRedis.get(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.BATCH_CUTOFF),
+  ]);
+  const lastProcessed = parseInt(lastProcessedString ?? '0', 10);
+
+  // Determine if we should process now
+  const timeSinceLastProcessed = Date.now() - lastProcessed;
+  const shouldProcess =
+    pendingCount >= PROCESS_MIN || timeSinceLastProcessed >= PROCESS_INTERVAL * 1000;
+  if (!shouldProcess) return { status: 'not-needed', timeSinceLastProcessed, pendingCount };
+
+  // Try to get a lock to process
+  const [lockAcquired] = await sysRedis
+    .multi()
+    .setNX(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.LOCK, '1')
+    .expire(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.LOCK, 10) // prevent deadlocks
+    .exec();
+  if (!lockAcquired) return { status: 'no-lock' }; // Another process is handling it
+
+  try {
+    // Get start and new end timeframe
+    const updateStart = new Date(cutoffString ? parseInt(cutoffString) : 0);
+    const [{ updateEnd: updateEndString }] = await clickhouse.$query<{ updateEnd: string }>`
+      SELECT update_time as updateEnd
+      FROM knights_rating_updates_batch
+      ORDER BY update_time DESC
+      LIMIT 1;
+    `;
+    const updateEnd = new Date(updateEndString);
+    console.log('Processing correct ratings from', updateStart, 'to', updateEnd);
+    if (updateStart.getTime() === updateEnd.getTime()) return { status: 'no-new-data' };
+
+    await clickhouse.$exec`
+      INSERT INTO knights_new_order_image_rating
+      WITH batch as (
+        SELECT
+            imageId,
+            argMax(rating, update_time) as rating,  -- Latest rating wins
+            max(update_time) as createdAt
+        FROM knights_rating_updates_batch
+        WHERE
+          update_time > ${updateStart}
+          AND update_time <= ${updateEnd}
+        GROUP BY imageId
+      )
+      SELECT
+          orig.userId,
+          orig.imageId as imageId,
+          orig.rating as rating,
+          orig.damnedReason,
+          CASE
+              WHEN new.rating = orig.rating THEN 'Correct'
+              ELSE 'Failed'
+          END as status,
+          orig.grantedExp,
+          CASE
+              WHEN new.rating = orig.rating THEN 1
+              ELSE -1
+          END as multiplier,
+          new.createdAt as createdAt,
+          orig.ip,
+          orig.userAgent,
+          orig.deviceId,
+          orig.rank,
+          orig.originalLevel
+      FROM knights_new_order_image_rating orig
+      JOIN batch new ON new.imageId = orig.imageId
+      WHERE orig.imageId IN (SELECT imageId FROM batch);
+    `;
+
+    // Update last processed time and reset pending count
+    await sysRedis
+      .multi()
+      .set(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.BATCH_CUTOFF, updateEnd.getTime().toString())
+      .set(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.PENDING_COUNT, '0')
+      .exec();
+
+    // Log processing completion
+    logToAxiom(
+      {
+        type: 'info',
+        name: 'new-order-process-correct-ratings',
+        details: {
+          data: {
+            lastProcessed,
+            pendingCount,
+            updateStart,
+            updateEnd,
+          },
+        },
+        message: `Processed correct ratings from ${updateStart.toISOString()} to ${updateEnd.toISOString()}`,
+      },
+      'clickhouse'
+    ).catch();
+
+    return {
+      status: 'processed',
+      start: updateStart,
+      end: updateEnd,
+    };
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'new-order-process-correct-ratings',
+        details: {
+          data: {
+            lastProcessed,
+            pendingCount,
+          },
+        },
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+    return { status: 'error', error: error.message };
+  } finally {
+    // Clear lock
+    await sysRedis
+      .multi()
+      .set(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.LAST_PROCESSED_AT, Date.now().toString())
+      .del(REDIS_SYS_KEYS.NEW_ORDER.PROCESSING.LOCK)
+      .exec();
+    console.log('Cleared processing lock');
+  }
 }
 
 export async function updatePlayerStats({

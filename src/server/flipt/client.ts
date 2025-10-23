@@ -36,6 +36,7 @@ class FliptSingleton {
           authentication: {
             clientToken: internalAuthHeader,
           },
+          updateInterval: 60, // Fetch feature flag updates (default: 120 seconds)
         });
 
         await fliptClient.refresh();
