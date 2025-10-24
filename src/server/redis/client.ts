@@ -486,6 +486,12 @@ export const REDIS_SYS_KEYS = {
       CORRECT: 'new-order:judgments:correct',
       ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
     },
+    PROCESSING: {
+      LAST_PROCESSED_AT: 'new-order:processing:last-processed-at',
+      BATCH_CUTOFF: 'new-order:processing:batch-cutoff',
+      PENDING_COUNT: 'new-order:processing:pending-count',
+      LOCK: 'new-order:processing:lock',
+    },
   },
   ENTITY_MODERATION: {
     // hset

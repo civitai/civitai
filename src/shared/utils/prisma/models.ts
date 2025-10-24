@@ -1594,6 +1594,7 @@ export interface CommentV2 {
   metadata: JsonValue | null;
   hidden: boolean | null;
   pinnedAt: Date | null;
+  reactionCount: number;
   reactions?: CommentV2Reaction[];
   reports?: CommentV2Report[];
 }

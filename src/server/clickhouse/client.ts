@@ -31,6 +31,7 @@ export type CustomClickHouseClient = ClickHouseClient & {
     query: TemplateStringsArray | string,
     ...values: any[]
   ) => Promise<T[]>;
+  $exec: (query: TemplateStringsArray | string, ...values: any[]) => Promise<void>;
 };
 
 declare global {
@@ -69,6 +70,18 @@ function getClickHouse() {
     });
     const data = await response?.json<T>();
     return data;
+  };
+
+  client.$exec = async function (query: TemplateStringsArray | string, ...values: any[]) {
+    if (typeof query !== 'string') {
+      query = query.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
+    }
+
+    log('$exec', query);
+
+    await client.exec({
+      query,
+    });
   };
 
   return client;

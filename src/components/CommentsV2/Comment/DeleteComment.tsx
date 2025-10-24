@@ -4,8 +4,11 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { queryClient, trpc } from '~/utils/trpc';
 import produce from 'immer';
+import { getQueryKey } from '@trpc/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
+import type { CommentV2GetInfinite } from '~/types/router';
 
 export function DeleteComment({
   children,
@@ -33,11 +36,20 @@ export function DeleteComment({
       if (created.some((x) => x.id === request.id)) {
         useNewCommentStore.getState().deleteComment(entityType, entityId, id);
       } else {
-        await queryUtils.commentv2.getThreadDetails.setData(
-          { entityType, entityId },
-          produce((old) => {
-            if (!old) return;
-            old.comments = old.comments?.filter((x) => x.id !== request.id);
+        // Use getQueryKey to match all infinite queries for this entity (regardless of sort/limit/hidden params)
+        await queryUtils.commentv2.getInfinite.cancel();
+
+        const queryKey = getQueryKey(trpc.commentv2.getInfinite);
+        queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+          produce(state, (old?: InfiniteData<CommentV2GetInfinite>) => {
+            if (!old?.pages?.length) return;
+
+            // Remove the comment from all pages
+            for (const page of old.pages) {
+              if (page?.comments) {
+                page.comments = page.comments.filter((x) => x.id !== request.id);
+              }
+            }
           })
         );
       }

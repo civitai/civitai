@@ -1,4 +1,4 @@
-import { Stack, Text, Loader, Center, Divider } from '@mantine/core';
+import { Stack, Text, Loader, Center, Divider, Button } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -19,7 +19,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
       limit={3}
       key={imageId}
     >
-      {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
+      {({ data, created, isLoading, isFetching, showMore, toggleShowMore, activeComment }) =>
         isLoading ? (
           <Center>
             <Loader type="bars" />
@@ -41,17 +41,12 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} borderless />
               ))}
-              {!!remaining && !showMore && (
-                <div className="flex justify-center">
-                  <Text
-                    c="blue.4"
-                    className="cursor-pointer text-sm"
-                    onClick={toggleShowMore}
-                    inherit
-                  >
-                    Show {remaining} More
-                  </Text>
-                </div>
+              {showMore && (
+                <Center>
+                  <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
+                    Load More Comments
+                  </Button>
+                </Center>
               )}
               {created.map((comment) => (
                 <Comment key={comment.id} comment={comment} borderless />

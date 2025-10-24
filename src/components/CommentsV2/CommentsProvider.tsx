@@ -10,8 +10,6 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
-import { isDefined } from '~/utils/type-guards';
-import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type CommentV2BadgeProps = {
@@ -34,6 +32,7 @@ type ChildProps = {
   data?: CommentV2Model[];
   isLoading: boolean;
   isFetching: boolean;
+  isFetchingNextPage: boolean;
   isLocked: boolean;
   isMuted: boolean;
   isReadonly: boolean;
@@ -83,20 +82,14 @@ export function RootThreadProvider({
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
   const expanded = useNewCommentStore((state) => state.expandedComments);
   const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
-  const setExpanded = useNewCommentStore((state) => state.setExpanded);
-  const utils = trpc.useUtils();
   const isInitialThread =
     entity.entityId === initialEntityId && entity.entityType === initialEntityType;
   const queryType = router.query.commentParentType as CommentConnectorInput['entityType'];
   const queryId = parseNumericString(router.query.commentParentId);
 
-  const { data: activeComment, isLoading } = trpc.commentv2.getSingle.useQuery(
-    {
-      id: entity.entityId,
-    },
-    {
-      enabled: !isInitialThread,
-    }
+  const { data: activeComment } = trpc.commentv2.getSingle.useQuery(
+    { id: entity.entityId },
+    { enabled: !isInitialThread }
   );
 
   const setRootThread = useCallback(
@@ -114,48 +107,7 @@ export function RootThreadProvider({
       entityType: initialEntityType,
       entityId: initialEntityId,
     });
-  }, []);
-
-  // Load this main thread first, so we can fill our child threads. It will be loaded anyway by the provider, so no harm really.
-  const { data: thread } = trpc.commentv2.getThreadDetails.useQuery(
-    { entityId: entity.entityId, entityType: entity.entityType, hidden },
-    {
-      onSuccess: (data) => {
-        if (!data) return;
-        const allThreads = [data, ...(data.children ?? [])];
-        const maxDepth = constants.comments.getMaxDepth({ entityType: entity.entityType });
-
-        for (const thread of allThreads) {
-          for (const comment of thread.comments ?? []) {
-            const childThread = allThreads.find((x) => x.commentId === comment.id) ?? null;
-            const childThreadDepth = childThread?.depth ?? 0;
-            if (childThreadDepth < maxDepth) {
-              utils.commentv2.getThreadDetails.setData(
-                {
-                  entityId: comment.id,
-                  entityType: 'comment',
-                  hidden,
-                },
-                childThread
-              );
-            }
-
-            utils.commentv2.getCount.setData(
-              { entityId: comment.id, entityType: 'comment' },
-              childThread?.count ?? 0
-            );
-          }
-        }
-
-        const expandedCommentIds =
-          data?.children
-            ?.filter((c) => c.depth < maxDepth)
-            .map((c) => c.commentId)
-            .filter(isDefined) ?? [];
-        setExpanded(expandedCommentIds);
-      },
-    }
-  );
+  }, [initialEntityType, initialEntityId]);
 
   useEffect(() => {
     if (queryType && queryId) {
@@ -219,68 +171,58 @@ export function CommentsProvider({
     useCallback((state) => state.comments[storeKey] ?? [], [storeKey])
   );
 
-  const [showMore, setShowMore] = useState(false);
-  const toggleShowMore = () => setShowMore((b) => !b);
+  // Fetch thread metadata separately (only metadata, no comments)
+  const { data: threadDetails } = trpc.commentv2.getThreadDetails.useQuery({
+    entityId,
+    entityType,
+  });
 
-  const {
-    data: thread,
-    isInitialLoading: isLoading,
-    isFetching,
-  } = trpc.commentv2.getThreadDetails.useQuery(
-    { entityId, entityType, hidden },
-    {
-      enabled: initialCount === undefined || initialCount > 0,
-      onSuccess: (data) => {
-        setLimit(getLimit(data?.comments));
+  // Use infinite query with cursor-based pagination for comments
+  const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.commentv2.getInfinite.useInfiniteQuery(
+      {
+        entityId,
+        entityType,
+        limit: initialLimit,
+        sort,
+        hidden: hidden ?? false,
       },
-    }
-  );
-  const hiddenCount = thread?.hidden ?? 0;
-  const initialComments = useMemo(() => {
-    const comments = thread?.comments ?? [];
-
-    if (sort === ThreadSort.Newest) return [...comments].reverse();
-    if (sort === ThreadSort.MostReactions)
-      return [...comments].sort((a, b) => b.reactions.length - a.reactions.length);
-
-    return comments;
-  }, [thread?.comments, sort]);
-
-  const highlighted = parseNumericString(router.query.highlight);
-  const getLimit = (data: { id: number }[] = []) => {
-    if (highlighted !== undefined) {
-      const limit = data.findIndex((x) => x.id === highlighted) + 1;
-      return limit < initialLimit ? initialLimit : limit;
-    }
-
-    return initialLimit;
-  };
-  const [limit, setLimit] = useState(getLimit(initialComments));
-
-  const comments = useMemo(() => {
-    const data = initialComments.sort(
-      (a, b) => new Date(b.pinnedAt ?? 0).getTime() - new Date(a.pinnedAt ?? 0).getTime()
+      {
+        enabled: initialCount === undefined || initialCount > 0,
+        getNextPageParam: (lastPage) => lastPage?.nextCursor,
+      }
     );
-    return !showMore ? data.slice(0, limit) : data;
-  }, [initialComments, showMore, limit]);
+
+  // Flatten all pages into single comments array
+  const comments = useMemo(() => data?.pages.flatMap((page) => page?.comments ?? []) ?? [], [data]);
+
+  // Get thread metadata from dedicated query (includes locked status and hiddenCount)
+  const threadMeta = threadDetails;
+  const hiddenCount = threadMeta?.hiddenCount ?? 0;
+  const highlighted = parseNumericString(router.query.highlight);
 
   const createdComments = useMemo(
     () => created.filter((x) => !comments?.some((comment) => comment.id === x.id)),
     [created, comments]
   );
 
-  const isLocked = thread?.locked ?? false;
+  const isLocked = threadMeta?.locked ?? false;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
-  let remaining = initialComments.length - limit;
-  remaining = remaining > 0 ? remaining : 0;
+
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   return (
     <CommentsCtx.Provider
       value={{
         data: comments,
         isLoading,
-        isFetching,
+        isFetching: isRefetching,
+        isFetchingNextPage,
         entityId,
         entityType,
         isLocked,
@@ -288,32 +230,31 @@ export function CommentsProvider({
         isReadonly,
         created,
         badges,
-        limit,
-        remaining,
-        showMore,
-        toggleShowMore,
+        limit: initialLimit,
+        showMore: hasNextPage ?? false,
+        toggleShowMore: loadMore,
         highlighted,
         hiddenCount,
         forceLocked,
         sort,
         setSort,
-        parentThreadId: thread?.id,
+        parentThreadId: threadMeta?.id,
         level,
       }}
     >
       {children({
         data: comments,
         isLoading,
-        isFetching,
+        isFetching: isRefetching,
+        isFetchingNextPage,
         isLocked,
         isMuted,
         isReadonly,
         created: createdComments,
         badges,
-        limit,
-        remaining,
-        showMore,
-        toggleShowMore,
+        limit: initialLimit,
+        showMore: hasNextPage ?? false,
+        toggleShowMore: loadMore,
         highlighted,
         hiddenCount,
         forceLocked,
@@ -350,7 +291,7 @@ type StoreProps = {
 const getKey = (entityType: string, entityId: number) => `${entityId}_${entityType}`;
 
 export const useNewCommentStore = create<StoreProps>()(
-  immer((set, get) => {
+  immer((set) => {
     return {
       comments: {},
       expandedComments: [],

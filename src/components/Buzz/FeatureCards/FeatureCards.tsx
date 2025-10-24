@@ -78,7 +78,6 @@ const getEarnings = (
         children: 'Create post',
         color: buzzConfig?.color,
       },
-      disabled: accountType === 'blue',
     },
     {
       disabled: accountType !== 'yellow',

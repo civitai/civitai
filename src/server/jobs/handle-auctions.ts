@@ -242,11 +242,19 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
 
 type AuctionRow = Awaited<ReturnType<typeof _fetchAuctionsWithBids>>[number];
 const _fetchAuctionsWithBids = async (now: Dayjs) => {
-  // Disable temporarily to avoid issues with refunds.
-  const canFetchFinalizedAuctions = false && now.isBefore(dayjs.utc().startOf('day'));
-  log('canFetchFinalizedAuctions:', canFetchFinalizedAuctions);
-  return dbWrite.auction.findMany({
-    where: { finalized: canFetchFinalizedAuctions, endAt: { lte: now.toDate() } },
+  const canFetchFinalizedAuctions = now.isBefore(dayjs.utc().startOf('day'));
+
+  const auctions = await dbWrite.auction.findMany({
+    where: canFetchFinalizedAuctions
+      ? {
+          finalized: true,
+          // Only fetch auctions that ended on this specific day
+          endAt: {
+            gte: now.startOf('day').toDate(),
+            lt: now.add(1, 'day').startOf('day').toDate(),
+          },
+        }
+      : { finalized: false, endAt: { lte: now.toDate() } },
     select: {
       ...auctionSelect,
       validFrom: true,
@@ -257,6 +265,7 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
           id: true,
           userId: true,
           transactionIds: true,
+          isRefunded: true,
         },
       },
       auctionBase: {
@@ -268,6 +277,8 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
       },
     },
   });
+
+  return auctions;
 };
 
 const TOP_EARNER_LIMIT = 20;
@@ -427,7 +438,24 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
 
 const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerType[]) => {
   const loserEntities = losers.map((l) => l.entityId);
-  const lostBids = auctionRow.bids.filter((b) => !b.deleted && loserEntities.includes(b.entityId));
+
+  // Log diagnostic information for manual reruns
+  log('Processing refunds for auction:', auctionRow.id);
+  log('Total loser entities:', loserEntities.length);
+
+  const allBidsForLosers = auctionRow.bids.filter((b) => loserEntities.includes(b.entityId));
+  log('Total bids for losers:', allBidsForLosers.length);
+  log('  - Deleted bids:', allBidsForLosers.filter((b) => b.deleted).length);
+  log('  - Already refunded:', allBidsForLosers.filter((b) => b.isRefunded).length);
+
+  // Filter out deleted and already refunded bids
+  const lostBids = allBidsForLosers.filter((b) => !b.deleted && !b.isRefunded);
+  log('  - Bids to refund:', lostBids.length);
+
+  if (lostBids.length === 0) {
+    log('No bids need refunding (all already refunded or deleted)');
+    return;
+  }
 
   const refundedBidIds: number[] = [];
   // TODO limit concurrency
