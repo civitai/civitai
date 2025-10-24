@@ -49,6 +49,12 @@ export const openBlockModelTagsModal = createDialogTrigger(BlockModelTagsModal);
 const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'), { ssr: false });
 export const openUnpublishModal = createDialogTrigger(UnpublishModal);
 
+const ArticleUnpublishModal = dynamic(
+  () => import('~/components/Modals/ArticleUnpublishModal'),
+  { ssr: false }
+);
+export const openArticleUnpublishModal = createDialogTrigger(ArticleUnpublishModal);
+
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'), {
   ssr: false,
 });

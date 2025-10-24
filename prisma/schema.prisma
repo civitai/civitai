@@ -2361,6 +2361,7 @@ enum ArticleStatus {
   Draft
   Published
   Unpublished
+  UnpublishedViolation
 }
 
 model Article {

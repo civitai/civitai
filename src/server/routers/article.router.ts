@@ -4,12 +4,15 @@ import {
   guardedProcedure,
   protectedProcedure,
   isFlagProtected,
+  middleware,
 } from '~/server/trpc';
 import type { UpsertArticleInput } from '~/server/schema/article.schema';
 import {
   getInfiniteArticlesSchema,
   upsertArticleInput,
   articleRateLimits,
+  unpublishArticleSchema,
+  restoreArticleSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -23,9 +26,34 @@ import {
 import {
   unpublishArticleHandler,
   upsertArticleHandler,
+  restoreArticleHandler,
 } from '~/server/controllers/article.controller';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
+import { dbRead } from '~/server/db/client';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { isModerator } from '~/server/routers/base.router';
+
+const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
+  if (!ctx.user) throw throwAuthorizationError();
+
+  const { id } = input as { id: number };
+  const userId = ctx.user.id;
+  const isModerator = ctx?.user?.isModerator;
+
+  if (!isModerator && !!id) {
+    const ownerId = (
+      await dbRead.article.findUnique({ where: { id }, select: { userId: true } })
+    )?.userId;
+    if (ownerId !== userId) throw throwAuthorizationError();
+  }
+
+  return next({
+    ctx: {
+      user: ctx.user,
+    },
+  });
+});
 
 export const articleRouter = router({
   getInfinite: publicProcedure
@@ -57,8 +85,14 @@ export const articleRouter = router({
     .mutation(({ input, ctx }) =>
       deleteArticleById({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
-  unpublish: guardedProcedure
-    .input(getByIdSchema)
+  unpublish: protectedProcedure
+    .input(unpublishArticleSchema)
     .use(isFlagProtected('articles'))
+    .use(isOwnerOrModerator)
     .mutation(unpublishArticleHandler),
+  restore: protectedProcedure
+    .input(restoreArticleSchema)
+    .use(isFlagProtected('articles'))
+    .use(isModerator)
+    .mutation(restoreArticleHandler),
 });
