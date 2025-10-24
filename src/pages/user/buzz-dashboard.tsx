@@ -130,7 +130,9 @@ export default function UserBuzzDashboard() {
           {/* Redeem Buzz Code Section */}
           {selectedAccountType === 'yellow' && <RedeemCodeCard />}
 
-          <EarningBuzz withCTA accountType={selectedAccountType} />
+          {selectedAccountType !== 'blue' && (
+            <EarningBuzz withCTA accountType={selectedAccountType} />
+          )}
 
           <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
