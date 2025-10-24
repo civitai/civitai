@@ -123,7 +123,14 @@ export async function submitWorkflow({
     const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
       messages?: string[];
     };
-    const message = messages?.length ? messages.join(',\n') : handleError(error);
+    let message = messages?.length ? messages.join(',\n') : handleError(error);
+    if (
+      body.allowMatureContent === false &&
+      message === 'Prompt requires mature content but workflow does not allow it' &&
+      body.currencies?.includes('green')
+    )
+      message =
+        'The prompt has been blocked due to mature content which is not supported by the current model';
 
     if (!isProd) {
       console.log('----Workflow Error----');

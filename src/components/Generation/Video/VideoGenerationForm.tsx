@@ -157,7 +157,11 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
             </Notification>
           )}
           <div className="flex gap-2">
-            <SubmitButton2 loading={isLoading || isLoadingDebounced} engine={engine} />
+            <SubmitButton2
+              loading={isLoading || isLoadingDebounced}
+              engine={engine}
+              setError={setError}
+            />
             <Button onClick={handleReset} variant="default" className="h-auto px-3">
               Reset
             </Button>
@@ -181,7 +185,15 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   );
 }
 
-function SubmitButton2({ loading, engine }: { loading: boolean; engine: OrchestratorEngine2 }) {
+function SubmitButton2({
+  loading,
+  engine,
+  setError,
+}: {
+  loading: boolean;
+  engine: OrchestratorEngine2;
+  setError: (error?: string) => void;
+}) {
   // const engine = useVideoGenerationStore((state) => state.engine);
   const setState = useVideoGenerationStore((state) => state.setState);
   const config = videoGenerationConfig2[engine];
@@ -198,6 +210,10 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
     { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage && canQuery }
   );
+
+  useEffect(() => {
+    setError(error?.message);
+  }, [error]);
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
