@@ -2042,11 +2042,13 @@ model CommentV2 {
   metadata     Json?
   hidden       Boolean?  @default(false)
   pinnedAt     DateTime?
+  reactionCount Int      @default(0)
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]
 
   @@index([threadId], type: Hash)
+  @@index([reactionCount(sort: Desc), id(sort: Desc)])
 }
 
 model Thread {
@@ -2359,6 +2361,7 @@ enum ArticleStatus {
   Draft
   Published
   Unpublished
+  UnpublishedViolation
 }
 
 model Article {

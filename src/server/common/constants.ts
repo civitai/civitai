@@ -317,19 +317,6 @@ export const constants = {
       },
     },
   },
-  freeMembershipDetails: {
-    name: 'Free',
-    price: 0,
-    badge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
-    metadata: {
-      monthlyBuzz: 0,
-      generationLimit: 1,
-      quantityLimit: 4,
-      queueLimit: 4,
-      badgeType: 'none',
-      maxPrivateModels: 0,
-    },
-  },
   cosmeticShop: {
     sectionImageAspectRatio: 250 / 1288,
     sectionImageHeight: 250,

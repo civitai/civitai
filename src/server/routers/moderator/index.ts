@@ -6,9 +6,11 @@ import {
   handleDenyTrainingData,
 } from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
+import { getModeratorArticlesSchema } from '~/server/schema/article.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema, getTrainingModerationFeedSchema } from '~/server/schema/model.schema';
+import { getModeratorArticles } from '~/server/services/article.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import { getModelModRules, getTrainingModelsForModerators } from '~/server/services/model.service';
@@ -37,6 +39,11 @@ export const modRouter = router({
     query: moderatorProcedure
       .input(queryModelVersionsSchema)
       .query(queryModelVersionsForModeratorHandler),
+  }),
+  articles: router({
+    query: moderatorProcedure
+      .input(getModeratorArticlesSchema)
+      .query(({ input }) => getModeratorArticles({ ...input, limit: input.limit ?? 50 })),
   }),
   trainingData: router({
     approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),

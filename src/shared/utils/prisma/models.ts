@@ -104,7 +104,7 @@ export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
 export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
-export type ArticleStatus = "Draft" | "Published" | "Unpublished";
+export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "UnpublishedViolation";
 
 export type ArticleEngagementType = "Favorite" | "Hide";
 
@@ -1594,6 +1594,7 @@ export interface CommentV2 {
   metadata: JsonValue | null;
   hidden: boolean | null;
   pinnedAt: Date | null;
+  reactionCount: number;
   reactions?: CommentV2Reaction[];
   reports?: CommentV2Report[];
 }

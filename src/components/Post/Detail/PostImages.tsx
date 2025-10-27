@@ -23,6 +23,7 @@ import type { PostContestCollectionItem } from '~/types/router';
 import classes from './PostImages.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -59,7 +60,7 @@ export function PostImages({
   const _images = showMore ? images : images.slice(0, maxInitialImages);
 
   return (
-    <Stack>
+    <ContainerProvider containerName="post-detail" className="gap-4">
       {_images.map((image, i) => {
         const width = image.width ?? maxWidth;
         const imageCollectionItem = collectionItems?.find((item) => item.imageId === image.id);
@@ -202,13 +203,13 @@ export function PostImages({
                 )}
               </ImageGuard2>
             </Paper>
-            {i > 0 && (i - 1) % 3 === 0 && <AdUnitTop maxWidth={728} />}
+            {i > 0 && (i - 1) % 3 === 0 && <AdUnitTop maxWidth={760} preserveLayout={false} />}
           </Fragment>
         );
       })}
       {remainingImages > 0 && (
         <Button onClick={() => setShowMore(true)}>Load {remainingImages} more images</Button>
       )}
-    </Stack>
+    </ContainerProvider>
   );
 }

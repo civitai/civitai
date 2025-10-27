@@ -11,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type {
   ArticleMetadata,
   GetInfiniteArticlesSchema,
+  GetModeratorArticlesSchema,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
@@ -152,9 +153,7 @@ export const getArticles = async ({
     const isMod = sessionUser?.isModerator ?? false;
     const isOwnerRequest =
       !!sessionUser?.username &&
-      !!username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
-
     // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
     // At that point, we should be relying more on unlisted status which is set by the owner.
     const hidePrivateArticles =
@@ -241,6 +240,9 @@ export const getArticles = async ({
     }
 
     if (!isOwnerRequest) {
+      if (!isMod) {
+        AND.push(Prisma.sql`a."status" = ${ArticleStatus.Published}::"ArticleStatus"`);
+      }
       if (!!excludedUserIds?.length) {
         AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
       }
@@ -353,7 +355,6 @@ export const getArticles = async ({
       )
     `);
     }
-
     const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
@@ -668,6 +669,7 @@ export const getArticleById = async ({
       })),
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
+      metadata: article.metadata as ArticleMetadata | null,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -788,6 +790,17 @@ export const upsertArticle = async ({
 
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+    // Prevent owners from re-publishing articles unpublished for ToS violations
+    if (
+      article.status === ArticleStatus.UnpublishedViolation &&
+      data.status === ArticleStatus.Published &&
+      !isModerator
+    ) {
+      throw throwBadRequestError(
+        'This article was unpublished for violating Terms of Service and cannot be republished. Please contact support if you believe this was in error.'
+      );
+    }
 
     const republishing =
       (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
@@ -964,32 +977,170 @@ export const getDraftArticlesByUserId = async ({
 
 export async function unpublishArticleById({
   id,
+  reason,
+  customMessage,
+  metadata,
   userId,
   isModerator,
 }: {
   id: number;
+  reason?: string;
+  customMessage?: string;
+  metadata?: ArticleMetadata;
   userId: number;
   isModerator?: boolean;
 }) {
+  // Fetch article
   const article = await dbRead.article.findUnique({
     where: { id },
     select: { userId: true, publishedAt: true, status: true },
   });
+
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
+  // Permission check (defensive, already checked in middleware)
   const isOwner = article.userId === userId || isModerator;
   if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
 
-  if (!article.publishedAt || article.status !== ArticleStatus.Published)
+  // State validation
+  if (!article.publishedAt || article.status !== ArticleStatus.Published) {
     throw throwBadRequestError('Article is not published');
+  }
 
-  const updated = await dbWrite.article.update({
-    where: { id },
-    data: { status: ArticleStatus.Unpublished },
-  });
+  // Atomic update with transaction
+  const updated = await dbWrite.$transaction(
+    async (tx) => {
+      const unpublishedAt = new Date().toISOString();
 
+      // Build updated metadata
+      const updatedMetadata = {
+        ...metadata,
+        ...(reason
+          ? {
+              unpublishedReason: reason,
+              customMessage,
+            }
+          : {}),
+        unpublishedAt,
+        unpublishedBy: userId,
+      };
+
+      // Update article status and metadata
+      return await tx.article.update({
+        where: { id },
+        data: {
+          status: reason ? ArticleStatus.UnpublishedViolation : ArticleStatus.Unpublished,
+          metadata: updatedMetadata,
+        },
+      });
+    },
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  // Update search index (remove from public search)
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  // Bust user content cache
   await userContentOverviewCache.bust(article.userId);
 
   return updated;
+}
+
+export async function restoreArticleById({ id, userId }: { id: number; userId: number }) {
+  const article = await dbRead.article.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      status: true,
+      metadata: true,
+    },
+  });
+
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  // Can only restore unpublished articles
+  if (
+    ![ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation].some(
+      (s) => s === article.status
+    )
+  ) {
+    throw throwBadRequestError('Article is not unpublished');
+  }
+
+  const updated = await dbWrite.$transaction(
+    async (tx) => {
+      const metadata = (article.metadata as ArticleMetadata) || {};
+
+      // Clear unpublish metadata
+      const updatedMetadata = {
+        ...metadata,
+        unpublishedReason: undefined,
+        customMessage: undefined,
+        unpublishedAt: undefined,
+        unpublishedBy: undefined,
+      };
+
+      return await tx.article.update({
+        where: { id },
+        data: {
+          status: ArticleStatus.Published,
+          publishedAt: new Date(),
+          metadata: updatedMetadata,
+        },
+      });
+    },
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  // Re-add to search index
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  await userContentOverviewCache.bust(article.userId);
+
+  return updated;
+}
+
+export async function getModeratorArticles({
+  limit,
+  cursor,
+  username,
+  status,
+}: GetModeratorArticlesSchema & { limit: number }) {
+  const AND: Prisma.ArticleWhereInput[] = [
+    {
+      status: {
+        in: status ? [status] : [ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation],
+      },
+    },
+  ];
+
+  if (username) {
+    AND.push({
+      user: {
+        username: { contains: username, mode: 'insensitive' },
+      },
+    });
+  }
+
+  const items = await dbRead.article.findMany({
+    take: limit + 1,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: { AND },
+    select: articleDetailSelect,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let nextCursor: number | undefined;
+  if (items.length > limit) {
+    const nextItem = items.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: items.map((article) => ({
+      ...article,
+      metadata: article.metadata as ArticleMetadata | null,
+    })),
+  };
 }
