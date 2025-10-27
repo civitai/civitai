@@ -15,7 +15,10 @@ import {
 import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
 import { benefitIconSize } from '~/components/Subscriptions/PlanBenefitList';
 import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
-import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type {
+  ProductTier,
+  SubscriptionProductMetadata,
+} from '~/server/schema/subscriptions.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan } from '~/server/services/subscriptions.service';
 import { isHolidaysTime } from '~/utils/date-helpers';
@@ -34,6 +37,8 @@ export const getPlanDetails: (
   const metadata = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
+    buzzType: product.metadata.buzzType,
+    tier: product.metadata.tier,
     image:
       metadata?.badge ?? constants.memberships.badges[metadata.tier] ?? constants.supporterBadge,
     benefits: [
@@ -236,5 +241,7 @@ export const getPlanDetails: (
 export type PlanMeta = {
   name: string;
   image: string;
+  buzzType: string;
+  tier: ProductTier;
   benefits: BenefitItem[];
 };
