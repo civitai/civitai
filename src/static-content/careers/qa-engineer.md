@@ -3,10 +3,10 @@ title: "Job Opportunity: QA Engineer"
 description: "Civitai Open Position: QA Engineer"
 ---
 
-**Job Title:** QA Engineer (Junior Developer / Bug Tester)  
-**Location:** Fully Remote  
-**Compensation:** $65,000–$75,000 USD annually  
-**Employment Type:** Full-time  
+**Job Title:** QA Engineer (Junior Developer / Bug Tester)
+**Location:** Fully Remote
+**Compensation:** $65,000–$75,000 USD annually
+**Employment Type:** Full-time
 **Benefits:** Employer-paid healthcare coverage (U.S. only)
 
 ### **Overview**
@@ -46,4 +46,4 @@ You'll gain hands-on experience across the full software development lifecycle, 
 
 Civitai is a fully remote company that values ownership, flexibility, and innovation. We offer an unlimited vacation policy, full healthcare benefits for U.S. workers, and the chance to grow within a fast-moving team shaping the future of AI creation.
 
-### [Apply Now](https://forms.clickup.com/8459928/f/825mr-5820/BEIF9TG69LYV9MQVSW)
+### [Apply Now](https://forms.clickup.com/8459928/f/825mr-15711/OMNG0XRXXSQRL533RC)

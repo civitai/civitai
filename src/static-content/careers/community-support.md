@@ -3,10 +3,10 @@ title: "Job Opportunity: Community Support Specialist"
 description: "Civitai Open Position: Community Support Specialist"
 ---
 
-**Job Title:** Community Support Specialist (Contract)  
-**Location:** Fully Remote  
-**Compensation:** $20/hour  
-**Employment Type:** Contract  
+**Job Title:** Community Support Specialist (Contract)
+**Location:** Fully Remote
+**Compensation:** $20/hour
+**Employment Type:** Contract
 **Hours:** 20–30 hours per week
 
 ### **Overview**
@@ -34,4 +34,4 @@ This is a contract position starting at $20/hour, with the potential to transiti
 * Opportunity to work directly with the Civitai core team and shape community experience.
 * Potential for career growth in a fast-evolving AI company.
 
-### [Apply Now](https://forms.clickup.com/8459928/f/825mr-5820/BEIF9TG69LYV9MQVSW)
+### [Apply Now](https://forms.clickup.com/8459928/f/825mr-15691/7OEZ0VMYZUKF8QJ561)

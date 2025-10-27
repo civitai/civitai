@@ -8,6 +8,7 @@ description: "Apply for our open positions to join us at Civitai!"
 ### Open Positions
 - [QA Engineer (Remote)](/content/careers/qa-engineer)
 - [Community Support (Remote)](/content/careers/community-support)
+- [Site Moderator (Remote)](/content/careers/moderator)
 
 <details open>
   <summary><h2 style="display: inline-block">Who We Are</h2></summary>
