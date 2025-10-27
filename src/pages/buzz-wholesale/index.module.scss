@@ -1,0 +1,231 @@
+.section {
+  margin-bottom: 3rem;
+}
+
+.highlightColor {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-4),
+    var(--mantine-color-cyan-4),
+    var(--mantine-color-violet-5)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+
+.card {
+  padding: 2rem;
+  transition: all 0.3s ease;
+  background: var(--mantine-color-body);
+  border-color: var(--mantine-color-default-border);
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-md);
+    border-color: var(--mantine-color-blue-5);
+  }
+}
+
+.highlightCard {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-6),
+    var(--mantine-color-cyan-5),
+    var(--mantine-color-violet-6)
+  );
+  border: none;
+  box-shadow: var(--mantine-shadow-xl);
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-xl);
+    transform: translateY(-2px);
+  }
+}
+
+.boltGroup {
+  @media (max-width: 48em) {
+    display: none;
+  }
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-1),
+    var(--mantine-color-cyan-1),
+    var(--mantine-color-violet-1)
+  );
+  color: var(--mantine-color-blue-6);
+}
+
+// Tier Cards
+.tierCard {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(
+      90deg,
+      var(--mantine-color-blue-5),
+      var(--mantine-color-cyan-5),
+      var(--mantine-color-violet-5)
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  &:hover {
+    box-shadow: var(--mantine-shadow-lg);
+    transform: translateY(-4px);
+    border-color: var(--mantine-color-blue-5);
+
+    &::before {
+      opacity: 1;
+    }
+  }
+}
+
+.recommendedTier {
+  border-color: var(--mantine-color-blue-5);
+  box-shadow: var(--mantine-shadow-md);
+
+  &::before {
+    opacity: 1;
+    background: linear-gradient(
+      90deg,
+      var(--mantine-color-blue-6),
+      var(--mantine-color-cyan-6)
+    );
+  }
+}
+
+.topTier {
+  border-color: var(--mantine-color-yellow-5);
+
+  &::before {
+    background: linear-gradient(
+      90deg,
+      var(--mantine-color-yellow-5),
+      var(--mantine-color-orange-5)
+    );
+  }
+}
+
+.tierName {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-6),
+    var(--mantine-color-cyan-6)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.tierPrice {
+  color: var(--mantine-color-blue-6);
+}
+
+.discountTable {
+  width: 100%;
+  font-size: var(--mantine-font-size-sm);
+
+  tbody tr {
+    border-bottom: 1px solid var(--mantine-color-default-border);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  td {
+    padding: 0.5rem 0;
+  }
+}
+
+.volumeCell {
+  font-weight: 600;
+  color: var(--mantine-color-text);
+}
+
+.discountCell {
+  text-align: right;
+  font-weight: 700;
+  color: var(--mantine-color-blue-6);
+}
+
+.ctaCard {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-0),
+    var(--mantine-color-cyan-0),
+    var(--mantine-color-violet-0)
+  );
+  border: 2px solid var(--mantine-color-blue-3);
+}
+
+// Dark mode adjustments
+:global(.mantine-dark) {
+  .card {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+
+    &:hover {
+      border-color: var(--mantine-color-blue-4);
+    }
+  }
+
+  .iconWrapper {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-dark-5),
+      var(--mantine-color-dark-4)
+    );
+    color: var(--mantine-color-blue-4);
+  }
+
+  .tierName {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-blue-4),
+      var(--mantine-color-cyan-4)
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .tierPrice {
+    color: var(--mantine-color-blue-4);
+  }
+
+  .discountCell {
+    color: var(--mantine-color-blue-4);
+  }
+
+  .ctaCard {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-dark-6),
+      var(--mantine-color-dark-5)
+    );
+    border-color: var(--mantine-color-blue-6);
+  }
+}

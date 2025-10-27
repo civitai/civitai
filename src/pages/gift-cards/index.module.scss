@@ -7,11 +7,11 @@
   width: 100%;
   margin-top: 1.5rem;
   margin-bottom: 1.5rem;
-  
+
   // Center the notification content
   display: flex;
   justify-content: center;
-  
+
   // On desktop: slightly less top margin
   @media (min-width: 769px) {
     margin-top: 1rem;
@@ -24,22 +24,22 @@
     max-width: none;
     position: relative;
     overflow: hidden;
-    
+
     // Subtle gradient background
-    background: linear-gradient(135deg, 
-      var(--mantine-color-blue-6) 0%, 
+    background: linear-gradient(135deg,
+      var(--mantine-color-blue-6) 0%,
       var(--mantine-color-cyan-6) 100%);
-    
+
     // Enhanced shadow and border
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1), 
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1),
                 0 2px 8px rgba(59, 130, 246, 0.15),
                 inset 0 1px 0 rgba(255, 255, 255, 0.15);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: var(--mantine-radius-md);
-    
+
     // Subtle animation
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    
+
     // Subtle hover effect
     &:hover {
       transform: translateY(-1px);
@@ -47,7 +47,7 @@
                   0 3px 12px rgba(59, 130, 246, 0.2),
                   inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
-    
+
     // Animated gradient overlay
     &::before {
       content: '';
@@ -65,21 +65,21 @@
       transition: left 0.6s ease;
       z-index: 1;
     }
-    
+
     // Shine effect on hover
     &:hover::before {
       left: 100%;
     }
-    
+
     // Ensure content is above the shine effect
     & > * {
       position: relative;
       z-index: 2;
     }
-    
+
     // Override text colors for better contrast on gradient
     color: white;
-    
+
     // Keep badges and text clean for readability - no glassmorphism
   }
 }
@@ -118,7 +118,7 @@
   border: none;
   box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
   transition: all 0.2s ease;
-  
+
   &:hover {
     background: linear-gradient(135deg, var(--mantine-color-yellow-6), var(--mantine-color-orange-7));
     box-shadow: 0 4px 12px rgba(255, 193, 7, 0.4);
@@ -134,13 +134,13 @@
   font-size: var(--mantine-font-size-xs);
   padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
   min-width: 0; // Allow buttons to shrink below content width
-  
+
   // Mobile optimizations
   @media (max-width: 768px) {
     font-size: 10px;
     padding: 4px 8px;
     min-height: 32px;
-    
+
     // Make text more compact on very small screens
     @media (max-width: 480px) {
       font-size: 10px;
@@ -149,10 +149,166 @@
       line-height: 1.2;
     }
   }
-  
+
   &:hover {
     background: linear-gradient(135deg, var(--mantine-color-violet-7), var(--mantine-color-indigo-7));
     box-shadow: 0 4px 12px rgba(139, 69, 219, 0.4);
     transform: translateY(-1px);
+  }
+}
+
+// Wholesale Program Callout
+.wholesaleCallout {
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(
+      90deg,
+      var(--mantine-color-blue-6),
+      var(--mantine-color-cyan-5),
+      var(--mantine-color-violet-6)
+    );
+  }
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--mantine-shadow-xl);
+  }
+
+  @media (max-width: 768px) {
+    padding: var(--mantine-spacing-lg);
+  }
+}
+
+.wholesaleIconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-5),
+    var(--mantine-color-cyan-5)
+  );
+  color: white;
+  flex-shrink: 0;
+
+  @media (max-width: 768px) {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+.wholesaleTitle {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-7),
+    var(--mantine-color-cyan-7)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+
+  @media (max-width: 768px) {
+    font-size: var(--mantine-font-size-xl);
+  }
+}
+
+.wholesaleHighlight {
+  color: var(--mantine-color-blue-6);
+  flex-shrink: 0;
+}
+
+.wholesaleCTAWrapper {
+  @media (min-width: 769px) {
+    align-items: flex-end;
+  }
+
+  @media (max-width: 768px) {
+    align-items: stretch;
+  }
+}
+
+.wholesaleCTA {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-blue-6),
+    var(--mantine-color-cyan-6)
+  );
+  border: none;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  transition: all 0.2s ease;
+
+  @media (max-width: 768px) {
+    width: 100%;
+  }
+
+  &:hover {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-blue-7),
+      var(--mantine-color-cyan-7)
+    );
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    transform: translateY(-1px);
+  }
+}
+
+.wholesaleCTAText {
+  @media (min-width: 769px) {
+    text-align: right;
+  }
+
+  @media (max-width: 768px) {
+    text-align: center;
+  }
+}
+
+// Dark mode adjustments
+:global(.mantine-dark) {
+  .wholesaleCallout {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-dark-6),
+      var(--mantine-color-dark-5)
+    );
+    border-color: var(--mantine-color-blue-7);
+
+    &:hover {
+      border-color: var(--mantine-color-blue-6);
+    }
+  }
+
+  .wholesaleIconWrapper {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-blue-6),
+      var(--mantine-color-cyan-6)
+    );
+  }
+
+  .wholesaleTitle {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-blue-4),
+      var(--mantine-color-cyan-4)
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .wholesaleHighlight {
+    color: var(--mantine-color-blue-4);
   }
 }
