@@ -375,7 +375,7 @@ export async function consumeRedeemableCode({
             type: TransactionType.Purchase,
             externalTransactionId: `civitai-membership:${date}:${userId}:${
               consumedCode.price!.product.id
-            }`,
+            }:${consumedCode.code}`,
             amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
             description: `Membership bonus`,
             details: {
