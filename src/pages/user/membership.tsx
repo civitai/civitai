@@ -239,7 +239,7 @@ export default function UserMembership() {
                   buttonText={`View ${otherBuzzType === 'green' ? 'Green' : 'Yellow'} Membership`}
                 />
               )}
-              {/* 
+              {/*
               {subscriptionPaymentProvider !== paymentProvider && !isCivitaiProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
@@ -436,7 +436,11 @@ export default function UserMembership() {
                     membership benefits
                   </Title>
                   <Paper withBorder className={styles.card}>
-                    <PlanBenefitList benefits={benefits} />
+                    <PlanBenefitList
+                      benefits={benefits}
+                      buzzType={subscription.buzzType}
+                      tier={subscription.product.metadata.tier}
+                    />
                   </Paper>
                 </div>
               )}

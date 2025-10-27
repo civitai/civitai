@@ -210,7 +210,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
               </>
             )}
           </Stack>
-          {benefits && <PlanBenefitList benefits={benefits} tier={meta?.tier} />}
+          {benefits && (
+            <PlanBenefitList benefits={benefits} tier={meta?.tier} buzzType={meta.buzzType} />
+          )}
         </Stack>
       </Stack>
     </Card>

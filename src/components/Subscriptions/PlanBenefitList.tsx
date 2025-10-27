@@ -29,6 +29,11 @@ const defaultBenefits = [
       </Text>
     ),
   },
+  {
+    content: 'Generate mature content with Blue Buzz',
+    tiers: ['bronze', 'silver', 'gold'],
+    subType: 'yellow',
+  },
   { content: 'Enhanced Model Creator controls', tiers: ['gold'] },
 ];
 
@@ -37,6 +42,7 @@ export const PlanBenefitList = ({
   useDefaultBenefits = true,
   defaultBenefitsDisabled,
   tier,
+  buzzType,
 }: Props) => {
   return (
     <Stack>
@@ -78,9 +84,12 @@ export const PlanBenefitList = ({
           <Divider mx="-md" />
           <List size="md" center>
             <Stack gap="xs">
-              {defaultBenefits.map(({ content, tiers }, index) => {
+              {defaultBenefits.map(({ content, tiers, subType }, index) => {
                 const isUnavailable =
                   defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));
+
+                if (subType && buzzType !== subType) return null;
+
                 return (
                   <List.Item
                     icon={
@@ -117,6 +126,7 @@ type Props = {
   useDefaultBenefits?: boolean;
   defaultBenefitsDisabled?: boolean;
   tier?: string;
+  buzzType?: string;
 };
 
 export type BenefitItem = {

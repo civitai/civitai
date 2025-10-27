@@ -331,7 +331,13 @@ export const CancelMembershipBenefitsModal = () => {
         <Stack>
           {product && (
             <Paper withBorder radius="lg" p="lg">
-              {benefits && <PlanBenefitList benefits={benefits} />}
+              {benefits && (
+                <PlanBenefitList
+                  benefits={benefits}
+                  buzzType={subscription.buzzType}
+                  tier={subscription.product.metadata.tier}
+                />
+              )}
             </Paper>
           )}
           <Group grow>
@@ -473,7 +479,7 @@ export const MembershipUpgradeModal = ({
 
         {benefits && (
           <Paper className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8" withBorder>
-            <PlanBenefitList benefits={benefits} />
+            <PlanBenefitList benefits={benefits} buzzType={meta.buzzType} tier={meta.tier} />
           </Paper>
         )}
 

@@ -13,7 +13,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { IconExternalLink, IconCheck } from '@tabler/icons-react';
+import { IconExternalLink, IconCheck, IconBolt, IconBuildingStore, IconArrowRight } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -22,6 +22,7 @@ import { KinguinCheckout } from '~/components/KinguinCheckout';
 import { useKinguinSDK } from '~/hooks/useKinguinSDK';
 import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift-cards/vendors';
 import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
+import { NextLink } from '~/components/NextLink/NextLink';
 import classes from './index.module.scss';
 
 // Kinguin utility moved to KinguinCheckout component
@@ -466,8 +467,81 @@ export default function GiftCardsPage() {
               )}
             </>
           )}
+
+          {/* Wholesale Program Callout */}
+          {!showKinguinCheckout && <WholesaleCallout />}
         </Stack>
       </Container>
     </>
   );
 }
+
+// Wholesale Program Callout Component
+const WholesaleCallout = () => {
+  return (
+    <Card
+      shadow="lg"
+      padding="xl"
+      radius="md"
+      withBorder
+      mt="xl"
+      className={classes.wholesaleCallout}
+    >
+      <Grid align="center">
+        <Grid.Col span={{ base: 12, md: 8 }}>
+          <Stack gap="md">
+            <Group gap="md">
+              <div className={classes.wholesaleIconWrapper}>
+                <IconBuildingStore size={32} />
+              </div>
+              <Stack gap={4}>
+                <Title order={2} className={classes.wholesaleTitle}>
+                  Run a Store? Sell Buzz Gift Cards
+                </Title>
+                <Text size="lg" c="dimmed">
+                  Join our Wholesale Program and offer Buzz gift cards to your customers
+                </Text>
+              </Stack>
+            </Group>
+            <Group gap="xl" ml={60}>
+              <Group gap="xs">
+                <IconBolt size={20} className={classes.wholesaleHighlight} />
+                <Text size="sm" fw={500}>
+                  Up to 15% discount
+                </Text>
+              </Group>
+              <Group gap="xs">
+                <IconCheck size={20} className={classes.wholesaleHighlight} />
+                <Text size="sm" fw={500}>
+                  Featured on gift cards page
+                </Text>
+              </Group>
+              <Group gap="xs">
+                <IconCheck size={20} className={classes.wholesaleHighlight} />
+                <Text size="sm" fw={500}>
+                  Marketing support
+                </Text>
+              </Group>
+            </Group>
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 4 }}>
+          <Stack gap="sm" className={classes.wholesaleCTAWrapper}>
+            <Button
+              component={NextLink}
+              href="/buzz-wholesale"
+              size="lg"
+              rightSection={<IconArrowRight size={20} />}
+              className={classes.wholesaleCTA}
+            >
+              Learn More
+            </Button>
+            <Text size="xs" c="dimmed" className={classes.wholesaleCTAText}>
+              Perfect for retailers, resellers, and online stores
+            </Text>
+          </Stack>
+        </Grid.Col>
+      </Grid>
+    </Card>
+  );
+};
