@@ -120,7 +120,7 @@ const formSchema = createBountyInputSchema
   })
   .refine((data) => data.nsfw && data.buzzType === 'green', {
     error: 'When using Green Buzz, you are not allowed to create NSFW content',
-    path: ['nsfw']
+    path: ['nsfw'],
   });
 
 export function BountyCreateForm() {
@@ -196,6 +196,7 @@ export function BountyCreateForm() {
   ].some((t) => t === type);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
+    accountTypes: availableBuzzTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to create this bounty. Required Buzz: ${numberWithCommas(
         requiredBalance

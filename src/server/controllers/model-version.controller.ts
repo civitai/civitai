@@ -687,7 +687,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
     return earlyAccessPurchase({
       ...input,
       userId: ctx.user.id,
-      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
+      buzzType: getAllowedAccountTypes(ctx.features)[0],
     });
   } catch (error) {
     if (error instanceof TRPCError) error;
