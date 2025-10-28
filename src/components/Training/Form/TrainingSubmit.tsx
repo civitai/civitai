@@ -67,7 +67,10 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   getTrainingFields,
+  getAiToolkitEcosystem,
+  getAiToolkitModelVariant,
   isInvalidRapid,
+  isInvalidAiToolkit,
   isValidRapid,
   rapidEta,
   type TrainingBaseModelType,
@@ -403,6 +406,56 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (isInvalidAiToolkit(baseType, paramData.engine)) {
+        showErrorNotification({
+          error: new Error('AI Toolkit training is not supported for this model.'),
+          title: `Parameter error`,
+          autoClose: false,
+        });
+        finishedRuns++;
+        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        return;
+      }
+
+      // Transform params for AI Toolkit if needed
+      let finalParams: any = paramData;
+      if (paramData.engine === 'ai-toolkit') {
+        const ecosystem = getAiToolkitEcosystem(base);
+        const modelVariant = getAiToolkitModelVariant(base as TrainingDetailsBaseModelList);
+
+        if (!ecosystem) {
+          showErrorNotification({
+            error: new Error('Failed to determine ecosystem for AI Toolkit training.'),
+            title: `Parameter error`,
+            autoClose: false,
+          });
+          finishedRuns++;
+          if (finishedRuns === runs.length) setAwaitInvalidate(false);
+          return;
+        }
+
+        finalParams = {
+          engine: 'ai-toolkit',
+          ecosystem,
+          ...(modelVariant && { modelVariant }),
+          epochs: paramData.maxTrainEpochs,
+          // NOTE: numRepeats and trainBatchSize are NOT included (not used by AI Toolkit)
+          resolution: paramData.resolution,
+          lr: paramData.unetLR,
+          textEncoderLr: paramData.textEncoderLR || null,
+          trainTextEncoder: !!paramData.textEncoderLR,
+          lrScheduler: paramData.lrScheduler,
+          optimizerType: paramData.optimizerType,
+          networkDim: paramData.networkDim,
+          networkAlpha: paramData.networkAlpha,
+          noiseOffset: paramData.noiseOffset || null,
+          minSnrGamma: paramData.minSnrGamma || null,
+          flipAugmentation: paramData.flipAugmentation || false,
+          shuffleTokens: paramData.shuffleCaption,
+          keepTokens: paramData.keepTokens,
+        };
+      }
+
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
         trainingModelInfo[base as TrainingDetailsBaseModelList]?.baseModel ??
@@ -426,7 +479,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) ?? {}),
           baseModel: base,
           baseModelType: baseType,
-          params: paramData,
+          params: finalParams,
           samplePrompts,
           ...(negativePrompt && { negativePrompt }),
           staging,

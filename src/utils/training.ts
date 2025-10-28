@@ -17,7 +17,7 @@ export const trainingBaseModelType = [
 ] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
-export const engineTypes = ['kohya', 'rapid', 'musubi'] as const;
+export const engineTypes = ['kohya', 'rapid', 'musubi', 'ai-toolkit'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
@@ -217,8 +217,127 @@ export const getTrainingFields = {
       ? OrchEngineTypes.Rapid
       : engine === 'musubi'
       ? OrchEngineTypes.Musubi
+      : engine === 'ai-toolkit'
+      ? OrchEngineTypes.AiToolkit
       : OrchEngineTypes.Kohya;
   },
+};
+
+/**
+ * Map civitai ecosystem (from getBaseModelEcosystem) to AI Toolkit ecosystem format
+ */
+export function getAiToolkitEcosystem(baseModel: string): string | null {
+  const { getBaseModelEcosystem } = require('~/shared/constants/base-model.constants');
+  const civitaiEcosystem = getBaseModelEcosystem(baseModel);
+
+  // Ecosystem mapping for AI Toolkit API
+  const ecosystemMap: Record<string, string> = {
+    // SD 1.x variants
+    sd1: 'sd1',
+
+    // SDXL variants (including Pony, Illustrious, NoobAI which have ecosystem: 'sdxl')
+    sdxl: 'sdxl',
+    pony: 'sdxl',
+    illustrious: 'sdxl',
+    noobai: 'sdxl',
+
+    // Flux variants
+    flux1: 'flux1',
+
+    // SD3 variants
+    sd3: 'sd3',
+    sd3_5m: 'sd3', // SD 3.5 Medium has ecosystem: 'sd3'
+
+    // Video models - all Wan/Hunyuan variants map to 'wan'
+    wanvideo: 'wan',
+    wanvideo14b_t2v: 'wan',
+    wanvideo14b_i2v_480p: 'wan',
+    wanvideo14b_i2v_720p: 'wan',
+    'wanvideo-22-t2v-a14b': 'wan',
+    'wanvideo-22-i2v-a14b': 'wan',
+    'wanvideo-22-ti2v-5b': 'wan',
+    'wanvideo-25-t2v': 'wan',
+    'wanvideo-25-i2v': 'wan',
+    hyv1: 'wan', // Hunyuan maps to wan ecosystem
+
+    // Chroma
+    chroma: 'chroma',
+  };
+
+  const mapped = ecosystemMap[civitaiEcosystem.toLowerCase()];
+  if (!mapped) {
+    console.warn(`Unknown ecosystem for AI Toolkit: ${civitaiEcosystem}`);
+    return null;
+  }
+
+  return mapped;
+}
+
+/**
+ * Get model variant for AI Toolkit based on base model
+ */
+export function getAiToolkitModelVariant(
+  baseModel: TrainingDetailsBaseModelList
+): string | undefined {
+  // Model variant mapping based on specific models
+  const variantMap: Partial<Record<TrainingDetailsBaseModelList, string>> = {
+    // Flux variants
+    flux_dev: 'dev',
+    // 'flux_schnell': 'schnell',  // if/when added
+
+    // SD3 variants
+    // 'sd3_medium': 'medium',  // if/when enabled
+    // 'sd3_large': 'large',    // if/when enabled
+
+    // Wan variants - determine from model name
+    wan_2_1_t2v_14b: '2.1',
+    wan_2_1_i2v_14b_720p: '2.1',
+    // Wan 2.2 models would be '2.2'
+  };
+
+  // If it's a custom model (civitai:xxx@yyy or AIR format), try to infer from URN
+  if (typeof baseModel === 'string' && baseModel.includes('civitai:')) {
+    return undefined;
+  }
+
+  return variantMap[baseModel as TrainingDetailsBaseModelList];
+}
+
+// Check if base model supports AI Toolkit
+export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
+  // AI Toolkit supports all base model types
+  const supportedTypes: TrainingBaseModelType[] = [
+    'sd15',
+    'sdxl',
+    'flux',
+    'sd35',
+    'hunyuan',
+    'wan',
+    'chroma',
+  ];
+  return supportedTypes.includes(baseType);
+};
+
+// Get default engine for base type
+export const getDefaultEngine = (baseType: TrainingBaseModelType): EngineTypes => {
+  if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
+  return 'kohya';
+};
+
+// Check if AI Toolkit is valid for the model
+export const isValidAiToolkit = (
+  baseModel: TrainingBaseModelType,
+  engine: EngineTypes
+): boolean => {
+  return isAiToolkitSupported(baseModel) && engine === 'ai-toolkit';
+};
+
+// Check if AI Toolkit is invalid for the model
+export const isInvalidAiToolkit = (
+  baseModel: TrainingBaseModelType,
+  engine: EngineTypes
+): boolean => {
+  return !isAiToolkitSupported(baseModel) && engine === 'ai-toolkit';
 };
 
 // TODO get this back from the dryRun

@@ -4,11 +4,15 @@ import type {
   ImageResourceTrainingStepTemplate,
   KohyaImageResourceTrainingInput,
   MusubiImageResourceTrainingInput,
+  TrainingStep,
+  TrainingStepTemplate,
+  TrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import type {
+  AiToolkitTrainingParams,
   ImageTrainingStepSchema,
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
@@ -19,7 +23,12 @@ import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
-import { getTrainingFields, isInvalidRapid, trainingModelInfo } from '~/utils/training';
+import {
+  getTrainingFields,
+  isInvalidRapid,
+  isInvalidAiToolkit,
+  trainingModelInfo,
+} from '~/utils/training';
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -100,7 +109,7 @@ const createTrainingStep_Run = (
   if (engine === 'kohya') {
     const input: KohyaImageResourceTrainingInput = {
       ...inputBase,
-      ...params,
+      ...(params as any),
       engine,
     };
     return {
@@ -119,7 +128,7 @@ const createTrainingStep_Run = (
   } else if (engine === 'musubi') {
     const input: MusubiImageResourceTrainingInput = {
       ...inputBase,
-      ...params,
+      ...(params as any),
       engine,
     };
     return {
@@ -128,6 +137,76 @@ const createTrainingStep_Run = (
     };
   } else {
     throw new Error('Invalid engine for training');
+  }
+};
+
+// NEW: Create training step using the new TrainingStep format (for ai-toolkit)
+const createTrainingStep_AiToolkit = (
+  input: ImageTrainingStepSchema
+): TrainingStepTemplate => {
+  const {
+    model,
+    priority,
+    loraName,
+    trainingData,
+    trainingDataImagesCount,
+    samplePrompts,
+    negativePrompt,
+    modelFileId,
+    params,
+  } = input;
+
+  const aiToolkitParams = params as AiToolkitTrainingParams;
+
+  const trainingInput: TrainingInput = {
+    engine: 'ai-toolkit',
+    ecosystem: aiToolkitParams.ecosystem,
+    model,
+    ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
+    trainingData: {
+      type: 'zip',
+      sourceUrl: trainingData,
+      count: trainingDataImagesCount,
+    },
+    samples: {
+      prompts: samplePrompts,
+    },
+    epochs: aiToolkitParams.epochs,
+    // NOTE: numRepeats and trainBatchSize are NOT included (not used by AI Toolkit)
+    resolution: aiToolkitParams.resolution ?? undefined,
+    lr: aiToolkitParams.lr,
+    textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
+    trainTextEncoder: aiToolkitParams.trainTextEncoder,
+    lrScheduler: aiToolkitParams.lrScheduler,
+    optimizerType: aiToolkitParams.optimizerType,
+    networkDim: aiToolkitParams.networkDim ?? undefined,
+    networkAlpha: aiToolkitParams.networkAlpha ?? undefined,
+    noiseOffset: aiToolkitParams.noiseOffset ?? undefined,
+    minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
+    flipAugmentation: aiToolkitParams.flipAugmentation,
+    shuffleTokens: aiToolkitParams.shuffleTokens,
+    keepTokens: aiToolkitParams.keepTokens,
+  };
+
+  return {
+    $type: 'training',
+    metadata: { modelFileId },
+    priority,
+    retries: constants.maxTrainingRetries,
+    input: trainingInput,
+  };
+};
+
+// Dispatcher to route to the correct training step creator
+const createTrainingStep = (
+  input: ImageTrainingStepSchema
+): ImageResourceTrainingStepTemplate | TrainingStepTemplate => {
+  const { engine } = input;
+
+  if (engine === 'ai-toolkit') {
+    return createTrainingStep_AiToolkit(input);
+  } else {
+    return createTrainingStep_Run(input); // Existing function for kohya, rapid, musubi
   }
 };
 
@@ -185,6 +264,9 @@ export const createTrainingWorkflow = async ({
   if (isInvalidRapid(baseModelType, trainingParams.engine))
     throw throwBadRequestError('Cannot use Rapid Training with a non-flux base model.');
 
+  if (isInvalidAiToolkit(baseModelType, trainingParams.engine))
+    throw throwBadRequestError('AI Toolkit training is not supported for this model.');
+
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 
   if (!(baseModel in trainingModelInfo)) {
@@ -217,7 +299,7 @@ export const createTrainingWorkflow = async ({
     params,
   };
 
-  const stepRun = createTrainingStep_Run(runArgs);
+  const stepRun = createTrainingStep(runArgs);
 
   const workflow = await submitWorkflow({
     token,
@@ -265,7 +347,7 @@ export const createTrainingWhatIfWorkflow = async ({
     negativePrompt: '',
   };
 
-  const stepRun = createTrainingStep_Run(runArgs);
+  const stepRun = createTrainingStep(runArgs);
 
   const workflow = await submitWorkflow({
     token,

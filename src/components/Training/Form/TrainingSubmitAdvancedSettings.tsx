@@ -44,9 +44,12 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import {
   discountInfo,
   isValidRapid,
+  isAiToolkitSupported,
+  getDefaultEngine,
   rapidEta,
   trainingBaseModelTypesVideo,
 } from '~/utils/training';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const AdvancedSettings = ({
   selectedRun,
@@ -62,6 +65,7 @@ export const AdvancedSettings = ({
   numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
+  const features = useFeatureFlags();
   const { triggerWord } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
@@ -190,6 +194,9 @@ export const AdvancedSettings = ({
                   <Text>
                     Your LoRA will be trained in {<b>{rapidEta} minutes</b>} or less so you can get
                     right into generating as fast as possible.
+                    {selectedRun.params.engine === 'ai-toolkit' && (
+                      <> Note: AI Toolkit is currently enabled and must be disabled first.</>
+                    )}
                   </Text>
                 </InfoPopover>
                 <Text>Rapid Training</Text>
@@ -197,6 +204,7 @@ export const AdvancedSettings = ({
             }
             labelPosition="left"
             checked={selectedRun.params.engine === 'rapid'}
+            disabled={selectedRun.params.engine === 'ai-toolkit'}
             onChange={(event) =>
               updateRun(modelId, mediaType, selectedRun.id, {
                 params: { engine: event.currentTarget.checked ? 'rapid' : 'kohya' }, // TODO ideally this would revert to the previous engine, but we only have 1 now
@@ -218,6 +226,42 @@ export const AdvancedSettings = ({
               Sale
             </Badge>
           )}
+        </Group>
+      )}
+
+      {/* AI Toolkit Training Toggle */}
+      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
+        <Group mt="md">
+          <Switch
+            label={
+              <Group gap={4} wrap="nowrap">
+                <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                  <Text>
+                    Train using the AI Toolkit engine, offering improved quality and flexibility.
+                    {selectedRun.baseType === 'flux' && selectedRun.params.engine === 'rapid' && (
+                      <> Note: Rapid Training is currently enabled and must be disabled first.</>
+                    )}
+                  </Text>
+                </InfoPopover>
+                <Text>AI Toolkit Training</Text>
+                <Badge color="blue" size="xs">
+                  Beta
+                </Badge>
+              </Group>
+            }
+            labelPosition="left"
+            checked={selectedRun.params.engine === 'ai-toolkit'}
+            disabled={selectedRun.params.engine === 'rapid'}
+            onChange={(event) => {
+              const newEngine = event.currentTarget.checked
+                ? 'ai-toolkit'
+                : getDefaultEngine(selectedRun.baseType);
+
+              updateRun(modelId, mediaType, selectedRun.id, {
+                params: { ...selectedRun.params, engine: newEngine },
+              });
+            }}
+          />
         </Group>
       )}
 
@@ -530,7 +574,11 @@ export const AdvancedSettings = ({
                       ts.label
                     ),
                     value: inp,
-                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux' && !isVideo),
+                    visible: !(
+                      ts.name === 'engine' ||
+                      ((ts.name === 'numRepeats' || ts.name === 'trainBatchSize') &&
+                        selectedRun.params.engine === 'ai-toolkit')
+                    ),
                   };
                 })}
               />

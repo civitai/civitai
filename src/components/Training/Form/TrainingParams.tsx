@@ -23,16 +23,19 @@ export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTyp
     kohya: optimizerArgMap.Adafactor,
     musubi: '(empty)',
     rapid: '(empty)',
+    'ai-toolkit': '(empty)',
   },
   AdamW8Bit: {
     kohya: 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
     musubi: '(empty)',
     rapid: '(empty)',
+    'ai-toolkit': '(empty)',
   },
   Prodigy: {
     kohya: optimizerArgMap.Prodigy,
     musubi: '(empty)',
     rapid: '(empty)',
+    'ai-toolkit': '(empty)',
   },
 };
 export const optimizerArgMapVideo: { [key in OptimizerTypes]: string } = {
