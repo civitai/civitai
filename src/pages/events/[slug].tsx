@@ -64,6 +64,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import classes from './[slug].module.scss';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -526,8 +527,10 @@ export default function EventPageDetails({
 
 const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, ref) => {
   const [amount, setAmount] = useState<number>();
+  const availableBuzzTypes = useAvailableBuzz();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
+    accountTypes: availableBuzzTypes,
     message: (requiredBalance: number) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
