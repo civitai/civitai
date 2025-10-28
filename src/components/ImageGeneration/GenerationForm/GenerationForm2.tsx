@@ -46,6 +46,7 @@ import {
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
@@ -1503,6 +1504,7 @@ export function GenerationFormContent() {
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                   <DailyBoostRewardClaim />
+                  <MembershipUpsell />
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
