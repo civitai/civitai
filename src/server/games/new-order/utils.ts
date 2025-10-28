@@ -16,6 +16,8 @@ type CounterOptions = {
   ordered?: boolean;
 };
 
+export type NewOrderCounter = ReturnType<typeof createCounter>;
+
 function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: CounterOptions) {
   async function populateCount(id: number | string) {
     const fetchedCount = await fetchCount(id);
@@ -177,6 +179,12 @@ export const acolyteFailedJudgments = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
   fetchCount: async () => 0,
   ttl: CacheTTL.week,
+});
+
+export const sanityCheckFailuresCounter = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.FAILURES,
+  fetchCount: async () => 0,
+  ttl: CacheTTL.day,
 });
 
 export const fervorCounter = createCounter({

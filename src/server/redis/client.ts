@@ -486,6 +486,10 @@ export const REDIS_SYS_KEYS = {
       CORRECT: 'new-order:judgments:correct',
       ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
     },
+    SANITY_CHECKS: {
+      POOL: 'new-order:sanity-checks',
+      FAILURES: 'new-order:sanity-failures',
+    },
     PROCESSING: {
       LAST_PROCESSED_AT: 'new-order:processing:last-processed-at',
       BATCH_CUTOFF: 'new-order:processing:batch-cutoff',

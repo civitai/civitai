@@ -25,16 +25,27 @@ import type {
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import type { GetImagesQueueItem, GetPlayersItem } from '~/types/router';
-import { showErrorNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showInfoNotification,
+  showWarningNotification,
+  showSuccessNotification,
+} from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 
 const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'));
 const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
 const RatingGuideModal = dynamic(() => import('./NewOrder/NewOrderRatingGuideModal'));
+const CareerResetModal = dynamic(() => import('./NewOrder/CareerResetModal'));
 
 type PlayerUpdateStatsPayload = {
   action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
   stats: { exp: number; fervor: number; blessedBuzz: number; smites: number };
+  notification?: {
+    type: 'smite' | 'reset' | 'warning' | 'cleanse';
+    message: string;
+    title: string;
+  };
 };
 
 type PlayerRankUpPayload = {
@@ -74,6 +85,29 @@ export const useKnightsNewOrderListener = ({
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, async (data: PlayerUpdatePayload) => {
     switch (data.action) {
       case NewOrderSignalActions.UpdateStats:
+        // Display notification if present
+        if (data.notification) {
+          if (data.notification.type === 'warning') {
+            showWarningNotification({
+              title: data.notification.title,
+              message: data.notification.message,
+              autoClose: 5000,
+            });
+          } else if (data.notification.type === 'smite') {
+            showInfoNotification({
+              title: data.notification.title,
+              message: data.notification.message,
+              autoClose: 7000,
+            });
+          } else if (data.notification.type === 'cleanse') {
+            showSuccessNotification({
+              title: data.notification.title,
+              message: data.notification.message,
+              autoClose: 5000,
+            });
+          }
+        }
+
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
 
@@ -82,6 +116,17 @@ export const useKnightsNewOrderListener = ({
         });
         break;
       case NewOrderSignalActions.Reset:
+        // Show modal for career reset
+        if (data.notification) {
+          dialogStore.trigger({
+            component: CareerResetModal,
+            props: {
+              title: data.notification.title,
+              message: data.notification.message,
+            },
+          });
+        }
+
         onReset?.();
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
@@ -207,10 +252,10 @@ export const useQueryKnightsNewOrderImageQueue = (
 ) => {
   const { playerData } = useJoinKnightsNewOrder();
 
-  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(filter, {
-    ...opts,
-    enabled: !!playerData && opts?.enabled !== false,
-  });
+  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(
+    { ...filter },
+    { ...opts, enabled: !!playerData && opts?.enabled !== false }
+  );
 
   return { data, ...rest };
 };
@@ -277,7 +322,35 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
     },
   });
 
+  const addSanityCheckRatingMutation = trpc.games.newOrder.addSanityCheckRating.useMutation({
+    onMutate: async (payload) => {
+      await queryUtils.games.newOrder.getImagesQueue.cancel();
+
+      queryUtils.games.newOrder.getImagesQueue.setData(opts?.filters, (old) => {
+        if (!old) return old;
+        return old.filter((image) => image.id !== payload.imageId);
+      });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
+    },
+  });
+
   const handleAddRating = (input: Omit<AddImageRatingInput, 'playerId'>) => {
+    // Check if this is a sanity check image
+    const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData();
+    const matchedImage = prevQueue?.find((image) => image.id === input.imageId);
+    const isSanityCheck = matchedImage?.metadata?.isSanityCheck === true;
+
+    if (isSanityCheck) {
+      // Use sanity check endpoint (only imageId and rating, no damnedReason)
+      return addSanityCheckRatingMutation.mutateAsync({
+        imageId: input.imageId,
+        rating: input.rating,
+      });
+    }
+
+    // Use regular rating endpoint
     return addRatingMutation.mutateAsync(input);
   };
 
@@ -292,7 +365,7 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
 
   return {
     addRating: handleAddRating,
-    isLoading: addRatingMutation.isLoading,
+    isLoading: addRatingMutation.isLoading || addSanityCheckRatingMutation.isLoading,
     skipRating: handleSkipImage,
   };
 };

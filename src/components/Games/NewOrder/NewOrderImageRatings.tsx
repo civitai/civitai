@@ -105,5 +105,5 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
 
 type Props = {
   imageId: number;
-  imageNsfwLevel: NsfwLevel;
+  imageNsfwLevel?: NsfwLevel;
 };
