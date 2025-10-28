@@ -299,7 +299,7 @@ export async function createEntityAppealHandler({
     const appeal = await createEntityAppeal({
       ...input,
       userId,
-      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
+      buzzType: getAllowedAccountTypes(ctx.features)[0],
     });
 
     return appeal;
