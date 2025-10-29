@@ -35,9 +35,11 @@ import type {
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
+import { ReportEntity } from '~/server/schema/report.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
+import { createReport } from '~/server/services/report.service';
 import { claimCosmetic } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
@@ -48,7 +50,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
-import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { NewOrderRankType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
@@ -572,6 +574,65 @@ async function processImageRating({
     }
   }
 
+  // Check for report creation when Knights vote Blocked
+  if (rating === NsfwLevel.Blocked && !isModerator && clickhouse) {
+    try {
+      // Query ClickHouse for total Blocked votes on this image
+      const blockedVotesData = await clickhouse.$query<{ count: number }>`
+        SELECT COUNT(*) as count
+        FROM knights_new_order_image_rating
+        WHERE imageId = ${imageId}
+          AND rating = ${NsfwLevel.Blocked}
+      `;
+
+      const blockedVoteCount = blockedVotesData[0]?.count ?? 0;
+
+      // If 2+ Knights have voted Blocked, create report
+      if (blockedVoteCount >= 2) {
+        // Check if report already exists for this image
+        const existingReport = await dbRead.report.findFirst({
+          where: {
+            reason: ReportReason.AdminAttention,
+            image: { imageId },
+            status: ReportStatus.Pending,
+          },
+        });
+
+        if (!existingReport) {
+          // Create report with the knight's damned reason
+          await createReport({
+            userId: playerId,
+            id: imageId,
+            type: ReportEntity.Image,
+            reason: ReportReason.AdminAttention,
+            details: {
+              reason: damnedReason || 'Multiple Knights have rated this image as Blocked.',
+              comment: damnedReason
+                ? `Knights reported: ${damnedReason} (${blockedVoteCount} votes)`
+                : `Knights consensus: Blocked rating (${blockedVoteCount} votes)`,
+            },
+          });
+
+          // Remove image from queue immediately after CSAM report
+          await valueInQueue.pool.reset({ id: imageId });
+          await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
+        }
+      }
+    } catch (error) {
+      // Log error but don't fail the vote
+      logToAxiom({
+        type: 'error',
+        name: 'new-order-knights-report-error',
+        details: {
+          imageId,
+          playerId,
+          error: (error as Error).message,
+        },
+        message: `Failed to create report for image ${imageId}`,
+      }).catch(() => null);
+    }
+  }
+
   // No need to await mainly cause it makes no difference as the user has a queue in general.
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
@@ -979,14 +1040,11 @@ export async function handleSanityCheckFailure(playerId: number, imageId: number
     }
 
     // Log for analytics
-    await logToAxiom(
-      {
-        type: 'info',
-        name: 'new-order-sanity-check-failure',
-        details: { playerId, imageId, failureCount },
-      },
-      'new-order'
-    );
+    await logToAxiom({
+      type: 'info',
+      name: 'new-order-sanity-check-failure',
+      details: { playerId, imageId, failureCount },
+    });
   } catch (e) {
     const error = e as Error;
     handleLogError(error, 'new-order-handle-sanity-check-failure');
@@ -1043,15 +1101,12 @@ async function handleNoConsensus({
     await notifyQueueUpdate(rankType, imageId, NewOrderSignalActions.RemoveImage);
 
     // Log for analytics
-    await logToAxiom(
-      {
-        type: 'info',
-        name: 'new-order-no-consensus',
-        details: { imageId, rankType },
-        message: `Image ${imageId} removed after 5 votes with no consensus`,
-      },
-      'new-order'
-    );
+    await logToAxiom({
+      type: 'info',
+      name: 'new-order-no-consensus',
+      details: { imageId, rankType },
+      message: `Image ${imageId} removed after 5 votes with no consensus`,
+    });
   } catch (e) {
     const error = e as Error;
     handleLogError(error, 'handleNoConsensus');
@@ -1108,26 +1163,19 @@ async function processConsensusRewards({
           updateAll: true,
         });
       }
-
-      // Update the vote status in ClickHouse
-      // Note: This requires a separate update query since ClickHouse doesn't support UPDATE directly
-      // We'll handle this through the next tracking call for this user
     }
 
     // Log for analytics
-    await logToAxiom(
-      {
-        type: 'info',
-        name: 'new-order-consensus-rewards',
-        details: {
-          imageId,
-          finalRating,
-          totalVotes: votes.length,
-          correctVotes: votes.filter((v) => v.rating === finalRating).length,
-        },
+    await logToAxiom({
+      type: 'info',
+      name: 'new-order-consensus-rewards',
+      details: {
+        imageId,
+        finalRating,
+        totalVotes: votes.length,
+        correctVotes: votes.filter((v) => v.rating === finalRating).length,
       },
-      'new-order'
-    );
+    });
   } catch (e) {
     const error = e as Error;
     handleLogError(error, 'processConsensusRewards');
