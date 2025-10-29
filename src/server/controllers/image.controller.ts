@@ -12,7 +12,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getUserCollectionPermissionsById,
+  removeEntityFromAllCollections,
+} from '~/server/services/collection.service';
 import {
   isImageInQueue,
   updatePendingImageRatings,
@@ -216,6 +219,9 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+
+    // Remove image from all collections
+    await removeEntityFromAllCollections('image', id);
 
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });

@@ -96,7 +96,10 @@ import type { ImageResourceHelperModel } from '~/server/selectors/image.selector
 import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getUserCollectionPermissionsById,
+  removeEntityFromAllCollections,
+} from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
@@ -237,6 +240,9 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
+    // Remove image from all collections before deleting
+    await removeEntityFromAllCollections('image', id);
+
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
@@ -269,6 +275,10 @@ export const deleteImageById = async ({
 
 export async function deleteImages(ids: number[], updatePosts = true) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
+    // Remove images from all collections before deleting
+    // Note: Since we're using raw SQL delete, Prisma cascades won't trigger automatically
+    await Promise.all(ids.map((id) => removeEntityFromAllCollections('image', id)));
+
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`
