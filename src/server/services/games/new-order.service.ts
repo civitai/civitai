@@ -55,7 +55,6 @@ import { isDefined } from '~/utils/type-guards';
 
 type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
-const FERVOR_COEFFICIENT = -0.0025;
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
 // Helper functions for atomic voting
@@ -171,23 +170,6 @@ export async function smitePlayer({
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId });
 
-  // Determine if this is a sanity check smite
-  const isSanityCheckSmite = modId === -1 && reason === 'Sanity check failure';
-
-  // Always include notification, with different messages
-  const notification = isSanityCheckSmite
-    ? {
-        type: 'smite' as const,
-        title: '⚡ You Have Been Smitten',
-        message:
-          'You failed another attention check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
-      }
-    : {
-        type: 'smite' as const,
-        title: '⚡ You Have Been Smitten',
-        message: reason || 'A moderator has applied a smite penalty to your account.',
-      };
-
   await signalClient
     .send({
       userId: playerId,
@@ -195,7 +177,11 @@ export async function smitePlayer({
       data: {
         action: NewOrderSignalActions.UpdateStats,
         stats: { smites: newSmiteCount },
-        notification,
+        notification: {
+          type: 'smite' as const,
+          title: '⚡ You Have Been Smitten',
+          message: reason || 'A moderator has applied a smite penalty to your account.',
+        },
       },
     })
     .catch((e) => handleLogError(e, 'signals:new-order-smite-player'));
@@ -402,11 +388,7 @@ async function processImageRating({
     imageId,
     rankType: allowedRankTypes,
   });
-
-  if (!valueInQueue) {
-    // Image not found in any valid queue for this player
-    return false;
-  }
+  if (!valueInQueue) return false; // Image not found in any valid queue for this player
 
   // Check if vote limits have been reached (using consistent logic)
   const currentVoteCount = valueInQueue.value;
@@ -593,12 +575,6 @@ async function processImageRating({
   // No need to await mainly cause it makes no difference as the user has a queue in general.
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
-  // Failsafe to clear the image from the queue if it was rated by enough players
-  if (reachedKnightVoteLimit) {
-    await valueInQueue.pool.reset({ id: imageId });
-    await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
-  }
-
   // Increase all counters
   const stats = await updatePlayerStats({
     playerId,
@@ -740,7 +716,6 @@ async function processFinalRatings() {
       LIMIT 1;
     `;
     const updateEnd = new Date(updateEndString);
-    console.log('Processing correct ratings from', updateStart, 'to', updateEnd);
     if (updateStart.getTime() === updateEnd.getTime()) return { status: 'no-new-data' };
 
     await clickhouse.$exec`
@@ -894,10 +869,9 @@ export function calculateFervor({
   correctJudgments: number;
   allJudgments: number;
 }) {
-  const correctPercentage = correctJudgments / (allJudgments || 1);
-  return Math.round(
-    correctJudgments * correctPercentage * Math.pow(Math.E, allJudgments * FERVOR_COEFFICIENT)
-  );
+  // New formula: number_of_ratings + (number_correct_ratings * 100)
+  // This rewards both activity (total ratings) and accuracy (correct ratings)
+  return allJudgments + correctJudgments * 100;
 }
 
 export function calculateVoteWeight({ level, smites }: { level: number; smites: number }): number {
@@ -1124,6 +1098,15 @@ async function processConsensusRewards({
           exp: xpToDeduct,
           updateAll: true,
         });
+      } else {
+        // Update status to Correct for proper fervor tracking
+        // No XP change needed (already granted when they voted)
+        await updatePlayerStats({
+          playerId: vote.userId,
+          status: NewOrderImageRatingStatus.Correct,
+          exp: 0,
+          updateAll: true,
+        });
       }
 
       // Update the vote status in ClickHouse
@@ -1164,15 +1147,7 @@ async function checkWeightedConsensus({ imageId }: { imageId: number }): Promise
   totalWeightedVotes: number;
   totalKnights: number;
 }> {
-  if (!clickhouse) {
-    // Fallback to old logic if ClickHouse unavailable
-    return {
-      hasConsensus: false,
-      weightedTotals: {},
-      totalWeightedVotes: 0,
-      totalKnights: 0,
-    };
-  }
+  if (!clickhouse) throw throwInternalServerError('Not supported');
 
   try {
     // Query all Knight votes for this image
@@ -1254,7 +1229,7 @@ async function checkWeightedConsensus({ imageId }: { imageId: number }): Promise
     };
   } catch (e) {
     const error = e as Error;
-    handleLogError(error, 'checkWeightedConsensus');
+    handleLogError(error, 'new-order-check-weighted-consensus');
     return {
       hasConsensus: false,
       weightedTotals: {},

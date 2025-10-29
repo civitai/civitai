@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
@@ -134,19 +135,23 @@ export const correctJudgmentsCounter = createCounter({
     });
     if (!player) return 0;
 
+    // Use 7-day rolling window for fervor calculation, but respect career resets
+    const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+    const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
+
     const data = await clickhouse.$query<{ count: number }>`
       SELECT
         COUNT(*) as count
       FROM knights_new_order_image_rating
       WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
+        AND createdAt >= ${effectiveStartDate}
         AND status = '${NewOrderImageRatingStatus.Correct}'
     `;
     if (!data) return 0;
 
     return data[0]?.count ?? 0;
   },
-  ttl: CacheTTL.week,
+  ttl: CacheTTL.day, // Shorter TTL for rolling window
 });
 
 export const allJudgmentsCounter = createCounter({
@@ -160,19 +165,23 @@ export const allJudgmentsCounter = createCounter({
     });
     if (!player) return 0;
 
+    // Use 7-day rolling window for fervor calculation, but respect career resets
+    const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+    const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
+
     const data = await clickhouse.$query<{ count: number }>`
       SELECT
         COUNT(*) as count
       FROM knights_new_order_image_rating
       WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
+        AND createdAt >= ${effectiveStartDate}
         AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
     `;
     if (!data) return 0;
 
     return data[0]?.count ?? 0;
   },
-  ttl: CacheTTL.week,
+  ttl: CacheTTL.day, // Shorter TTL for rolling window
 });
 
 export const acolyteFailedJudgments = createCounter({
