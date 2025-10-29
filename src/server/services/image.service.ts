@@ -591,9 +591,11 @@ export const imageScanTypes: ImageScanType[] = [
 
 export const ingestImage = async ({
   image,
+  lowPriority,
   tx,
 }: {
   image: IngestImageInput;
+  lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
@@ -634,7 +636,10 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
+  let scanUrl = `${env.IMAGE_SCANNING_ENDPOINT}/enqueue`;
+  if (lowPriority) scanUrl += '?lowpri=true';
+
+  const response = await fetch(scanUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

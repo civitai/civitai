@@ -10,7 +10,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
-const IMAGE_SCANNING_RETRY_LIMIT = 3;
+const IMAGE_SCANNING_RETRY_LIMIT = 6;
 
 type PendingIngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
@@ -39,7 +39,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as retryCount
     FROM "Image"
-    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND "createdAt" > now() - '6 hours'::interval
+    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR "nsfwLevel" IS NOT NULL)
   `) ?? []
   ).filter(
     (img) =>
@@ -50,7 +50,10 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
 
   const images: IngestImageInput[] = [...pendingImages, ...errorImages];
 
-  if (isProd) await sendImagesForScanBulk(images);
+  if (isProd) {
+    await sendImagesForScanBulk(pendingImages);
+    await sendImagesForScanBulk(errorImages, { lowPriority: true });
+  }
 
   return { toScan: images.length };
 });
@@ -76,7 +79,10 @@ async function sendImagesForScanSingle(images: IngestImageInput[]) {
   console.log('Failed sends:', failedSends.length);
 }
 
-async function sendImagesForScanBulk(images: IngestImageInput[]) {
+async function sendImagesForScanBulk(
+  images: IngestImageInput[],
+  options?: { lowPriority?: boolean }
+) {
   const failedSends: number[] = [];
   const tasks = chunk(images, 250).map((batch, i) => async () => {
     console.log('Ingesting batch', i + 1, 'of', tasks.length);
@@ -85,7 +91,7 @@ async function sendImagesForScanBulk(images: IngestImageInput[]) {
     let retryCount = 0,
       success = false;
     while (retryCount < 3) {
-      success = await ingestImageBulk({ images: batch });
+      success = await ingestImageBulk({ images: batch, lowPriority: options?.lowPriority });
       if (success) break;
       console.log('Retrying batch', i + 1, 'retry', retryCount + 1);
       retryCount++;
