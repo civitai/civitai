@@ -2105,7 +2105,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
   }
   sorts.push(searchSort);
-  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
@@ -2678,7 +2678,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // }
   }
   sorts.push(searchSort);
-  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
