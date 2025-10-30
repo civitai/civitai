@@ -260,25 +260,20 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
                   );
 
                   // Log any failures for monitoring
-                  const failures = refundResults.filter((r) => r.status === 'rejected');
-                  if (failures.length > 0) {
-                    log(
-                      `Bounty ${id}: ${failures.length}/${buzzTransactionId.length} refunds failed for user ${userId}`
-                    );
-                    failures.forEach((f, idx) => {
-                      if (f.status === 'rejected') {
-                        logJob({
-                          message: 'Refund transaction failed',
-                          data: {
-                            bountyId: id,
-                            userId,
-                            txId: buzzTransactionId[idx],
-                            error: f.reason,
-                          },
-                        });
-                      }
-                    });
-                  }
+
+                  refundResults.forEach((refund, idx) => {
+                    if (refund.status === 'rejected') {
+                      logJob({
+                        message: 'Refund transaction failed',
+                        data: {
+                          bountyId: id,
+                          userId,
+                          txId: buzzTransactionId[idx],
+                          error: refund.reason,
+                        },
+                      });
+                    }
+                  });
                 } else {
                   // Fallback: No transaction IDs recorded (legacy data or edge case)
                   await createBuzzTransaction({

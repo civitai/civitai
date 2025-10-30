@@ -383,6 +383,8 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
             // Single batched call for all transactions (performance optimization)
             if (allTransactions.length > 0) {
               await createBuzzTransactionMany(allTransactions);
+            } else {
+              throw throwBadRequestError('No valid transactions found for multi-account award');
             }
 
             logToAxiom({
