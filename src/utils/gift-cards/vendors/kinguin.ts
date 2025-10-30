@@ -15,7 +15,7 @@ export const kinguinVendor: Vendor = {
   discount: {
     percentage: 13,
     startDate: new Date('2025-10-29T07:00:00Z'),
-    endDate: new Date('2025-11-01T07:00:00Z'),
+    endDate: new Date('2025-10-31T11:00:00Z'),
     title: 'The Spooky Season Flash Sale is on!',
     description:
       'All Buzz Gift Cards and Pre-Paid Memberships are 13% off — October 29th–31st only!',

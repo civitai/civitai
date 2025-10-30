@@ -30,6 +30,7 @@ import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift
 import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getVendorDiscount } from '~/utils/gift-cards/discount-utils';
+import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 
 // Kinguin utility moved to KinguinCheckout component
@@ -375,9 +376,16 @@ export default function GiftCardsPage() {
                   },
                 }}
               >
-                <Text size="sm" c="white">
-                  {discountInfo.description}
-                </Text>
+                <Stack gap="xs">
+                  <Text size="sm" c="white">
+                    {discountInfo.description}
+                  </Text>
+                  {selectedVendor.discount?.endDate && (
+                    <Text size="sm" c="white" fw={600}>
+                      Time remaining: <Countdown endTime={selectedVendor.discount.endDate} format="short" />
+                    </Text>
+                  )}
+                </Stack>
               </Alert>
             ) : null;
           })()}
