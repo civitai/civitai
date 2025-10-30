@@ -87,24 +87,18 @@ export const useKnightsNewOrderListener = ({
       case NewOrderSignalActions.UpdateStats:
         // Display notification if present
         if (data.notification) {
-          if (data.notification.type === 'warning') {
-            showWarningNotification({
-              title: data.notification.title,
-              message: data.notification.message,
-              autoClose: 5000,
-            });
-          } else if (data.notification.type === 'smite') {
-            showInfoNotification({
-              title: data.notification.title,
-              message: data.notification.message,
-              autoClose: 7000,
-            });
-          } else if (data.notification.type === 'cleanse') {
-            showSuccessNotification({
-              title: data.notification.title,
-              message: data.notification.message,
-              autoClose: 5000,
-            });
+          const notification = { ...data.notification, autoClose: 5000 };
+          switch (data.notification.type) {
+            case 'warning':
+              showWarningNotification(notification);
+              break;
+            case 'cleanse':
+              showSuccessNotification(notification);
+              break;
+            case 'smite':
+            default:
+              showInfoNotification(notification);
+              break;
           }
         }
 
