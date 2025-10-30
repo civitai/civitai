@@ -45,6 +45,7 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { logToAxiom } from '~/server/logging/client';
 
 export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {
   return `bounty-${bountyId}-${userId}-${new Date().getTime()}`;
@@ -266,9 +267,12 @@ export const createBounty = async ({
             },
           });
 
+          // Set transaction ID (benefactor just created, guaranteed to be empty array)
           await tx.bountyBenefactor.update({
             where: { bountyId_userId: { userId, bountyId: bounty.id } },
-            data: { buzzTransactionId: prefix },
+            data: {
+              buzzTransactionId: [prefix],
+            },
           });
 
           break;
@@ -492,12 +496,33 @@ export const deleteBountyById = async ({
   if (bounty.userId && !bounty.complete && !bounty.refunded && bountyCreator) {
     switch (bountyCreator.currency) {
       case Currency.BUZZ: {
-        if (bountyCreator.buzzTransactionId) {
-          await refundMultiAccountTransaction({
-            externalTransactionIdPrefix: bountyCreator.buzzTransactionId,
-            description: 'Refund reason: owner deleted bounty',
+        if (bountyCreator.buzzTransactionId && bountyCreator.buzzTransactionId.length > 0) {
+          // Refund all transactions for the creator
+          const txResults = await Promise.allSettled(
+            bountyCreator.buzzTransactionId.map((txId) =>
+              refundMultiAccountTransaction({
+                externalTransactionIdPrefix: txId,
+                description: 'Refund reason: owner deleted bounty',
+                details: { bountyId: id },
+              })
+            )
+          );
+
+          // Log any failures
+          txResults.forEach((result, index) => {
+            if (result.status === 'rejected') {
+              // Log failure
+              logToAxiom({
+                name: 'bounty-refund',
+                type: 'error',
+                message: `Bounty ${id}: Failed to refund transaction ${
+                  bountyCreator.buzzTransactionId[index]
+                } - ${String(result.reason)}`,
+              }).catch(() => null);
+            }
           });
         } else {
+          // Fallback: No transaction IDs (legacy data)
           await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: bounty.userId,
@@ -579,16 +604,13 @@ export const addBenefactorUnitAmount = async ({
 
   const benefactor = await dbRead.bountyBenefactor.findUnique({
     where: {
-      bountyId_userId: {
-        userId,
-        bountyId,
-      },
+      bountyId_userId: { userId, bountyId },
     },
-    select: {
-      unitAmount: true,
-      currency: true,
-    },
+    select: { unitAmount: true, currency: true, buzzTransactionId: true },
   });
+  if (!benefactor) {
+    throw throwNotFoundError('You are not a benefactor of this bounty');
+  }
 
   const { currency } = benefactor || { currency: Currency.BUZZ };
 
@@ -627,7 +649,9 @@ export const addBenefactorUnitAmount = async ({
 
       await dbWrite.bountyBenefactor.update({
         where: { bountyId_userId: { userId, bountyId: bounty.id } },
-        data: { buzzTransactionId: prefix },
+        data: {
+          buzzTransactionId: [...(benefactor.buzzTransactionId || []), prefix],
+        },
       });
       break;
     default: // Do no checks
@@ -741,12 +765,33 @@ export const refundBounty = async ({
     if (unitAmount > 0) {
       switch (currency) {
         case Currency.BUZZ: {
-          if (buzzTransactionId) {
-            await refundMultiAccountTransaction({
-              externalTransactionIdPrefix: buzzTransactionId,
-              description: 'Refund reason: owner deleted bounty',
+          if (buzzTransactionId && buzzTransactionId.length > 0) {
+            // Refund all transactions for this benefactor
+            const txResults = await Promise.allSettled(
+              buzzTransactionId.map((txId) =>
+                refundMultiAccountTransaction({
+                  externalTransactionIdPrefix: txId,
+                  description: 'Reason: Bounty refund',
+                  details: { bountyId: id, userId, unitAmount },
+                })
+              )
+            );
+
+            // Log any failures
+            txResults.forEach((result, index) => {
+              if (result.status === 'rejected') {
+                // Log failure
+                logToAxiom({
+                  name: 'bounty-refund',
+                  type: 'error',
+                  message: `Bounty ${id}: Failed to refund transaction ${
+                    buzzTransactionId[index]
+                  } - ${String(result.reason)}`,
+                }).catch(() => null);
+              }
             });
           } else {
+            // Fallback: No transaction IDs (legacy data or edge case)
             await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: userId,

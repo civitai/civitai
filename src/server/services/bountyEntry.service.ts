@@ -328,53 +328,88 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       switch (updatedBenefactor.currency) {
         case Currency.BUZZ: {
-          if (updatedBenefactor.buzzTransactionId) {
-            // This is a multi-transaction
-            const data = await getMultiAccountTransactionsByPrefix(
-              updatedBenefactor.buzzTransactionId
+          if (
+            updatedBenefactor.buzzTransactionId &&
+            updatedBenefactor.buzzTransactionId.length > 0
+          ) {
+            // Collect all transactions from all transaction IDs (batch optimization)
+            const allTransactions = [];
+            let totalAmount = 0;
+
+            // Process all transaction IDs in parallel for better performance
+            const txResults = await Promise.allSettled(
+              updatedBenefactor.buzzTransactionId.map(async (txId) => {
+                const data = await getMultiAccountTransactionsByPrefix(txId);
+                const txAmount = data.reduce((sum, t) => sum + t.amount, 0);
+
+                logToAxiom({
+                  ...logData,
+                  name: 'bounty-award',
+                  type: 'info',
+                  message: 'Found multi-account transactions',
+                  transactionId: txId,
+                  transactionCount: data.length,
+                  totalAmount: txAmount,
+                }).catch(() => null);
+
+                return { data, txAmount, txId };
+              })
             );
-            if (!data || !data.length) {
-              await logToAxiom({
-                ...logData,
-                name: 'bounty-award',
-                type: 'error',
-                message: 'No multi-account transactions found',
-                buzzTransactionId: updatedBenefactor.buzzTransactionId,
-              }).catch(() => null);
-              throw throwBadRequestError('No transactions found for this benefactor.');
+
+            // Aggregate successful results
+            for (const result of txResults) {
+              if (result.status === 'fulfilled' && result.value) {
+                const { data, txAmount } = result.value;
+                totalAmount += txAmount;
+
+                const transactions = data.map((t) => ({
+                  fromAccountId: 0,
+                  toAccountId: entry.userId as number,
+                  toAccountType: t.accountType,
+                  amount: t.amount,
+                  type: TransactionType.Bounty,
+                  description: 'Reason: Bounty entry has been awarded!',
+                  details: {
+                    entityId: entry.bountyId,
+                    entityType: 'Bounty',
+                  },
+                  externalTransactionId: `bounty-award-${id}-${String(t.accountType)}`,
+                }));
+
+                allTransactions.push(...transactions);
+              }
             }
 
-            await logToAxiom({
+            // Single batched call for all transactions (performance optimization)
+            if (allTransactions.length > 0) {
+              await createBuzzTransactionMany(allTransactions);
+            }
+
+            logToAxiom({
               ...logData,
               name: 'bounty-award',
               type: 'info',
-              message: 'Found multi-account transactions',
-              transactionCount: data.length,
-              totalAmount: data.reduce((sum, t) => sum + t.amount, 0),
+              message: 'All multi-account buzz transactions created (batched)',
+              transactionIdCount: updatedBenefactor.buzzTransactionId.length,
+              totalTransactions: allTransactions.length,
+              totalAmount,
             }).catch(() => null);
 
-            const transactions = data.map((t) => ({
-              fromAccountId: 0,
-              toAccountId: entry.userId as number,
-              toAccountType: t.accountType,
-              amount: t.amount,
-              type: TransactionType.Bounty,
-              description: 'Reason: Bounty entry has been awarded!',
-              details: {
-                entityId: entry.bountyId,
-                entityType: 'Bounty',
-              },
-              externalTransactionId: `bounty-award-${id}-${t.accountType}`,
-            }));
-
-            await createBuzzTransactionMany(transactions);
-            await logToAxiom({
-              ...logData,
-              name: 'bounty-award',
-              type: 'info',
-              message: 'Multi-account buzz transactions created',
-            }).catch(() => null);
+            // Log any failures
+            txResults.forEach((result, index) => {
+              if (result.status === 'rejected') {
+                logToAxiom({
+                  ...logData,
+                  name: 'bounty-award',
+                  type: 'error',
+                  message: 'Transaction lookup failed',
+                  txId: updatedBenefactor.buzzTransactionId[index],
+                  error: result.reason,
+                }).catch(() => null);
+              }
+            });
           } else {
+            // Fallback: No transaction IDs recorded (legacy data)
             await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: entry.userId,
@@ -390,7 +425,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
               ...logData,
               name: 'bounty-award',
               type: 'info',
-              message: 'Single buzz transaction created',
+              message: 'Single buzz transaction created (no recorded transaction IDs)',
               amount: updatedBenefactor.unitAmount,
             }).catch(() => null);
           }
