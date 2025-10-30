@@ -39,7 +39,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as retryCount
     FROM "Image"
-    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR "nsfwLevel" IS NOT NULL)
+    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR ("nsfwLevel" IS NOT NULL AND "createdAt" > '10/15/2025'))
   `) ?? []
   ).filter(
     (img) =>
