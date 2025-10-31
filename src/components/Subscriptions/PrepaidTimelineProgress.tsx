@@ -1,21 +1,13 @@
 import { Box, Group, Paper, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
-import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import {
+  subscriptionMetadata,
+  type SubscriptionProductMetadata,
+  type SubscriptionMetadata,
+} from '~/server/schema/subscriptions.schema';
 import styles from './PrepaidTimelineProgress.module.scss';
 import type { Dayjs } from 'dayjs';
-
-interface PrepaidMetadata {
-  prepaids?: {
-    gold?: number;
-    silver?: number;
-    bronze?: number;
-  };
-  proratedDays?: {
-    gold?: number;
-    silver?: number;
-    bronze?: number;
-  };
-}
+import { numberWithCommas } from '~/utils/number-helpers';
 
 interface TimelineSegment {
   tier: string;
@@ -39,8 +31,41 @@ const TIER_COLORS = {
 
 const TIERS = ['gold', 'silver', 'bronze'] as const;
 
+/**
+ * Calculate the next buzz delivery date based on subscription currentPeriodStart
+ * Matches the logic from deliver-civitai-membership-buzz job
+ */
+function calculateNextBuzzDeliveryDate(currentPeriodStart: Dayjs, now: Dayjs): Dayjs | null {
+  const deliveryDay = currentPeriodStart.date(); // Day of month from currentPeriodStart
+
+  // Start with current month
+  let nextDelivery = now.date(deliveryDay);
+
+  // If the delivery day doesn't exist in current month (e.g., 31st in Feb)
+  // use the last day of the month (matches job's month-end handling)
+  const daysInCurrentMonth = now.daysInMonth();
+  if (deliveryDay > daysInCurrentMonth) {
+    nextDelivery = now.date(daysInCurrentMonth);
+  }
+
+  // If we've already passed this month's delivery, move to next month
+  if (nextDelivery.isBefore(now, 'day') || nextDelivery.isSame(now, 'day')) {
+    nextDelivery = nextDelivery.add(1, 'month');
+
+    // Handle month-end edge case for next month
+    const daysInNextMonth = nextDelivery.daysInMonth();
+    if (deliveryDay > daysInNextMonth) {
+      nextDelivery = nextDelivery.date(daysInNextMonth);
+    } else {
+      nextDelivery = nextDelivery.date(deliveryDay);
+    }
+  }
+
+  return nextDelivery;
+}
+
 export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgressProps) {
-  const metadata = subscription.metadata as PrepaidMetadata | null;
+  const metadata = subscription.metadata as SubscriptionMetadata | null;
   const prepaids = metadata?.prepaids;
   const proratedDays = metadata?.proratedDays || {};
 
@@ -67,6 +92,15 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
   const totalEndDate = segments[segments.length - 1].endDate;
   const daysRemaining = Math.max(0, totalEndDate.diff(now, 'day'));
 
+  // Calculate next buzz delivery date
+  // Only show if user has prepaid deliveries remaining for the current tier
+  const nextBuzzDelivery = calculateNextBuzzDeliveryDate(currentPeriodStart, now);
+  const hasMonthlyBuzz =
+    subscription.product?.metadata?.monthlyBuzz &&
+    Number(subscription.product.metadata.monthlyBuzz) > 0;
+  const hasPrepaidsForCurrentTier = prepaids?.[currentTier] && prepaids[currentTier] > 0;
+  const deliveryWithinTimeline = nextBuzzDelivery && nextBuzzDelivery.isBefore(totalEndDate);
+
   return (
     <Paper withBorder className={styles.card}>
       <Stack>
@@ -76,6 +110,20 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
             {daysRemaining} days remaining
           </Text>
         </Group>
+
+        {hasMonthlyBuzz && hasPrepaidsForCurrentTier && deliveryWithinTimeline && (
+          <Group gap="xs" wrap="nowrap">
+            <Text size="sm" c="dimmed">
+              Next Buzz Delivery:
+            </Text>
+            <Text size="sm" fw={600}>
+              {nextBuzzDelivery.format('MMM D, YYYY')}
+            </Text>
+            <Text size="xs" c="dimmed">
+              ({numberWithCommas(subscription.product.metadata.monthlyBuzz)} Buzz)
+            </Text>
+          </Group>
+        )}
 
         <TimelineProgressBar segments={segments} totalDays={totalDays} daysPassed={daysPassed} />
 
