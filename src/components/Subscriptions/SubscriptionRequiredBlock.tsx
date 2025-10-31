@@ -27,6 +27,9 @@ const data: Record<
           perks to enhance your experience. Choose the plan that fits your needs and start creating
           today!
         </Text>
+        <Text>
+          Please note, private models can only be used to generate PG (or SFW) content onsite.
+        </Text>
       </Stack>
     ),
   },
