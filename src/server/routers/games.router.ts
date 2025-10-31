@@ -5,17 +5,20 @@ import { env } from '~/env/server';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   addImageRatingSchema,
+  addSanityCheckRatingSchema,
   cleanseSmiteSchema,
   getHistorySchema,
   getImageRatersSchema,
   getImagesQueueSchema,
   getPlayersInfiniteSchema,
+  manageSanityChecksSchema,
   resetPlayerByIdSchema,
   smitePlayerSchema,
 } from '~/server/schema/games/new-order.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import {
   addImageRating,
+  addSanityCheckRating,
   cleanseSmite,
   getImageRaters,
   getImagesQueue,
@@ -23,6 +26,7 @@ import {
   getPlayerHistory,
   getPlayersInfinite,
   joinGame,
+  manageSanityChecks,
   resetPlayer,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
@@ -134,6 +138,15 @@ export const gamesRouter = router({
           isModerator: ctx.user.isModerator,
         })
       ),
+    addSanityCheckRating: guardedProcedure
+      .input(addSanityCheckRatingSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input, ctx }) =>
+        addSanityCheckRating({
+          ...input,
+          playerId: ctx.user.id,
+        })
+      ),
     resetCareer: guardedProcedure
       .use(isFlagProtected('newOrderGame'))
       .mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
@@ -152,5 +165,9 @@ export const gamesRouter = router({
 
         return ratings[input.imageId];
       }),
+    manageSanityChecks: moderatorProcedure
+      .input(manageSanityChecksSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input }) => manageSanityChecks(input)),
   }),
 });

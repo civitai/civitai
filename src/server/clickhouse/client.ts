@@ -583,6 +583,7 @@ export class Tracker {
       multiplier: number;
       rank: NewOrderRankType;
       originalLevel?: NsfwLevel;
+      voteWeight?: number;
     }
   ) {
     return this.track('knights_new_order_image_rating', { ...values, createdAt: new Date() });

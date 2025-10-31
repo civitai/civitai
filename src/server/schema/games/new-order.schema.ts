@@ -8,9 +8,8 @@ import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 export type GetImagesQueueSchema = z.input<typeof getImagesQueueSchema>;
 export const getImagesQueueSchema = z.object({
-  // TODO: add playerId to the schema
   imageCount: z.number().optional().default(20),
-  queueType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
+  queueType: z.enum(NewOrderRankType).optional(), // For moderator testing only
 });
 
 export type GetPlayersInfiniteSchema = z.infer<typeof getPlayersInfiniteSchema>;
@@ -38,6 +37,12 @@ export const addImageRatingSchema = z.object({
   imageId: z.number(),
   rating: z.enum(NsfwLevel),
   damnedReason: z.enum(NewOrderDamnedReason).optional(),
+});
+
+export type AddSanityCheckRatingInput = z.infer<typeof addSanityCheckRatingSchema>;
+export const addSanityCheckRatingSchema = z.object({
+  imageId: z.number(),
+  rating: z.enum(NsfwLevel),
 });
 
 const transformStatus = {
@@ -88,4 +93,10 @@ export const resetPlayerByIdSchema = z.object({
 export type GetImageRatersInput = z.infer<typeof getImageRatersSchema>;
 export const getImageRatersSchema = z.object({
   imageId: z.number(),
+});
+
+export type ManageSanityChecksInput = z.infer<typeof manageSanityChecksSchema>;
+export const manageSanityChecksSchema = z.object({
+  add: z.array(z.number()).optional(),
+  remove: z.array(z.number()).optional(),
 });
