@@ -26,6 +26,7 @@ import {
   deleteImageById,
   getAllImagesIndex,
   getPostDetailByImageId,
+  invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageAcceptableMinor,
@@ -219,6 +220,7 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+    await invalidateManyImageExistence([id]);
 
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
