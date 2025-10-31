@@ -13,6 +13,8 @@ import { env } from '~/env/client';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 export function SubscriptionCard() {
   const [mainBuzzType] = useAvailableBuzz();
@@ -26,6 +28,11 @@ export function SubscriptionCard() {
   const { image } = subscription
     ? getPlanDetails(subscription?.product, features)
     : { image: null };
+
+  // Calculate next buzz delivery
+  const { nextBuzzDelivery, buzzAmount, shouldShow } = useNextBuzzDelivery({
+    buzzType: mainBuzzType,
+  });
 
   // Don't show the card if there's no subscription
   if (!subscriptionLoading && !subscription) {
@@ -86,6 +93,19 @@ export function SubscriptionCard() {
                 </Text>
               </Stack>
             </Group>
+            {shouldShow && nextBuzzDelivery && buzzAmount && (
+              <Group gap="xs" wrap="nowrap">
+                <Text size="sm" c="dimmed">
+                  Next Buzz Delivery:
+                </Text>
+                <Text size="sm" fw={500}>
+                  {formatDate(nextBuzzDelivery.toDate())}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  ({numberWithCommas(buzzAmount)} Buzz)
+                </Text>
+              </Group>
+            )}
             {!subscription.cancelAt && !isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
