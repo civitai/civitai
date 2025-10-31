@@ -163,20 +163,23 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         // Handle initial token setup (not update trigger)
         token.sub = Number(token.sub) as any; //eslint-disable-line
 
-        const { deletedAt, ...restUser } = token.user as User;
-        token.user = { ...restUser };
-
         const isNewToken = !token.id;
         if (isNewToken) {
           token.id = uuid();
           token.signedAt = Date.now();
         }
 
+        if (isNewToken) {
+          token.user = await getSessionUser({ userId: Number(user.id) });
+        }
+
         // Track new tokens
         if (isNewToken && token.user) {
-          token.user = await getSessionUser({ userId: Number(user.id) });
           await trackToken(token.id as string, (token.user as User).id);
         }
+
+        const { deletedAt, ...restUser } = (token.user ?? {}) as User;
+        token.user = { ...restUser };
 
         // Check if token should be refreshed or invalidated
         const refreshedToken = isNewToken ? token : await refreshToken(token);
