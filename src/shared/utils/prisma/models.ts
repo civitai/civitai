@@ -2122,7 +2122,7 @@ export interface BountyBenefactor {
   awardedToId: number | null;
   awartedTo?: BountyEntry | null;
   currency: Currency;
-  buzzTransactionId: string | null;
+  buzzTransactionId: string[];
 }
 
 export interface BountyEngagement {
