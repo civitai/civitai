@@ -34,7 +34,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
   ).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
 
   // Fetch then filter error images in JS to avoid a slow query
-  const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes');
+  const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
   const errorImages = (
     (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as retryCount
@@ -44,8 +44,8 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
   ).filter(
     (img) =>
       img.scanRequestedAt &&
-      img.scanRequestedAt <= errorRetryDate &&
-      img.retryCount < IMAGE_SCANNING_RETRY_LIMIT
+      new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
+      Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
   );
 
   const images: IngestImageInput[] = [...pendingImages, ...errorImages];
