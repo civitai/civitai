@@ -218,15 +218,6 @@ export const createBounty = async ({
         },
       });
 
-      const bountyBenefactor = await tx.bountyBenefactor.create({
-        data: {
-          userId,
-          bountyId: bounty.id,
-          unitAmount,
-          currency,
-        },
-      });
-
       if (files) {
         await updateEntityFiles({
           tx,
@@ -267,10 +258,12 @@ export const createBounty = async ({
             },
           });
 
-          // Set transaction ID (benefactor just created, guaranteed to be empty array)
-          await tx.bountyBenefactor.update({
-            where: { bountyId_userId: { userId, bountyId: bounty.id } },
+          await tx.bountyBenefactor.create({
             data: {
+              userId,
+              bountyId: bounty.id,
+              unitAmount,
+              currency,
               buzzTransactionId: [prefix],
             },
           });
@@ -502,7 +495,9 @@ export const deleteBountyById = async ({
             bountyCreator.buzzTransactionId.map((txId) =>
               refundMultiAccountTransaction({
                 externalTransactionIdPrefix: txId,
-                description: 'Refund reason: owner deleted bounty',
+                description: isModerator
+                  ? 'Refund reason: moderator deleted bounty'
+                  : 'Refund reason: owner deleted bounty',
                 details: { bountyId: id },
               })
             )
