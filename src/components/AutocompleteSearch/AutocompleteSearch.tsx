@@ -492,6 +492,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           classNames={{
             root: classes.targetSelectorRoot,
             input: classes.targetSelectorInput,
+            option: classes.targetSelectorOption,
+            options: classes.targetSelectorOptions,
+            dropdown: classes.targetSelectorDropdown,
           }}
           rightSectionProps={{
             className: classes.targetSelectorRightSection,
