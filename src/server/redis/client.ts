@@ -11,7 +11,7 @@ import { slugit } from '~/utils/string-helpers';
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
 
-export type RedisKeyTemplateCache = `${RedisKeyStringsCache}${'' | `:${string}`}`;
+export type RedisKeyTemplateCache = `${RedisKeyStringsCache}${'' | `:${string}`}` | string;
 export type RedisKeyTemplateSys = `${RedisKeyStringsSys}${'' | `:${string}`}`;
 export type RedisKeyTemplates = RedisKeyTemplateCache | RedisKeyTemplateSys;
 

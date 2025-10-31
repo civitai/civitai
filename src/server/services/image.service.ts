@@ -29,7 +29,7 @@ import {
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
-import { pgDbRead } from '~/server/db/pgDb';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -48,7 +48,7 @@ import {
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -160,6 +160,9 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
+import { ImagesFeed } from '../../../event-engine-common/feeds';
+import { MetricService } from '../../../event-engine-common/services/metrics';
+import { CacheService } from '../../../event-engine-common/services/cache';
 
 const {
   cacheHitRequestsTotal,
@@ -1598,6 +1601,10 @@ export const getAllImagesIndex = async (
   // } = input;
   // const { sort, browsingLevel } = input;
 
+  if (true) {
+    return getImagesFromFeedSearch(input);
+  }
+
   const { include, user } = input;
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
@@ -1770,6 +1777,26 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   return searchFn(input);
+}
+
+export async function getImagesFromFeedSearch(input: ImageSearchInput) {
+  try {
+    const feed = new ImagesFeed(
+      metricsSearchClient!,
+      clickhouse!,
+      pgDbWrite,
+      new MetricService(clickhouse!, redis!),
+      new CacheService(redis!, pgDbWrite, clickhouse!)
+    );
+
+    const data = await feed.populatedQuery(input);
+    // console.log('ImagesFeed search returned', data.items.length, 'items');
+    console.log(Object.keys(data));
+    return data;
+  } catch (err) {
+    console.error('Error in getImagesFromFeedSearch:', err);
+    throw err;
+  }
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
