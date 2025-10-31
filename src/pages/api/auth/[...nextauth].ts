@@ -149,7 +149,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           // Clear cache first, then fetch fresh user data to avoid getting stale cached data
           // Also mark all user's tokens for refresh in case they have multiple sessions
           await refreshSession(Number(token.sub));
-
           // Now fetch fresh user data (cache is cleared, so this will hit the database)
           const freshUser = await getSessionUser({ userId: Number(token.sub) });
           if (freshUser) {
@@ -164,24 +163,6 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         // Handle initial token setup (not update trigger)
         token.sub = Number(token.sub) as any; //eslint-disable-line
 
-        // If we have a user object from initial sign-in, we need to enrich it with full session data
-        // because OAuth providers only return basic user fields from the database adapter
-        if (user) {
-          // For OAuth providers, the user object doesn't have tier/subscription data
-          // We need to fetch the full session user to get that information
-          if (!(user as any).tier && !(user as any).subscriptions) {
-            const fullUser = await getSessionUser({ userId: Number(user.id) });
-            if (fullUser) {
-              token.user = fullUser;
-            } else {
-              token.user = user;
-            }
-          } else {
-            // Credentials provider already has full data
-            token.user = user;
-          }
-        }
-
         const { deletedAt, ...restUser } = token.user as User;
         token.user = { ...restUser };
 
@@ -193,6 +174,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
         // Track new tokens
         if (isNewToken && token.user) {
+          token.user = await getSessionUser({ userId: Number(user.id) });
           await trackToken(token.id as string, (token.user as User).id);
         }
 
@@ -497,7 +479,6 @@ async function sendVerificationRequest({
   try {
     await verificationEmail.send({ to, url, theme });
     await emailLimiter.increment(to).catch(() => null);
-
   } catch (error) {
     logToAxiom({
       name: 'verification-email',
