@@ -29,7 +29,7 @@ export const workflowDefinitions: WorkflowDefinition[] = [
     selectable: false,
     memberOnly: true,
     template:
-      '{"1":{"class_type":"LoadRembgByBiRefNetModel","inputs":{"model":"urn:air:other:birefnet:huggingface:ZhengPeng7/BiRefNet@main/model.safetensors","device":"AUTO","dtype":"float32","use_weight":false},"_meta":{"title":"LoadRembgByBiRefNetModel"}},"4":{"class_type":"LoadImage","inputs":{"image":"{{image}}","upload":"image"},"_meta":{"title":"Load Image"}},"10":{"class_type":"BlurFusionForegroundEstimation","inputs":{"blur_size":91,"blur_size_two":7,"color":0,"fill_color":false,"images":["4",0],"masks":["16",0]},"_meta":{"title":"BlurFusionForegroundEstimation"}},"16":{"class_type":"GetMaskByBiRefNet","inputs":{"upscale_method":"bilinear","width":{{width}},"height":{{height}},"mask_threshold":0,"model":["1",0],"images":["4",0]},"_meta":{"title":"GetMaskByBiRefNet"}},"18":{"class_type":"SaveImage","inputs":{"format":"png","images":["10",0]},"_meta":{"title":"SaveImage"}}}',
+      '{"1":{"inputs":{"model":"urn:air:other:birefnet:huggingface:ZhengPeng7/BiRefNet@main/model.safetensors","device":"AUTO","use_weight":false,"dtype":"float32"},"class_type":"LoadRembgByBiRefNetModel","_meta":{"title":"LoadRembgByBiRefNetModel"}},"3":{"inputs":{"image":"{{image}}","upload":"image"},"class_type":"LoadImage","_meta":{"title":"Load Image"}},"4":{"class_type":"SaveImage","inputs":{"format":"png","images":["8",0]},"_meta":{"title":"SaveImage"}},"8":{"inputs":{"model":["1",0],"images":["3",0]},"class_type":"RembgByBiRefNet","_meta":{"title":"RembgByBiRefNet"}}}',
   },
   {
     type: 'img2img',
