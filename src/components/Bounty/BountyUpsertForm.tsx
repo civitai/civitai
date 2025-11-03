@@ -129,7 +129,7 @@ const formSchema = upsertBountyInputSchema
   })
   .refine((data) => data.nsfw && data.buzzType === 'green', {
     error: 'When using Green Buzz, you are not allowed to create NSFW content',
-    path: ['nsfw']
+    path: ['nsfw'],
   });
 
 const lockableProperties = ['nsfw', 'poi'];
@@ -138,7 +138,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const features = useFeatureFlags();
-  const [mainBuzzType] = useAvailableBuzz();
+
+  const availableBuzzTypes = useAvailableBuzz();
+  const [mainBuzzType] = availableBuzzTypes;
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [bountyImages, setBountyImages] = useState<BountyGetById['images']>(bounty?.images ?? []);
@@ -216,6 +218,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   ].some((t) => t === type);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
+    accountTypes: availableBuzzTypes,
     message: (requiredBalance) =>
       `You don't have enough funds to create this bounty. Required Buzz: ${numberWithCommas(
         requiredBalance

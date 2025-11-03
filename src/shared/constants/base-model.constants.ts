@@ -46,7 +46,7 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Pony', type: 'image', group: 'Pony', ecosystem: 'sdxl' },
-  { name: 'Pony V7', type: 'image', group: 'PonyV7', ecosystem: 'auraflow', hidden: true },
+  { name: 'Pony V7', type: 'image', group: 'PonyV7', ecosystem: 'auraflow' },
   { name: 'Qwen', type: 'image', group: 'Qwen', ecosystem: 'qwen' },
   {
     name: 'Stable Cascade',
@@ -284,7 +284,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'PonyV7',
     support: [
       {
-        modelTypes: [ModelType.Checkpoint],
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Pony V7'],
       },
     ],

@@ -3,6 +3,7 @@ import { useHotkeys } from '@mantine/hooks';
 import { useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { createEntityAppealSchema } from '~/server/schema/report.schema';
@@ -15,6 +16,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
   const queryUtils = trpc.useUtils();
   const dialog = useDialogContext();
   const [state, setState] = useState<State>({ message: '', error: '' });
+  const [mainBuzzType] = useAvailableBuzz();
 
   const { data = 0, isLoading } = trpc.report.getRecentAppeals.useQuery({});
 
@@ -115,7 +117,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
               <BuzzTransactionButton
                 buzzAmount={100}
                 label="Submit"
-                accountTypes={['green', 'yellow', 'red']}
+                accountTypes={[mainBuzzType]}
                 loading={createAppealMutation.isLoading}
                 onPerformTransaction={handleSubmit}
                 showPurchaseModal

@@ -2361,6 +2361,7 @@ enum ArticleStatus {
   Draft
   Published
   Unpublished
+  UnpublishedViolation
 }
 
 model Article {
@@ -2802,7 +2803,7 @@ model BountyBenefactor {
   awardedToId       Int?
   awartedTo         BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
   currency          Currency     @default(BUZZ)
-  buzzTransactionId String?
+  buzzTransactionId String[]     @default([])
 
   @@id([bountyId, userId])
   @@index([bountyId], type: Hash)

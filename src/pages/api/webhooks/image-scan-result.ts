@@ -131,7 +131,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
     const image = await getImage(imageId);
     const result = await auditImageScanResults({ image });
     if (req.query.rescan) await updateImage(image, result);
-    return res.status(200).json(result);
+    return res.status(200).json({ audit: result, image });
   }
   if (req.method !== 'POST')
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });

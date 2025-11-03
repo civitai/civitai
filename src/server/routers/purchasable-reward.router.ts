@@ -31,7 +31,7 @@ export const purchasableRewardRouter = router({
     return purchasableRewardPurchase({
       ...input,
       userId: ctx.user.id,
-      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
+      buzzType: getAllowedAccountTypes(ctx.features)[0],
     });
   }),
   getById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {

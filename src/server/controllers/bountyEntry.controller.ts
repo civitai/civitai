@@ -132,7 +132,7 @@ export const upsertBountyEntryHandler = async ({
       userId,
     });
 
-    if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id}`);
+    if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id as number}`);
 
     ctx.track
       .bountyEntry({ type: input.id ? 'Create' : 'Update', bountyEntryId: entry.id })

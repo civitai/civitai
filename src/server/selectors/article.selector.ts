@@ -41,4 +41,5 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   userId: true,
   coverImage: { select: imageSelect },
   lockedProperties: true,
+  metadata: true,
 });

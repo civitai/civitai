@@ -27,10 +27,12 @@ export default function TosModal({
   onAccepted,
   slug,
   fieldKey,
+  showBackButton = true,
 }: {
   onAccepted: () => Promise<void>;
   slug: string;
   fieldKey: keyof SetUserSettingsInput;
+  showBackButton?: boolean;
 }) {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -60,7 +62,6 @@ export default function TosModal({
     const elementGaps = 16 * 3;
     const dividerHeight = 2;
     const reservedSpace = headerHeight + footerHeight + elementGaps + dividerHeight + 32;
-    console.log('Reserved space:', reservedSpace);
 
     return Math.max(210, reservedSpace);
   };
@@ -78,7 +79,14 @@ export default function TosModal({
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
+    <Modal
+      {...dialog}
+      size="lg"
+      withCloseButton={false}
+      closeOnClickOutside={false}
+      closeOnEscape={false}
+      radius="md"
+    >
       {isLoading || !data?.content ? (
         <Center>
           <Loader />
@@ -119,9 +127,11 @@ export default function TosModal({
               size="sm"
             />
             <Group ml="auto">
-              <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
-                Go back
-              </Button>
+              {showBackButton && (
+                <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
+                  Go back
+                </Button>
+              )}
               <Button
                 onClick={handleConfirm}
                 disabled={!acceptedCoC}

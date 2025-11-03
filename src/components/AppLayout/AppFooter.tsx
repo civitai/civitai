@@ -1,4 +1,4 @@
-import { Button, Text } from '@mantine/core';
+import { Button, Indicator, Text } from '@mantine/core';
 import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
@@ -17,6 +17,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   domains?: ColorDomain[];
   features?: (features: FeatureAccess) => boolean;
   key: string;
+  indicator?: boolean;
 })[] = [
   {
     key: 'tos',
@@ -67,11 +68,12 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     color: 'blue',
     children: 'Creators',
   },
-  // {
-  //   key: 'careers',
-  //   href: '/content/careers',
-  //   children: 'Careers',
-  // },
+  {
+    key: 'careers',
+    href: '/content/careers',
+    children: 'Careers',
+    indicator: true,
+  },
   {
     key: '2257',
     href: '/content/2257',
@@ -136,18 +138,36 @@ export function AppFooter() {
                 // !item.defaultExcluded &&
                 !(browsingSettingsAddons.settings.excludedFooterLinks ?? []).includes(item.key)
             )
-            .map(({ features, key, ...props }, i) => (
-              <Button
-                key={key ?? i}
-                component={Link}
-                {...props}
-                className="px-2.5 @max-sm:px-1"
-                size="xs"
-                variant="subtle"
-                color="gray"
-              />
-            ))}
-
+            .map(({ features, key, indicator, ...props }, i) => {
+              let button = (
+                <Button
+                  key={key ?? i}
+                  component={Link}
+                  {...props}
+                  className={clsx('px-2.5 @max-sm:px-1', {
+                    'pr-3.5': indicator,
+                  })}
+                  size="xs"
+                  variant="subtle"
+                  color="gray"
+                />
+              );
+              if (indicator) {
+                button = (
+                  <Indicator
+                    key={key ?? i}
+                    position="middle-end"
+                    size={6}
+                    offset={7}
+                    processing
+                    color="yellow"
+                  >
+                    {button}
+                  </Indicator>
+                );
+              }
+              return button;
+            })}
           <SocialLinks />
         </div>
         <div className="ml-auto flex items-center gap-1">

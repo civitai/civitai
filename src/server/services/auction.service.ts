@@ -66,6 +66,7 @@ export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
       amount: true,
       createdAt: true,
       deleted: true,
+      auctionId: true,
     },
   },
   auctionBase: {

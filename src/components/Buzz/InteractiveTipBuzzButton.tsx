@@ -83,7 +83,6 @@ export const useBuzzTippingStore = ({
   return useStore(useCallback((state) => state.tips[key] ?? 0, [key]));
 };
 
-
 const steps: [number, number][] = [
   // [20000, 2500],
   // [5000, 1000],
@@ -256,7 +255,6 @@ export function InteractiveTipBuzzButton({
       setStatus('pending');
     }, CONFIRMATION_TIMEOUT);
   };
-
 
   const clickStart = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice()) {

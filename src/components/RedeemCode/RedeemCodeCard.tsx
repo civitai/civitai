@@ -10,6 +10,7 @@ import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { formatDate } from '~/utils/date-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -66,6 +67,7 @@ export function RedeemCodeCard({
   placeholder = 'BUZZ-CODE-HERE',
   className,
 }: RedeemCodeCardProps) {
+  const currentUser = useCurrentUser();
   const [redeemState, setRedeemState] = useState<RedeemState>({
     status: 'idle',
     code: initialCode,
@@ -111,6 +113,7 @@ export function RedeemCodeCard({
       });
 
       await Promise.all([
+        currentUser?.refresh(),
         queryUtils.buzz.getAccountTransactions.invalidate(),
         queryUtils.buzz.getBuzzAccount.invalidate(),
         queryUtils.subscriptions.getUserSubscription.invalidate(),
