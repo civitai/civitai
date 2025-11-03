@@ -246,10 +246,10 @@ export const useQueryKnightsNewOrderImageQueue = (
 ) => {
   const { playerData } = useJoinKnightsNewOrder();
 
-  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(
-    { ...filter },
-    { ...opts, enabled: !!playerData && opts?.enabled !== false }
-  );
+  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(filter, {
+    ...opts,
+    enabled: !!playerData && opts?.enabled !== false,
+  });
 
   return { data, ...rest };
 };
@@ -279,7 +279,7 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
       await queryUtils.games.newOrder.getImagesQueue.cancel();
       await queryUtils.games.newOrder.getPlayer.cancel();
 
-      const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData();
+      const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData(opts?.filters);
       queryUtils.games.newOrder.getImagesQueue.setData(opts?.filters, (old) => {
         if (!old) return old;
 
@@ -332,7 +332,7 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
 
   const handleAddRating = (input: Omit<AddImageRatingInput, 'playerId'>) => {
     // Check if this is a sanity check image
-    const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData();
+    const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData(opts?.filters);
     const matchedImage = prevQueue?.find((image) => image.id === input.imageId);
     const isSanityCheck = matchedImage?.metadata?.isSanityCheck === true;
 

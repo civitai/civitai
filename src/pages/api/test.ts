@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { clickhouse } from '~/server/clickhouse/client';
 import {
   createBuzzTransactionMany,
   getAccountsBalances,
@@ -16,17 +17,19 @@ import { CAPPED_BUZZ_VALUE } from '~/shared/constants/creator-program.constants'
 import { withRetries } from '~/utils/errorHandling';
 
 export default PublicEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const month = dayjs().subtract(1, 'months').toDate();
-  const monthAccount = getMonthAccount(month);
-  const participants = await getPoolParticipantsV2(month, true, 'yellow');
-  const balances = await getAccountsBalances({
-    accountIds: participants.map((p) => p.userId),
-    accountTypes: ['cashpending'],
-  });
+  const { id, rating = null } = req.query;
+  const imageId = Number(id);
+
+  async function test() {
+    await clickhouse!.$exec`
+      INSERT INTO knights_rating_updates_buffer (imageId, rating)
+      VALUES (${imageId}, ${rating});
+    `;
+  }
+
+  // await test();
 
   return res.status(200).json({
-    month,
-    balances,
-    participants,
+    success: true,
   });
 });

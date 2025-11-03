@@ -43,29 +43,24 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
       AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
-    HAVING balance > 0
   `;
 
-  const positiveBalanceJudgments = judgments.filter((j) => j.balance > 0);
-
-  if (!positiveBalanceJudgments.length) {
+  if (!judgments.length) {
     log('BlessedBuzz :: No correct judgments found');
     return;
   }
-  log(`BlessedBuzz :: Found ${positiveBalanceJudgments.length} correct judgments`);
+  log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
 
   // Get current player data for knights and templars only
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
-      userId: { in: positiveBalanceJudgments.map((j) => j.userId) },
+      userId: { in: judgments.map((j) => j.userId) },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     select: { userId: true },
   });
 
-  const validPlayers = positiveBalanceJudgments.filter((j) =>
-    players.some((p) => p.userId === j.userId)
-  );
+  const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
 
   if (!validPlayers.length) {
     log('BlessedBuzz :: No valid players found');
@@ -77,16 +72,19 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   let loopCount = 1;
   for (const batch of batches) {
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-    const transactions = batch.map((validPlayer) => ({
-      fromAccountId: 0,
-      toAccountId: validPlayer.userId,
-      amount: validPlayer.balance,
-      type: TransactionType.Reward,
-      description: 'Content Moderation Correct Judgment',
-      externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-    }));
 
-    await createBuzzTransactionMany(transactions);
+    const transactions = batch
+      .filter((player) => player.balance > 0)
+      .map((validPlayer) => ({
+        fromAccountId: 0,
+        toAccountId: validPlayer.userId,
+        amount: validPlayer.balance,
+        type: TransactionType.Reward,
+        description: 'Content Moderation Correct Judgment',
+        externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
+      }));
+
+    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
 
     // Deduct the actual EXP from the blessed buzz counter
     // Counter stores EXP values, not converted buzz, so we deduct totalExp
@@ -327,8 +325,7 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
 
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
-  newOrderDailyReset,
-  // newOrderPickTemplars removed - Templar rank eliminated in redesign
+  // newOrderDailyReset - Temporarily disabled during redesign
   newOrderCleanseSmites,
   newOrderCleanupQueues,
 ];
