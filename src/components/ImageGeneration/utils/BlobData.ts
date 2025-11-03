@@ -48,12 +48,11 @@ export class BlobData implements NormalizedWorkflowStepOutput {
   }) {
     Object.assign(this, data);
 
-    const metadataParams: StepMetadataParams = (step.metadata?.params ??
-      {}) satisfies StepMetadataParams;
+    const isPrivateGeneration = (step.metadata as any)?.isPrivateGeneration ?? false;
 
     if (data.blockedReason === 'none') this.blockedReason = null;
     if (!this.blockedReason) {
-      if (metadataParams.isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
+      if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
         this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {
         if (domain.green) this.blockedReason = 'siteRestricted';

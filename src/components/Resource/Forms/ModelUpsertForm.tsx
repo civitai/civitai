@@ -769,6 +769,7 @@ export const PrivateModelAutomaticSetup = ({
           private model at any time. By continuing, the model setup wizard will complete, and you
           will be able to use your resource in the Generator
         </Text>
+        <Text fw="bold">Only PG (or SFW) content can be generated with private models.</Text>
         <Group ml="auto">
           <Button
             onClick={handleClose}

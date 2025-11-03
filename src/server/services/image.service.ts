@@ -669,11 +669,33 @@ export const ingestImage = async ({
     }),
   });
   if (response.status === 202) {
-    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as { jobId: string };
-    await dbClient.image.update({
-      where: { id },
-      data: { scanRequestedAt, scanJobs },
-    });
+    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as
+      | { jobId: string }
+      | typeof Prisma.JsonNull;
+
+    // Convert scanJobs to JSON string for raw SQL, preserving existing retryCount if it exists
+    const scanJobsJson = scanJobs === Prisma.JsonNull ? null : JSON.stringify(scanJobs);
+
+    if (scanJobsJson) {
+      await dbClient.$executeRaw`
+        UPDATE "Image"
+        SET
+          "scanRequestedAt" = ${scanRequestedAt},
+          "scanJobs" = CASE
+            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
+              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
+            ELSE
+              ${scanJobsJson}::jsonb
+          END
+        WHERE id = ${id}
+      `;
+    } else {
+      await dbClient.$executeRaw`
+        UPDATE "Image"
+        SET "scanRequestedAt" = ${scanRequestedAt}
+        WHERE id = ${id}
+      `;
+    }
 
     return true;
   } else {
@@ -2132,7 +2154,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
   }
   sorts.push(searchSort);
-  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
@@ -2705,7 +2727,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // }
   }
   sorts.push(searchSort);
-  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
