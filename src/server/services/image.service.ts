@@ -1797,7 +1797,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   return searchFn(input);
 }
 
-export async function getImagesFromFeedSearch(input: ImageSearchInput) {
+export async function getImagesFromFeedSearch(input: ImageSearchInput): Promise<GetAllImagesIndexResult> {
   try {
     const feed = new ImagesFeed(
       metricsSearchClient! as import('event-engine-common/types/meilisearch-interface').IMeilisearch,
@@ -1823,10 +1823,35 @@ export async function getImagesFromFeedSearch(input: ImageSearchInput) {
       cursor: input.cursor ? String(input.cursor) : undefined,
     };
 
-    const data = await feed.populatedQuery(feedInput);
-    // console.log('ImagesFeed search returned', data.items.length, 'items');
-    console.log(Object.keys(data));
-    return data;
+    const feedResult = await feed.populatedQuery(feedInput);
+
+    // Transform PopulatedImage to match getAllImagesIndex return type
+    // Remove extra fields that getAllImagesIndex doesn't have
+    const transformedItems = feedResult.items.map((img) => {
+      // Destructure to remove extra fields
+      const {
+        sortAtUnix,
+        publishedAtUnix,
+        existedAtUnix,
+        tagIds,
+        flags,
+        aiNsfwLevel,
+        combinedNsfwLevel,
+        ...rest
+      } = img;
+
+      // Return structure matching getAllImagesIndex
+      return {
+        ...rest,
+        type: img.type as MediaType, // Cast to MediaType enum
+        availability: img.availability ?? Availability.Public, // Ensure non-undefined
+      };
+    });
+
+    return {
+      nextCursor: feedResult.nextCursor,
+      items: transformedItems as any, // Cast to match getAllImagesIndex return type
+    };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
     throw err;
