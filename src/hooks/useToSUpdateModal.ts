@@ -32,6 +32,7 @@ export function useToSUpdateModal() {
         props: {
           slug: 'tos',
           fieldKey: tosUpdate.tosFieldKey || ('tosLastSeenDate' as const),
+          showBackButton: false,
           onAccepted: async () => {
             await currentUser.refresh();
             // Use queryUtils to update the query data from trpc.content.checkTosUpdate

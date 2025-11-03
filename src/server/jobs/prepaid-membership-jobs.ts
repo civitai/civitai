@@ -95,7 +95,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           toAccountId: d.userId,
           toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
           type: TransactionType.Purchase,
-          externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}`,
+          externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}:v2`,
           amount: amount,
           description: `Membership Bonus`,
           details: {
@@ -118,6 +118,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           const userData = batch.map((b) => ({
             id: b.toAccountId,
             tier: (b.details as any).tier,
+            externalTransactionId: b.externalTransactionId,
           }));
 
           // Decrement prepaid counts for each user who received buzz
@@ -128,9 +129,13 @@ export const deliverPrepaidMembershipBuzz = createJob(
               UPDATE "CustomerSubscription"
               SET
                 "metadata" = jsonb_set(
-                  "metadata",
-                  ARRAY['prepaids', (updates.data ->> 'tier')],
-                  (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
+                  jsonb_set(
+                    "metadata",
+                    ARRAY['prepaids', (updates.data ->> 'tier')],
+                    (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
+                  ),
+                  ARRAY['buzzTransactionIds'],
+                  COALESCE("metadata"->'buzzTransactionIds', '[]'::jsonb) || jsonb_build_array(updates.data ->> 'externalTransactionId')
                 ),
                 "updatedAt" = NOW()
               FROM (
@@ -141,6 +146,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
                   userData.map((d) => ({
                     id: d.id,
                     tier: d.tier,
+                    externalTransactionId: d.externalTransactionId,
                   }))
                 )}::json)
               ) AS updates
