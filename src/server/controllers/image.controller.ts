@@ -25,6 +25,7 @@ import {
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,
+  getImagesFromFeedSearch,
   getPostDetailByImageId,
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
@@ -257,18 +258,29 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
-  const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
-  // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
+  const useFeedSearch = features.imageIndexFeed && input.useIndex;
 
   try {
-    return await fetchFn({
-      ...input,
-      user,
-      useCombinedNsfwLevel: !features.canViewNsfw,
-      headers: { src: 'getInfiniteImagesHandler' },
-      include: [...input.include, 'tagIds'],
-      useLogicalReplica: features.logicalReplica,
-    });
+    if (useFeedSearch) {
+      // getImagesFromFeedSearch uses ImageSearchInput (currentUserId, isModerator)
+      return await getImagesFromFeedSearch({
+        ...input,
+        currentUserId: user?.id,
+        isModerator: user?.isModerator,
+        useCombinedNsfwLevel: !features.canViewNsfw,
+        include: [...input.include, 'tagIds'],
+      });
+    } else {
+      // getAllImages uses GetAllImagesInput (user object)
+      return await getAllImages({
+        ...input,
+        user,
+        useCombinedNsfwLevel: !features.canViewNsfw,
+        headers: { src: 'getInfiniteImagesHandler' },
+        include: [...input.include, 'tagIds'],
+        useLogicalReplica: features.logicalReplica,
+      });
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

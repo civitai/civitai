@@ -1623,10 +1623,6 @@ export const getAllImagesIndex = async (
   // } = input;
   // const { sort, browsingLevel } = input;
 
-  if (true) {
-    return getImagesFromFeedSearch(input);
-  }
-
   const { include, user } = input;
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
@@ -1804,14 +1800,30 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 export async function getImagesFromFeedSearch(input: ImageSearchInput) {
   try {
     const feed = new ImagesFeed(
-      metricsSearchClient!,
+      metricsSearchClient! as import('event-engine-common/types/meilisearch-interface').IMeilisearch,
       clickhouse!,
       pgDbWrite,
       new MetricService(clickhouse!, redis!),
-      new CacheService(redis!, pgDbWrite, clickhouse!)
+      new CacheService(redis!, pgDbWrite, clickhouse!),
+      {
+        redis: sysRedis,
+        flipt: await FliptSingleton.getInstance(),
+        constants: {
+          REDIS_SYS_KEYS,
+          FLIPT_FEATURE_FLAGS,
+          nsfwRestrictedBaseModels,
+          nsfwBrowsingLevelsArray,
+        },
+      }
     );
 
-    const data = await feed.populatedQuery(input);
+    // Convert cursor to string if it's not already
+    const feedInput = {
+      ...input,
+      cursor: input.cursor ? String(input.cursor) : undefined,
+    };
+
+    const data = await feed.populatedQuery(feedInput);
     // console.log('ImagesFeed search returned', data.items.length, 'items');
     console.log(Object.keys(data));
     return data;
