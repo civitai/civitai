@@ -175,7 +175,7 @@ export const allJudgmentsCounter = createCounter({
       FROM knights_new_order_image_rating
       WHERE userId = ${id}
         AND createdAt >= ${effectiveStartDate}
-        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}', '${NewOrderImageRatingStatus.Inconclusive}')
     `;
     if (!data) return 0;
 
