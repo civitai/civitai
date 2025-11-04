@@ -11,7 +11,6 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { NewOrderCounter } from '~/server/games/new-order/utils';
 import {
   acolyteFailedJudgments,
   allJudgmentsCounter,
