@@ -1237,9 +1237,7 @@ async function getRatedImages({
 
   // Store in Redis Set (only if we have results to avoid empty sets)
   if (imageIds.length > 0) {
-    await redis.packed.sAdd(key, imageIds.map(String));
-    // Set expiration to match the old TTL
-    await redis.expire(key, CacheTTL.day);
+    await redis.multi().sAdd(key, imageIds.map(String)).expire(key, CacheTTL.day).exec();
   }
 
   return imageIds;
@@ -1251,7 +1249,7 @@ async function addRatedImage(userId: number, imageId: number) {
 
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
   // Add image ID to the set (O(1) operation)
-  await redis.packed.sAdd(key, [imageId.toString()]);
+  await redis.multi().sAdd(key, [imageId.toString()]).expire(key, CacheTTL.day).exec();
 }
 
 // Helper function to clear rated images cache for a player
