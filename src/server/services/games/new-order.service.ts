@@ -210,6 +210,7 @@ export async function cleanseAllSmites({
   });
 
   await smitesCounter.reset({ id: playerId });
+  await sanityCheckFailuresCounter.reset({ id: playerId });
 
   if (data.count === 0) return; // Nothing done :shrug:
 
@@ -237,6 +238,8 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   });
 
   const smiteCount = await smitesCounter.decrement({ id: playerId });
+  await sanityCheckFailuresCounter.reset({ id: playerId });
+
   await signalClient
     .send({
       userId: playerId,
