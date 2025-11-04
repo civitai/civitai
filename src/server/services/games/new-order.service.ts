@@ -1212,7 +1212,7 @@ async function getRatedImages({
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
 
   // Try to get from Redis Set first
-  const cachedImageIds = await redis.packed.sMembers(key);
+  const cachedImageIds = await redis.sMembers(key);
 
   // If cache exists, return the cached image IDs as numbers
   if (cachedImageIds && cachedImageIds.length > 0) {
