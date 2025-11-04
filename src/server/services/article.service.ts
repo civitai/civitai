@@ -697,17 +697,22 @@ export const upsertArticle = async ({
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
-      // Check article title and content for profanity
+      // Check article title and content for profanity using threshold-based evaluation
       const profanityFilter = createProfanityFilter();
       const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
-      const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+      const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-      // If profanity is detected, mark article as NSFW and add to locked properties
-      if (isProfane && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
-        data.metadata = { profanityMatches: matchedWords };
+      // If profanity exceeds thresholds, mark article as NSFW with recommended level
+      if (evaluation.shouldMarkNSFW && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+        data.metadata = {
+          ...data.metadata,
+          profanityEvaluation: {
+            reason: evaluation.reason,
+            metrics: evaluation.metrics,
+          },
+        } as ArticleMetadata;
         data.nsfw = true;
-        data.userNsfwLevel =
-          data.userNsfwLevel <= NsfwLevel.PG13 ? NsfwLevel.R : data.userNsfwLevel;
+        data.userNsfwLevel = evaluation.suggestedLevel;
         data.lockedProperties =
           data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
             ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
