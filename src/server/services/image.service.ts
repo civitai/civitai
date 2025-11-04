@@ -163,6 +163,14 @@ import { getExplainSql } from '~/server/db/db-helpers';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { CacheService } from '../../../event-engine-common/services/cache';
+import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
+import type {
+  IClickhouseClient,
+  IDbClient,
+  IRedisClient,
+} from '../../../event-engine-common/types/package-stubs';
+import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
+import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 
 const {
   cacheHitRequestsTotal,
@@ -1798,7 +1806,9 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   return searchFn(input);
 }
 
-export async function getImagesFromFeedSearch(input: ImageSearchInput): Promise<GetAllImagesIndexResult> {
+export async function getImagesFromFeedSearch(
+  input: ImageSearchInput
+): Promise<GetAllImagesIndexResult> {
   try {
     // Evaluate feature flags before creating feed
     let enableExistenceCheck = false;
@@ -1817,11 +1827,15 @@ export async function getImagesFromFeedSearch(input: ImageSearchInput): Promise<
     }
 
     const feed = new ImagesFeed(
-      metricsSearchClient! as unknown as import('../../../event-engine-common/types/meilisearch-interface').IMeilisearch,
-      clickhouse! as unknown as import('../../../event-engine-common/types/package-stubs').IClickhouseClient,
-      pgDbWrite as unknown as import('../../../event-engine-common/types/package-stubs').IDbClient,
-      new MetricService(clickhouse! as unknown as import('../../../event-engine-common/types/package-stubs').IClickhouseClient, redis! as unknown as import('../../../event-engine-common/types/package-stubs').IRedisClient),
-      new CacheService(redis! as unknown as import('../../../event-engine-common/types/package-stubs').IRedisClient, pgDbWrite as unknown as import('../../../event-engine-common/types/package-stubs').IDbClient, clickhouse! as unknown as import('../../../event-engine-common/types/package-stubs').IClickhouseClient)
+      metricsSearchClient as IMeilisearch,
+      clickhouse as IClickhouseClient,
+      pgDbWrite as IDbClient,
+      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
+      new CacheService(
+        redis as unknown as IRedisClient,
+        pgDbWrite as IDbClient,
+        clickhouse as IClickhouseClient
+      )
     );
 
     // Convert cursor to string if it's not already, and add feature flag result
@@ -1831,7 +1845,7 @@ export async function getImagesFromFeedSearch(input: ImageSearchInput): Promise<
       enableExistenceCheck,
     };
 
-    const feedResult = await feed.populatedQuery(feedInput as import('../../../event-engine-common/feeds/types').FeedQueryInput<import('../../../event-engine-common/types/image-feed-types').ImageQueryInput>);
+    const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
 
     // Transform PopulatedImage to match getAllImagesIndex return type
     // Remove extra fields that getAllImagesIndex doesn't have
