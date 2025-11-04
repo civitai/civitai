@@ -8,9 +8,8 @@ import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 export type GetImagesQueueSchema = z.input<typeof getImagesQueueSchema>;
 export const getImagesQueueSchema = z.object({
-  // TODO: add playerId to the schema
   imageCount: z.number().optional().default(20),
-  queueType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
+  queueType: z.enum(NewOrderRankType).optional(), // For moderator testing only
 });
 
 export type GetPlayersInfiniteSchema = z.infer<typeof getPlayersInfiniteSchema>;
@@ -40,6 +39,12 @@ export const addImageRatingSchema = z.object({
   damnedReason: z.enum(NewOrderDamnedReason).optional(),
 });
 
+export type AddSanityCheckRatingInput = z.infer<typeof addSanityCheckRatingSchema>;
+export const addSanityCheckRatingSchema = z.object({
+  imageId: z.number(),
+  rating: z.enum(NsfwLevel),
+});
+
 const transformStatus = {
   [NewOrderImageRatingStatus.AcolyteCorrect]: [
     NewOrderImageRatingStatus.AcolyteCorrect,
@@ -58,6 +63,7 @@ const transformStatus = {
     NewOrderImageRatingStatus.AcolyteFailed,
   ],
   [NewOrderImageRatingStatus.Pending]: [NewOrderImageRatingStatus.Pending],
+  [NewOrderImageRatingStatus.Inconclusive]: [NewOrderImageRatingStatus.Inconclusive],
 } as const;
 
 export type GetHistoryInput = z.input<typeof getHistorySchema>;
@@ -73,7 +79,7 @@ export const getHistorySchema = z.object({
     )
     .optional(),
   status: z
-    .nativeEnum(NewOrderImageRatingStatus)
+    .enum(NewOrderImageRatingStatus)
     .transform((val) => {
       return transformStatus[val] ?? undefined;
     })
@@ -87,5 +93,37 @@ export const resetPlayerByIdSchema = z.object({
 
 export type GetImageRatersInput = z.infer<typeof getImageRatersSchema>;
 export const getImageRatersSchema = z.object({
+  imageId: z.number(),
+});
+
+export type ManageSanityChecksInput = z.infer<typeof manageSanityChecksSchema>;
+export const manageSanityChecksSchema = z.object({
+  add: z.array(z.number()).optional(),
+  remove: z.array(z.number()).optional(),
+});
+
+// Admin testing schemas
+export type TestVoteInput = z.infer<typeof testVoteSchema>;
+export const testVoteSchema = z.object({
+  imageId: z.number(),
+  rating: z.enum(NsfwLevel),
+  userId: z.number().optional(), // Optional: vote as different user
+  damnedReason: z.enum(NewOrderDamnedReason).optional(),
+  level: z.number().min(20).max(80).optional(), // Optional: override player level for vote weight
+  smites: z.number().min(0).max(6).optional(), // Optional: override smites for vote weight
+});
+
+export type GetQueueStateInput = z.infer<typeof getQueueStateSchema>;
+export const getQueueStateSchema = z.object({
+  imageId: z.number().optional(),
+});
+
+export type GetVoteDetailsInput = z.infer<typeof getVoteDetailsSchema>;
+export const getVoteDetailsSchema = z.object({
+  imageId: z.number(),
+});
+
+export type ResetImageVotesInput = z.infer<typeof resetImageVotesSchema>;
+export const resetImageVotesSchema = z.object({
   imageId: z.number(),
 });

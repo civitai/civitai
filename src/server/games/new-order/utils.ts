@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
@@ -15,6 +16,8 @@ type CounterOptions = {
   ttl?: number;
   ordered?: boolean;
 };
+
+export type NewOrderCounter = ReturnType<typeof createCounter>;
 
 function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: CounterOptions) {
   async function populateCount(id: number | string) {
@@ -132,19 +135,23 @@ export const correctJudgmentsCounter = createCounter({
     });
     if (!player) return 0;
 
+    // Use 7-day rolling window for fervor calculation, but respect career resets
+    const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+    const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
+
     const data = await clickhouse.$query<{ count: number }>`
       SELECT
         COUNT(*) as count
       FROM knights_new_order_image_rating
       WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
+        AND createdAt >= ${effectiveStartDate}
         AND status = '${NewOrderImageRatingStatus.Correct}'
     `;
     if (!data) return 0;
 
     return data[0]?.count ?? 0;
   },
-  ttl: CacheTTL.week,
+  ttl: CacheTTL.day, // Shorter TTL for rolling window
 });
 
 export const allJudgmentsCounter = createCounter({
@@ -158,25 +165,35 @@ export const allJudgmentsCounter = createCounter({
     });
     if (!player) return 0;
 
+    // Use 7-day rolling window for fervor calculation, but respect career resets
+    const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+    const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
+
     const data = await clickhouse.$query<{ count: number }>`
       SELECT
         COUNT(*) as count
       FROM knights_new_order_image_rating
       WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
-        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+        AND createdAt >= ${effectiveStartDate}
+        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}', '${NewOrderImageRatingStatus.Inconclusive}')
     `;
     if (!data) return 0;
 
     return data[0]?.count ?? 0;
   },
-  ttl: CacheTTL.week,
+  ttl: CacheTTL.day, // Shorter TTL for rolling window
 });
 
 export const acolyteFailedJudgments = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
   fetchCount: async () => 0,
   ttl: CacheTTL.week,
+});
+
+export const sanityCheckFailuresCounter = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.FAILURES,
+  fetchCount: async () => 0,
+  ttl: CacheTTL.day,
 });
 
 export const fervorCounter = createCounter({
@@ -236,7 +253,7 @@ export const poolKeys = {
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1`,
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2`,
     // Temporarily disabled Knight3 queue
-    // `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
   ],
   [NewOrderRankType.Templar]: [
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar1`,

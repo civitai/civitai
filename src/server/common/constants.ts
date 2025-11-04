@@ -1257,7 +1257,7 @@ export const FEATURED_MODEL_COLLECTION_ID = 104;
 
 export const newOrderConfig = {
   baseExp: 100,
-  blessedBuzzConversionRatio: 0.001,
+  blessedBuzzConversionRatio: 1 / 1000,
   smiteSize: 10,
   welcomeImageUrl: 'f2a97014-c0e2-48ba-bb7d-99435922850b',
   cosmetics: {
@@ -1268,6 +1268,7 @@ export const newOrderConfig = {
     templarVotes: 2,
     templarPicks: 24,
     minKnightVotes: 4,
+    maxKnightVotes: 10,
   },
 };
 

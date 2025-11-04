@@ -1,9 +1,8 @@
-import { removeDuplicates } from '@tiptap/react';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
-import { NewOrderImageRatingStatus, NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudgmentsCounter,
@@ -17,8 +16,6 @@ import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
-import { createNotification } from '~/server/services/notification.service';
-import { claimCosmetic } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -33,41 +30,37 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   const startDate = dayjs().subtract(3, 'day').startOf('day').toDate();
   const endDate = dayjs().subtract(3, 'day').endOf('day').toDate();
 
-  // Get all correct judgments for the last 3 days
+  // Get all judgments from exactly 3 days ago
   log(
-    `BlessedBuzz :: Getting correct judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
+    `BlessedBuzz :: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
-  const judgments = await clickhouse.$query<{ userId: number; balance: number }>`
+  const judgments = await clickhouse.$query<{ userId: number; balance: number; totalExp: number }>`
     SELECT
       userId,
-      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance
+      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance,
+      SUM(grantedExp * multiplier) as totalExp
     FROM knights_new_order_image_rating
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
       AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
-    HAVING balance > 0
   `;
 
-  const positiveBalanceJudgments = judgments.filter((j) => j.balance > 0);
-
-  if (!positiveBalanceJudgments.length) {
+  if (!judgments.length) {
     log('BlessedBuzz :: No correct judgments found');
     return;
   }
-  log(`BlessedBuzz :: Found ${positiveBalanceJudgments.length} correct judgments`);
+  log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
 
   // Get current player data for knights and templars only
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
-      userId: { in: positiveBalanceJudgments.map((j) => j.userId) },
+      userId: { in: judgments.map((j) => j.userId) },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     select: { userId: true },
   });
 
-  const validPlayers = positiveBalanceJudgments.filter((j) =>
-    players.some((p) => p.userId === j.userId)
-  );
+  const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
 
   if (!validPlayers.length) {
     log('BlessedBuzz :: No valid players found');
@@ -79,22 +72,25 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   let loopCount = 1;
   for (const batch of batches) {
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-    const transactions = batch.map((validPlayer) => ({
-      fromAccountId: 0,
-      toAccountId: validPlayer.userId,
-      amount: validPlayer.balance,
-      type: TransactionType.Reward,
-      description: 'Content Moderation Correct Judgment',
-      externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-    }));
 
-    await createBuzzTransactionMany(transactions);
+    const transactions = batch
+      .filter((player) => player.balance > 0)
+      .map((validPlayer) => ({
+        fromAccountId: 0,
+        toAccountId: validPlayer.userId,
+        amount: validPlayer.balance,
+        type: TransactionType.Reward,
+        description: 'Content Moderation Correct Judgment',
+        externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
+      }));
 
-    // Deduct the blessed buzz from the counter
+    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
+
+    // Deduct the actual EXP from the blessed buzz counter
+    // Counter stores EXP values, not converted buzz, so we deduct totalExp
     await Promise.all(
       batch.map((player) => {
-        const blessedBuzzValue = player.balance / newOrderConfig.blessedBuzzConversionRatio;
-        return blessedBuzzCounter.decrement({ id: player.userId, value: blessedBuzzValue });
+        return blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp });
       })
     );
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
@@ -110,6 +106,7 @@ type DailyResetQueryResult = {
   correctJudgments: number;
   failedJudgments: number;
   totalJudgments: number;
+  fervor?: number;
 };
 
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
@@ -218,130 +215,41 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   }
   log('DailyReset:: Processing judgments :: done');
 
-  // Clean up counters
-  const userIds = userData.map((j) => j.userId);
-  await Promise.all([
-    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => fervorCounter.reset({ id })),
-    ...userIds.map((id) => expCounter.reset({ id })),
-  ]);
-  log('DailyReset:: Cleared counters');
-});
+  // Synchronize Redis counters with PostgreSQL values
+  // This ensures Redis and DB stay in sync and prevents race conditions
+  log('DailyReset:: Synchronizing Redis counters with DB values');
+  const syncBatches = chunk(userData, 100);
+  let syncLoopCount = 1;
+  for (const syncBatch of syncBatches) {
+    log(`DailyReset:: Synchronizing counters :: ${syncLoopCount} of ${syncBatches.length}`);
 
-const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * *', async () => {
-  if (!clickhouse) return;
-  log('PickTemplars :: Picking templars');
-
-  const startDate = dayjs().subtract(7, 'day').startOf('day').toDate();
-  const endDate = new Date();
-  const judgments = await clickhouse.$query<{ userId: number; status: NewOrderImageRatingStatus }>`
-    SELECT userId, status
-    FROM knights_new_order_image_rating
-    WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-      AND status NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
-  `;
-
-  if (!judgments.length) {
-    log('PickTemplars :: No judgments found');
-    return;
-  }
-
-  const userIds = removeDuplicates(judgments.map((j) => j.userId));
-  const players = await dbRead.newOrderPlayer.findMany({
-    where: {
-      userId: { in: userIds },
-      rankType: {
-        in: [NewOrderRankType.Knight, NewOrderRankType.Templar],
-      },
-    },
-    select: { userId: true },
-  });
-
-  if (!players.length) {
-    log('PickTemplars :: No players found');
-    return;
-  }
-
-  // Get correct judgments and total judgments count for each player
-  const playersFervor = players.reduce((acc, player) => {
-    const allJudgments = judgments.filter((j) => j.userId === player.userId);
-    const correctJudgments = allJudgments.filter(
-      (j) => j.status === NewOrderImageRatingStatus.Correct
+    await Promise.all(
+      syncBatch.flatMap((user) => [
+        // Reset and repopulate exp counter
+        (async () => {
+          await expCounter.reset({ id: user.userId });
+          if (user.exp > 0) await expCounter.increment({ id: user.userId, value: user.exp });
+        })(),
+        // Reset and repopulate fervor counter
+        (async () => {
+          await fervorCounter.reset({ id: user.userId });
+          if (user.fervor && user.fervor > 0)
+            await fervorCounter.increment({ id: user.userId, value: user.fervor });
+        })(),
+        // Reset judgment counters (these will repopulate from ClickHouse on next access)
+        correctJudgmentsCounter.reset({ id: user.userId }),
+        allJudgmentsCounter.reset({ id: user.userId }),
+      ])
     );
-    const totalCount = allJudgments.length;
-    const correctCount = correctJudgments.length;
-    const fervor = calculateFervor({ correctJudgments: correctCount, allJudgments: totalCount });
 
-    acc[player.userId] = fervor;
-
-    return acc;
-  }, {} as Record<number, number>);
-
-  // Pick the top 24 players based on fervor
-  const candidates = Object.entries(playersFervor)
-    .sort((a, b) => b[1] - a[1]) // Sort by fervor descending
-    .slice(0, newOrderConfig.limits.templarPicks) // Take the top 24
-    .map(([userId]) => Number(userId)); // Extract userIds
-  if (candidates.length === 0) {
-    log('PickTemplars :: No candidates found');
-    return;
+    log(`DailyReset:: Synchronizing counters :: ${syncLoopCount} of ${syncBatches.length} :: done`);
+    syncLoopCount++;
   }
-
-  log(`PickTemplars :: Candidates: ${candidates.join(', ')}`);
-
-  // Update the new templars:
-  const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({
-    select: { userId: true },
-    where: {
-      userId: { in: candidates },
-      rankType: { not: NewOrderRankType.Acolyte },
-    },
-    data: { rankType: NewOrderRankType.Templar },
-  });
-
-  // Grant cosmetic to new templars
-  for (const templar of selectedTemplars) {
-    createNotification({
-      category: NotificationCategory.Other,
-      type: 'new-order-templar-promotion',
-      key: `new-order-templar-promotion:${templar.userId}:${endDate.valueOf()}`,
-      userId: templar.userId,
-      details: {},
-    }).catch();
-
-    await claimCosmetic({
-      id: newOrderConfig.cosmetics.badgeIds.templar,
-      userId: templar.userId,
-    }).catch(() => null); // Ignore if it fails
-  }
-  log(`PickTemplars :: Granted templar badge to ${selectedTemplars.length} players`);
-
-  // Get a list of players who are not candidates
-  const nonCandidates = players.filter((p) => !candidates.includes(p.userId)).map((p) => p.userId);
-
-  // Update the demoted knights:
-  const demotedKnights = await dbWrite.newOrderPlayer.updateManyAndReturn({
-    select: { userId: true },
-    where: {
-      userId: { in: nonCandidates },
-      rankType: { not: NewOrderRankType.Acolyte },
-    },
-    data: { rankType: NewOrderRankType.Knight },
-  });
-
-  for (const knight of demotedKnights) {
-    createNotification({
-      category: NotificationCategory.Other,
-      type: 'new-order-knight-demoted',
-      key: `new-order-knight-demoted:${knight.userId}:${endDate.valueOf()}`,
-      userId: knight.userId,
-      details: {},
-    }).catch();
-  }
-
-  log('PickTemplars :: Picking templars :: done');
+  log('DailyReset:: Synchronized Redis counters with DB values');
 });
+
+// Templar selection job removed as part of Knights of New Order redesign
+// Templars rank has been eliminated, keeping only Acolyte and Knight ranks
 
 // Cleanse smites that are older than 7 days
 const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *', async () => {
@@ -417,8 +325,7 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
 
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
-  newOrderDailyReset,
-  newOrderPickTemplars,
+  // newOrderDailyReset - Temporarily disabled during redesign
   newOrderCleanseSmites,
   newOrderCleanupQueues,
 ];
