@@ -1769,7 +1769,8 @@ export const makeMeiliImageSearchSort = (
   return `${field}:${criteria}`;
 };
 
-type ImageSearchInput = GetAllImagesInput & {
+type ImageSearchInput = GetInfiniteImagesOutput & {
+  useCombinedNsfwLevel?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -1799,31 +1800,38 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
 export async function getImagesFromFeedSearch(input: ImageSearchInput): Promise<GetAllImagesIndexResult> {
   try {
-    const feed = new ImagesFeed(
-      metricsSearchClient! as import('event-engine-common/types/meilisearch-interface').IMeilisearch,
-      clickhouse!,
-      pgDbWrite,
-      new MetricService(clickhouse!, redis!),
-      new CacheService(redis!, pgDbWrite, clickhouse!),
-      {
-        redis: sysRedis,
-        flipt: await FliptSingleton.getInstance(),
-        constants: {
-          REDIS_SYS_KEYS,
-          FLIPT_FEATURE_FLAGS,
-          nsfwRestrictedBaseModels,
-          nsfwBrowsingLevelsArray,
-        },
+    // Evaluate feature flags before creating feed
+    let enableExistenceCheck = false;
+    const fliptClient = await FliptSingleton.getInstance();
+    if (fliptClient) {
+      try {
+        const flag = fliptClient.evaluateBoolean({
+          flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+          entityId: input.currentUserId?.toString() || 'anonymous',
+          context: {},
+        });
+        enableExistenceCheck = flag.enabled;
+      } catch (err) {
+        console.log('[getImagesFromFeedSearch] Flipt evaluation failed:', err);
       }
+    }
+
+    const feed = new ImagesFeed(
+      metricsSearchClient! as unknown as import('../../../event-engine-common/types/meilisearch-interface').IMeilisearch,
+      clickhouse! as unknown as import('../../../event-engine-common/types/package-stubs').IClickhouseClient,
+      pgDbWrite as unknown as import('../../../event-engine-common/types/package-stubs').IDbClient,
+      new MetricService(clickhouse! as unknown as import('../../../event-engine-common/types/package-stubs').IClickhouseClient, redis! as unknown as import('../../../event-engine-common/types/package-stubs').IRedisClient),
+      new CacheService(redis! as unknown as import('../../../event-engine-common/types/package-stubs').IRedisClient, pgDbWrite as unknown as import('../../../event-engine-common/types/package-stubs').IDbClient, clickhouse! as unknown as import('../../../event-engine-common/types/package-stubs').IClickhouseClient)
     );
 
-    // Convert cursor to string if it's not already
+    // Convert cursor to string if it's not already, and add feature flag result
     const feedInput = {
       ...input,
       cursor: input.cursor ? String(input.cursor) : undefined,
+      enableExistenceCheck,
     };
 
-    const feedResult = await feed.populatedQuery(feedInput);
+    const feedResult = await feed.populatedQuery(feedInput as import('../../../event-engine-common/feeds/types').FeedQueryInput<import('../../../event-engine-common/types/image-feed-types').ImageQueryInput>);
 
     // Transform PopulatedImage to match getAllImagesIndex return type
     // Remove extra fields that getAllImagesIndex doesn't have
@@ -1901,7 +1909,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
-    useLogicalReplica,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -2497,7 +2504,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
-    useLogicalReplica,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
