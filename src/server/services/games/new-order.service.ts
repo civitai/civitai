@@ -50,7 +50,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
-import { NewOrderRankType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import {
+  MediaType,
+  NewOrderRankType,
+  ReportReason,
+  ReportStatus,
+} from '~/shared/utils/prisma/enums';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
@@ -1357,7 +1362,8 @@ export async function getImagesQueue({
       const images = await dbRead.image.findMany({
         where: {
           id: { in: unratedImageIds },
-          nsfwLevel: { not: 0, notIn: [NsfwLevel.Blocked] },
+          type: MediaType.image,
+          nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
           post: {
             publishedAt: { not: null, lt: new Date() },
           },
