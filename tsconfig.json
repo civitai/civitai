@@ -44,6 +44,7 @@
     "node_modules",
     "./node_modules",
     "./node_modules/*",
-    "./node_modules/@types/node/index.d.ts"
+    "./node_modules/@types/node/index.d.ts",
+    "src/pages/api/dev-local/*.ts",
   ]
 }
