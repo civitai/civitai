@@ -380,6 +380,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
         },
         className
       )}
+      useFsAccessApi={false}
     >
       <div className="pointer-events-none flex items-center justify-center gap-2">
         <Dropzone.Accept>
