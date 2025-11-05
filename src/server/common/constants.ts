@@ -248,7 +248,7 @@ export const constants = {
   profanity: {
     thresholds: {
       shortContentWordLimit: 100,
-      shortContentMatchThreshold: 3,
+      shortContentMatchThreshold: 5,
       longContentDensityThreshold: 0.02, // 2%
       diversityThreshold: 10,
     },
