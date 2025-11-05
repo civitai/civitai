@@ -86,6 +86,7 @@ export function ImageDropzone({
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}
+        useFsAccessApi={false}
       >
         <div className="pointer-events-none flex min-h-28 flex-col items-center justify-center gap-2">
           <Dropzone.Accept>
