@@ -12,14 +12,14 @@ import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
-import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
-import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -414,11 +414,7 @@ export async function consumeRedeemableCode({
   );
 
   if (consumedCode.type === RedeemableCodeType.Membership) {
-    await refreshSession(userId);
-    await getMultipliersForUser(userId, true);
-    await setVaultFromSubscription({
-      userId,
-    });
+    await invalidateSubscriptionCaches(userId);
 
     const consumedProductMetadata = consumedCode.price?.product
       .metadata as SubscriptionProductMetadata;
