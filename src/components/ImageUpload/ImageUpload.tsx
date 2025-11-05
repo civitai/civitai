@@ -156,6 +156,7 @@ export function ImageUpload({
                 : undefined,
           })}
           disabled={dropzoneDisabled}
+          useFsAccessApi={false}
           // loading={loading}
         >
           <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>

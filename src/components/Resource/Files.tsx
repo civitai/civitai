@@ -83,6 +83,7 @@ export function Files() {
           showErrorNotification({ error: new Error(errors) });
         }}
         className={classes.dropzoneReject}
+        useFsAccessApi={false}
       >
         <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
           {/* <Dropzone.Accept>
