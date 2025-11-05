@@ -1478,6 +1478,7 @@ export const upsertModel = async (
     if (evaluation.shouldMarkNSFW && !data.nsfw) {
       meta = {
         ...(meta ?? {}),
+        profanityMatches: evaluation.matchedWords,
         profanityEvaluation: {
           reason: evaluation.reason,
           metrics: evaluation.metrics,

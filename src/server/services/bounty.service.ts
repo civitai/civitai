@@ -418,6 +418,7 @@ export const upsertBounty = async ({
     if (evaluation.shouldMarkNSFW && !data.nsfw) {
       data.details = {
         ...data.details,
+        profanityMatches: evaluation.matchedWords,
         profanityEvaluation: {
           reason: evaluation.reason,
           metrics: evaluation.metrics,

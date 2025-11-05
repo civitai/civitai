@@ -26,6 +26,7 @@ import { imageSelect, profileImageSelect } from '~/server/selectors/image.select
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -669,7 +670,9 @@ export const getArticleById = async ({
       })),
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
-      metadata: article.metadata as ArticleMetadata | null,
+      metadata: article.metadata
+        ? filterSensitiveProfanityData(article.metadata as ArticleMetadata, isModerator)
+        : null,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -706,6 +709,7 @@ export const upsertArticle = async ({
       if (evaluation.shouldMarkNSFW && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
         data.metadata = {
           ...data.metadata,
+          profanityMatches: evaluation.matchedWords,
           profanityEvaluation: {
             reason: evaluation.reason,
             metrics: evaluation.metrics,

@@ -31,6 +31,7 @@ import {
 import { postgresSlugify } from '~/utils/string-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/base-model.constants';
+import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -262,6 +263,7 @@ export type ModelMeta = Partial<{
   cannotPublish: boolean;
   commentsLocked: boolean;
   profanityMatches: string[];
+  profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

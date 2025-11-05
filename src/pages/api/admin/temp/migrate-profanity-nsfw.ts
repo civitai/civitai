@@ -113,9 +113,10 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.name].filter(Boolean).join(' ');
-          const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, matchedWords } =
+            profanityFilter.evaluateContent(textToCheck);
 
-          if (isProfane && !record.nsfw) {
+          if (shouldMarkNSFW && !record.nsfw) {
             const newLockedProperties =
               record.lockedProperties && !record.lockedProperties.includes('nsfw')
                 ? [...record.lockedProperties, 'nsfw']
@@ -124,6 +125,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             const updatedMeta = {
               ...(record.meta || {}),
               profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
             };
 
             updatesToMake.push({
@@ -263,9 +265,10 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.title, record.content].filter(Boolean).join(' ');
-          const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, suggestedLevel, matchedWords } =
+            profanityFilter.evaluateContent(textToCheck);
 
-          if (isProfane && (record.userNsfwLevel <= NsfwLevel.PG13 || !record.nsfw)) {
+          if (shouldMarkNSFW && (record.userNsfwLevel <= NsfwLevel.PG13 || !record.nsfw)) {
             const newLockedProperties = [
               ...(record.lockedProperties || []),
               'nsfw',
@@ -275,12 +278,13 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             const updatedMetadata = {
               ...(record.metadata || {}),
               profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
             };
 
             updatesToMake.push({
               id: record.id,
               nsfw: true,
-              userNsfwLevel: NsfwLevel.R,
+              userNsfwLevel: suggestedLevel,
               lockedProperties: newLockedProperties,
               metadata: updatedMetadata,
             });
@@ -412,9 +416,10 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.name, record.description].filter(Boolean).join(' ');
-          const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, matchedWords } =
+            profanityFilter.evaluateContent(textToCheck);
 
-          if (isProfane && !record.nsfw) {
+          if (shouldMarkNSFW && !record.nsfw) {
             const newLockedProperties =
               record.lockedProperties && !record.lockedProperties.includes('nsfw')
                 ? [...record.lockedProperties, 'nsfw']
@@ -423,6 +428,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             const updatedDetails = {
               ...(record.details || {}),
               profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
             };
 
             updatesToMake.push({

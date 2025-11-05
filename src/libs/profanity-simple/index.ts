@@ -59,9 +59,9 @@ export interface ProfanityEvaluation {
     totalWords: number;
     /** Profanity density (matchCount / totalWords) */
     density: number;
-    /** Whether the input was HTML that was stripped */
-    wasHtml: boolean;
   };
+  /** Array of actual matched words containing profanity (for admin/moderator review) */
+  matchedWords?: string[];
 }
 
 /**
@@ -194,12 +194,8 @@ export class SimpleProfanityFilter {
   ): ProfanityEvaluation {
     const finalConfig = { ...constants.profanity.thresholds, ...config };
 
-    // Detect if input is HTML
-    const wasHtml = /<[^>]+>/.test(text);
-
     // Strip HTML tags to get plain text
     const plainText = removeTags(text);
-
     // Analyze the plain text
     const analysis = this.analyze(plainText);
 
@@ -214,8 +210,8 @@ export class SimpleProfanityFilter {
           uniqueWords: 0,
           totalWords: this.countWords(plainText),
           density: 0,
-          wasHtml,
         },
+        matchedWords: [],
       };
     }
 
@@ -235,8 +231,8 @@ export class SimpleProfanityFilter {
           uniqueWords,
           totalWords,
           density,
-          wasHtml,
         },
+        matchedWords: analysis.matchedWords,
       };
     }
 
@@ -252,8 +248,8 @@ export class SimpleProfanityFilter {
             uniqueWords,
             totalWords,
             density,
-            wasHtml,
           },
+          matchedWords: analysis.matchedWords,
         };
       }
     } else {
@@ -268,8 +264,8 @@ export class SimpleProfanityFilter {
             uniqueWords,
             totalWords,
             density,
-            wasHtml,
           },
+          matchedWords: analysis.matchedWords,
         };
       }
     }
@@ -286,8 +282,8 @@ export class SimpleProfanityFilter {
         uniqueWords,
         totalWords,
         density,
-        wasHtml,
       },
+      matchedWords: analysis.matchedWords,
     };
   }
 
