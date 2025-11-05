@@ -742,6 +742,44 @@ export async function updatePendingImageRatings({
       })
     )
   );
+
+  // Update counters and stats for players whose pending votes are now finalized
+  await Promise.all(
+    votes.map(async (vote) => {
+      // Parallelize independent counter reads
+      const [allJudgments, expCount] = await Promise.all([
+        allJudgmentsCounter.getCount(vote.userId),
+        expCounter.getCount(vote.userId),
+      ]);
+
+      // Conditionally increment or get correct judgments
+      let correctJudgments: number;
+      if (vote.rating === rating) {
+        // Increment returns the new count - no separate getCount needed
+        correctJudgments = await correctJudgmentsCounter.increment({ id: vote.userId });
+      } else {
+        // Only call getCount for incorrect votes
+        correctJudgments = await correctJudgmentsCounter.getCount(vote.userId);
+      }
+
+      // Recalculate and update fervor based on new judgment counts
+      const fervor = calculateFervor({ correctJudgments, allJudgments });
+      await fervorCounter.reset({ id: vote.userId });
+      const newFervor = await fervorCounter.increment({ id: vote.userId, value: fervor });
+
+      // Emit signal to update player stats in real-time
+      await signalClient
+        .send({
+          userId: vote.userId,
+          target: SignalMessages.NewOrderPlayerUpdate,
+          data: {
+            action: NewOrderSignalActions.UpdateStats,
+            stats: { exp: expCount, fervor: newFervor },
+          },
+        })
+        .catch((e) => handleLogError(e, 'signals:new-order-update-pending-ratings'));
+    })
+  );
 }
 
 const PROCESS_MIN = 100; // number of items that will trigger early processing
@@ -900,10 +938,7 @@ export async function updatePlayerStats({
   let stats = { exp: newExp, fervor: 0, smites: 0, blessedBuzz: 0 };
 
   if (updateAll) {
-    const allJudgments =
-      status !== NewOrderImageRatingStatus.Pending
-        ? await allJudgmentsCounter.increment({ id: playerId })
-        : await allJudgmentsCounter.getCount(playerId);
+    const allJudgments = await allJudgmentsCounter.increment({ id: playerId });
     const correctJudgments =
       status === NewOrderImageRatingStatus.Correct
         ? await correctJudgmentsCounter.increment({ id: playerId })
