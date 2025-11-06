@@ -1572,12 +1572,12 @@ export async function getPlayerHistory({
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
   const AND = [
-    `"userId" = ${playerId}`,
-    `"createdAt" >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
+    `userId = ${playerId}`,
+    `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
   // Ignoring error since we format the clickhouse params in custom $query
   // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-  if (cursor) AND.push(`"createdAt" < '${cursor}'`);
+  if (cursor) AND.push(`createdAt < '${cursor}'`);
   if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
 
   const judgments = await clickhouse.$query<{
@@ -1587,18 +1587,26 @@ export async function getPlayerHistory({
     grantedExp: number;
     multiplier: number;
     originalLevel: NsfwLevel | null;
-    createdAt: Date;
+    lastCreatedAt: Date;
   }>`
-    SELECT imageId, rating, status, grantedExp, multiplier, originalLevel, "createdAt"
+    SELECT
+      imageId,
+      argMax(rating, createdAt)         AS rating,
+      argMax(status, createdAt)         AS status,
+      argMax(grantedExp, createdAt)     AS grantedExp,
+      argMax(multiplier, createdAt)     AS multiplier,
+      argMax(originalLevel, createdAt)  AS originalLevel,
+      max(createdAt)                    AS lastCreatedAt
     FROM knights_new_order_image_rating
     WHERE ${AND.join(' AND ')}
-    ORDER BY createdAt DESC
+    GROUP BY imageId
+    ORDER BY lastCreatedAt DESC
     LIMIT ${limit + 1}
   `;
   if (judgments.length === 0) return { items: [], nextCursor: null };
 
   let nextCursor: Date | null = null;
-  if (judgments.length > limit) nextCursor = judgments.pop()?.createdAt ?? null;
+  if (judgments.length > limit) nextCursor = judgments.pop()?.lastCreatedAt ?? null;
 
   const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
