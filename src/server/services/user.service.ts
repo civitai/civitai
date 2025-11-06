@@ -117,6 +117,29 @@ import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
+export const getUsersByIds = async (userIds: number[]) => {
+  const users = await dbRead.user.findMany({
+    where: { id: { in: userIds } },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      isModerator: true,
+      image: true,
+      profilePicture: {
+        select: profileImageSelect,
+      },
+    },
+  });
+  return users.map(({ id, username, email, isModerator, image, profilePicture }) => ({
+    id,
+    username,
+    email,
+    avatarUrl: profilePicture?.url ?? image,
+    isModerator,
+  }));
+};
+
 export const getUserCreator = async ({
   leaderboardId,
   isModerator,
