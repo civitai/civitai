@@ -212,6 +212,26 @@ export function getRatio(a: number, b: number) {
   return [a / c, b / c].join(':');
 }
 
+function countDecimals(num: number) {
+  if (!Number.isFinite(num)) return 0;
+  const str = num.toString().toLowerCase();
+
+  // Handle scientific notation, e.g. 1e-5 → 0.00001
+  if (str.includes('e')) {
+    const [base, exp] = str.split('e');
+    const decimalPart = base.split('.')[1] || '';
+    const exponent = parseInt(exp, 10);
+    return Math.max(0, decimalPart.length - exponent);
+  }
+
+  // Normal decimal form
+  const parts = str.split('.');
+  return parts[1] ? parts[1].length : 0;
+}
+
 export function almostEqual(a: number, b: number, tolerance: number) {
-  return Math.abs(a - b) <= tolerance;
+  const decimals = countDecimals(tolerance);
+  const factor = 10 ** decimals;
+  const diff = Math.round(Math.abs(a - b) * factor) / factor;
+  return diff <= tolerance;
 }
