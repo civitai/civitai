@@ -2,7 +2,6 @@ import produce from 'immer';
 import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GetAssociatedResourcesInput } from '~/server/schema/model.schema';
 import type { RecommendationRequest } from '~/server/schema/recommenders.schema';
@@ -16,7 +15,6 @@ export function useQueryRecommendedResources(
   const { fromId, modelVersionId, type } = payload;
   const browsingLevel = useBrowsingLevelDebounced();
   const features = useFeatureFlags();
-  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const { data: associatedModels = [], isLoading: loadingAssociated } =
     trpc.model.getAssociatedResourcesCardData.useQuery({
@@ -55,24 +53,14 @@ export function useQueryRecommendedResources(
     items: filteredModels,
     hiddenCount: modelsHiddenCount,
     loadingPreferences: modelsLoading,
-  } = useApplyHiddenPreferences({
-    type: 'models',
-    data: modelItems,
-    isRefetching: loadingAssociated || loadingRecommended,
-    hiddenTags: browsingSettingsAddons.settings.excludedTagIds ?? [],
-  });
+  } = useApplyHiddenPreferences({ type: 'models', data: modelItems });
 
   // Apply hidden preferences to articles
   const {
     items: filteredArticles,
     hiddenCount: articlesHiddenCount,
     loadingPreferences: articlesLoading,
-  } = useApplyHiddenPreferences({
-    type: 'articles',
-    data: articleItems,
-    isRefetching: loadingAssociated || loadingRecommended,
-    hiddenTags: browsingSettingsAddons.settings.excludedTagIds ?? [],
-  });
+  } = useApplyHiddenPreferences({ type: 'articles', data: articleItems });
 
   // Merge filtered results
   const filteredResources = useMemo(
