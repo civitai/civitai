@@ -90,7 +90,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
@@ -1751,7 +1751,7 @@ export const privateModelFromTrainingHandler = async ({
     const { id: userId } = ctx.user;
     const { nsfw, poi, minor, sfwOnly } = input;
 
-    const membership = await getUserSubscription({ userId });
+    const membership = await getHighestTierSubscription(userId);
     if (!membership && !ctx.user.isModerator)
       throw throwAuthorizationError('You must have a subscription to create private models.');
 

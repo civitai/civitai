@@ -5,26 +5,38 @@ import { env } from '~/env/server';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   addImageRatingSchema,
+  addSanityCheckRatingSchema,
   cleanseSmiteSchema,
   getHistorySchema,
   getImageRatersSchema,
   getImagesQueueSchema,
   getPlayersInfiniteSchema,
+  getQueueStateSchema,
+  getVoteDetailsSchema,
+  manageSanityChecksSchema,
+  resetImageVotesSchema,
   resetPlayerByIdSchema,
   smitePlayerSchema,
+  testVoteSchema,
 } from '~/server/schema/games/new-order.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import {
   addImageRating,
+  addSanityCheckRating,
   cleanseSmite,
   getImageRaters,
   getImagesQueue,
   getPlayerById,
   getPlayerHistory,
   getPlayersInfinite,
+  getQueueStateForTesting,
+  getVoteDetailsForTesting,
   joinGame,
+  manageSanityChecks,
+  resetImageVotesForTesting,
   resetPlayer,
   smitePlayer,
+  submitTestVote,
 } from '~/server/services/games/new-order.service';
 import {
   guardedProcedure,
@@ -134,6 +146,15 @@ export const gamesRouter = router({
           isModerator: ctx.user.isModerator,
         })
       ),
+    addSanityCheckRating: guardedProcedure
+      .input(addSanityCheckRatingSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input, ctx }) =>
+        addSanityCheckRating({
+          ...input,
+          playerId: ctx.user.id,
+        })
+      ),
     resetCareer: guardedProcedure
       .use(isFlagProtected('newOrderGame'))
       .mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
@@ -152,5 +173,26 @@ export const gamesRouter = router({
 
         return ratings[input.imageId];
       }),
+    manageSanityChecks: moderatorProcedure
+      .input(manageSanityChecksSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input }) => manageSanityChecks(input)),
+    // Testing endpoints
+    testVote: moderatorProcedure
+      .input(testVoteSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input, ctx }) => submitTestVote({ ...input, moderatorId: ctx.user.id })),
+    getQueueState: moderatorProcedure
+      .input(getQueueStateSchema.optional())
+      .use(isFlagProtected('newOrderGame'))
+      .query(({ input }) => getQueueStateForTesting(input?.imageId)),
+    getVoteDetails: moderatorProcedure
+      .input(getVoteDetailsSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .query(({ input }) => getVoteDetailsForTesting(input.imageId)),
+    resetImageVotes: moderatorProcedure
+      .input(resetImageVotesSchema)
+      .use(isFlagProtected('newOrderGame'))
+      .mutation(({ input }) => resetImageVotesForTesting(input.imageId)),
   }),
 });

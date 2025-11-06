@@ -9,6 +9,7 @@ import {
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -235,6 +236,26 @@ export const getAllUserSubscriptions = async (userId: number) => {
 };
 
 export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscriptions>>;
+
+/**
+ * Get the highest tier subscription for a user
+ * @param userId - The user ID
+ * @returns The subscription with the highest tier, or null if no subscriptions found
+ */
+export const getHighestTierSubscription = async (userId: number) => {
+  const subscriptions = await getAllUserSubscriptions(userId);
+
+  if (subscriptions.length === 0) return null;
+
+  // Find the subscription with the highest tier using the tier hierarchy from constants
+  return subscriptions.reduce((highest, current) => {
+    const highestTierIndex = constants.memberships.tierOrder.indexOf(highest.tier as any);
+    const currentTierIndex = constants.memberships.tierOrder.indexOf(current.tier as any);
+
+    // If tier not found in hierarchy, treat as lowest (-1 < any valid index)
+    return currentTierIndex > highestTierIndex ? current : highest;
+  });
+};
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
   const priceIds = data.items.map((i) => i.price?.id).filter(isDefined);

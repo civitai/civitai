@@ -66,9 +66,7 @@ export default Page(
     const [isLevelingUp, setIsLevelingUp] = useState(false);
     const [isRankingUp, setIsRankingUp] = useState(false);
     const [prevHistory, setPrevHistory] = useState<number[]>([]);
-    const [selectedQueue, setSelectedQueue] = useState<NewOrderRankType | 'Inquisitor' | null>(
-      null
-    );
+    const [selectedQueue, setSelectedQueue] = useState<NewOrderRankType | null>(null);
     const [imageStatus, setImageStatus] = useState<'loading' | 'error' | 'idle'>('idle');
     const filters = selectedQueue ? { queueType: selectedQueue } : undefined;
 
@@ -204,7 +202,7 @@ export default Page(
                       className="absolute right-2 top-2 z-10 w-[200px] max-w-full"
                       placeholder="Select a queue"
                       value={selectedQueue}
-                      data={[...Object.keys(NewOrderRankType), 'Inquisitor']}
+                      data={Object.keys(NewOrderRankType)}
                       onChange={(value) => setSelectedQueue(value as NewOrderRankType)}
                     />
                   )}
@@ -229,11 +227,11 @@ export default Page(
                               src={currentImage.url}
                               className={clsx('h-full max-w-full rounded-lg object-contain')}
                               type="image"
-                              width={700}
                               onLoadStart={() => setImageStatus('loading')}
                               onLoad={() => setImageStatus('idle')}
                               onError={() => setImageStatus('error')}
                               contain
+                              original
                             />
                             {currentUser?.isModerator && (
                               <LegacyActionIcon

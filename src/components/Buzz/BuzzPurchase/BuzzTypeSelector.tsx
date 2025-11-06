@@ -45,7 +45,7 @@ export function BuzzTypeSelector({
     text: 'Yellow Buzz',
     description: (
       <>
-        Can be purchased using <b>Gift Cards or cryptocurrency&ndash;cards.</b>.<br />
+        Can be purchased using <b>Gift Cards or cryptocurrency</b>.<br />
         Can be used to generate <b>NSFW</b> content as well as anything else on the site. Can only
         be used in Civitai.com.
       </>

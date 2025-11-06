@@ -57,6 +57,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -467,8 +468,7 @@ export const upsertSubscription = async (
         cancelAtPeriodEnd: true,
       },
     });
-    await getMultipliersForUser(user.id, true);
-    await refreshSession(user.id);
+    await invalidateSubscriptionCaches(user.id);
     await dbWrite.vault.update({
       where: { userId: user.id },
       data: {
@@ -630,8 +630,7 @@ export const upsertSubscription = async (
     }
   }
 
-  await refreshSession(user.id);
-  await getMultipliersForUser(user.id, true);
+  await invalidateSubscriptionCaches(user.id);
 };
 
 export const manageSubscriptionTransactionComplete = async (
@@ -780,8 +779,7 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await refreshSession(userId);
-    await getMultipliersForUser(userId, true);
+    await invalidateSubscriptionCaches(userId);
 
     return true;
   } catch (e) {
@@ -946,8 +944,7 @@ export const updateSubscriptionPlan = async ({
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await refreshSession(userId);
-    await getMultipliersForUser(userId, true);
+    await invalidateSubscriptionCaches(userId);
 
     return true;
   } catch (e) {
