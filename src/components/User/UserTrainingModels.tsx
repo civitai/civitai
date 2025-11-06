@@ -48,7 +48,8 @@ import {
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
-  TrainingDetailsParams,
+  // TrainingDetailsParams,
+  TrainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
@@ -74,7 +75,7 @@ type ModalData = {
   id?: number;
   file?: TrainingFileData;
   baseModel?: string;
-  params?: TrainingDetailsParams;
+  params?: TrainingDetailsParamsUnion;
 };
 
 export const trainingStatusFields: {

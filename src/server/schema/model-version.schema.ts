@@ -153,6 +153,7 @@ const aiToolkitTrainingDetailsParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  maxTrainEpochs: z.number().nullable().optional(),
 });
 
 // Union type for database storage - supports both formats

@@ -1,7 +1,10 @@
 import type { SessionUser } from 'next-auth';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
-import { trainingDetailsParams } from '~/server/schema/model-version.schema';
+import {
+  trainingDetailsParams,
+  trainingDetailsParamsUnion,
+} from '~/server/schema/model-version.schema';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const imageTrainingBaseSchema = z.object({
@@ -125,6 +128,7 @@ const whatIfAiToolkitParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  maxTrainEpochs: z.number().nullable().optional(),
 });
 
 export const imageTrainingRouterWhatIfSchema = z.discriminatedUnion('engine', [
@@ -138,10 +142,9 @@ const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
   loraName: z.string(),
   samplePrompts: z.array(z.string()),
   negativePrompt: z.string().optional(),
-  params: z.union([
-    trainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
+  params: z.discriminatedUnion('engine', [
     whatIfTrainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
-    aiToolkitTrainingParams,
+    trainingDetailsParamsUnion,
   ]),
   modelFileId: z.number(),
 });
