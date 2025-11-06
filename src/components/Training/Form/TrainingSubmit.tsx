@@ -152,11 +152,69 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
   const whatIfData = useMemo(() => {
-    const retData: ImageTrainingRouterWhatIfSchema = {
+    const baseData = {
       model: getTrainingFields.getModel(formBaseModel),
       priority: getTrainingFields.getPriority(selectedRun.highPriority),
       engine: getTrainingFields.getEngine(selectedRun.params.engine),
       trainingDataImagesCount: thisNumImages ?? 1,
+    };
+
+    // Transform parameters for AI Toolkit
+    if (selectedRun.params.engine === 'ai-toolkit') {
+      const ecosystem = getAiToolkitEcosystem(formBaseModel);
+      const modelVariant = getAiToolkitModelVariant(formBaseModel as TrainingDetailsBaseModelList);
+
+      console.log('AI Toolkit whatIf ecosystem:', ecosystem, formBaseModel);
+
+      if (!ecosystem) {
+        console.error('Failed to determine ecosystem for AI Toolkt whatIf query');
+        return null;
+      }
+
+      // Transform lrScheduler: 'cosine_with_restarts' -> 'cosine' (AI Toolkit doesn't support restarts)
+      let lrScheduler = selectedRun.params.lrScheduler;
+      if (lrScheduler === 'cosine_with_restarts') {
+        lrScheduler = 'cosine';
+      }
+
+      // Transform optimizerType: 'AdamW8Bit' -> 'adamw8bit', 'Prodigy' -> 'prodigy', etc.
+      const optimizerTypeMap: Record<string, string> = {
+        AdamW8Bit: 'adamw8bit',
+        Adafactor: 'adafactor',
+        Prodigy: 'prodigy',
+      };
+      const optimizerType =
+        optimizerTypeMap[selectedRun.params.optimizerType] ||
+        selectedRun.params.optimizerType.toLowerCase();
+
+      const retData: ImageTrainingRouterWhatIfSchema = {
+        ...baseData,
+        ecosystem,
+        ...(modelVariant && { modelVariant }),
+        epochs: selectedRun.params.maxTrainEpochs,
+        resolution: selectedRun.params.resolution,
+        lr: selectedRun.params.unetLR,
+        textEncoderLr: selectedRun.params.textEncoderLR || null,
+        trainTextEncoder: !!selectedRun.params.textEncoderLR,
+        lrScheduler: lrScheduler as any,
+        optimizerType: optimizerType as any,
+        networkDim: selectedRun.params.networkDim,
+        networkAlpha: selectedRun.params.networkAlpha,
+        noiseOffset: selectedRun.params.noiseOffset || null,
+        minSnrGamma: selectedRun.params.minSnrGamma || null,
+        flipAugmentation: selectedRun.params.flipAugmentation || false,
+        shuffleTokens: selectedRun.params.shuffleCaption,
+        keepTokens: selectedRun.params.keepTokens,
+      } as any;
+      return retData;
+    }
+
+    // Kohya-style parameters for other engines
+    const retData: ImageTrainingRouterWhatIfSchema = {
+      model: baseData.model,
+      priority: baseData.priority,
+      engine: baseData.engine as any, // Type assertion for discriminated union
+      trainingDataImagesCount: baseData.trainingDataImagesCount,
       resolution: selectedRun.params.resolution,
       trainBatchSize: selectedRun.params.trainBatchSize,
       maxTrainEpochs: selectedRun.params.maxTrainEpochs,
@@ -172,11 +230,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.trainBatchSize,
     selectedRun.params.maxTrainEpochs,
     selectedRun.params.numRepeats,
+    selectedRun.params.unetLR,
+    selectedRun.params.textEncoderLR,
+    selectedRun.params.lrScheduler,
+    selectedRun.params.optimizerType,
+    selectedRun.params.networkDim,
+    selectedRun.params.networkAlpha,
+    selectedRun.params.noiseOffset,
+    selectedRun.params.minSnrGamma,
+    selectedRun.params.flipAugmentation,
+    selectedRun.params.shuffleCaption,
+    selectedRun.params.keepTokens,
   ]);
 
   const [debounced] = useDebouncedValue(whatIfData, 100);
 
-  const dryRunResult = trpc.orchestrator.createTrainingWhatif.useQuery(debounced, {
+  const dryRunResult = trpc.orchestrator.createTrainingWhatif.useQuery(debounced!, {
     enabled: !!debounced,
   });
 

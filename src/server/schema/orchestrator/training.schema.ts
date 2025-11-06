@@ -80,9 +80,57 @@ const whatIfTrainingDetailsParams = trainingDetailsParams.pick({
   trainBatchSize: true,
 });
 
-export const imageTrainingRouterWhatIfSchema = imageTrainingBaseSchema.merge(
-  whatIfTrainingDetailsParams
-);
+// WhatIf schema that accepts either Kohya-style or AI Toolkit parameters
+// Using discriminated union for better type safety based on engine type
+const whatIfKohyaParams = z.object({
+  model: z.string(),
+  priority: z.enum(OrchPriorityTypes),
+  engine: z.enum([OrchEngineTypes.Kohya, OrchEngineTypes.Rapid, OrchEngineTypes.Musubi]),
+  trainingDataImagesCount: z.number(),
+  resolution: z.number(),
+  maxTrainEpochs: z.number(),
+  numRepeats: z.number(),
+  trainBatchSize: z.number(),
+});
+
+const whatIfAiToolkitParams = z.object({
+  model: z.string(),
+  priority: z.enum(OrchPriorityTypes),
+  engine: z.literal(OrchEngineTypes.AiToolkit),
+  trainingDataImagesCount: z.number(),
+  ecosystem: z.string(),
+  modelVariant: z.string().optional(),
+  epochs: z.number(),
+  resolution: z.number().nullable(),
+  lr: z.number(),
+  textEncoderLr: z.number().nullable(),
+  trainTextEncoder: z.boolean(),
+  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
+  optimizerType: z.enum([
+    'adam',
+    'adamw',
+    'adamw8bit',
+    'adam8bit',
+    'lion',
+    'lion8bit',
+    'adafactor',
+    'adagrad',
+    'prodigy',
+    'prodigy8bit',
+  ]),
+  networkDim: z.number().nullable(),
+  networkAlpha: z.number().nullable(),
+  noiseOffset: z.number().nullable(),
+  minSnrGamma: z.number().nullable(),
+  flipAugmentation: z.boolean(),
+  shuffleTokens: z.boolean(),
+  keepTokens: z.number(),
+});
+
+export const imageTrainingRouterWhatIfSchema = z.discriminatedUnion('engine', [
+  whatIfKohyaParams,
+  whatIfAiToolkitParams,
+]);
 export type ImageTrainingRouterWhatIfSchema = z.infer<typeof imageTrainingRouterWhatIfSchema>;
 
 const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
@@ -111,8 +159,12 @@ export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSc
   user: SessionUser;
 };
 
-const imageTraininWhatIfgWorkflowSchema = imageTrainingRouterWhatIfSchema.extend({
-  token: z.string(),
-  currencies: z.array(z.enum(buzzSpendTypes)).optional(),
-});
+// Can't extend a union, so we need to merge with an intersection
+const imageTraininWhatIfgWorkflowSchema = z.intersection(
+  imageTrainingRouterWhatIfSchema,
+  z.object({
+    token: z.string(),
+    currencies: z.array(z.enum(buzzSpendTypes)).optional(),
+  })
+);
 export type ImageTraininWhatIfWorkflowSchema = z.infer<typeof imageTraininWhatIfgWorkflowSchema>;

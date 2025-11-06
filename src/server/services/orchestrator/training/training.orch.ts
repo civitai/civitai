@@ -141,9 +141,7 @@ const createTrainingStep_Run = (
 };
 
 // NEW: Create training step using the new TrainingStep format (for ai-toolkit)
-const createTrainingStep_AiToolkit = (
-  input: ImageTrainingStepSchema
-): TrainingStepTemplate => {
+const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
   const {
     model,
     priority,
@@ -332,7 +330,7 @@ export const createTrainingWhatIfWorkflow = async ({
   const params = {
     ...trainingParams,
     engine,
-  };
+  } as any; // Type assertion needed because whatIf schema is a union
 
   const runArgs: ImageTrainingStepSchema = {
     model,
@@ -340,7 +338,7 @@ export const createTrainingWhatIfWorkflow = async ({
     engine,
     trainingDataImagesCount,
     params,
-    trainingData: '',
+    trainingData: 'https://fake',
     loraName: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,
@@ -348,6 +346,8 @@ export const createTrainingWhatIfWorkflow = async ({
   };
 
   const stepRun = createTrainingStep(runArgs);
+
+  console.log(JSON.stringify(stepRun));
 
   const workflow = await submitWorkflow({
     token,

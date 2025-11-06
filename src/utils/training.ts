@@ -1,5 +1,5 @@
 import type JSZip from 'jszip';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { getBaseModelEcosystem, type BaseModel } from '~/shared/constants/base-model.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
@@ -36,6 +36,10 @@ export const trainingModelInfo: {
     baseModel: BaseModel;
     isNew: boolean;
     disabled?: boolean;
+    aiToolkit?: {
+      ecosystem: string;
+      modelVariant?: string;
+    };
   };
 } = {
   sd_1_5: {
@@ -46,6 +50,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:127227@139180',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   anime: {
     label: 'Anime',
@@ -55,6 +60,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:84586@89927',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   semi: {
     label: 'Semi-realistic',
@@ -64,6 +70,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:4384@128713',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   realistic: {
     label: 'Realistic',
@@ -73,6 +80,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:81458@132760',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   //
   sdxl: {
@@ -83,6 +91,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
     baseModel: 'SDXL 1.0',
     isNew: false,
+    aiToolkit: { ecosystem: 'sdxl' },
   },
   pony: {
     label: 'Pony',
@@ -92,6 +101,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sdxl:checkpoint:civitai:257749@290640',
     baseModel: 'Pony',
     isNew: false,
+    aiToolkit: { ecosystem: 'sdxl' },
   },
   illustrious: {
     label: 'Illustrious',
@@ -101,6 +111,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
     baseModel: 'Illustrious',
     isNew: false,
+    aiToolkit: { ecosystem: 'sdxl' },
   },
   //
   // sd3_medium: {
@@ -130,6 +141,7 @@ export const trainingModelInfo: {
     air: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     baseModel: 'Flux.1 D',
     isNew: false,
+    aiToolkit: { ecosystem: 'flux1', modelVariant: 'dev' },
   },
   //
   hy_720_fp8: {
@@ -141,6 +153,7 @@ export const trainingModelInfo: {
     air: 'urn:air:hyv1:vae:huggingface:tencent/HunyuanVideo@main/hunyuan-video-t2v-720p/vae/pytorch_model.pt',
     baseModel: 'Hunyuan Video',
     isNew: false,
+    aiToolkit: { ecosystem: 'wan' }, // Hunyuan uses wan ecosystem
   },
   wan_2_1_t2v_14b: {
     label: '2.1 T2V [14B]',
@@ -150,6 +163,7 @@ export const trainingModelInfo: {
     air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth', // actually t2v, uses HF
     baseModel: 'Wan Video 14B t2v',
     isNew: false,
+    aiToolkit: { ecosystem: 'wan', modelVariant: '2.1' },
   },
   wan_2_1_i2v_14b_720p: {
     label: '2.1 I2V [14B, 720p]',
@@ -160,6 +174,7 @@ export const trainingModelInfo: {
     baseModel: 'Wan Video 14B i2v 720p',
     isNew: true,
     disabled: true, // TODO remove
+    aiToolkit: { ecosystem: 'wan', modelVariant: '2.1' },
   },
   //
   chroma: {
@@ -170,6 +185,7 @@ export const trainingModelInfo: {
     air: 'urn:air:chroma:checkpoint:civitai:1330309@2164239',
     baseModel: 'Chroma',
     isNew: false,
+    aiToolkit: { ecosystem: 'chroma' },
   },
 };
 
@@ -224,83 +240,36 @@ export const getTrainingFields = {
 };
 
 /**
- * Map civitai ecosystem (from getBaseModelEcosystem) to AI Toolkit ecosystem format
+ * Get AI Toolkit ecosystem for a training model
+ * Reads from the centralized trainingModelInfo structure
  */
 export function getAiToolkitEcosystem(baseModel: string): string | null {
-  const { getBaseModelEcosystem } = require('~/shared/constants/base-model.constants');
-  const civitaiEcosystem = getBaseModelEcosystem(baseModel);
+  const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
 
-  // Ecosystem mapping for AI Toolkit API
-  const ecosystemMap: Record<string, string> = {
-    // SD 1.x variants
-    sd1: 'sd1',
-
-    // SDXL variants (including Pony, Illustrious, NoobAI which have ecosystem: 'sdxl')
-    sdxl: 'sdxl',
-    pony: 'sdxl',
-    illustrious: 'sdxl',
-    noobai: 'sdxl',
-
-    // Flux variants
-    flux1: 'flux1',
-
-    // SD3 variants
-    sd3: 'sd3',
-    sd3_5m: 'sd3', // SD 3.5 Medium has ecosystem: 'sd3'
-
-    // Video models - all Wan/Hunyuan variants map to 'wan'
-    wanvideo: 'wan',
-    wanvideo14b_t2v: 'wan',
-    wanvideo14b_i2v_480p: 'wan',
-    wanvideo14b_i2v_720p: 'wan',
-    'wanvideo-22-t2v-a14b': 'wan',
-    'wanvideo-22-i2v-a14b': 'wan',
-    'wanvideo-22-ti2v-5b': 'wan',
-    'wanvideo-25-t2v': 'wan',
-    'wanvideo-25-i2v': 'wan',
-    hyv1: 'wan', // Hunyuan maps to wan ecosystem
-
-    // Chroma
-    chroma: 'chroma',
-  };
-
-  const mapped = ecosystemMap[civitaiEcosystem.toLowerCase()];
-  if (!mapped) {
-    console.warn(`Unknown ecosystem for AI Toolkit: ${civitaiEcosystem}`);
-    return null;
+  if (modelInfo?.aiToolkit) {
+    console.log('AI Toolkit ecosystem:', modelInfo.aiToolkit.ecosystem, 'for baseModel:', baseModel);
+    return modelInfo.aiToolkit.ecosystem;
   }
 
-  return mapped;
+  // For custom models, we can't determine the ecosystem
+  console.warn(`No AI Toolkit ecosystem configured for: ${baseModel}`);
+  return null;
 }
 
 /**
- * Get model variant for AI Toolkit based on base model
+ * Get AI Toolkit model variant for a training model
+ * Reads from the centralized trainingModelInfo structure
  */
 export function getAiToolkitModelVariant(
   baseModel: TrainingDetailsBaseModelList
 ): string | undefined {
-  // Model variant mapping based on specific models
-  const variantMap: Partial<Record<TrainingDetailsBaseModelList, string>> = {
-    // Flux variants
-    flux_dev: 'dev',
-    // 'flux_schnell': 'schnell',  // if/when added
-
-    // SD3 variants
-    // 'sd3_medium': 'medium',  // if/when enabled
-    // 'sd3_large': 'large',    // if/when enabled
-
-    // Wan variants - determine from model name
-    wan_2_1_t2v_14b: '2.1',
-    wan_2_1_i2v_14b_720p: '2.1',
-    // Wan 2.2 models would be '2.2'
-  };
-
-  // If it's a custom model (civitai:xxx@yyy or AIR format), try to infer from URN
+  // Custom models (AIR URNs or civitai:xxx@yyy format) don't have variants
   if (typeof baseModel === 'string' && baseModel.includes('civitai:')) {
     return undefined;
   }
 
-  return variantMap[baseModel as TrainingDetailsBaseModelList];
+  const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
+  return modelInfo?.aiToolkit?.modelVariant;
 }
 
 // Check if base model supports AI Toolkit
