@@ -32,6 +32,7 @@ import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { create } from 'zustand';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -380,7 +381,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
         },
         className
       )}
-      useFsAccessApi={false}
+      useFsAccessApi={!isAndroidDevice()}
     >
       <div className="pointer-events-none flex items-center justify-center gap-2">
         <Dropzone.Accept>
