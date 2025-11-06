@@ -12,15 +12,19 @@ import {
   RegExpMatcher,
   TextCensor,
   englishDataset,
-  englishRecommendedTransformers,
   DataSet,
   asteriskCensorStrategy,
   grawlixCensorStrategy,
   assignIncrementingIds,
   pattern,
+  resolveConfusablesTransformer,
+  toAsciiLowerCaseTransformer,
+  collapseDuplicatesTransformer,
+  englishRecommendedWhitelistMatcherTransformers,
 } from 'obscenity';
 
 import { getCachedNsfwWords } from './word-processor';
+import { customLeetSpeakTransformer } from './custom-transformers';
 import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
 import { removeTags } from '~/utils/string-helpers';
 import { NsfwLevel } from '~/server/common/enums';
@@ -324,11 +328,29 @@ export class SimpleProfanityFilter {
     // Always add extended words from metadata
     this.dataset = this.extendWithCustomDataset(this.dataset);
 
-    // Build the matcher
+    // Build the matcher with custom transformers to avoid false positives
+    // Note: We use a custom leetspeak transformer instead of the default one
+    // because the default maps '(' to 'c', causing false positives like
+    // "(untucked)" being detected as profanity.
     const builtDataset = this.dataset.build();
     this.matcher = new RegExpMatcher({
       ...builtDataset,
-      ...englishRecommendedTransformers, // Includes leetspeak handling
+      blacklistMatcherTransformers: [
+        resolveConfusablesTransformer(), // '🅰' => 'a' (Unicode confusables)
+        customLeetSpeakTransformer, // Custom leetspeak without problematic punctuation
+        toAsciiLowerCaseTransformer(), // Case insensitive matching
+        collapseDuplicatesTransformer({
+          customThresholds: new Map([
+            ['b', 2], // a_bb_o
+            ['e', 2], // ab_ee_d
+            ['o', 2], // b_oo_nga
+            ['l', 2], // fe_ll_atio
+            ['s', 2], // a_ss_
+            ['g', 2], // ni_gg_er
+          ]),
+        }), // 'aaaa' => 'a'
+      ],
+      whitelistMatcherTransformers: englishRecommendedWhitelistMatcherTransformers,
     });
   }
 
