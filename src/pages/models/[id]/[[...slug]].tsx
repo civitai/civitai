@@ -1235,23 +1235,25 @@ export default function ModelDetailsV2({
             {(isOwner || model.hasSuggestedResources) && (
               <>
                 {model.hasSuggestedResources && <AdUnitTopSection />}
-                <AssociatedModels
-                  fromId={model.id}
-                  type="Suggested"
-                  versionId={selectedVersion?.id}
-                  label={
-                    <Group gap={8} wrap="nowrap">
-                      Suggested Resources{' '}
-                      <InfoPopover>
-                        <Text size="sm" fw={400}>
-                          These are resources suggested by the creator of this model. They may be
-                          related to this model or created by the same user.
-                        </Text>
-                      </InfoPopover>
-                    </Group>
-                  }
-                  ownerId={model.user.id}
-                />
+                {selectedVersion && (
+                  <AssociatedModels
+                    fromId={model.id}
+                    type="Suggested"
+                    versionId={selectedVersion.id}
+                    ownerId={model.user.id}
+                    label={
+                      <Group gap={8} wrap="nowrap">
+                        Suggested Resources{' '}
+                        <InfoPopover>
+                          <Text size="sm" fw={400}>
+                            These are resources suggested by the creator of this model. They may be
+                            related to this model or created by the same user.
+                          </Text>
+                        </InfoPopover>
+                      </Group>
+                    }
+                  />
+                )}
               </>
             )}
             <AdUnitTopSection />

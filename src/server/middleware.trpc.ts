@@ -10,17 +10,22 @@ import { middleware } from '~/server/trpc';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import type { ExtendedUser } from '~/types/next-auth';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   const _input = input as UserPreferencesInput | undefined;
   if (_input !== undefined && typeof _input === 'object' && !Array.isArray(_input)) {
     // _input.browsingLevel ??= ctx.browsingLevel;
 
+    // TODO.hiddenPreferences - update this once `disableHidden` comes in with rest of user settings
+    const result = booleanString().optional().safeParse(ctx.req.cookies['disableHidden']);
+    const disableHidden = result.success ? result.data ?? false : false;
+
     const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
       userId: ctx.user?.id,
     });
 
-    const tagsToHide = hiddenTags.filter((x) => x.hidden).map((x) => x.id);
+    const tagsToHide = hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => x.id);
 
     const imagesToHide = hiddenImages
       .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)

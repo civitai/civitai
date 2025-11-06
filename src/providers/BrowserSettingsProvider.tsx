@@ -57,7 +57,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
           snapshotRef.current = curr;
         }
 
-        // TODO - remove this once `disableHidden` comes in with rest of user settings
+        // TODO.hiddenPreferences - remove this once `disableHidden` comes in with rest of user settings
         if (curr.disableHidden !== prev.disableHidden)
           setCookie('disableHidden', curr.disableHidden);
       });

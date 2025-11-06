@@ -39,7 +39,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       userId,
       floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance,
       SUM(grantedExp * multiplier) as totalExp
-    FROM knights_new_order_image_rating
+    FROM knights_new_order_image_rating FINAL
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
       AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
