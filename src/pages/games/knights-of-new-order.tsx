@@ -227,11 +227,11 @@ export default Page(
                               src={currentImage.url}
                               className={clsx('h-full max-w-full rounded-lg object-contain')}
                               type="image"
-                              width={700}
                               onLoadStart={() => setImageStatus('loading')}
                               onLoad={() => setImageStatus('idle')}
                               onError={() => setImageStatus('error')}
                               contain
+                              original
                             />
                             {currentUser?.isModerator && (
                               <LegacyActionIcon
