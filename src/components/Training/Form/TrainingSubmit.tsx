@@ -503,18 +503,31 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           return;
         }
 
+        // Transform lrScheduler
+        let lrScheduler = paramData.lrScheduler;
+        if (lrScheduler === 'cosine_with_restarts') {
+          lrScheduler = 'cosine';
+        }
+
+        // Transform optimizerType
+        const optimizerTypeMap: Record<string, string> = {
+          'AdamW8Bit': 'adamw8bit',
+          'Adafactor': 'adafactor',
+          'Prodigy': 'prodigy',
+        };
+        const optimizerType = optimizerTypeMap[paramData.optimizerType] || paramData.optimizerType.toLowerCase();
+
         finalParams = {
           engine: 'ai-toolkit',
           ecosystem,
           ...(modelVariant && { modelVariant }),
           epochs: paramData.maxTrainEpochs,
-          // NOTE: numRepeats and trainBatchSize are NOT included (not used by AI Toolkit)
           resolution: paramData.resolution,
           lr: paramData.unetLR,
           textEncoderLr: paramData.textEncoderLR || null,
           trainTextEncoder: !!paramData.textEncoderLR,
-          lrScheduler: paramData.lrScheduler,
-          optimizerType: paramData.optimizerType,
+          lrScheduler: lrScheduler as any,
+          optimizerType: optimizerType as any,
           networkDim: paramData.networkDim,
           networkAlpha: paramData.networkAlpha,
           noiseOffset: paramData.noiseOffset || null,
@@ -548,7 +561,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) ?? {}),
           baseModel: base,
           baseModelType: baseType,
-          params: finalParams,
+          params: finalParams, // Store in the native format (Kohya or AI Toolkit)
           samplePrompts,
           ...(negativePrompt && { negativePrompt }),
           staging,

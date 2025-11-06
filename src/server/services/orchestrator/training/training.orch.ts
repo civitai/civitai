@@ -154,6 +154,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     params,
   } = input;
 
+  // Params are already in AI Toolkit format from the database
   const aiToolkitParams = params as AiToolkitTrainingParams;
 
   const trainingInput: TrainingInput = {
@@ -170,7 +171,6 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       prompts: samplePrompts,
     },
     epochs: aiToolkitParams.epochs,
-    // NOTE: numRepeats and trainBatchSize are NOT included (not used by AI Toolkit)
     resolution: aiToolkitParams.resolution ?? undefined,
     lr: aiToolkitParams.lr,
     textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
