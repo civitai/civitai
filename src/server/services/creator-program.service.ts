@@ -163,8 +163,8 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
 };
 
 // Cache per buzz type
-export const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
-function getUserCapCache(buzzType: BuzzSpendType) {
+const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
+export function getUserCapCache(buzzType: BuzzSpendType) {
   if (!userCapCaches.has(buzzType)) {
     userCapCaches.set(buzzType, createUserCapCache(buzzType));
   }

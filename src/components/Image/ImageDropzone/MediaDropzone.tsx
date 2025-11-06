@@ -72,6 +72,7 @@ export function MediaDropzone({
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}
         accept={accept}
+        useFsAccessApi={false}
       >
         <div className="flex flex-col items-center justify-center gap-2">
           <Dropzone.Accept>

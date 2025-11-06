@@ -109,98 +109,49 @@ type DailyResetQueryResult = {
   fervor?: number;
 };
 
+// Updated to sync PostgreSQL from Redis counters instead of ClickHouse
+// This is more efficient and respects the real-time counter updates
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
-  if (!clickhouse) return;
-  log('DailyReset:: Running daily reset');
+  log('DailyReset:: Starting PostgreSQL sync from Redis counters');
 
-  const endDate = new Date();
-  // Apr. 10, 2025 as Start Date
-  const startDate = dayjs('2025-04-10').startOf('day').toDate();
-
-  log(`DailyReset:: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
-
-  const users = await dbRead.newOrderPlayer.findMany({
-    select: { userId: true, startAt: true },
+  // Get all players to sync their stats
+  const allPlayers = await dbRead.newOrderPlayer.findMany({
+    select: { userId: true },
   });
 
-  if (!users.length) {
-    log('DailyReset:: No users found');
+  if (!allPlayers.length) {
+    log('DailyReset:: No players found');
     return;
   }
 
-  const userBatches = chunk(users, 1000);
-  log(`DailyReset:: Processing ${users.length} users in ${userBatches.length} batches`);
-  let userData: DailyResetQueryResult[] = [];
-  let userLoopCount = 1;
-  for (const batch of userBatches) {
-    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length}`);
+  log(`DailyReset:: Syncing ${allPlayers.length} players`);
 
-    const tuples = batch.map((u) => `(${u.userId},'${u.startAt.toISOString()}')`).join(',');
-    const data = await clickhouse.$query<DailyResetQueryResult>`
-    WITH u AS (
-      SELECT
-        arrayJoin([${tuples}]) as user_tuple,
-        user_tuple.1 as userId,
-        user_tuple.2 as startAt
-    )
-    SELECT
-      knoir."userId",
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt), 1, 0) *
-        grantedExp * multiplier
-      ) as exp,
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = '${NewOrderImageRatingStatus.Correct}', 1, 0)
-      ) as correctJudgments,
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = '${NewOrderImageRatingStatus.Failed}', 1, 0)
-      ) as failedJudgments,
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        -- Exclude 'AcolyteCorrect' and 'AcolyteFailed' statuses from total judgments as they represent auxiliary actions not directly tied to the primary judgment process.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}'), 1, 0)
-      ) as totalJudgments
-    FROM knights_new_order_image_rating knoir
-    JOIN u ON knoir."userId" = CAST(u.userId as Int32)
-    WHERE knoir."createdAt" BETWEEN ${startDate} AND ${endDate}
-    GROUP BY knoir."userId"
-  `;
+  // Process in batches of 200 for optimal performance
+  const batches = chunk(allPlayers, 200);
+  let batchCount = 1;
 
-    if (data.length) {
-      userData = [...userData, ...data];
-    }
-
-    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length} :: done`);
-    userLoopCount++;
-  }
-
-  if (!userData.length) {
-    log('DailyReset:: No judgments found');
-    return;
-  }
-
-  const batches = chunk(userData, 200);
-  let loopCount = 1;
   for (const batch of batches) {
-    log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length}`);
-    const batchWithFervor = batch.map((b) => ({
-      ...b,
-      fervor: calculateFervor({
-        correctJudgments: b.correctJudgments,
-        allJudgments: b.totalJudgments,
-      }),
-    }));
+    log(`DailyReset:: Processing batch ${batchCount} of ${batches.length}`);
 
+    // Fetch current Redis counter values for all players in batch
+    const playerStats = await Promise.all(
+      batch.map(async (player) => {
+        const [exp, fervor] = await Promise.all([
+          expCounter.getCount(player.userId),
+          fervorCounter.getCount(player.userId),
+        ]);
+        return { userId: player.userId, exp, fervor };
+      })
+    );
+
+    // Bulk update PostgreSQL with Redis counter values
     await dbWrite.$queryRaw`
       WITH affected AS (
         SELECT
           (value ->> 'userId')::int as "userId",
           (value ->> 'exp')::int as "exp",
           (value ->> 'fervor')::int as "fervor"
-        FROM json_array_elements(${JSON.stringify(batchWithFervor)}::json)
+        FROM json_array_elements(${JSON.stringify(playerStats)}::json)
       )
       UPDATE "NewOrderPlayer"
       SET
@@ -210,42 +161,11 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
-    log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length} :: done`);
-    loopCount++;
+    log(`DailyReset:: Batch ${batchCount} of ${batches.length} complete`);
+    batchCount++;
   }
-  log('DailyReset:: Processing judgments :: done');
 
-  // Synchronize Redis counters with PostgreSQL values
-  // This ensures Redis and DB stay in sync and prevents race conditions
-  log('DailyReset:: Synchronizing Redis counters with DB values');
-  const syncBatches = chunk(userData, 100);
-  let syncLoopCount = 1;
-  for (const syncBatch of syncBatches) {
-    log(`DailyReset:: Synchronizing counters :: ${syncLoopCount} of ${syncBatches.length}`);
-
-    await Promise.all(
-      syncBatch.flatMap((user) => [
-        // Reset and repopulate exp counter
-        (async () => {
-          await expCounter.reset({ id: user.userId });
-          if (user.exp > 0) await expCounter.increment({ id: user.userId, value: user.exp });
-        })(),
-        // Reset and repopulate fervor counter
-        (async () => {
-          await fervorCounter.reset({ id: user.userId });
-          if (user.fervor && user.fervor > 0)
-            await fervorCounter.increment({ id: user.userId, value: user.fervor });
-        })(),
-        // Reset judgment counters (these will repopulate from ClickHouse on next access)
-        correctJudgmentsCounter.reset({ id: user.userId }),
-        allJudgmentsCounter.reset({ id: user.userId }),
-      ])
-    );
-
-    log(`DailyReset:: Synchronizing counters :: ${syncLoopCount} of ${syncBatches.length} :: done`);
-    syncLoopCount++;
-  }
-  log('DailyReset:: Synchronized Redis counters with DB values');
+  log(`DailyReset:: PostgreSQL sync complete - ${allPlayers.length} players updated`);
 });
 
 // Templar selection job removed as part of Knights of New Order redesign
@@ -325,7 +245,7 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
 
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
-  // newOrderDailyReset - Temporarily disabled during redesign
+  newOrderDailyReset, // Re-enabled with Redis counter sync
   newOrderCleanseSmites,
   newOrderCleanupQueues,
 ];

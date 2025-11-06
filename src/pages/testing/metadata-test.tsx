@@ -71,6 +71,7 @@ export default function MetadataTester() {
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           maxFiles={1}
           maxSize={50 * 1024 ** 2}
+          useFsAccessApi={false}
         >
           <Dropzone.Accept>
             <IconUpload

@@ -132,6 +132,7 @@ export const MultiFileInputUpload = forwardRef<HTMLDivElement, Props>(
             }}
             className={clsx(dropzoneProps?.className, !showDropzoneStatus && classes.dropzone)}
             classNames={{ root: props.error || hasErrors ? 'border-red-6 mb-[5px]' : undefined }}
+            useFsAccessApi={false}
           >
             <Group
               justify="center"
