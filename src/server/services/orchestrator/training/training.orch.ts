@@ -279,22 +279,22 @@ export const createTrainingWorkflow = async ({
   const engine = getTrainingFields.getEngine(trainingParams.engine);
   const loraName = modelVersion.modelName;
   const modelFileId = modelVersion.fileId;
-  const params = {
-    ...trainingParams,
-    engine,
-  };
+
+  // Don't override the engine field in params - it needs to remain as the literal type
+  // from the database for the discriminated union to work properly
+  const params = trainingParams;
 
   const runArgs: ImageTrainingStepSchema = {
     model,
     priority,
     trainingData,
     trainingDataImagesCount,
-    engine,
+    engine, // This uses the OrchEngineTypes enum
     loraName,
     samplePrompts,
     negativePrompt,
     modelFileId,
-    params,
+    params, // This keeps the literal string type in params.engine
   };
 
   const stepRun = createTrainingStep(runArgs);
