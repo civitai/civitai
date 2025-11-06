@@ -298,7 +298,8 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
           stats: {
             ...old.stats,
             exp:
-              matchedImage && isCorrectRating
+              (matchedImage && isCorrectRating) ||
+              prevPlayerData?.rankType !== NewOrderRankType.Acolyte
                 ? old.stats.exp + newOrderConfig.baseExp
                 : old.stats.exp,
           },
