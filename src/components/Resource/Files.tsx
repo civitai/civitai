@@ -44,6 +44,7 @@ import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 // TODO.Briant - compare file extension when checking for duplicate files
 export function Files() {
@@ -83,6 +84,7 @@ export function Files() {
           showErrorNotification({ error: new Error(errors) });
         }}
         className={classes.dropzoneReject}
+        useFsAccessApi={!isAndroidDevice()}
       >
         <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>
           {/* <Dropzone.Accept>

@@ -10,6 +10,7 @@ import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 export function MediaDropzone({
   label,
@@ -72,6 +73,7 @@ export function MediaDropzone({
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}
         accept={accept}
+        useFsAccessApi={!isAndroidDevice()}
       >
         <div className="flex flex-col items-center justify-center gap-2">
           <Dropzone.Accept>

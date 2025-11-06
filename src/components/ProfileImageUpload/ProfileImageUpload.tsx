@@ -11,6 +11,7 @@ import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 import { IconUser } from '@tabler/icons-react';
 import { isValidURL } from '~/utils/type-guards';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: string | { url: string };
@@ -115,6 +116,7 @@ export function ProfileImageUpload({
             styles={(theme) => ({
               root: hasError ? { borderColor: theme.colors.red[6] } : undefined,
             })}
+            useFsAccessApi={!isAndroidDevice()}
           >
             <Text c="dimmed">{`Drop image here, should not exceed ${formatBytes(maxSize)}`}</Text>
           </Dropzone>

@@ -18,6 +18,7 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?:
@@ -158,6 +159,7 @@ export function SimpleImageUpload({
           {...dropzoneProps}
           onDrop={handleDrop}
           maxFiles={1}
+          useFsAccessApi={!isAndroidDevice()}
           // maxSize={maxSize}
         >
           <Dropzone.Accept>

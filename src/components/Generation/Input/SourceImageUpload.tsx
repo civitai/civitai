@@ -102,6 +102,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
         const base64 = await getBase64(jpegBlob);
         if (base64) handleChange(base64);
       } catch (e) {
+        console.log({ dropzoneError: e });
         setError((e as Error).message);
         setLoading(false);
       }

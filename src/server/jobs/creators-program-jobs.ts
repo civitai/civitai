@@ -9,7 +9,7 @@ import {
   flushBankedCache,
   getCompensationPool,
   getPoolParticipantsV2,
-  userCapCaches,
+  getUserCapCache,
   userCashCache,
 } from '~/server/services/creator-program.service';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
@@ -176,7 +176,7 @@ export const creatorsProgramRollover = createJob(
   async () => {
     // Flush caches for all bankable buzz types
     for (const buzzType of buzzBankTypes) {
-      await userCapCaches.get(buzzType)?.flush();
+      await getUserCapCache(buzzType).flush();
     }
     await flushBankedCache();
     await bustCompensationPoolCache();

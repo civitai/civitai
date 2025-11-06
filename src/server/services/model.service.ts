@@ -83,7 +83,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -3095,7 +3095,7 @@ export const privateModelFromTraining = async ({
     },
   });
 
-  const subscription = await getUserSubscription({ userId: input.user.id });
+  const subscription = await getHighestTierSubscription(input.user.id);
 
   const maxPrivateModels = subscription?.tier
     ? constants.memberships.membershipDetailsAddons[

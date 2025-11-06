@@ -6,7 +6,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { openSendTipModal } from '../Modals/SendTipModal';
 import { useTrackEvent } from '../TrackView/track.utils';
-import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SendTipModal } from '~/components/Modals/SendTipModal';
 
