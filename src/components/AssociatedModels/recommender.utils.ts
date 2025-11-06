@@ -22,7 +22,7 @@ export function useQueryRecommendedResources(
       type,
       browsingLevel,
     });
-  const { data: recommendedResources = [], isLoading: loadingRecommended } =
+  const { data: recommendedResources = [], isInitialLoading: loadingRecommended } =
     trpc.recommenders.getResourceRecommendations.useQuery(
       { modelVersionId, browsingLevel },
       { enabled: !!modelVersionId && features.recommenders }
