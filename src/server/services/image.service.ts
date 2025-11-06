@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
-import type { SearchParams, SearchResponse } from 'meilisearch';
+import { MeiliSearch, type SearchParams, type SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
@@ -1827,7 +1827,11 @@ export async function getImagesFromFeedSearch(
     }
 
     const feed = new ImagesFeed(
-      metricsSearchClient as IMeilisearch,
+      ({ apiKey, host }) =>
+        new MeiliSearch({
+          host,
+          apiKey,
+        }) as IMeilisearch,
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
       new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
