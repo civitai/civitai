@@ -125,7 +125,7 @@ export const getPlanDetails: (
                       ?.maxPrivateModels ??
                     0
                 )}{' '}
-                Private Models
+                Private Models (PG Generation only)
               </Text>
             ),
           }

@@ -12,14 +12,14 @@ import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
-import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/utils/session-helpers';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
-import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 
 export async function createRedeemableCodes({
   unitValue,
@@ -193,6 +193,10 @@ export async function consumeRedeemableCode({
           .metadata as SubscriptionProductMetadata;
         const consumedProductTier = consumedProductMetadata.tier ?? 'free';
 
+        // Calculate external transaction ID for buzz delivery (to be stored in metadata)
+        const date = dayjs().format('YYYY-MM');
+        const externalTransactionId = `civitai-membership:${date}:${userId}:${consumedCode.price.product.id}:${consumedCode.code}`;
+
         if (userMembership) {
           // Check states:
           if (userMembership.status !== 'active') {
@@ -261,6 +265,10 @@ export async function consumeRedeemableCode({
                         (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
                         consumedCode.unitValue,
                     },
+                    buzzTransactionIds: [
+                      ...(subscriptionMetadata.buzzTransactionIds ?? []),
+                      externalTransactionId,
+                    ],
                   },
                   status: 'active',
                   currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
@@ -309,6 +317,10 @@ export async function consumeRedeemableCode({
                           membershipProductMetadata.tier ?? 'free'
                         ] ?? 0) + Math.max(0, proratedDays),
                     },
+                    buzzTransactionIds: [
+                      ...(subscriptionMetadata.buzzTransactionIds ?? []),
+                      externalTransactionId,
+                    ],
                   },
                 },
               });
@@ -326,6 +338,10 @@ export async function consumeRedeemableCode({
                         (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
                         consumedCode.unitValue,
                     },
+                    buzzTransactionIds: [
+                      ...(subscriptionMetadata.buzzTransactionIds ?? []),
+                      externalTransactionId,
+                    ],
                   },
                 },
               });
@@ -340,6 +356,7 @@ export async function consumeRedeemableCode({
             prepaids: {
               [consumedProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
             },
+            buzzTransactionIds: [externalTransactionId],
           };
 
           await tx.customerSubscription.create({
@@ -364,8 +381,6 @@ export async function consumeRedeemableCode({
           });
         }
 
-        const date = dayjs().format('YYYY-MM');
-
         await withRetries(async () => {
           // Grant buzz right away:
           await createBuzzTransaction({
@@ -373,9 +388,7 @@ export async function consumeRedeemableCode({
             toAccountId: userId,
             toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
             type: TransactionType.Purchase,
-            externalTransactionId: `civitai-membership:${date}:${userId}:${
-              consumedCode.price!.product.id
-            }:${consumedCode.code}`,
+            externalTransactionId: externalTransactionId,
             amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
             description: `Membership bonus`,
             details: {
@@ -401,11 +414,7 @@ export async function consumeRedeemableCode({
   );
 
   if (consumedCode.type === RedeemableCodeType.Membership) {
-    await refreshSession(userId);
-    await getMultipliersForUser(userId, true);
-    await setVaultFromSubscription({
-      userId,
-    });
+    await invalidateSubscriptionCaches(userId);
 
     const consumedProductMetadata = consumedCode.price?.product
       .metadata as SubscriptionProductMetadata;

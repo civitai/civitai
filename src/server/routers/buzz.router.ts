@@ -35,7 +35,7 @@ import {
   getPoolForecast,
   getUserBuzzAccounts,
 } from '~/server/services/buzz.service';
-import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 const buzzProcedure = protectedProcedure.use(isFlagProtected('buzz'));
 
@@ -47,7 +47,8 @@ export const buzzRouter = router({
   getUserTransactions: buzzProcedure
     .input(getUserBuzzTransactionsSchema)
     .query(getUserTransactionsHandler),
-  tipUser: buzzProcedure
+  tipUser: guardedProcedure
+    .use(isFlagProtected('buzz'))
     .input(userBuzzTransactionInputSchema)
     .mutation(createBuzzTipTransactionHandler),
   completeStripeBuzzPurchase: buzzProcedure

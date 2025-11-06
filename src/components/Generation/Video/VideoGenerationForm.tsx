@@ -38,6 +38,7 @@ import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
 import { SoraFormInput } from '~/components/Generation/Video/SoraFormInput';
+import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
@@ -144,6 +145,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
         </div>
         <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
           <DailyBoostRewardClaim />
+          <MembershipUpsell />
           {!error ? (
             <QueueSnackbar />
           ) : (

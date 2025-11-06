@@ -8,7 +8,7 @@ export const donationGoalRouter = router({
     return donateToGoal({
       ...input,
       userId: ctx.user.id,
-      buzzType: getAllowedAccountTypes(ctx.user.meta)[0],
+      buzzType: getAllowedAccountTypes(ctx.features)[0],
     });
   }),
 });

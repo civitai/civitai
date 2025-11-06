@@ -362,6 +362,7 @@ export enum NewOrderImageRatingStatus {
   Correct = 'Correct',
   Pending = 'Pending',
   Failed = 'Failed',
+  Inconclusive = 'Inconclusive',
   AcolyteCorrect = 'AcolyteCorrect',
   AcolyteFailed = 'AcolyteFailed',
 }

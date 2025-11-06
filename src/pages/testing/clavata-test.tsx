@@ -87,7 +87,13 @@ export default function MetadataTester() {
           placeholder="Leave empty for default."
           label="Clavata Policy ID"
         />
-        <Dropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} maxFiles={1} loading={isLoading}>
+        <Dropzone
+          onDrop={onDrop}
+          accept={IMAGE_MIME_TYPE}
+          maxFiles={1}
+          loading={isLoading}
+          useFsAccessApi={false}
+        >
           <Dropzone.Accept>
             <IconUpload
               size={50}

@@ -158,6 +158,7 @@ export function SimpleImageUpload({
           {...dropzoneProps}
           onDrop={handleDrop}
           maxFiles={1}
+          useFsAccessApi={false}
           // maxSize={maxSize}
         >
           <Dropzone.Accept>

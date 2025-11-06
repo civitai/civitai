@@ -96,7 +96,10 @@ import type { ImageResourceHelperModel } from '~/server/selectors/image.selector
 import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getUserCollectionPermissionsById,
+  removeEntityFromAllCollections,
+} from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
@@ -237,6 +240,9 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
+    // Remove image from all collections before deleting
+    await removeEntityFromAllCollections('image', id);
+
     const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
@@ -269,6 +275,10 @@ export const deleteImageById = async ({
 
 export async function deleteImages(ids: number[], updatePosts = true) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
+    // Remove images from all collections before deleting
+    // Note: Since we're using raw SQL delete, Prisma cascades won't trigger automatically
+    await Promise.all(ids.map((id) => removeEntityFromAllCollections('image', id)));
+
     const results = await dbWrite.$queryRaw<
       { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
     >`
@@ -591,9 +601,11 @@ export const imageScanTypes: ImageScanType[] = [
 
 export const ingestImage = async ({
   image,
+  lowPriority,
   tx,
 }: {
   image: IngestImageInput;
+  lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
@@ -634,7 +646,10 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
+  let scanUrl = `${env.IMAGE_SCANNING_ENDPOINT}/enqueue`;
+  if (lowPriority) scanUrl += '?lowpri=true';
+
+  const response = await fetch(scanUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -651,11 +666,33 @@ export const ingestImage = async ({
     }),
   });
   if (response.status === 202) {
-    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as { jobId: string };
-    await dbClient.image.update({
-      where: { id },
-      data: { scanRequestedAt, scanJobs },
-    });
+    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as
+      | { jobId: string }
+      | typeof Prisma.JsonNull;
+
+    // Convert scanJobs to JSON string for raw SQL, preserving existing retryCount if it exists
+    const scanJobsJson = scanJobs === Prisma.JsonNull ? null : JSON.stringify(scanJobs);
+
+    if (scanJobsJson) {
+      await dbClient.$executeRaw`
+        UPDATE "Image"
+        SET
+          "scanRequestedAt" = ${scanRequestedAt},
+          "scanJobs" = CASE
+            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
+              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
+            ELSE
+              ${scanJobsJson}::jsonb
+          END
+        WHERE id = ${id}
+      `;
+    } else {
+      await dbClient.$executeRaw`
+        UPDATE "Image"
+        SET "scanRequestedAt" = ${scanRequestedAt}
+        WHERE id = ${id}
+      `;
+    }
 
     return true;
   } else {
@@ -2090,7 +2127,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
   }
   sorts.push(searchSort);
-  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
@@ -2663,7 +2700,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // }
   }
   sorts.push(searchSort);
-  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
+  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
@@ -4897,6 +4934,7 @@ export async function updateImageNsfwLevel({
     if (!image) throw throwNotFoundError('Image not found');
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
+    if (activity === 'setNsfwLevelKono' && !reason) reason = 'Knights Vote';
     const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
 
     await dbWrite.image.update({

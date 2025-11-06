@@ -30,6 +30,7 @@ import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
@@ -426,8 +427,7 @@ export const upsertSubscription = async (
     // immediate cancel:
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
-    await getMultipliersForUser(user.id, true);
-    await refreshSession(user.id);
+    await invalidateSubscriptionCaches(user.id);
     return;
   }
 
@@ -508,8 +508,7 @@ export const upsertSubscription = async (
     }
   }
 
-  await refreshSession(user.id);
-  await getMultipliersForUser(user.id, true);
+  await invalidateSubscriptionCaches(user.id);
 };
 
 export const toDateTime = (secs: number) => {

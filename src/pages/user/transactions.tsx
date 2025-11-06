@@ -111,9 +111,6 @@ export default function UserTransactions() {
             w="calc(50% - 12px)"
             defaultValue={defaultFilters.start}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
-            clearButtonProps={{
-              children: 'Clear start date',
-            }}
           />
           <DatePickerInput
             label="To"
@@ -124,9 +121,6 @@ export default function UserTransactions() {
             defaultValue={defaultFilters.end}
             minDate={dayjs(filters.start).add(1, 'day').toDate()}
             maxDate={defaultFilters.end}
-            clearButtonProps={{
-              children: 'Clear end date',
-            }}
           />
           <Select
             label="Type"
@@ -142,7 +136,6 @@ export default function UserTransactions() {
                   }))
                 : setFilters((current) => ({ ...current, type: undefined }))
             }
-            clearButtonProps={{ children: 'Clear tip filter' }}
             clearable
           />
         </Group>
