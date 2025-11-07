@@ -1575,10 +1575,11 @@ export async function getPlayerHistory({
     `userId = ${playerId}`,
     `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // Ignoring error since we format the clickhouse params in custom $query
   // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
   if (cursor) AND.push(`createdAt < '${cursor}'`);
-  if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
+
+  const HAVING = [];
+  if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);
 
   const judgments = await clickhouse.$query<{
     imageId: number;
@@ -1600,6 +1601,7 @@ export async function getPlayerHistory({
     FROM knights_new_order_image_rating
     WHERE ${AND.join(' AND ')}
     GROUP BY imageId
+    ${HAVING.length > 0 ? `HAVING ${HAVING.join(' AND ')}` : ''}
     ORDER BY lastCreatedAt DESC
     LIMIT ${limit + 1}
   `;
@@ -1610,7 +1612,13 @@ export async function getPlayerHistory({
 
   const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds }, nsfwLevel: { notIn: [0, NsfwLevel.Blocked] } },
+    where: {
+      id: { in: imageIds },
+      nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
+      post: {
+        publishedAt: { not: null, lt: new Date() },
+      },
+    },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
