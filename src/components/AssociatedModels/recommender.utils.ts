@@ -16,17 +16,23 @@ export function useQueryRecommendedResources(
   const browsingLevel = useBrowsingLevelDebounced();
   const features = useFeatureFlags();
 
-  const { data: associatedModels = [], isLoading: loadingAssociated } =
-    trpc.model.getAssociatedResourcesCardData.useQuery({
-      fromId,
-      type,
-      browsingLevel,
-    });
-  const { data: recommendedResources = [], isInitialLoading: loadingRecommended } =
-    trpc.recommenders.getResourceRecommendations.useQuery(
-      { modelVersionId, browsingLevel },
-      { enabled: !!modelVersionId && features.recommenders }
-    );
+  const {
+    data: associatedModels = [],
+    isLoading: loadingAssociated,
+    isRefetching: refetchingAssociated,
+  } = trpc.model.getAssociatedResourcesCardData.useQuery({
+    fromId,
+    type,
+    browsingLevel,
+  });
+  const {
+    data: recommendedResources = [],
+    isInitialLoading: loadingRecommended,
+    isRefetching: refetchingRecommended,
+  } = trpc.recommenders.getResourceRecommendations.useQuery(
+    { modelVersionId, browsingLevel },
+    { enabled: !!modelVersionId && features.recommenders }
+  );
 
   // Memoize combined data to prevent unnecessary re-renders
   const combinedData = useMemo(
@@ -53,14 +59,22 @@ export function useQueryRecommendedResources(
     items: filteredModels,
     hiddenCount: modelsHiddenCount,
     loadingPreferences: modelsLoading,
-  } = useApplyHiddenPreferences({ type: 'models', data: modelItems });
+  } = useApplyHiddenPreferences({
+    type: 'models',
+    data: modelItems,
+    isRefetching: refetchingAssociated || refetchingRecommended,
+  });
 
   // Apply hidden preferences to articles
   const {
     items: filteredArticles,
     hiddenCount: articlesHiddenCount,
     loadingPreferences: articlesLoading,
-  } = useApplyHiddenPreferences({ type: 'articles', data: articleItems });
+  } = useApplyHiddenPreferences({
+    type: 'articles',
+    data: articleItems,
+    isRefetching: refetchingAssociated || refetchingRecommended,
+  });
 
   // Merge filtered results
   const filteredResources = useMemo(
