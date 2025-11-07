@@ -737,12 +737,27 @@ export async function queryModelVersionsForModeratorHandler({
           userId: true,
         },
       },
+      files: {
+        select: { metadata: true },
+        where: { type: 'Training Data' },
+        take: 1,
+      },
     },
   });
 
   return {
     nextCursor,
-    items: items as Array<Omit<(typeof items)[number], 'meta'> & { meta: ModelVersionMeta }>,
+    items: items.map(({ files, meta, ...version }) => {
+      const trainingFile = files[0];
+      const trainingResults = (trainingFile?.metadata as FileMetadata)
+        ?.trainingResults as TrainingResultsV2;
+
+      return {
+        ...version,
+        meta: meta as ModelVersionMeta | null,
+        workflowId: trainingResults?.workflowId,
+      };
+    }),
   };
 }
 
