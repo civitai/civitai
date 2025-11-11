@@ -61,8 +61,14 @@ import { includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
-import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  getBaseModelByMediaType,
+  getGenerationBaseModelResourceOptions,
+} from '~/shared/constants/base-model.constants';
+import type {
+  ResourceInput,
+  SourceImageProps,
+} from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 
@@ -542,17 +548,23 @@ function formatVideoGenStep({
   const params = videoMetadata.params ?? {};
 
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const stepResources = (params && 'resources' in params ? params.resources ?? [] : [])?.map(
-    ({ air, strength }) => {
-      const { version } = parseAIR(air);
-      return { id: version, strength };
-    }
-  );
+  const stepResources = (
+    (params && 'resources' in params
+      ? params.resources
+      : (metadata.resources as unknown as ResourceInput[])) ?? // this casting is not ideal, but we are now assigning a resource value here when we call createVideoGenStep
+    []
+  ).map(({ air, strength }) => {
+    const { version } = parseAIR(air);
+    return { id: version, strength };
+  });
 
   // it's silly, but video resources are nested in the params, where image resources are not
-  if (params && 'resources' in params) params.resources = null;
+  // if (params && 'resources' in params) params.resources = null;
 
-  const combinedResources = combineResourcesWithInputResource(resources, stepResources);
+  const videoBaseModels = getBaseModelByMediaType('video');
+  const combinedResources = combineResourcesWithInputResource(resources, stepResources).filter(
+    (x) => videoBaseModels.includes(x.baseModel as any)
+  );
 
   let baseModel =
     metadata.params?.baseModel ??

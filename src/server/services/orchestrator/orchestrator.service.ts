@@ -25,11 +25,13 @@ export async function createWorkflowStep(args: GenerationSchema) {
 export async function createVideoGenStep(args: VideoGenerationSchema2) {
   const config = videoGenerationConfig2[args.engine];
   const { priority, ...rest } = args;
+  const params: Record<string, any> = removeEmpty(config.metadataFn(rest as any));
+
   return {
     $type: 'videoGen' as const,
     priority,
     input: config.inputFn(args as any),
-    metadata: { params: removeEmpty(config.metadataFn(rest as any)) },
+    metadata: removeEmpty({ resources: params.resources, params }),
   };
 }
 

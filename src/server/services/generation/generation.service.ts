@@ -782,7 +782,8 @@ export async function getResourceData(
   return generation
     ? resources.filter((resource) => {
         const baseModel = getBaseModelSetType(resource.baseModel);
-        return !!getGenerationBaseModelGroup(baseModel)?.supportMap.size;
+        const size = getGenerationBaseModelGroup(baseModel)?.supportMap.size;
+        return !!size;
       })
     : resources;
 }

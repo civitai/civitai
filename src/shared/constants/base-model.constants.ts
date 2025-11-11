@@ -409,6 +409,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedream'] }],
   },
   {
+    group: 'Sora2',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Sora 2'] }],
+  },
+  {
     group: 'WanVideo',
     support: [{ modelTypes: [ModelType.LORA], baseModels: ['Wan Video'] }],
   },
