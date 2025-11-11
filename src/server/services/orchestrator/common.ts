@@ -833,7 +833,17 @@ function formatWorkflowStepOutput({
       aspect,
     };
   });
-  const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+  const errors: string[] = [];
+  if (step.output) {
+    if ('errors' in step.output && step.output.errors) errors.push(...step.output.errors);
+    if (
+      'externalTOSViolation' in step.output &&
+      'message' in step.output &&
+      typeof step.output.message === 'string'
+    )
+      errors.push(step.output.message);
+  }
+  // const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
 
   return {
     images,
