@@ -6,6 +6,7 @@ import {
   Divider,
   Group,
   Input,
+  Loader,
   Paper,
   Select,
   Stack,
@@ -73,17 +74,20 @@ const CosmeticSearch = ({
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticsInput, 'limit'>>({
     page: 1,
   });
+  const [selectedCosmeticId, setSelectedCosmeticId] = useState<string | null>(
+    cosmetic ? cosmetic.id.toString() : null
+  );
   const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { cosmetics } = useQueryCosmeticsPaged(debouncedFilters);
   const data = useMemo(
     () =>
-      [cosmetic, ...cosmetics].filter(isDefined).map((c) => ({
+      cosmetics.filter(isDefined).map((c) => ({
         value: c.id.toString(),
         label: c.name,
         name: c.name,
         description: c.description,
       })),
-    [cosmetics, cosmetic]
+    [cosmetics]
   );
 
   return (
@@ -92,6 +96,7 @@ const CosmeticSearch = ({
       description="Select a cosmetic to make into a product. Search by name"
       onChange={(cosmeticId) => {
         onCosmeticSelected(Number(cosmeticId));
+        setSelectedCosmeticId(cosmeticId || null);
       }}
       onSearchChange={(query) => setFilters({ ...filters, name: query })}
       searchValue={filters.name}
@@ -105,7 +110,7 @@ const CosmeticSearch = ({
       data={data}
       searchable
       withAsterisk
-      value={cosmetic?.id.toString() ?? ''}
+      value={selectedCosmeticId}
       clearable
     />
   );
@@ -135,7 +140,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     'meta.paidToUserIds',
     'availableQuantity',
   ]);
-  const { cosmetic } = useQueryCosmetic({ id: cosmeticId });
+  const { cosmetic, isInitialLoading, isRefetching } = useQueryCosmetic({ id: cosmeticId });
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
@@ -192,7 +197,9 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               }
             />
           )}
-          {cosmetic && (
+          {isInitialLoading || isRefetching ? (
+            <Loader />
+          ) : cosmetic ? (
             <Paper radius="md" withBorder p="md">
               <Stack>
                 <Text c="dimmed" fw="bold">
@@ -210,7 +217,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                 </Group>
               </Stack>
             </Paper>
-          )}
+          ) : null}
           <InputText
             name="title"
             label="Title"
