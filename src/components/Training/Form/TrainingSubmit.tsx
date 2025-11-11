@@ -383,6 +383,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (r.params.engine === 'ai-toolkit') {
+        const numPromptsNeeded = thisMediaType === 'video' ? 2 : 3;
+        const filledPrompts = r.samplePrompts.filter((p) => p && p.trim().length > 0);
+
+        if (filledPrompts.length < numPromptsNeeded) {
+          showErrorNotification({
+            error: new Error(
+              `AI Toolkit requires all ${numPromptsNeeded} sample prompts to be filled. Currently ${filledPrompts.length} of ${numPromptsNeeded} are filled.`
+            ),
+            title: 'Sample prompts required',
+            autoClose: false,
+          });
+          return;
+        }
+      }
+
       if (r.params.targetSteps > maxSteps) {
         showErrorNotification({
           error: new Error(
