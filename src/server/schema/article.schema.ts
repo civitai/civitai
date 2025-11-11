@@ -17,6 +17,7 @@ import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const UnpublishReasons = Object.keys(unpublishReasons) as [UnpublishReason, ...UnpublishReason[]];
 
@@ -106,6 +107,7 @@ export type ArticleMetadata = {
   challengeType?: string;
   entryPrizeRequirements?: number;
   profanityMatches?: string[];
+  profanityEvaluation?: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
   unpublishedReason?: string;
   customMessage?: string;
   unpublishedAt?: string;

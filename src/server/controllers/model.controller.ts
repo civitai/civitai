@@ -107,6 +107,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -228,7 +229,9 @@ export const getModelHandler = async ({
           unavailableGenResources.indexOf(version.id) === -1
       ),
       hasSuggestedResources: suggestedResources > 0,
-      meta: model.meta as ModelMeta | null,
+      meta: model.meta
+        ? filterSensitiveProfanityData(model.meta as ModelMeta, ctx?.user?.isModerator)
+        : null,
       tagsOnModels:
         tagsOnModels[model.id]?.tags
           .filter(({ unlisted }) => !unlisted)
@@ -318,7 +321,9 @@ export const getModelHandler = async ({
           >,
           baseModel: version.baseModel as BaseModel,
           baseModelType: version.baseModelType as BaseModelType,
-          meta: version.meta as ModelVersionMeta,
+          meta: version.meta
+            ? filterSensitiveProfanityData(version.meta as ModelVersionMeta, ctx?.user?.isModerator)
+            : null,
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
           recommendedResources: version.recommendedResources
@@ -399,6 +404,7 @@ export const getModelsPagedSimpleHandler = async ({
     },
   });
 
+  const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
     ...results,
     items: results.items.map(({ modelVersions = [], ...model }) => {
@@ -406,9 +412,16 @@ export const getModelsPagedSimpleHandler = async ({
 
       return {
         ...model,
-        meta: model.meta as ModelMeta | null,
+        meta: model.meta
+          ? filterSensitiveProfanityData(model.meta as ModelMeta, isModerator)
+          : null,
         modelVersion: version
-          ? { ...version, meta: version.meta as ModelVersionMeta | null }
+          ? {
+              ...version,
+              meta: version.meta
+                ? filterSensitiveProfanityData(version.meta as ModelVersionMeta, isModerator)
+                : null,
+            }
           : undefined,
       };
     }),

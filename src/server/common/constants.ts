@@ -245,6 +245,14 @@ export const constants = {
     coverImageHeight: 400,
     coverImageWidth: 850,
   },
+  profanity: {
+    thresholds: {
+      shortContentWordLimit: 100,
+      shortContentMatchThreshold: 5,
+      longContentDensityThreshold: 0.02, // 2%
+      diversityThreshold: 10,
+    },
+  },
   comments: {
     getMaxDepth({ entityType }: { entityType: string }) {
       switch (entityType) {
