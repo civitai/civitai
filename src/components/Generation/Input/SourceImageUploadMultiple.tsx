@@ -32,6 +32,7 @@ import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { create } from 'zustand';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -127,7 +128,7 @@ export function SourceImageUploadMultiple({
       const { width, height } = previewImages[0];
       const ratio = width / height;
       allMatch = previewImages.every(({ width, height }) =>
-        almostEqual(ratio, width / height, 0.001)
+        almostEqual(ratio, width / height, 0.01)
       );
     } else if (!!aspectRatios?.length) {
       const ratios = aspectRatios.map((ratio) => {
@@ -135,7 +136,7 @@ export function SourceImageUploadMultiple({
         return w / h;
       });
       allMatch = previewImages.every(({ width, height }) =>
-        ratios.some((r) => almostEqual(r, width / height, 0.001))
+        ratios.some((r) => almostEqual(r, width / height, 0.01))
       );
     }
     return !allMatch;
@@ -380,6 +381,7 @@ SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { cla
         },
         className
       )}
+      useFsAccessApi={!isAndroidDevice()}
     >
       <div className="pointer-events-none flex items-center justify-center gap-2">
         <Dropzone.Accept>

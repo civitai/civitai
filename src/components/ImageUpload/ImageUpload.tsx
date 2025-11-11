@@ -52,6 +52,7 @@ import { formatBytes } from '~/utils/number-helpers';
 import styles from './ImageUpload.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -156,6 +157,7 @@ export function ImageUpload({
                 : undefined,
           })}
           disabled={dropzoneDisabled}
+          useFsAccessApi={!isAndroidDevice()}
           // loading={loading}
         >
           <Group justify="center" gap="xl" style={{ minHeight: 120, pointerEvents: 'none' }}>

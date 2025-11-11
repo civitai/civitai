@@ -123,7 +123,7 @@ function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 20;
+const KONO_NSFW_SAMPLING_RATE = 5;
 
 export default WebhookEndpoint(async function imageTags(req, res) {
   if (req.method === 'GET' && req.query.imageId) {
@@ -259,20 +259,20 @@ async function updateImage(
           rankType: NewOrderRankType.Knight,
         };
 
-        // Sampling logic: Only include 5% of NSFW images to reduce queue congestion
+        // Sampling logic: Only include 20% of NSFW images to reduce queue congestion
         let shouldAddToQueue = true;
         if (flags.nsfw) {
           queueDetails.priority = 2;
-          // Use image ID for deterministic sampling (5% inclusion rate)
-          shouldAddToQueue = id % KONO_NSFW_SAMPLING_RATE === 0; // 1/20 = 5%
+          // Use image ID for deterministic sampling (20% inclusion rate)
+          shouldAddToQueue = id % KONO_NSFW_SAMPLING_RATE === 0; // 1/5 = 20%
         }
 
         if (reviewKey) {
           data.needsReview = reviewKey;
-          queueDetails.rankType = NewOrderRankType.Templar;
+          // queueDetails.rankType = NewOrderRankType.Templar;
 
-          if (reviewKey === 'minor') queueDetails.priority = 1;
-          if (reviewKey === 'poi') queueDetails.priority = 2;
+          // if (reviewKey === 'minor') queueDetails.priority = 1;
+          // if (reviewKey === 'poi') queueDetails.priority = 2;
 
           // never add images needing review regardless of sampling
           shouldAddToQueue = false;

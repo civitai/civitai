@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Center,
   CloseButton,
@@ -9,7 +8,7 @@ import {
   SegmentedControl,
   useMantineTheme,
 } from '@mantine/core';
-import { IconCheck, IconExternalLink, IconX } from '@tabler/icons-react';
+import { IconCheck, IconExternalLink, IconMinus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -66,6 +65,7 @@ export default function JudgmentHistoryModal() {
               NewOrderImageRatingStatus.Correct,
               NewOrderImageRatingStatus.Failed,
               NewOrderImageRatingStatus.Pending,
+              NewOrderImageRatingStatus.Inconclusive,
             ]}
           />
         </div>
@@ -117,14 +117,21 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
   const { ref: inViewRef, inView } = useInView();
   const theme = useMantineTheme();
 
-  const { image, rating, grantedExp, multiplier, status, originalLevel } = data;
+  const { image, rating, grantedExp, multiplier, status } = data;
   const totalExp = Math.floor(grantedExp * (multiplier ?? 1));
   const isPending = status === NewOrderImageRatingStatus.Pending;
+  const isInconclusive = status === NewOrderImageRatingStatus.Inconclusive;
   const isCorrect =
     status === NewOrderImageRatingStatus.Correct ||
     status === NewOrderImageRatingStatus.AcolyteCorrect;
   const borderClass = clsx(
-    !isPending ? (isCorrect ? 'border border-green-5' : 'border border-red-5') : ''
+    !isPending && !isInconclusive
+      ? isCorrect
+        ? 'border border-green-5'
+        : 'border border-red-5'
+      : isInconclusive
+      ? 'border border-yellow-5'
+      : ''
   );
 
   return (
@@ -159,30 +166,39 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
                 color="gray"
                 className={borderClass}
                 leftSection={
-                  !isPending ? (
+                  !isPending && !isInconclusive ? (
                     isCorrect ? (
                       <IconCheck color={theme.colors.green[5]} size={18} />
                     ) : (
                       <IconX color={theme.colors.red[5]} size={18} />
                     )
+                  ) : isInconclusive ? (
+                    <IconMinus color={theme.colors.yellow[5]} size={18} />
                   ) : null
                 }
               >
                 {browsingLevelLabels[rating]}
               </Badge>
-              {!isPending && !isCorrect && (
+              {!isPending && !isCorrect && !isInconclusive && (
                 <Badge className="border border-blue-5" variant="filled" color="gray">
                   {browsingLevelLabels[image.nsfwLevel as NsfwLevel]}
+                </Badge>
+              )}
+              {isInconclusive && (
+                <Badge className="border border-yellow-5" variant="filled" color="gray">
+                  No Consensus
                 </Badge>
               )}
             </div>
             {!isPending && (
               <Badge
                 variant="filled"
-                color={!isPending ? (isCorrect ? 'green' : 'red') : 'gray'}
+                color={
+                  isInconclusive ? 'yellow' : !isPending ? (isCorrect ? 'green' : 'red') : 'gray'
+                }
                 leftSection="XP"
               >
-                {isCorrect ? `+${totalExp}` : totalExp}
+                {isInconclusive ? '0' : isCorrect ? `+${totalExp}` : totalExp}
               </Badge>
             )}
           </div>

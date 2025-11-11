@@ -18,6 +18,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { ClavataTag } from '~/server/integrations/clavata';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
@@ -87,7 +88,13 @@ export default function MetadataTester() {
           placeholder="Leave empty for default."
           label="Clavata Policy ID"
         />
-        <Dropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} maxFiles={1} loading={isLoading}>
+        <Dropzone
+          onDrop={onDrop}
+          accept={IMAGE_MIME_TYPE}
+          maxFiles={1}
+          loading={isLoading}
+          useFsAccessApi={!isAndroidDevice()}
+        >
           <Dropzone.Accept>
             <IconUpload
               size={50}

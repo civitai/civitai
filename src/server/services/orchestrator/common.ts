@@ -36,7 +36,7 @@ import {
   queryWorkflows,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   allInjectableResourceIds,
@@ -150,7 +150,7 @@ export async function getGenerationResourceData(
     )
   ) {
     // Confirm the user has a subscription:
-    const subscription = await getUserSubscription({ userId: user.id });
+    const subscription = await getHighestTierSubscription(user.id);
     if (!subscription)
       throw throwBadRequestError('Using Private resources require an active subscription.');
   }

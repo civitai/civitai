@@ -47,12 +47,15 @@ export default function ReviewTrainingDataPage() {
           <div className="flex flex-col gap-3">
             {flatData?.map((item) => (
               <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
-                <div className="flex flex-col">
+                <div className="flex flex-col items-center">
                   <Text lineClamp={1}>
                     {item.model.name} - {item.name}
                   </Text>
                   <Text c="dimmed" size="xs">
                     Created: {formatDate(item.createdAt)}
+                  </Text>
+                  <Text c="dimmed" size="xs">
+                    WorkflowId: {item.workflowId}
                   </Text>
                 </div>
                 <Button size="compact-sm" component={Link} href={`${router.asPath}/${item.id}`}>

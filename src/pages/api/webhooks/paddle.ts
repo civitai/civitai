@@ -7,7 +7,7 @@ import { dbWrite } from '~/server/db/client';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 import { getPaddle } from '~/server/paddle/client';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { userCapCaches } from '~/server/services/creator-program.service';
+import { getUserCapCache } from '~/server/services/creator-program.service';
 import {
   getBuzzPurchaseItem,
   manageSubscriptionTransactionComplete,
@@ -166,8 +166,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               serviceTier: subscription?.tier ?? serviceTier ?? null,
             });
 
-            userCapCaches.get('yellow')?.bust(user.id);
-            userCapCaches.get('green')?.bust(user.id);
+            getUserCapCache('yellow')?.bust(user.id);
+            getUserCapCache('green')?.bust(user.id);
           }
         }
 

@@ -1,18 +1,92 @@
 import produce from 'immer';
+import { useMemo } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { GetAssociatedResourcesInput } from '~/server/schema/model.schema';
 import type { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function useQueryRecommendedResources(
-  payload: Pick<RecommendationRequest, 'modelVersionId'>,
-  options?: { enabled?: boolean }
+  payload: Omit<GetAssociatedResourcesInput, 'browsingLevel'> &
+    Pick<RecommendationRequest, 'modelVersionId'>
 ) {
-  const { data = [], ...rest } = trpc.recommenders.getResourceRecommendations.useQuery(
-    { ...payload },
-    options
+  const { fromId, modelVersionId, type } = payload;
+  const browsingLevel = useBrowsingLevelDebounced();
+  const features = useFeatureFlags();
+
+  const {
+    data: associatedModels = [],
+    isLoading: loadingAssociated,
+    isRefetching: refetchingAssociated,
+  } = trpc.model.getAssociatedResourcesCardData.useQuery({
+    fromId,
+    type,
+    browsingLevel,
+  });
+  const {
+    data: recommendedResources = [],
+    isInitialLoading: loadingRecommended,
+    isRefetching: refetchingRecommended,
+  } = trpc.recommenders.getResourceRecommendations.useQuery(
+    { modelVersionId, browsingLevel },
+    { enabled: !!modelVersionId && features.recommenders }
   );
 
-  return { data, ...rest };
+  // Memoize combined data to prevent unnecessary re-renders
+  const combinedData = useMemo(
+    () => [...associatedModels, ...recommendedResources],
+    [associatedModels, recommendedResources]
+  );
+
+  // Partition data by resourceType for appropriate filtering
+  const modelItems = useMemo(
+    () =>
+      combinedData.filter(
+        (item) => item.resourceType === 'model' || item.resourceType === 'recommended'
+      ),
+    [combinedData]
+  );
+
+  const articleItems = useMemo(
+    () => combinedData.filter((item) => item.resourceType === 'article'),
+    [combinedData]
+  );
+
+  // Apply hidden preferences to models (including 'recommended' type)
+  const {
+    items: filteredModels,
+    hiddenCount: modelsHiddenCount,
+    loadingPreferences: modelsLoading,
+  } = useApplyHiddenPreferences({
+    type: 'models',
+    data: modelItems,
+    isRefetching: refetchingAssociated || refetchingRecommended,
+  });
+
+  // Apply hidden preferences to articles
+  const {
+    items: filteredArticles,
+    hiddenCount: articlesHiddenCount,
+    loadingPreferences: articlesLoading,
+  } = useApplyHiddenPreferences({
+    type: 'articles',
+    data: articleItems,
+    isRefetching: refetchingAssociated || refetchingRecommended,
+  });
+
+  // Merge filtered results
+  const filteredResources = useMemo(
+    () => [...filteredModels, ...filteredArticles],
+    [filteredModels, filteredArticles]
+  );
+
+  return {
+    recommendedResources: filteredResources,
+    hiddenCount: modelsHiddenCount + articlesHiddenCount,
+    isLoading: loadingAssociated || loadingRecommended || modelsLoading || articlesLoading,
+  };
 }
 
 export function useToggleResourceRecommendationMutation() {
@@ -45,6 +119,6 @@ export function useToggleResourceRecommendationMutation() {
 
   return {
     toggleResourceRecommendation: handleToggle,
-    isLoading: toggleRecommenderMutation.isLoading,
+    isLoading: toggleRecommenderMutation.isPending,
   };
 }

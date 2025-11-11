@@ -6,7 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/caches';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 
 const logError = (name: string, details: Record<string, unknown>) => {
   logToAxiom({ type: 'error', name, details }, 'clickhouse').catch(() => {
@@ -61,6 +61,8 @@ export const updateEntityMetric = async ({
   metricType: EntityMetric_MetricType_Type;
   amount?: number;
 }) => {
+  if (await isFlipt('disable-app-entity-metrics')) return;
+
   const logData = JSON.stringify({
     userId: ctx.user?.id,
     entityType,
