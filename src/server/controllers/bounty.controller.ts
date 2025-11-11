@@ -177,7 +177,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             bounty.details as BountyDetailsSchema,
             ctx?.user?.isModerator
           )
-        : null,
+        : ({} as BountyDetailsSchema),
       images: images.map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,

@@ -115,8 +115,8 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           const { shouldMarkNSFW, metrics, reason, matchedWords } =
             profanityFilter.evaluateContent(textToCheck);
 
-          // Case 1: Mark as NSFW if threshold exceeded and not already marked
-          if (shouldMarkNSFW && !record.nsfw) {
+          // Case 1: Mark as NSFW if threshold exceeded
+          if (shouldMarkNSFW) {
             const newLockedProperties =
               record.lockedProperties && !record.lockedProperties.includes('nsfw')
                 ? [...record.lockedProperties, 'nsfw']
@@ -298,7 +298,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             profanityFilter.evaluateContent(textToCheck);
 
           // Case 1: Mark as NSFW if threshold exceeded and not properly marked
-          if (shouldMarkNSFW && (record.userNsfwLevel <= NsfwLevel.PG13 || !record.nsfw)) {
+          if (shouldMarkNSFW && record.userNsfwLevel <= NsfwLevel.PG13) {
             const newLockedProperties = [
               ...(record.lockedProperties || []),
               'nsfw',
@@ -481,8 +481,8 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           const { shouldMarkNSFW, metrics, reason, matchedWords } =
             profanityFilter.evaluateContent(textToCheck);
 
-          // Case 1: Mark as NSFW if threshold exceeded and not already marked
-          if (shouldMarkNSFW && !record.nsfw) {
+          // Case 1: Mark as NSFW if threshold exceeded
+          if (shouldMarkNSFW) {
             const newLockedProperties =
               record.lockedProperties && !record.lockedProperties.includes('nsfw')
                 ? [...record.lockedProperties, 'nsfw']
