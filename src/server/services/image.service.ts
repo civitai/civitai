@@ -428,7 +428,7 @@ export async function handleBlockImages({
       needsReview: true,
     },
   });
-  await Limiter().process(images, async (images) => {
+  await Limiter({ batchSize: 100, limit: 10 }).process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const invalidateExistence = invalidateManyImageExistence(ids);
 

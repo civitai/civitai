@@ -88,24 +88,16 @@ export const moderateImageHandler = async ({
       moderatorId: ctx.user.id,
     });
     if (input.reviewAction === 'block') {
-      const ids = images.map((x) => x.id);
-      const imageTags = await getTagNamesForImages(ids);
-      const imageResources = await getResourceIdsForImages(ids);
       await Limiter().process(images, (images) =>
         ctx.track.images(
           images.map(({ id, userId, nsfwLevel, needsReview }) => {
-            const tosReason = needsReview ?? 'other';
-            const tags = imageTags[id] ?? [];
-            tags.push(tosReason);
-            const resources = imageResources[id] ?? [];
-
             return {
               type: 'DeleteTOS',
               imageId: id,
               nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-              tags,
-              resources,
-              tosReason: tosReason,
+              tags: [],
+              resources: [],
+              tosReason: needsReview ?? 'other',
               ownerId: userId,
             };
           })
