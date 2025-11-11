@@ -101,6 +101,7 @@ export function useToggleResourceRecommendationMutation() {
           const affectedVersion = model.modelVersions.find((v) => v.id === result.id);
           if (!affectedVersion) return model;
 
+          if (affectedVersion.meta == null) affectedVersion.meta = {};
           affectedVersion.meta.allowAIRecommendations = result.meta.allowAIRecommendations;
         })
       );

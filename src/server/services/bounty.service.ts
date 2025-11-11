@@ -409,14 +409,21 @@ export const upsertBounty = async ({
     // don't allow updating of locked properties
     for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
-    // Check bounty name and description for profanity
+    // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+    const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity is detected, mark bounty as NSFW and add to locked properties
-    if (isProfane && !data.nsfw) {
-      data.details = { ...data.details, profanityMatches: matchedWords };
+    // If profanity exceeds thresholds, mark bounty as NSFW
+    if (evaluation.shouldMarkNSFW && !data.nsfw) {
+      data.details = {
+        ...data.details,
+        profanityMatches: evaluation.matchedWords,
+        profanityEvaluation: {
+          reason: evaluation.reason,
+          metrics: evaluation.metrics,
+        },
+      };
       data.nsfw = true;
       data.lockedProperties =
         data.lockedProperties && !data.lockedProperties.includes('nsfw')

@@ -1469,14 +1469,21 @@ export const upsertModel = async (
       if (data[key] !== undefined) delete data[key];
     }
 
-    // Check model name and description for profanity
+    // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+    const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity is detected, mark model as NSFW and add to locked properties
-    if (isProfane && !data.nsfw) {
-      meta = { ...(meta ?? {}), profanityMatches: matchedWords };
+    // If profanity exceeds thresholds, mark model as NSFW
+    if (evaluation.shouldMarkNSFW && !data.nsfw) {
+      meta = {
+        ...(meta ?? {}),
+        profanityMatches: evaluation.matchedWords,
+        profanityEvaluation: {
+          reason: evaluation.reason,
+          metrics: evaluation.metrics,
+        },
+      };
       data.nsfw = true;
       data.lockedProperties =
         data.lockedProperties && !data.lockedProperties.includes('nsfw')

@@ -50,7 +50,7 @@ export default function AssociateModelsModal({
               </Stack>
               <Switch
                 onChange={handleToggleAIRecommendations}
-                defaultChecked={selectedVersion?.meta.allowAIRecommendations}
+                defaultChecked={selectedVersion?.meta?.allowAIRecommendations ?? false}
                 disabled={isLoading}
               />
             </Group>
