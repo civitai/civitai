@@ -203,7 +203,10 @@ export const AdvancedSettings = ({
     const randomCaptions: string[] = [];
     const usedIndices = new Set<number>();
 
-    while (randomCaptions.length < numPromptsNeeded && randomCaptions.length < captionsWithContent.length) {
+    while (
+      randomCaptions.length < numPromptsNeeded &&
+      randomCaptions.length < captionsWithContent.length
+    ) {
       const randomIndex = Math.floor(Math.random() * captionsWithContent.length);
       if (!usedIndices.has(randomIndex)) {
         usedIndices.add(randomIndex);
@@ -220,7 +223,8 @@ export const AdvancedSettings = ({
 
     showInfoNotification({
       title: 'Sample prompts pre-filled',
-      message: 'Sample prompts have been pre-filled with random captions from your uploaded images.',
+      message:
+        'Sample prompts have been pre-filled with random captions from your uploaded images.',
       autoClose: 8000,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -338,7 +342,9 @@ export const AdvancedSettings = ({
                 <Text size="xs" c="dimmed">
                   {selectedRun.params.engine === 'ai-toolkit'
                     ? `AI Toolkit requires sample prompts. These are pre-filled from your image captions.`
-                    : `Set your own prompts for any of the {isVideo ? '2' : '3'} sample {isVideo ? 'videos' : 'images'} we generate for each epoch.`}
+                    : `Set your own prompts for any of the ${isVideo ? '2' : '3'} sample ${
+                        isVideo ? 'videos' : 'images'
+                      } we generate for each epoch.`}
                 </Text>
               )}
             </Stack>
@@ -347,10 +353,19 @@ export const AdvancedSettings = ({
             <Stack p="sm">
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #1`}
-                placeholder={selectedRun.params.engine === 'ai-toolkit' ? 'Required - pre-filled from captions' : 'Automatically set'}
+                placeholder={
+                  selectedRun.params.engine === 'ai-toolkit'
+                    ? 'Required - pre-filled from captions'
+                    : 'Automatically set'
+                }
                 value={selectedRun.samplePrompts[0]}
                 required={selectedRun.params.engine === 'ai-toolkit'}
-                error={selectedRun.params.engine === 'ai-toolkit' && !selectedRun.samplePrompts[0]?.trim() ? 'Required for AI Toolkit' : undefined}
+                error={
+                  selectedRun.params.engine === 'ai-toolkit' &&
+                  !selectedRun.samplePrompts[0]?.trim()
+                    ? 'Required for AI Toolkit'
+                    : undefined
+                }
                 onChange={(event) => {
                   doUpdate({
                     samplePrompts: [
@@ -363,10 +378,19 @@ export const AdvancedSettings = ({
               />
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #2`}
-                placeholder={selectedRun.params.engine === 'ai-toolkit' ? 'Required - pre-filled from captions' : 'Automatically set'}
+                placeholder={
+                  selectedRun.params.engine === 'ai-toolkit'
+                    ? 'Required - pre-filled from captions'
+                    : 'Automatically set'
+                }
                 value={selectedRun.samplePrompts[1]}
                 required={selectedRun.params.engine === 'ai-toolkit'}
-                error={selectedRun.params.engine === 'ai-toolkit' && !selectedRun.samplePrompts[1]?.trim() ? 'Required for AI Toolkit' : undefined}
+                error={
+                  selectedRun.params.engine === 'ai-toolkit' &&
+                  !selectedRun.samplePrompts[1]?.trim()
+                    ? 'Required for AI Toolkit'
+                    : undefined
+                }
                 onChange={(event) => {
                   doUpdate({
                     samplePrompts: [
@@ -380,10 +404,19 @@ export const AdvancedSettings = ({
               {!isVideo && (
                 <TextInputWrapper
                   label={`${isVideo ? 'Video' : 'Image'} #3`}
-                  placeholder={selectedRun.params.engine === 'ai-toolkit' ? 'Required - pre-filled from captions' : 'Automatically set'}
+                  placeholder={
+                    selectedRun.params.engine === 'ai-toolkit'
+                      ? 'Required - pre-filled from captions'
+                      : 'Automatically set'
+                  }
                   value={selectedRun.samplePrompts[2]}
                   required={selectedRun.params.engine === 'ai-toolkit'}
-                  error={selectedRun.params.engine === 'ai-toolkit' && !selectedRun.samplePrompts[2]?.trim() ? 'Required for AI Toolkit' : undefined}
+                  error={
+                    selectedRun.params.engine === 'ai-toolkit' &&
+                    !selectedRun.samplePrompts[2]?.trim()
+                      ? 'Required for AI Toolkit'
+                      : undefined
+                  }
                   onChange={(event) => {
                     doUpdate({
                       samplePrompts: [

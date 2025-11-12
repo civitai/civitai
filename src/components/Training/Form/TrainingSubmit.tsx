@@ -384,13 +384,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       }
 
       if (r.params.engine === 'ai-toolkit') {
-        const numPromptsNeeded = thisMediaType === 'video' ? 2 : 3;
+        const numPromptsNeeded = 1;
         const filledPrompts = r.samplePrompts.filter((p) => p && p.trim().length > 0);
 
         if (filledPrompts.length < numPromptsNeeded) {
           showErrorNotification({
             error: new Error(
-              `AI Toolkit requires all ${numPromptsNeeded} sample prompts to be filled. Currently ${filledPrompts.length} of ${numPromptsNeeded} are filled.`
+              `AI Toolkit requires at least ${numPromptsNeeded} sample prompt (s) to train.`
             ),
             title: 'Sample prompts required',
             autoClose: false,
@@ -527,11 +527,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
         // Transform optimizerType
         const optimizerTypeMap: Record<string, string> = {
-          'AdamW8Bit': 'adamw8bit',
-          'Adafactor': 'adafactor',
-          'Prodigy': 'prodigy',
+          AdamW8Bit: 'adamw8bit',
+          Adafactor: 'adafactor',
+          Prodigy: 'prodigy',
         };
-        const optimizerType = optimizerTypeMap[paramData.optimizerType] || paramData.optimizerType.toLowerCase();
+        const optimizerType =
+          optimizerTypeMap[paramData.optimizerType] || paramData.optimizerType.toLowerCase();
 
         finalParams = {
           engine: 'ai-toolkit',
