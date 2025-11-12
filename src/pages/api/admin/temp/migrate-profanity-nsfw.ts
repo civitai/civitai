@@ -112,8 +112,10 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.name].filter(Boolean).join(' ');
-          const { shouldMarkNSFW, metrics, reason, matchedWords } =
-            profanityFilter.evaluateContent(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, matchedWords } = profanityFilter.evaluateContent(
+            textToCheck,
+            { diversityThreshold: 3, shortContentWordLimit: 1 }
+          );
 
           // Case 1: Mark as NSFW if threshold exceeded
           if (shouldMarkNSFW) {
@@ -623,5 +625,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
     console.log('\n=== CSV OUTPUT ===');
     console.log(csvContent);
     console.log(`\nTotal records with profanity: ${csvRecords.length}`);
+
+    return res.send(csvContent);
   }
 }

@@ -32,7 +32,6 @@ const customLeetSpeakMappings = new Map<number, number>([
   ['@'.charCodeAt(0), 'a'.charCodeAt(0)], // @ → a
   ['$'.charCodeAt(0), 's'.charCodeAt(0)], // $ → s
   ['!'.charCodeAt(0), 'i'.charCodeAt(0)], // ! → i
-  ['/'.charCodeAt(0), 'l'.charCodeAt(0)], // / → l
 
   // EXCLUDED: '(' → 'c' (causes false positives with words like "untucked")
   // EXCLUDED: ')' (not in original, but being explicit)
