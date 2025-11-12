@@ -86,7 +86,6 @@ export default WebhookEndpoint(async (req, res) => {
           token: env.ORCHESTRATOR_ACCESS_TOKEN,
           path: { workflowId },
         });
-        console.log(workflow);
         await updateRecords(workflow, status);
       } catch (e: unknown) {
         const err = e as Error | undefined;
@@ -153,7 +152,7 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
       epochNumber: epoch.epochNumber ?? -1,
       blobUrl: epoch.model?.url ?? '',
       blobSize: 0, // Not provided in TrainingStep
-      sampleImages: (epoch.samples ?? []).map((s) => s.url),
+      sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
     }));
   } else if (stepType === 'imageResourceTraining') {
     // ImageResourceTrainingStep: legacy format

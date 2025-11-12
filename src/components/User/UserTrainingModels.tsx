@@ -302,7 +302,10 @@ export default function UserTrainingModels() {
                 const trainingParams = thisTrainingDetails?.params;
                 const hasTrainingParams = !!trainingParams;
 
-                const numEpochs = trainingParams?.maxTrainEpochs ?? 0;
+                const numEpochs =
+                  trainingParams?.engine === 'ai-toolkit'
+                    ? trainingParams?.epochs ?? 0
+                    : trainingParams?.maxTrainEpochs ?? 0;
                 const epochsDone =
                   (thisFileMetadata?.trainingResults?.version === 2
                     ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
