@@ -128,10 +128,17 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       }
     }, []);
 
-    const handleLoadedData = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
-      onLoadedData?.(e);
+    const handleLoadedData = useCallback(
+      (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        onLoadedData?.(e);
+        setLoaded(true);
+        e.currentTarget.style.opacity = '1';
+      },
+      [onLoadedData]
+    );
+
+    const handleCanPlay = useCallback(() => {
       setLoaded(true);
-      e.currentTarget.style.opacity = '1';
     }, []);
 
     const handleToggleMuted = useCallback(() => {
@@ -156,7 +163,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       [setVolume]
     );
 
-    const showCustomControls = loaded && controls && !html5Controls;
+    const showCustomControls = controls && !html5Controls;
     const enableAudioControl = ref.current && hasAudio(ref.current);
     const inSafari =
       typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
@@ -244,6 +251,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           muted={state.muted}
           style={style}
           onLoadedData={handleLoadedData}
+          onCanPlay={handleCanPlay}
           onLoad={onLoad}
           controls={html5Controls}
           onClick={handleTogglePlayPause}
@@ -259,7 +267,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
-          preload={inSafari ? 'auto' : 'none'}
+          preload={inSafari ? 'auto' : controls && !html5Controls ? 'metadata' : 'none'}
           onError={onError}
           {...props}
         >
@@ -319,7 +327,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                 size="lg"
                 radius="xl"
               >
-                {document.fullscreenElement ? (
+                {typeof document !== 'undefined' && document.fullscreenElement ? (
                   <IconMinimize size={16} />
                 ) : (
                   <IconMaximize size={16} />
