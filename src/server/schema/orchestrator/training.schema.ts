@@ -68,10 +68,6 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('wan'),
     modelVariant: z.enum(['2.1', '2.2']),
   }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('chroma'),
-    modelVariant: z.undefined().optional(),
-  }),
 ]);
 
 export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParams>;
