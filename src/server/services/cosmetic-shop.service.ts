@@ -528,6 +528,7 @@ export const purchaseCosmeticShopItem = async ({
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
     description: `Cosmetic purchase - ${shopItem.title}`,
+    externalTransactionId: `cosmetic-purchase-${userId}-${shopItemId}-${Date.now()}`,
   });
 
   const transactionId = transaction.transactionId;
