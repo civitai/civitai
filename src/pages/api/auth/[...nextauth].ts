@@ -43,7 +43,10 @@ import {
 } from '~/server/utils/session-helpers';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { createLogger } from '~/utils/logging';
 import { getRandomInt } from '~/utils/number-helpers';
+
+const log = createLogger('nextauth', 'blue');
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -194,9 +197,22 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         return refreshedToken;
       },
       async session({ session, token }) {
-        if (token.user) {
-          session.user = token.user as Session['user'];
+        if (!token.user || !token.id) {
+          return session;
         }
+
+        // Validate and refresh token on every request (this runs on every getServerSession call)
+        // This ensures invalidated sessions are caught immediately, not just when the JWT renews
+        const validatedToken = await refreshToken(token);
+
+        if (!validatedToken) {
+          // Token was invalidated or expired - return empty session to force logout
+          return (session = {} as Session); // Return without user to force logout
+        }
+
+        // Token is valid, use the (potentially refreshed) user data
+        session.user = validatedToken.user as Session['user'];
+
         return session;
       },
       async redirect({ url, baseUrl }) {

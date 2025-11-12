@@ -67,47 +67,63 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
   // Enforce token ID requirement
   if (!token.id) return null;
 
+  const tokenId = token.id as string;
+  const userTokenKey = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
+
+  // Use Redis pipeline to batch all read operations into a single round trip
+  // This reduces network latency from 3 sequential calls to 1 call
+  const pipeline = sysRedis.multi();
+  pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
+  pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
+  pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+
+  const results = await pipeline.exec();
+
+  // Handle pipeline errors
+  if (!results) {
+    log(`Pipeline failed for token ${tokenId}, allowing session to continue`);
+    return token;
+  }
+
+  // Extract results (multi().exec() in node-redis returns array of results directly)
+  const tokenState = results[0] as unknown as string | null;
+  const exists = results[1] as unknown as number;
+  const allInvalidationDateStr = results[2] as unknown as string | null;
+
+  // Handle explicit invalidation
+  if (tokenState === 'invalid') {
+    // Remove the user token tracking since it's invalid
+    await sysRedis.hDel(userTokenKey as any, tokenId);
+    return null; // Explicit invalidation - force logout
+  }
+
+  // Determine if token should be refreshed
   let shouldRefresh = false;
 
   if (!token.signedAt) {
     shouldRefresh = true;
   }
 
-  const tokenId = token.id as string;
-
-  // Check token state in INVALID_TOKENS hash (single Redis call)
-  const tokenState = await sysRedis.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
-  if (tokenState === 'invalid') {
-    // Remove the user token tracking since it's invalid
-    await sysRedis.hDel(`${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}` as any, tokenId);
-    return null; // Explicit invalidation - force logout
-  } else if (tokenState === 'refresh') {
+  // Handle refresh marker
+  if (tokenState === 'refresh') {
     shouldRefresh = true;
     // Remove from hash after detecting it so it only refreshes once
     await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
     log(`Token ${tokenId} marked for refresh for user ${user.id}`);
   }
 
-  if (!shouldRefresh) {
-    const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
-
-    // Check if token exists in hash (expired tokens are automatically removed by Redis)
-    const exists = await sysRedis.hExists(key as any, tokenId);
-    if (!exists) {
-      // Token not found - force refresh to track it
-      shouldRefresh = true;
-      log(`Found untracked token ${tokenId} for user ${user.id}, forcing refresh`);
-    }
+  // Check if token exists in tracking hash
+  if (!shouldRefresh && !exists) {
+    // Token not found - force refresh to track it
+    shouldRefresh = true;
+    log(`Found untracked token ${tokenId} for user ${user.id}, forcing refresh`);
   }
 
   // Check if all sessions should be refreshed
-  if (!shouldRefresh) {
-    const allInvalidationDateStr = await sysRedis.get(REDIS_SYS_KEYS.SESSION.ALL);
-    if (allInvalidationDateStr) {
-      const allInvalidationDate = new Date(allInvalidationDateStr);
-      if (allInvalidationDate.getTime() > (token.signedAt as number)) {
-        shouldRefresh = true;
-      }
+  if (!shouldRefresh && allInvalidationDateStr) {
+    const allInvalidationDate = new Date(allInvalidationDateStr);
+    if (allInvalidationDate.getTime() > (token.signedAt as number)) {
+      shouldRefresh = true;
     }
   }
 
