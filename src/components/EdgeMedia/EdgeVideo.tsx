@@ -88,6 +88,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const [loaded, setLoaded] = useState(false);
     const [showPlayIndicator, setShowPlayIndicator] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
+    const [autoplayFailed, setAutoplayFailed] = useState(false);
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
       defaultValue: state.muted ? 0 : 0.5,
@@ -163,7 +164,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       [setVolume]
     );
 
-    const showCustomControls = controls && !html5Controls;
+    const showCustomControls = loaded && controls && !html5Controls;
     const enableAudioControl = ref.current && hasAudio(ref.current);
     const inSafari =
       typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
@@ -211,14 +212,21 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         observer.unobserve(videoElem);
         observer.disconnect();
       };
-    }, [threshold, options?.anim, loaded]);
+    }, [threshold, options?.anim, loaded, props.autoPlay]);
 
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (isCurrentStack && (canPlay || props.autoPlay)) videoElem.play();
-      else videoElem.pause();
-    }, [canPlay, loaded, isCurrentStack]);
+      if (isCurrentStack && (canPlay || props.autoPlay)) {
+        videoElem.play().catch(() => {
+          // Autoplay failed, user interaction required
+          console.log('auto play failed');
+          setAutoplayFailed(true);
+        });
+      } else {
+        videoElem.pause();
+      }
+    }, [canPlay, loaded, isCurrentStack, props.autoPlay]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -255,7 +263,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           onLoad={onLoad}
           controls={html5Controls}
           onClick={handleTogglePlayPause}
-          onPlaying={() => setIsPlaying(true)}
+          onPlaying={() => {
+            setIsPlaying(true);
+            setAutoplayFailed(false);
+          }}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
             !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined;
@@ -274,7 +285,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
           <source src={videoUrl} type="video/mp4" />
         </video>
-        {!options?.anim && !showCustomControls && !html5Controls && !isPlaying && (
+        {((!options?.anim && !showCustomControls && !html5Controls && !isPlaying) ||
+          autoplayFailed) && (
           <IconPlayerPlayFilled
             className={clsx(styles.playButton, 'pointer-events-none z-10 absolute-center')}
           />
