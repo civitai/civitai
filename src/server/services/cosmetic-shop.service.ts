@@ -23,6 +23,7 @@ import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
   refundMultiAccountTransaction,
+  refundTransaction,
 } from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
@@ -434,15 +435,11 @@ export const getShopSectionsWithItems = async ({
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
-  buzzTypes = ['yellow'],
+  buzzType = 'yellow',
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
-  buzzTypes?: BuzzSpendType[];
+  buzzType?: BuzzSpendType;
 }) => {
-  if (buzzTypes && buzzTypes.includes('blue')) {
-    throw new Error('You cannot use Blue Buzz to purchase cosmetics.');
-  }
-
   const shopItem = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
     select: {
@@ -523,20 +520,18 @@ export const purchaseCosmeticShopItem = async ({
   const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
 
   // Confirms user has enough buzz:
-  const prefix = `purchase-cosmetic-${shopItem.id}-${userId}`;
-  const data = await createMultiAccountBuzzTransaction({
+  const transaction = await createBuzzTransaction({
     fromAccountId: userId,
     // Can use a combination of all these accounts:
-    fromAccountTypes: buzzTypes,
+    fromAccountType: buzzType,
     toAccountId: 0, // bank
     amount: shopItem.unitAmount,
     type: TransactionType.Purchase,
     description: `Cosmetic purchase - ${shopItem.title}`,
-    externalTransactionIdPrefix: prefix,
   });
 
-  const transactionId = prefix;
-  if (!transactionId || (data.transactionCount ?? 0) === 0) {
+  const transactionId = transaction.transactionId;
+  if (!transactionId) {
     throw new Error('There was an error creating the transaction');
   }
 
@@ -621,10 +616,7 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: prefix,
-      description: `Failed to purchase cosmetic - ${shopItem.title}`,
-    });
+    await refundTransaction(transactionId, `Failed to purchase cosmetic - ${shopItem.title}`);
 
     throw new Error('Failed to purchase cosmetic');
   }

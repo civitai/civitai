@@ -94,12 +94,12 @@ export const cosmeticShopRouter = router({
     .input(purchaseCosmeticShopItemInput)
     .mutation(({ input, ctx }) => {
       // Calculate domain-allowed account types at router level
-      const allowedAccountTypes = getAllowedAccountTypes(ctx.features);
+      const [buzzType] = getAllowedAccountTypes(ctx.features);
 
       return purchaseCosmeticShopItem({
         ...input,
         userId: ctx.user.id,
-        buzzTypes: allowedAccountTypes,
+        buzzType,
       });
     }),
   getPreviewImages: protectedProcedure.input(getPreviewImagesInput).query(({ input, ctx }) => {
