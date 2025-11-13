@@ -108,7 +108,7 @@ function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 5;
+const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.query.type === 'new') {
@@ -253,8 +253,8 @@ async function updateImage(
         let shouldAddToQueue = true;
         if (flags.nsfw) {
           queueDetails.priority = 2;
-          // Use image ID for deterministic sampling (20% inclusion rate)
-          shouldAddToQueue = id % KONO_NSFW_SAMPLING_RATE === 0; // 1/5 = 20%
+          // Use random sampling for 20% inclusion rate
+          shouldAddToQueue = Math.random() < KONO_NSFW_SAMPLING_RATE;
         }
 
         if (reviewKey) {
@@ -987,8 +987,6 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     if (reviewer === 'moderators') {
       flags.tagReview = true;
       reviewTags.push(...tags.filter((x) => tagNames.includes(x.name)));
-    } else if (reviewer === 'knights') {
-      // TODO @manuelurenah - Add knight review logic
     }
   }
 

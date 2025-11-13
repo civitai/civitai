@@ -1,0 +1,718 @@
+{
+  "id": "18085-20251112182553704",
+  "createdAt": "2025-11-12T18:25:53.7041808Z",
+  "transactions": {
+    "list": [
+      {
+        "type": "debit",
+        "amount": 32,
+        "id": "28619f9c-1f5b-4492-b6b1-9cbcd37690fb",
+        "accountType": "yellow"
+      }
+    ]
+  },
+  "metadata": {},
+  "status": "succeeded",
+  "startedAt": "2025-11-12T18:25:56.473453Z",
+  "completedAt": "2025-11-12T18:33:10.8835777Z",
+  "tags": [
+    "civitai",
+    "training"
+  ],
+  "arguments": {},
+  "steps": [
+    {
+      "$type": "training",
+      "input": {
+        "ecosystem": "sd1",
+        "epochs": 10,
+        "resolution": 512,
+        "lr": 0.0005,
+        "textEncoderLr": 0.0001,
+        "trainTextEncoder": true,
+        "lrScheduler": "cosine",
+        "optimizerType": "adamw8bit",
+        "networkDim": 16,
+        "networkAlpha": 8,
+        "noiseOffset": 0.1,
+        "minSnrGamma": 5,
+        "flipAugmentation": false,
+        "shuffleTokens": false,
+        "keepTokens": 0,
+        "engine": "ai-toolkit",
+        "model": "urn:air:sd1:checkpoint:civitai:84586@89927",
+        "trainingData": {
+          "type": "zip",
+          "sourceUrl": "urn:air:other:other:civitai-r2:civitai-delivery-worker-prod@training-images/18085/2400703TrainingData.9SKQ.zip",
+          "count": 3
+        },
+        "samples": {
+          "prompts": [
+            "no humans, pokemon (creature), solo, flower, full body, brown eyes, looking at viewer, closed mouth, smile, grass",
+            "no humans, pokemon (creature), solo, flower, full body, brown eyes, looking at viewer, closed mouth, smile, grass",
+            "no humans, pokemon (creature), solo, flower, outdoors, grass, :3, brown eyes, full body, closed mouth"
+          ]
+        }
+      },
+      "output": {
+        "moderationStatus": "approved",
+        "epochs": [
+          {
+            "epochNumber": 1,
+            "model": {
+              "id": "A4VT89XFN2PDR52TH8XTBT84F0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/A4VT89XFN2PDR52TH8XTBT84F0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-VZXtTZ2r4IQHzGmcRikizNs91ucqetV7YGImey2XlT2FqFqawFtzFhNLl4mbrj_-jRXQ9bFkJjtYwiRHc0GPFCg6f_KE2fUOWsP9XDdLtj4k7bZBc9ipO4VYdfBxvK6QWbufn93mb2BKVufqwQXqTYTvWQ-kD0f0g3DbYxw4beo0ooH3T0kAsMh-bAjwGAguRWlJvvViOT9NWsM-DnxtEfHovhcQE-A8thqYC5UHXUrw\u0026exp=2025-11-19T18:37:13.3627541Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3627541Z"
+            },
+            "samples": [
+              {
+                "id": "CVKF1NEP1YK889FQZYKEKMYY60.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/CVKF1NEP1YK889FQZYKEKMYY60.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WlvUP7scBJtqd5YXntlcUmpMG4UaOvBR2m-mjaOUtD1BNlHTMJ0Ktik_234NoSJwB43O0pTE7k0ZP80bA1rj1qlPqYSjKlv0aV-wi2BdWqJKHhewRoRMRhBfZalBBgRp075Zs1w7cK3aOu-iw4J5gLeKPlwPzyhJeDyXLTyhHdBSRqnPosYvYNoX0hb6PeWKPWW94SQubmyVLvrJvOsDLuzCTezQCjWFWmYxF5mj57MJ2kpDCYzms-UI5rlq2hzhp7NYJG_83fMhVMnao6Piqtp5t0Zm6FzVTFd8ioUUKs6A\u0026exp=2025-11-19T18:37:13.3627541Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3627541Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "7AW10PHQSCF3315EK8PJ805380.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/7AW10PHQSCF3315EK8PJ805380.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-Vbc6ETxwk8ZUqHu6NAEg0zPocWkxVJHuDLHH873QE5N9bLaLQhGOavBQ17IA_yTSpV9xtWmtvURxlG35YuoVIRHD6CwqtV7t9SnpkTDab8Gm1xps55Vl4Oq2a0wa4Lmf5ZRYOXBGr2cCuBCSnqxlCgRLx2NvXFerib3ACyKhBnFqXP4ztW5OE51vNmPa9iJSB33xPqb5wSN69dkN-G2dyZ7FoMeY4aNKgSsElsA1fdRPO-Y_oPhlalHo4-V5oiQcVtnhFBE8AKJYgejIZJUR9Ls2PArcofCMLZVPHrYMyN5w\u0026exp=2025-11-19T18:37:13.3627541Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3627541Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "8182PZTESDXH8YW47CEFW925R0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/8182PZTESDXH8YW47CEFW925R0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UPTcOhP5kmhH5Qeej2X3NuTXOsU1jTNZ6qVISxCqvdqW0MAI2EJhQ_vch32WdWIkd4ybi8mJ9l_YjOrE29OiGq2WzLqbdbj8YrBuc6eoGer8p3sXi6ZXfue-KhaNEC60bDsFz43Zf3mIIEFq7GacBwi5WR-tykLmX8CseCF84uRVasB6_5tc2YJFTBM2GHeTvBxzoXy-pbp8fTsiMlGS5IHU3Gc9hNe52uli50-FEK7tcZEY3IWGClQasskIfsdSi6TcocWXhHbvSKxaOSdBCit2p83RvgzIDzqCbqUN4BjQ\u0026exp=2025-11-19T18:37:13.3627541Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3627541Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 2,
+            "model": {
+              "id": "DKYTJVPM56ZXYWHQ9J82MTVCE0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/DKYTJVPM56ZXYWHQ9J82MTVCE0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-Wfqt2j0wBoDzzn8msWUnr_0JrMt_-IZ5hlAvGcpAG-23Vfv1Z0Z5UssKxjjrQ2TMfCmlD6_pfjCPCz_sQiRHkD1isxgbeVbvGVy8CutrmxKTfm9v8aFGnVk4gVxBy55ebM7gZEHGivjBtkQSOeTH0iJmS_gMiN0fpxJLMKURB5yQOKIJ0bNt_zJilXuShFp9Ozk2OqjqX1obj18Aetd-jLw_6OxBZeZuexPqEIssl3TA\u0026exp=2025-11-19T18:37:13.3629790Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.362979Z"
+            },
+            "samples": [
+              {
+                "id": "K1AFX0WC55XAC4DM3XJX38V190.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/K1AFX0WC55XAC4DM3XJX38V190.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WrIELde2IFxI2YaHC-cwgtV2yvQVjKzfOG93g_d3q2f6l1d3oOguIua5MbkTiUkS5ohT-t7pk4hnbYoDK4VLqpNU360WLWsQoCtFQ3tk0DpLY9V88GPwAqwvM8vKShU6SqaIOPEOXqwm6g0L1FW6MOW_ni31TGpMYdH4kPAH5fkL-3FT1PpzFwAoZDil6nKKYNeZchUW-IIm3ZL-lZurZSBj7hjcyAZigPRoATX1qlRqsOpDcKasBw7RF0NrEb8igIurx6q093kk5lLOdZdPWIJLulejy9qszYIAh57nNUdQ\u0026exp=2025-11-19T18:37:13.3629790Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.362979Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "16NB73FFSJBQHK70Q2XN20EYP0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/16NB73FFSJBQHK70Q2XN20EYP0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UuTASzVL-NKLKJkkXzvvfD4e2_YB2lLjD5uMPieNPdn5Z3xBz7qPxo38gx0L-tfe8K_PyCaCsk24-Jphf-o8AlD7MVvvpHBosTYbJ9OC42EKvz1uD4C-PXaoENV4IfNoTpg8f-GCAHB6C1nMQ-9uX_m77WJu0RwC4_lgoC9VqsWQ4rNFyVMXX5Q4j7gmaM1l051wIQVES_zKb6bSwFlMbVcShxbwdJWAmPFQS1A1ZZaBk7tLwlSfvanQ65erHk56ovPJp8yV4Y49o5ep-qhdy7LseArfivcA7L2A2SZyQ3Sg\u0026exp=2025-11-19T18:37:13.3629790Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.362979Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "7NF60FZ83SRMDSNZ2GVETMX620.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/7NF60FZ83SRMDSNZ2GVETMX620.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-Wnpn8E_GpUq0qkG8xPi717l6-iakuC-KlsQnv18TsXYq9vhkzWwvTT-WdaHsB0U4BoKyBi3RtYotWnl0xew1I59g-SQOnRUVHpE6r733uDho8nkEa1IDOWMQC-Be9U-78AXloT9a1JhsVmb2H6Hnkhm5jfvRq2GovNrMxXLPalF0CYxQfSb_OL7OQnHbAdATUgLSr9rFEWzq2KJg62V_TWsq1VCOLKG_Tultf0u6069N5sL6UmqsjG7cPQfrFHMm33s_G4K3vDlMG17vaM2bYgEdL7p5XwtvFeg4IN_X_xLw\u0026exp=2025-11-19T18:37:13.3629790Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.362979Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 3,
+            "model": {
+              "id": "4Z0PZ91QABWA456RK2SX7PDWH0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/4Z0PZ91QABWA456RK2SX7PDWH0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UUgd707zQ0q6X58MgpktqivC--z0gfpjeXrjY-2TkJHY2Ad-HxYzFAdY8bub19KVcHVWSbZyVOYpGk5seXBu-VxRGhZilR_qHZmR2ub3P91A5VUPmyOrlXn-BfOlY3VwoYbla6wU32ZYIlz4qIfAIPpORoz_v1IIzGI18QSKoHVkqoS7Bwbw4oS4SrCDW-YKz49bIgyTf4AqgDy3e5KegOb2JPCEvSMFWLkPU7OTWG3A\u0026exp=2025-11-19T18:37:13.3630862Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3630862Z"
+            },
+            "samples": [
+              {
+                "id": "25TPK55JAHS4ZRQKGE32Z13BQ0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/25TPK55JAHS4ZRQKGE32Z13BQ0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XfBdq34dANJhFzQ-4C8kxhtc3zie--L81Hc8mvEVJPYRLaPAwepZTN0THFBEthvmprn0AxrbihnBgTswBuMOYo1fk1htduHiT8iqZmgrs--3QQ_aWrEFANDAsuiK60q00dFPtq9EUly36L54NTDHu2Krvz0wPcFgAeDL3GtIP9k-Nwp-hO6oXqhJs7n201-d54KQahUJL8VI5f7VoEgKugvuVhtDULUKQHFaymoAe1adP7qI_fv8Cq3qNKLHylgzxR07Oran9-bTyAC0jmybiPs7A4U4oGcb-T-IlSYcrh-Q\u0026exp=2025-11-19T18:37:13.3630862Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3630862Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "ZRGPM4TAHT8NKBRFEC6SA9ER40.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/ZRGPM4TAHT8NKBRFEC6SA9ER40.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WkIvHw4xIjAbqjTcr2tR9z_RQke6-e-lmhzZ0k5-5t6wQZyGH2XZvmj2Zx9tpt_IiubOzmcd1RVvbC7jDgvhMx0OIpeS_QtZMkFq5IP4lZfr-V3Y4bHBvzIGwNBzOH6YYQEjK20pQXyvp9T6AVLrZ1RwW76dd8jTskIyKx1XZ7pA-4zXiLubOJWJSHIbWk9nt0o1ZDNmw_NkJdhTSXmdwWCguPTxTDkwb920kems17YnsUA92wWAUPd1tZ-Tn-WN6xy_ZTYGZj_F8hTLa7zj1AzTuADkKN7Eau8ZvXEZTlUw\u0026exp=2025-11-19T18:37:13.3630862Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3630862Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "V8MPKNXJP1R7P4P36WBYKJ9F60.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/V8MPKNXJP1R7P4P36WBYKJ9F60.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-W75jOXf9KxjfO3RAwMB10uFw4oQAhzSLSdmLEaXhHF7Ipty5DYfefYADMeKgokWp8GlHowf0i-Pqk5bZTQBegXG-BIKLJOh2d4rmA2EPURn3y_0gQXbqxJuPbVbGYsolqQPpQwNFUtdcXSkAWMJiDMqaFl6noof1bQCA_O-3w1sXl4p_9xuBigY0OP3HntzsAWJEfoVLSJEs6B9zy7BHMvnL96tr5_O-QFVi6LwjznNSQq4eX3hai9Yl3gzFqY4RebtwB-QlrQembfhHBLcEjD384Ldtk6vW2e8GGFDss8xw\u0026exp=2025-11-19T18:37:13.3630862Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3630862Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 4,
+            "model": {
+              "id": "5P3NA0NVA4DRA2EECWYKJRRDZ0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/5P3NA0NVA4DRA2EECWYKJRRDZ0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-VN8FLefeJOOGTaF8Magkjp2_Gz6MMrJIDB3T3yAVm4lQ7YXnXpMS9zQwvgIJGR5Iip_a8FHDj4OmBHyfl4bKA3bUvcl_-bokHgD7dONnV4xZmoMvxNgxdIXfVM59k7g6MH2yvaQyvQtpIiUT6MJGvxtRkx_0E7OqSCUOTW3Cz19h6QWvaIbfY_44yyc6nU8FuUJ076hmnBN55lZKCsMXKCUmZ_FHGDZLgpHUlX5ltGHg\u0026exp=2025-11-19T18:37:13.3631907Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3631907Z"
+            },
+            "samples": [
+              {
+                "id": "M4WWFF8YXTANGV5JZPFM6T81R0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/M4WWFF8YXTANGV5JZPFM6T81R0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UDnU0rGDT1NazSTJEGTwa9aVMTfP4X5teNhhvT2ii23uLH0QU0aq8hFVLEZZCSujxLXVHfgT77Zeyq6cA15oKd4TLvc3_GU2iiBLrgjlRdgK8QMA7R5oejWl_uBYwUu8XRwxDmf_4KfbqkME00G--p30u-jh5YI9l-I_SRVhP_BbXOobf9mjAyGMlx7ljXrK3K19HF4MVmLLuDpAXV6cW5JyiWxxvc3wlgo9RJuovZndM9cN6Owz8CbBZGaAriG5OtX_LNQDVbSZrIGRuRDVKJELASwGi-Lvafmyadctg51g\u0026exp=2025-11-19T18:37:13.3631907Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3631907Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "0D4VBMAWF1CDN4HPVQYZN6RYV0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/0D4VBMAWF1CDN4HPVQYZN6RYV0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-U69HwY7xaq27VEY2b_P-r9hBc_NbmsLHcgeyjD0YkhrEHx9M4zP1loQyGVv7GKFVlJ2x9OOPH5PdEoZZbo8CKZ8YlOBsh7J9gj3enKPgVui5u9urVeNojgp_vJF-RDlLL7RdhOnQEY5XWQfKR-AnqN1xh9zYc3LjB7zS8Teow2aOTdzkgeUHhTdH-DxU_UA0KJDDufS7j4tyOshYQzElD6cMAdbaXnHn0_ovqPITAEfKGh7NWf7k7yxmIGCRF5Pwqp-GAXRqDzL_t4SWSmXsLX0y6nISvcFCwzc94dYK-hdg\u0026exp=2025-11-19T18:37:13.3631907Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3631907Z",
+                "nsfwLevel": "pg13"
+              },
+              {
+                "id": "MT5B9RVSZS066G74215YWF8E10.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/MT5B9RVSZS066G74215YWF8E10.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WZlHT25XIKZj2hdxXryK-TXoy8OyCBl6rWi1Nk1GJZZExXPtMmVAvVYouSjs7AJtOTIXOnbOBwQEVkbcZUA1to-JOqIJu6kjOuqYyKT1o53nfFYGNZceIhup3TFUTnE2hiK3DTK7TOPpXAWM32ttcfTPL6LEZELgyc-yhM2aB426qTiySyvEfbQT7joJrP_77V8zjJ7x6wsUr7vukNzGWmxw_zrM9DlNjT4CSHl9A_wSo31FiqP3sH0SlwTfAB_JFn45x6bec4glgu5VA3pD-9S3EdTYjmFy3LjcRt576pdQ\u0026exp=2025-11-19T18:37:13.3631907Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3631907Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 5,
+            "model": {
+              "id": "163G8A50H71XTG93QNQ60E0XW0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/163G8A50H71XTG93QNQ60E0XW0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WfwBlj_a8vCJfd83rmz4qstyTxmXetVKeb3bSBHt-5NWXRXgk-oJHn2qowdMKpFwezrx41Q-569I9xoAK1YtgmNNE-hC3918nPLC0gK-OZPl5RoPNaz1KwtNUCOYyssK13y4LTG_Jjo5GUDkBrqL6dkQLdHOXroGjdevYjlvhUvR-s7_WvjUMr7e0kA5zGfkacnaNSybP9ypQ0Rh7kUvnFoWw6Z3LMjTHo03YusbqV6A\u0026exp=2025-11-19T18:37:13.3633407Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3633407Z"
+            },
+            "samples": [
+              {
+                "id": "7VMMPXJGBA5DZAE8YFQ5ZG3V00.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/7VMMPXJGBA5DZAE8YFQ5ZG3V00.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XjSEN6DJ-f9oYhijlK3w3D1csjUDz6nxGFb0UZlg590oOCku3GZZpt5T2-SabHJD4e5CoWGQ7wMf41M_Kf6HOsQDB6aR2B7lFu1zJF_TyFlpU7mzCBwRsEPtg11YxrhF4gACn8cJ7rpvH_YhhO2Slv2UXGIsKn_CJhLomZH_VhoouLWPEH6kzGOqIYUOiJASdXpiSq1XBGiWS6fWjpmimW5Gk4CssfogY6EaAbtUtisQwlWKWBqmaKdeRR0YmD4Z96ZWYZOEXLzfUQJj1j9gmgi7AQQkOtQCO6oEx_lF6G1Q\u0026exp=2025-11-19T18:37:13.3633407Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3633407Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "BBS649D073DFD86GQT60NWBF00.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/BBS649D073DFD86GQT60NWBF00.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XbbWMCFbji4IvoCgiFI-c_4bKodBeIzJUrygpbxEmZGLEogJCL7CMehTa1Or-U9gOIKjJrJEquS2Ty38z4zNqqroKap6HAD3tBXmasj2TrcY4UGsAILx-Ifx1_lXtZAdV6hWCOW0CIBYPAcMXBxa2EDPomuQrNjeFoTMEUL18bdZVu78kZMz-fteWtjwzr5yyg0LZoUHeQgQ8lMHIMRs6kh0xrpSOTElVm6AvEtBhDnP99zsIFZK-StFmSQ0Pfs39UtqGQHFjwHivWzNBZtjHcwni38bmuIkzeuC-OmxwCLA\u0026exp=2025-11-19T18:37:13.3633407Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3633407Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "XXH1HWD4Q9HQGT71Y11XEZFCC0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/XXH1HWD4Q9HQGT71Y11XEZFCC0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UTchYG9l4WsAPjJ1LiBLC8NN4Q7p9K86lNc9fSNOcb8FnxrHkCEoWlL9EEhvF21__OMF1HY7dGxMRPxT1_omIxS3_Ed3njn_FfV22OV1ch7cZ4UmjZKyJ3YB69RfmFsTUQtuXlMFfGgkCq1dnKNO6O6CnQRrJknI8GeKXWdUFAKD7Dku06XYvgLoS1NJXIh7BB46OO_eYWyDHkP_7RV6eb7yXICfnzOqVopR84zl6L0atri1ixZhtYhxiHClYAHvCsdVbLrZDyVg-jJ4uzf9cYSD0k5S4jmUeIr9dcjOaL0w\u0026exp=2025-11-19T18:37:13.3633407Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3633407Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 6,
+            "model": {
+              "id": "HVD7V752X4R9BH9JGFGB82BB10.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/HVD7V752X4R9BH9JGFGB82BB10.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-X9k3j1y-DWCt6C-VQe2tgSVWQaT7YQY-DOaeSwApMqrNJbOzM-mULHFqHB2mcR5pKjbkdbd1jyfVwmvIjsQBYwfclLUHHINIEjeZ6ZHCIytN2bFsmo71DiYQP9G3cwD3cko2UugyDATrbDGBrEynofr7V90DoxeTo-6t4M3_3lDnsnKWVxXUd40I5Wa43BZNYAH7sFNizO-ROd8DFgXkuP-ulJluUCmpflkxL5hnx6NA\u0026exp=2025-11-19T18:37:13.3634845Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3634845Z"
+            },
+            "samples": [
+              {
+                "id": "7WES9E67QXPD0E6T1DRTQYA840.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/7WES9E67QXPD0E6T1DRTQYA840.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WgPZCc82Y8jqp0uIzEtrq-ZQefnhwmXl0j09PbSWThsiZMHQsJUd_sPlP2rtKX24n8hQ9TEhnVNUG5QFON7tdI8zCY_Z9FaupcTcbfBoQm28HroBilrzurKsDZEli2246TDWsLF5IxbzFUDK-7LwdaxeUCSyXm8rBypOxyJ6kv5IqHjuswF-gpZVwaETs-yehhFH_IAmVX11mQru-wQsVnIykCjE3q4-wI2mEp9pLJ2WbI806n0XRO0DVXBIPdWS2_fweIn_P8Q7WmZ-2eKcHB5zQ2JXrDx4Aibk37Ra991Q\u0026exp=2025-11-19T18:37:13.3634845Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3634845Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "607TCVHXVBS8MYEEWRXZTZYNZ0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/607TCVHXVBS8MYEEWRXZTZYNZ0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WpsIbEGaIaa5ipcFHMkSjxGuh0pJWeDRk1uKbDSLi6CtYqIbQPnEfPtuctn8RJsXg6RYpZUsc2yhrXrKgOZiQGb0gAlUTWstxZWA2Yy5TZSe-uoWqgBupSeelW9OiJanXBJivrBJBLg-5c7PtNFE7UbJJzXiiD2J3q_-02BzQf906s3kXSh3HV1trh8rndSTJR3LzxpDQTxr96lnzq4ELrG3vO6PBbnT00jcGKDcxPNiuaDOptx3PPByF4r4Whh8Vapt69Jv3rC-w-aV0jO2XWTNUcB__B65vll1Xv7sZLmg\u0026exp=2025-11-19T18:37:13.3634845Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3634845Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "VBXDADEW20VM2AAKPRTKKCKDG0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/VBXDADEW20VM2AAKPRTKKCKDG0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-Wt0InKRxBwaCl05T56MkOTxVMlDA9-wH3hxyFMBmHdQLgf1yCREt3TVqPHxU4FM4DxoJoDRugBNzXLYroagdqStZh2x6JovycNdH35kBEhz8lqSgS9108uYauLBIAzAieq8Z42z4XqFDpB-cEUF8agSwPckNk5E8i8CBQcVrorUR4OFX_O62orFsYgjBQMRZDdDmFmSGTvIuDr4I3ksZoqxKubsvBRABwxBEAEra6tLWgBav0mWMudbWg7FSaMTHg9Bl0Be-u9qTvcq9Fe_o_khTmCSdQkvPr_344fmnWiaw\u0026exp=2025-11-19T18:37:13.3634845Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3634845Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 7,
+            "model": {
+              "id": "90VSQMSH5WV41EF4XJ2GR64MA0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/90VSQMSH5WV41EF4XJ2GR64MA0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WvfmaHfNn9dKvAPGmLOV0T0vW-mcdnc73LWXMWioteaCriAnEixGR8elAF9Uu0kak_l08s6989NApEwbfWqeueqoLb8hlMI4pTSuXN_oRSW6RplX1AICTECBYPUWDzjwh0BlXur0J5BC6ArBlV55q3ibSKVMnViH0WpQH3A1ihfmliGnKYC7uKmkMeXhDBUXZXFov2NQKmuU1_lPNEL0vkA3_ZAbdfAOL9-6vpPZg2fw\u0026exp=2025-11-19T18:37:13.3635955Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3635955Z"
+            },
+            "samples": [
+              {
+                "id": "EXER4R5VZCF5RMK688Y390PNK0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/EXER4R5VZCF5RMK688Y390PNK0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-USek1yTA1aOTUBIpuM2eObuuEunJJ5S3WILQFrw-fOrugfNOYz4KsuI9t9JoqYmPpu7tc50fhHM2_lFZV-GPe2y3vF3-CEZAFOn4J_zmQfN8ciB9oqJoQTtAJRQoG4TXiOM7rzaLhLGoEEu8gWGCSdGaIsIcBvi9Bfd795LN6t45ITi8gD-6Wg8MTrc2SmlNxF0BAUTrdOXipn964OI8I2Dm9KovJoFOYc79092fr9RDYQCiGAYTPYlvEMH_IjKh9nyU94OthoBQKdeDlcb5pbCtrU-3xrC1xgDIwevJqm1g\u0026exp=2025-11-19T18:37:13.3635955Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3635955Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "WHR225VGGGNNE5PHF1V9YK5NS0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/WHR225VGGGNNE5PHF1V9YK5NS0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WLWWTo_bllDH2lbpTcgcbbjZt05bXVUieQUM9Iy2Bnar7I25Ihtl5xvOL9cUvkaex63_3CMMjOJFQpfXSQlTRB7_TFhSZh5zLzXFM33SkI1EHp9KMaPj2eUd5idawlVofv62XMlO3OcJ68Np_ipJG_Wel5iPZaT4dRxYcv35OG5qWZTz1u7YbJqvxF0MwOMSj8vXIeupL_ztmP6cOcpY-GJmGwVkDv6jNZWuAx1yxewoSvaJPjkCJwiM56Nf6IWTmOv2a9qEJV7vzJAqTkHs_Mk2xZZAcIImrxsXdSwjr_5w\u0026exp=2025-11-19T18:37:13.3635955Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3635955Z",
+                "nsfwLevel": "pg13"
+              },
+              {
+                "id": "0ND12SP3C27EC0FTXR3YCTSVM0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/0ND12SP3C27EC0FTXR3YCTSVM0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XmG-U9AFNRf0SRXUQ8ockTU8_Td2iUrTS1SQkkwjWpVkZY5P5anwUBC5fhtJllBBx3XV1I25KbCUVqFAqCT-8E4csJU22Arg0iToEdwEQ5KAELpKiIGwZa8K1u1OGwgAQTJ4IaZz7pq2Yd-RaQlSyHw_OPEMC4ecC56xx2HJKXbnRQIorKNOOEpCUTFddrFOkEavY3rDAJw8PdrQx1N0jsyuBWU-qTZTQpX5UyS0lbCyV2B6GqGsugqGlqJ1I_3wX7-B6GDFIkCaFURzWT5pv6Z5Tc-zvTo7K_sziy6zPVpA\u0026exp=2025-11-19T18:37:13.3635955Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3635955Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 8,
+            "model": {
+              "id": "7JSRZ8AHMKVXBSE8BTDW3VHHQ0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/7JSRZ8AHMKVXBSE8BTDW3VHHQ0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XqK7Z4Z_Rr7UCqTcF--fK7Ynlpj6FASBCSiLFqk_NFlqjB_6ZW1MDoTAgYP-FlmBb8EOfszCgetGr0oNNi6yG4IZNR-D3J2j_rHD2cr3WOYPJctcbkbPB2zaNccnuPsN_0O-q8deVntsZJ1FaBn9izVrm_gWgexDhcwSBYxg7hwT3MA-5Nrq72HWXW5apRo8dMxdhP9SSvNKy5xeUPAxiNeBCid7EmCQlqCvv4bjlaFA\u0026exp=2025-11-19T18:37:13.3636984Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3636984Z"
+            },
+            "samples": [
+              {
+                "id": "5XXHQRRA5S0FQZ91SDQBP64Y20.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/5XXHQRRA5S0FQZ91SDQBP64Y20.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-W28xDAmujjxgiTm2iKXjd-V_-SavyKx5sTOAoUZXWcNcYF3AqXzqWzDeRJrKAyuFtzNuPywWQdyg_2FhpNzzCbVB7jHL425C4kbiMJayiZdzh2Xvi3q5E7pPg2X1h0f0M6Rup3Ex3s8wPVUoriQA4-zdq4gYiJ_ySDgwLk3yfFd5o5Jt4LjFg5DkeV3_cxxQYhHb4mPMfT-gRg6_Bq4gvU2pIHQWPMlh0ByydYTbzz1AIERUybxaqBpivuwt_EZPbh-Lzko-t6TYKsnl9CFnOsyvY2nt9QXoDuspb_fIeu9Q\u0026exp=2025-11-19T18:37:13.3636984Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3636984Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "WBK5Q6FK2WJ5VP74DZBKWY8K20.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/WBK5Q6FK2WJ5VP74DZBKWY8K20.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XsDGc5mkBmmjJFFTpRAjGENZp1pETLyYzefcJTuf3PNz9WD8Bk1s5uaf9J3dzSebsvpB7G37oECAcPQjfHKt4fNBoa5Gj9YsLWxNcGJsJxYGCfNAtUni8K3VRS7jc3LLtTUuQnPF_2MEi6Tx_s1MUaMY1s2tunmsLKFxjKW3J57MUsadWr_ThTTjkpHQuB2wTmjG6JMQPDeHbfA-5OrymrPg_VHf-aZ9-QVveL9br8IduDFXLM-b8Xz06xorE5gRNtJ9DraIl4RIdv1aOHUjzm6qc-3dwI2KTtFNGC98xIOA\u0026exp=2025-11-19T18:37:13.3636984Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3636984Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "KDHVDRQ6QXWDXS2MYJ2C1KASE0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/KDHVDRQ6QXWDXS2MYJ2C1KASE0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-WxX1WXgwRUgxVOe46Z-adFBetDjNkKtSJFQ0tj1XVA9m93KfeDW0P-TRipSHtSAw7IvgAA0ktJlzC-UpDraIYJEAn0SGJUbNsxeEnUOCcEtPUhV0IsbJMa5wtYBVUV1c1cb2X5x_M7fiEOEWBmeqFjqr5VqXpQV_7FxmayhHCmscnSLzLsksO2cn6DVqriV4B-6gBVdYh3Ig4rTxKtj-VcIMAgkMnpNVhdw90NbH8wSvrN5vNkHLMxloWDhn9_kSryOPDRZYZzeos-px872A93RjDq4zXb6sJ_1mRVCcjWbw\u0026exp=2025-11-19T18:37:13.3636984Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3636984Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 9,
+            "model": {
+              "id": "243T8908QDBSMQF9MXCFJF33X0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/243T8908QDBSMQF9MXCFJF33X0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UtaZMZYkTBMYwZynyFM5k6dDQrtDLHwNp-0N-C6AFdT91D5LOtR7fufmYmOiKrVWBvbCbVkB8YwUu9C6isGZRERKyBiqv26oxJOCohzr3MJ1-xy5-7bY6bmSKnP1Qa5C3Z0KHW438kl-iz1r0Bz9iEz0Y2ofIXx2_cbojYiJ4xnIUcStmnU4ZGmSDOhKhNaP4aYCmp94-plHndlUsiX_n7ZJAUGNjfcalV8LHsfU4tyw\u0026exp=2025-11-19T18:37:13.3637985Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3637985Z"
+            },
+            "samples": [
+              {
+                "id": "VKMVYNV3TGMYE3278YZXKRS6B0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/VKMVYNV3TGMYE3278YZXKRS6B0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-Xz4g2o23UD838U2Lj4kavwsIXLp6yqpcx6f9TeYzFOUjgtGyWmFheOoQOblE9Oikkc5Y9ek9ja94t-EbS98HGd8OnHpSNVt0ZcR4yviqSAFz7ldVmuY8gEf6VousdjyRyPgv4URLsNjAcIhol6Wpl7V31e2hMkEJH6Oz8F5xOYxSuzxnKvU4z8Jf36TnHAF70nLfttxnj0dm02KIWEymlCTSae8SMlsXFdc5QyQwH0ldktiYuZvz52rxeKMGmG1P9NyjkFVxTVA4C9CgeGYoiFWRECaG0Heu9ZkXkw6xwxHA\u0026exp=2025-11-19T18:37:13.3637985Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3637985Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "R1G4V1RENQMN9ZQR1EXPR9XN60.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/R1G4V1RENQMN9ZQR1EXPR9XN60.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UbAQDpUBYIvDrtA-KmI_XemeoihvFlyRJpQVaXvTEVuUoQKTN6yD9OKEkQ5XAoWgHp-CtglED1AzUoo3hldyxzpCDViuTjxUzTVH0ubJcs9onLGaYwvdOIra3kaKz4lIbIsQBDZ0IyUO03_Exfh462sdaSq8u6x-0ddV6kIrSpdl3sky2700a20PpHymxWQj2skdqi2pnwJ3UIM43YRQZ-ybqEQdQmQYyYXdxBzG_moNhmhwEQyVdzFBNWI7ofxzb7VStEZm_cGe30zr8Xvy0k8Ccs6thjmP1SX4XwijXAfA\u0026exp=2025-11-19T18:37:13.3637985Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3637985Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "XWHP9TS03YHR540GMB32CK3PY0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/XWHP9TS03YHR540GMB32CK3PY0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-VGePKn-aBPgfPOUoxcThO0wwzDWtjSSg15Y90C-VGFiL-jIxlRhfj8GqRgcGxZDWcGcUkcvAQ3tW-5GMobbDOWFlFoUf2bPjauGFcxPigALcNYrIKT1_V7_0DYtSDH1hcm3JiMQxkIHGkCFsWSU96yQypGtk73erF-myA--t9vuDmNDLrN8wvd2xGGZ3UcZU3jdaYEYlCr75tb5OCMKpk6F02KPWiVO0Srg9ysIRAVZTn5YvXszxnh6atQQpEzdUXebLUnxEixkAlzGoqhq4r8Mwb73V-vDdnXTmsi9RkLJw\u0026exp=2025-11-19T18:37:13.3637985Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3637985Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          },
+          {
+            "epochNumber": 10,
+            "model": {
+              "id": "YGMWWVJ9B57RV7KZTXRFSFF0Y0.safetensors",
+              "available": true,
+              "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/YGMWWVJ9B57RV7KZTXRFSFF0Y0.safetensors?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-VYDjueJmoNUvYv-N9_4kP8ojq3TyfvXXGMQYFvRCPvuuQjobl5uZveBThLpaIoiNAw2Ydbivk5EF-VeZIDj1v82r7zWMysf933KuJC8d0_ESsyoZsOr-nwhH27cYqATRS24VMA7EWE9XrY59Ujsxkj4JXaRIuKkihfm1fkpSbiA2XExRb6R8BOYLhhhYJpltsC0tYrlcaNB8WcHDTbMatzAVGGFm1s2ghcmFUymZ_Cow\u0026exp=2025-11-19T18:37:13.3639179Z",
+              "urlExpiresAt": "2025-11-19T18:37:13.3639179Z"
+            },
+            "samples": [
+              {
+                "id": "H4ZBNYAB5G7EEFHQ0Q7JNE3GZ0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/H4ZBNYAB5G7EEFHQ0Q7JNE3GZ0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-UuIEKAZxfDYB3uI0KP_YzDK14uFp-wXZENepLuTlLkrs2U_bEgOmR0vL_RSeLY-8ii8DLRQwtNwGSuFyzCoS59meNMn8z-KxyJout-L43fbCxCRjh7V2ApOoBonyiqSAeyxIF5V5BQ2AFEu_k64MUrJMo3UDvbqQNGagUVv3FTMdr-W-McR3RTl9_2J4xYTrkVKE2R2qFvHxPfogyXzQTcYQb_BNfaQVJBY1Jribmzn1vQMUfGLMipydaS_J-6AD7rzUuzK_8Rn2j7TFjbHHurcMTis6YOVKKlh5pMUD9UmA\u0026exp=2025-11-19T18:37:13.3639179Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3639179Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "ZMFGHHW21M3ECCNFX55RBE96R0.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/ZMFGHHW21M3ECCNFX55RBE96R0.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-V3IivyGEp128rykQgE1N7vQNZOT7ABuFta_aaqKCQ--hyW0efpgwezlGlGm4lx27K4V_ztMUF8n4FVyZnZGYmAm55P3QtqZJQoQPP2xuIr23-5TCyMFgohpe7DDcfvZA7p2EVah9p3IS0APEjoDOhDf2VDzt7sOuCjiyTJGUaSOVs_HVkWsQB1ZULO5kblfcE8pugv7_baMBt6uFfW3SLrbE-tg4bNcgW_CjAKwEEWXxw0XpG3_8n3S_r2_OXMiU4qiQXEzeJPrjY72_Y3b_wmUGpbFwvcwAZhv6ASfhJM-g\u0026exp=2025-11-19T18:37:13.3639179Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3639179Z",
+                "nsfwLevel": "pg"
+              },
+              {
+                "id": "Q6Z54AWB0F64P4C2S0D6C9M310.jpeg",
+                "available": true,
+                "url": "https://orchestration-new.civitai.com/v2/consumer/blobs/Q6Z54AWB0F64P4C2S0D6C9M310.jpeg?sig=CfDJ8H6DOWrLOFdNsdc1XPb7s-XpFbl4sQy40qXw4qrkJqW2cCgdnZ1v_o5t06P_lIz4XiAb2XglBb9MetDDyvfVtk_n353v6Rrg-IqLERh5sriaaRfWJRqaHGRWd90g2MAOMLUhdLhSJWNIpdNOwR8q7qEAMUDlDtth0ZX374I4wLOXO6u1x9uSpOF3-LjdGdfkiHPLb5MRUZAuYxMhDJlI29M0ZMDJ3si85_qPG9pvKR1v22H5xH1mIgK-6WAjp_Av7hfU_Z4sXGBf-R0KnPaxMa6DfWyXVeNxaI-liW9obx51dPz11aSe0oN4RcbAWjy-3A\u0026exp=2025-11-19T18:37:13.3639179Z",
+                "urlExpiresAt": "2025-11-19T18:37:13.3639179Z",
+                "nsfwLevel": "pg"
+              }
+            ]
+          }
+        ]
+      },
+      "name": "$0",
+      "priority": "low",
+      "retries": 2,
+      "jobs": [
+        {
+          "id": "2d9706c9-36e5-4446-9505-1ba02d6f79e7",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:25:56.4731251Z",
+          "completedAt": "2025-11-12T18:25:58.0575024Z",
+          "cost": 0
+        },
+        {
+          "id": "eb661d78-3973-46b3-9e4c-eb8f7807aaf8",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:25:58.0580332Z",
+          "completedAt": "2025-11-12T18:25:58.0580335Z",
+          "cost": 0
+        },
+        {
+          "id": "a4f03027-4c14-4cf4-9e95-85845f15082e",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:25:59.9653077Z",
+          "completedAt": "2025-11-12T18:27:30.9376899Z",
+          "cost": 0
+        },
+        {
+          "id": "597d29cc-53e6-4497-af8d-778df0ecfe13",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:27:31.2301863Z",
+          "completedAt": "2025-11-12T18:27:39.8336543Z",
+          "cost": 0
+        },
+        {
+          "id": "27e686f0-24f8-451c-be70-34eac49be5e6",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:27:31.3520127Z",
+          "completedAt": "2025-11-12T18:27:39.8679423Z",
+          "cost": 0
+        },
+        {
+          "id": "62cc7308-be7e-42ca-84e1-ee2c6234d0bc",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:27:31.2317522Z",
+          "completedAt": "2025-11-12T18:27:40.1291398Z",
+          "cost": 0
+        },
+        {
+          "id": "394cd98f-4856-43e3-a2b1-e928a2d34718",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:27:31.2329039Z",
+          "completedAt": "2025-11-12T18:28:50.5906463Z",
+          "cost": 0
+        },
+        {
+          "id": "678d62cb-f526-458a-bf92-6d21dde88d27",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:28:50.8828194Z",
+          "completedAt": "2025-11-12T18:28:59.2311539Z",
+          "cost": 0
+        },
+        {
+          "id": "3949ffb8-23f9-4b85-8055-af49563612dc",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:28:50.8814325Z",
+          "completedAt": "2025-11-12T18:28:58.0931448Z",
+          "cost": 0
+        },
+        {
+          "id": "cc45f757-9314-4310-a87e-89b7d4c24009",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:28:50.8821582Z",
+          "completedAt": "2025-11-12T18:28:57.7442905Z",
+          "cost": 0
+        },
+        {
+          "id": "8d60bcf3-4625-42e3-a5a0-5514716d993f",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:28:50.8836889Z",
+          "completedAt": "2025-11-12T18:29:57.113542Z",
+          "cost": 0
+        },
+        {
+          "id": "de0870da-3a29-4b3b-9161-e6a7a81647d9",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:29:57.1160416Z",
+          "completedAt": "2025-11-12T18:30:07.0064572Z",
+          "cost": 0
+        },
+        {
+          "id": "c807cb7d-9524-4f34-ab05-62b8515717d7",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:29:57.4083192Z",
+          "completedAt": "2025-11-12T18:30:05.817689Z",
+          "cost": 0
+        },
+        {
+          "id": "2ff2f263-5082-4e64-8772-b5388babaa06",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:29:57.4071466Z",
+          "completedAt": "2025-11-12T18:30:05.6805942Z",
+          "cost": 0
+        },
+        {
+          "id": "5a64a5cb-9e80-4a7f-bb66-c8de3b4c011b",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:30:07.0076609Z",
+          "completedAt": "2025-11-12T18:30:44.905808Z",
+          "cost": 0
+        },
+        {
+          "id": "fc3118d3-c6c7-431b-8c07-6afb8eee8470",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:30:45.1945423Z",
+          "completedAt": "2025-11-12T18:30:51.8156107Z",
+          "cost": 0
+        },
+        {
+          "id": "7d28a445-c93a-45cb-93b5-b9f9d49c5750",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:30:45.1965609Z",
+          "completedAt": "2025-11-12T18:30:54.9867342Z",
+          "cost": 0
+        },
+        {
+          "id": "03d0104e-49ab-4bc0-9b3b-08d13a603e60",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:30:45.1971536Z",
+          "completedAt": "2025-11-12T18:30:51.8250565Z",
+          "cost": 0
+        },
+        {
+          "id": "9d363dd6-a21c-4628-8872-e121ad37a621",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:30:45.1941114Z",
+          "completedAt": "2025-11-12T18:31:08.0137485Z",
+          "cost": 0
+        },
+        {
+          "id": "c986fa44-0e3f-4148-98d9-88d516344c9c",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:08.3065731Z",
+          "completedAt": "2025-11-12T18:31:14.9554346Z",
+          "cost": 0
+        },
+        {
+          "id": "431edc79-ef78-437b-aa7c-e19998791af0",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:08.3090984Z",
+          "completedAt": "2025-11-12T18:31:15.1428838Z",
+          "cost": 0
+        },
+        {
+          "id": "e0bbcf74-484c-4074-b804-b182089fad0c",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:08.3071707Z",
+          "completedAt": "2025-11-12T18:31:15.5894527Z",
+          "cost": 0
+        },
+        {
+          "id": "2a5f996b-e988-41b7-8e56-6106979ccba7",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:08.3070467Z",
+          "completedAt": "2025-11-12T18:31:31.1382797Z",
+          "cost": 0
+        },
+        {
+          "id": "faec026a-9658-4c58-8c6b-50252f7cc064",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:31.9160555Z",
+          "completedAt": "2025-11-12T18:31:39.1371723Z",
+          "cost": 0
+        },
+        {
+          "id": "2e19ede8-bc38-42e5-8d7d-f0ccddd4dedd",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:31.915916Z",
+          "completedAt": "2025-11-12T18:31:39.1049236Z",
+          "cost": 0
+        },
+        {
+          "id": "543424c9-ba38-4b8a-87d3-f113185ed9b0",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:31.9155331Z",
+          "completedAt": "2025-11-12T18:31:39.144224Z",
+          "cost": 0
+        },
+        {
+          "id": "a38fce5f-1bf6-4713-abdc-0c44c57df1ec",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:31.9148636Z",
+          "completedAt": "2025-11-12T18:31:49.2391977Z",
+          "cost": 0
+        },
+        {
+          "id": "f52c9f60-b3c0-420a-9b26-98d69dfd7ad1",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:49.5315975Z",
+          "completedAt": "2025-11-12T18:31:55.7200735Z",
+          "cost": 0
+        },
+        {
+          "id": "badfe1df-408c-4636-a317-8a66d95504a3",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:49.5307896Z",
+          "completedAt": "2025-11-12T18:31:56.2188677Z",
+          "cost": 0
+        },
+        {
+          "id": "4a045902-8ef6-4324-a0e6-99e508427009",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:49.5313389Z",
+          "completedAt": "2025-11-12T18:31:54.5461471Z",
+          "cost": 0
+        },
+        {
+          "id": "2de86057-9c97-4ef7-94ed-2129621ef01f",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:31:49.5322408Z",
+          "completedAt": "2025-11-12T18:32:11.0082823Z",
+          "cost": 0
+        },
+        {
+          "id": "dedd3f62-c6dc-4b6c-9acc-067d513e7182",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:11.0110058Z",
+          "completedAt": "2025-11-12T18:32:19.934876Z",
+          "cost": 0
+        },
+        {
+          "id": "5ca2e25e-4772-43bd-b807-b463bdc8519a",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:11.3028979Z",
+          "completedAt": "2025-11-12T18:32:19.6684069Z",
+          "cost": 0
+        },
+        {
+          "id": "79be472c-88b0-440f-a7a3-fc4b38f7e9c3",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:11.3010568Z",
+          "completedAt": "2025-11-12T18:32:19.6931891Z",
+          "cost": 0
+        },
+        {
+          "id": "f1a3ab35-23e6-4b05-ae5f-2d398249a673",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:19.9354692Z",
+          "completedAt": "2025-11-12T18:32:39.1891365Z",
+          "cost": 0
+        },
+        {
+          "id": "de32cd1d-da69-4ecb-b084-f58c1e3e76ec",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:39.47647Z",
+          "completedAt": "2025-11-12T18:32:45.88366Z",
+          "cost": 0
+        },
+        {
+          "id": "865a1d46-94d7-464a-8337-369eb53c3861",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:39.598039Z",
+          "completedAt": "2025-11-12T18:32:46.0002513Z",
+          "cost": 0
+        },
+        {
+          "id": "a1a35736-05e2-431d-b1da-e85ac956bb5f",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:39.5975024Z",
+          "completedAt": "2025-11-12T18:32:46.1806848Z",
+          "cost": 0
+        },
+        {
+          "id": "fd40d429-5fea-4d35-9f76-d58751305edd",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:32:39.5981495Z",
+          "completedAt": "2025-11-12T18:33:02.2259208Z",
+          "cost": 0
+        },
+        {
+          "id": "94404275-278c-4eff-a297-d46038b96a0d",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:33:02.514858Z",
+          "completedAt": "2025-11-12T18:33:09.8559291Z",
+          "cost": 0
+        },
+        {
+          "id": "c39575b3-6118-466a-b2dc-747e701942f6",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:33:02.5136074Z",
+          "completedAt": "2025-11-12T18:33:10.8831945Z",
+          "cost": 0
+        },
+        {
+          "id": "a77364a5-de08-4bef-9548-84d8b7cafb7e",
+          "status": "succeeded",
+          "startedAt": "2025-11-12T18:33:02.514395Z",
+          "completedAt": "2025-11-12T18:33:09.8585064Z",
+          "cost": 32
+        }
+      ],
+      "status": "succeeded",
+      "startedAt": "2025-11-12T18:25:56.4734452Z",
+      "completedAt": "2025-11-12T18:33:10.8835701Z",
+      "metadata": {
+        "modelFileId": 2291122
+      }
+    }
+  ],
+  "callbacks": [
+    {
+      "url": "https://stage.civitai.com/api/webhooks/resource-training-v2/2400703?token=letsgethookie",
+      "type": [
+        "workflow:*"
+      ]
+    }
+  ],
+  "tips": {
+    "civitai": 0,
+    "creators": 0
+  },
+  "cost": {
+    "base": 32,
+    "factors": {
+      "base": 32
+    },
+    "tips": {
+      "civitai": 0,
+      "creators": 0
+    },
+    "total": 32
+  },
+  "allowMatureContent": true,
+  "upgradeMode": "manual",
+  "currencies": [
+    "blue",
+    "yellow"
+  ]
+}

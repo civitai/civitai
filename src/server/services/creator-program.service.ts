@@ -384,10 +384,13 @@ export async function getCompensationPool({ month, buzzType }: CompensationPoolI
 }
 
 export async function bustCompensationPoolCache() {
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS);
+  const buzzTypes: BuzzSpendType[] = ['yellow', 'green'];
+  for (const buzzType of buzzTypes) {
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE}:${buzzType}`);
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE}:${buzzType}`);
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST}:${buzzType}`);
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS}:${buzzType}`);
+  }
 }
 
 async function getFlippedPhaseStatus() {

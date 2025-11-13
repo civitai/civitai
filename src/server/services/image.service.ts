@@ -141,8 +141,6 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
   EntityType,
   ImageIngestionStatus,
   MediaType,
@@ -159,10 +157,7 @@ import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
-import { getExplainSql } from '~/server/db/db-helpers';
-import type { WorkflowStepTemplate } from '@civitai/client';
-import { submitWorkflow } from '@civitai/client';
-import { internalOrchestratorClient } from '~/server/services/orchestrator/common';
+
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
@@ -4621,6 +4616,8 @@ export const getImageModerationReviewQueue = async ({
 
   if (tagReview) {
     tagsVar = await getImageTagsForImages(imageIds);
+    // Filter to only include tags that need review to prevent greyed-out images
+    tagsVar = tagsVar?.filter((tag) => tag.needsReview);
   }
 
   const reviewTags =
@@ -4748,7 +4745,12 @@ export const getImageModerationReviewQueue = async ({
     })
   );
 
-  return { nextCursor, items: images };
+  // Filter out images with no tags needing review to prevent greyed-out images in the queue
+  const filteredImages = tagReview
+    ? images.filter((img) => img.tags && img.tags.length > 0)
+    : images;
+
+  return { nextCursor, items: filteredImages };
 };
 
 export async function getImageModerationCounts() {

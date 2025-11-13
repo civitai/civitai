@@ -107,6 +107,7 @@ export class SimpleProfanityFilter {
   private dataset: DataSet<{ originalWord: string }>;
   private whitelistMappings: Map<string, string[]>;
   private readonly nsfwWords: ReturnType<typeof getCachedNsfwWords>;
+  private readonly whitelistSet: Set<string>;
 
   constructor(options: Partial<ProfanityFilterOptions> = {}) {
     this.options = {
@@ -123,6 +124,9 @@ export class SimpleProfanityFilter {
 
     // Initialize whitelist mappings
     this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelistWords);
+
+    // Initialize whitelist Set for O(1) lookup during analysis
+    this.whitelistSet = new Set(whitelistWords.map((word) => word.toLowerCase()));
 
     this.initializeMatcher();
     this.initializeCensor();
@@ -158,11 +162,28 @@ export class SimpleProfanityFilter {
       };
     }
 
+    // Filter out matches where the full word is in the whitelist
+    const filteredMatches = matches.filter((match) => {
+      const { startIndex, endIndex } = this.dataset.getPayloadWithPhraseMetadata(match);
+      const fullWord = this.extractFullWord(text, startIndex, endIndex + 1);
+      return !this.isWhitelistedWord(fullWord);
+    });
+
+    // If all matches were filtered out, return clean result
+    if (filteredMatches.length === 0) {
+      return {
+        isProfane: false,
+        matchCount: 0,
+        matches: [],
+        matchedWords: [],
+      };
+    }
+
     // Efficiently extract unique original words and full words in single pass
     const uniqueWords = new Set<string>();
     const matchedWordsSet = new Set<string>();
 
-    matches.forEach((match) => {
+    filteredMatches.forEach((match) => {
       const { phraseMetadata, startIndex, endIndex } =
         this.dataset.getPayloadWithPhraseMetadata(match);
       const originalWord = phraseMetadata?.originalWord;
@@ -182,7 +203,7 @@ export class SimpleProfanityFilter {
 
     return {
       isProfane: true,
-      matchCount: matches.length,
+      matchCount: filteredMatches.length,
       matches: Array.from(uniqueWords),
       matchedWords: Array.from(matchedWordsSet),
     };
@@ -289,6 +310,13 @@ export class SimpleProfanityFilter {
       },
       matchedWords: analysis.matchedWords,
     };
+  }
+
+  /**
+   * Check if a word is in the whitelist (case-insensitive)
+   */
+  private isWhitelistedWord(word: string): boolean {
+    return this.whitelistSet.has(word.toLowerCase().trim());
   }
 
   /**
