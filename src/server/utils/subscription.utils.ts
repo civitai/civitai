@@ -1,5 +1,6 @@
 import { getMultipliersForUser } from '~/server/services/buzz.service';
 import { getUserCapCache } from '~/server/services/creator-program.service';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { refreshSession } from '~/server/utils/session-helpers';
 
@@ -12,5 +13,6 @@ export const invalidateSubscriptionCaches = async (userId: number) => {
     }),
     getUserCapCache('yellow').bust(userId),
     getUserCapCache('green').bust(userId),
+    invalidateCivitaiUser({ userId }),
   ]);
 };
