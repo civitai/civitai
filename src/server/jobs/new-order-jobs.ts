@@ -112,7 +112,7 @@ type DailyResetQueryResult = {
 // Updated to sync PostgreSQL from Redis counters instead of ClickHouse
 // This is more efficient and respects the real-time counter updates
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
-  log('DailyReset:: Starting PostgreSQL sync from Redis counters');
+  log('DailyReset:: Starting fervor recalculation and PostgreSQL sync');
 
   // Get all players to sync their stats
   const allPlayers = await dbRead.newOrderPlayer.findMany({
@@ -124,7 +124,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     return;
   }
 
-  log(`DailyReset:: Syncing ${allPlayers.length} players`);
+  log(`DailyReset:: Processing ${allPlayers.length} players`);
 
   // Process in batches of 200 for optimal performance
   const batches = chunk(allPlayers, 200);
@@ -133,18 +133,52 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   for (const batch of batches) {
     log(`DailyReset:: Processing batch ${batchCount} of ${batches.length}`);
 
-    // Fetch current Redis counter values for all players in batch
+    // Step 1: Recalculate fervor for each player using 7-day rolling window
     const playerStats = await Promise.all(
       batch.map(async (player) => {
-        const [exp, fervor] = await Promise.all([
+        // Fetch 7-day judgment counts from ClickHouse (via counters)
+        const [exp, correctJudgments, allJudgments, oldFervor] = await Promise.all([
           expCounter.getCount(player.userId),
+          correctJudgmentsCounter.getCount(player.userId),
+          allJudgmentsCounter.getCount(player.userId),
           fervorCounter.getCount(player.userId),
         ]);
-        return { userId: player.userId, exp, fervor };
+
+        // Recalculate fervor using same formula as service
+        const newFervor = calculateFervor({ correctJudgments, allJudgments });
+
+        return {
+          userId: player.userId,
+          exp,
+          fervor: newFervor,
+          oldFervor,
+          needsUpdate: newFervor !== oldFervor,
+        };
       })
     );
 
-    // Bulk update PostgreSQL with Redis counter values
+    // Step 2: Update Redis fervor counter for players whose fervor changed
+    await Promise.all(
+      playerStats.map(async ({ userId, fervor, oldFervor, needsUpdate }) => {
+        if (!needsUpdate) return;
+
+        if (fervor === 0) {
+          // Player has no activity in 7-day window - remove from leaderboard
+          await fervorCounter.reset({ id: userId });
+          log(`DailyReset:: Removed inactive player ${userId} (fervor: ${oldFervor} → 0)`);
+        } else {
+          // Update fervor value (reset + increment pattern)
+          await fervorCounter.reset({ id: userId });
+          await fervorCounter.increment({ id: userId, value: fervor });
+
+          if (Math.abs(fervor - oldFervor) > 100) {
+            log(`DailyReset:: Large fervor change for player ${userId}: ${oldFervor} → ${fervor}`);
+          }
+        }
+      })
+    );
+
+    // Step 3: Bulk update PostgreSQL with exp and recalculated fervor
     await dbWrite.$queryRaw`
       WITH affected AS (
         SELECT

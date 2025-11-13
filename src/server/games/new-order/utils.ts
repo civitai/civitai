@@ -207,7 +207,7 @@ export const fervorCounter = createCounter({
 
     return data.fervor;
   },
-  ttl: CacheTTL.week,
+  ttl: 0, // Changed from CacheTTL.week - recalculated daily by newOrderDailyReset job
   ordered: true,
 });
 
@@ -275,7 +275,7 @@ export const poolCounters = {
     createCounter({
       key: key as NewOrderRedisKey,
       fetchCount: async () => 0,
-      ttl: CacheTTL.week,
+      ttl: 0, // Changed from CacheTTL.week - cleaned by newOrderCleanupQueues job
       ordered: true,
     })
   ),
@@ -283,7 +283,7 @@ export const poolCounters = {
     createCounter({
       key: key as NewOrderRedisKey,
       fetchCount: async () => 0,
-      ttl: CacheTTL.week,
+      ttl: 0, // Changed from CacheTTL.week - cleaned by newOrderCleanupQueues job
       ordered: true,
     })
   ),

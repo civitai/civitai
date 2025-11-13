@@ -857,7 +857,7 @@ async function processFinalRatings() {
           orig.originalLevel
       FROM knights_new_order_image_rating orig
       JOIN batch new ON new.imageId = orig.imageId
-      WHERE orig.imageId IN (SELECT imageId FROM batch);
+      WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte';
     `;
 
     // Update last processed time and reset pending count
