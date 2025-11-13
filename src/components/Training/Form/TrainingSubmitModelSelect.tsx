@@ -27,6 +27,7 @@ import {
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
 } from '~/server/schema/model-version.schema';
@@ -160,6 +161,10 @@ const ModelSelector = ({
                   ? 'flux'
                   : ([...getBaseModelsByGroup('SD3')] as string[]).includes(baseModel)
                   ? 'sd35'
+                  : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
+                  ? 'qwen'
+                  : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
+                  ? 'chroma'
                   : 'sd15';
 
                 const cLink = stringifyAIR({
@@ -254,6 +259,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsChroma as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelQwen =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -324,6 +334,15 @@ export const ModelSelect = ({
                     baseType="chroma"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2025-10-01')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="orange"
+                    name="Qwen"
+                    value={baseModelQwen}
+                    baseType="qwen"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={true}
                   />
                 </>
               )}

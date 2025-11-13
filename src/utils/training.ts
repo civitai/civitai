@@ -9,7 +9,14 @@ import type {
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export const trainingBaseModelTypesImage = ['sd15', 'sdxl', 'sd35', 'flux', 'chroma'] as const;
+export const trainingBaseModelTypesImage = [
+  'sd15',
+  'sdxl',
+  'sd35',
+  'flux',
+  'chroma',
+  'qwen',
+] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
@@ -187,6 +194,17 @@ export const trainingModelInfo: {
     isNew: false,
     aiToolkit: { ecosystem: 'chroma' },
   },
+  //
+  qwen_image: {
+    label: 'Qwen-Image',
+    pretty: 'Qwen-Image',
+    type: 'qwen',
+    description: 'High-quality image generation with advanced understanding.',
+    air: 'urn:air:qwen:checkpoint:civitai:1864281@2110043',
+    baseModel: 'Qwen',
+    isNew: true,
+    aiToolkit: { ecosystem: 'qwen' },
+  },
 };
 
 export const rapidEta = 5;
@@ -247,7 +265,12 @@ export function getAiToolkitEcosystem(baseModel: string): string | null {
   const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
 
   if (modelInfo?.aiToolkit) {
-    console.log('AI Toolkit ecosystem:', modelInfo.aiToolkit.ecosystem, 'for baseModel:', baseModel);
+    console.log(
+      'AI Toolkit ecosystem:',
+      modelInfo.aiToolkit.ecosystem,
+      'for baseModel:',
+      baseModel
+    );
     return modelInfo.aiToolkit.ecosystem;
   }
 
@@ -283,12 +306,20 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'hunyuan',
     'wan',
     'chroma',
+    'qwen',
   ];
   return supportedTypes.includes(baseType);
 };
 
+// Check if AI Toolkit is mandatory (cannot use other engines)
+export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen'];
+  return mandatoryTypes.includes(baseType);
+};
+
 // Get default engine for base type
 export const getDefaultEngine = (baseType: TrainingBaseModelType): EngineTypes => {
+  if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   return 'kohya';
 };

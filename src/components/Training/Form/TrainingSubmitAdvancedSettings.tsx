@@ -45,6 +45,7 @@ import {
   discountInfo,
   isValidRapid,
   isAiToolkitSupported,
+  isAiToolkitMandatory,
   getDefaultEngine,
   rapidEta,
   trainingBaseModelTypesVideo,
@@ -276,39 +277,56 @@ export const AdvancedSettings = ({
         </Group>
       )}
 
-      {/* AI Toolkit Training Toggle */}
+      {/* AI Toolkit Training Toggle or Required Badge */}
       {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
         <Group mt="md">
-          <Switch
-            label={
-              <Group gap={4} wrap="nowrap">
-                <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
-                  <Text>
-                    Train using the AI Toolkit engine, offering improved quality and flexibility.
-                    {selectedRun.baseType === 'flux' && selectedRun.params.engine === 'rapid' && (
-                      <> Note: Rapid Training is currently enabled and must be disabled first.</>
-                    )}
-                  </Text>
-                </InfoPopover>
-                <Text>AI Toolkit Training</Text>
-                <Badge color="blue" size="xs">
-                  Beta
-                </Badge>
-              </Group>
-            }
-            labelPosition="left"
-            checked={selectedRun.params.engine === 'ai-toolkit'}
-            disabled={selectedRun.params.engine === 'rapid'}
-            onChange={(event) => {
-              const newEngine = event.currentTarget.checked
-                ? 'ai-toolkit'
-                : getDefaultEngine(selectedRun.baseType);
+          {isAiToolkitMandatory(selectedRun.baseType) ? (
+            // Show non-interactive badge for mandatory AI Toolkit
+            <Group gap={4} wrap="nowrap">
+              <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                <Text>
+                  This model requires AI Toolkit training engine for optimal quality and
+                  compatibility.
+                </Text>
+              </InfoPopover>
+              <Text>AI Toolkit Training</Text>
+              <Badge color="green" size="xs">
+                Required
+              </Badge>
+            </Group>
+          ) : (
+            // Show toggle for optional AI Toolkit
+            <Switch
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                    <Text>
+                      Train using the AI Toolkit engine, offering improved quality and flexibility.
+                      {selectedRun.baseType === 'flux' && selectedRun.params.engine === 'rapid' && (
+                        <> Note: Rapid Training is currently enabled and must be disabled first.</>
+                      )}
+                    </Text>
+                  </InfoPopover>
+                  <Text>AI Toolkit Training</Text>
+                  <Badge color="blue" size="xs">
+                    Beta
+                  </Badge>
+                </Group>
+              }
+              labelPosition="left"
+              checked={selectedRun.params.engine === 'ai-toolkit'}
+              disabled={selectedRun.params.engine === 'rapid'}
+              onChange={(event) => {
+                const newEngine = event.currentTarget.checked
+                  ? 'ai-toolkit'
+                  : getDefaultEngine(selectedRun.baseType);
 
-              updateRun(modelId, mediaType, selectedRun.id, {
-                params: { ...selectedRun.params, engine: newEngine },
-              });
-            }}
-          />
+                updateRun(modelId, mediaType, selectedRun.id, {
+                  params: { ...selectedRun.params, engine: newEngine },
+                });
+              }}
+            />
+          )}
         </Group>
       )}
 
