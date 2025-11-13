@@ -2,7 +2,7 @@ import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
-import { CacheTTL, constants } from '~/server/common/constants';
+import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -26,8 +26,9 @@ import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { styleTags, subjectTags } from '~/libs/tags';
 
-const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
+const alwaysIncludeTags = [...styleTags, ...subjectTags];
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
   tags: number[];

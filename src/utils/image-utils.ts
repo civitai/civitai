@@ -1,6 +1,6 @@
 import { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { TagType } from '~/shared/utils/prisma/enums';
+import type { TagType } from '~/shared/utils/prisma/enums';
 
 import {
   isNsfwLevelRestrictedForBaseModel,
@@ -133,19 +133,10 @@ export function isValidAIGeneration(image: ImageForAiVerification) {
   // if (image.resources?.length) return true;
 
   // PG images are alright for us anyway.
-  if (image.nsfwLevel !== 0 && image.nsfwLevel <= NsfwLevel.R) return true;
-
-  if (image.nsfwLevel > NsfwLevel.R) {
-    // We need some of the above.
-    return false;
-  }
+  if (image.nsfwLevel !== 0) return image.nsfwLevel <= NsfwLevel.R;
 
   // If NSFW level is 0 or something else, we can go ahead and check tags:.
-  const hasNsfwTag = image.tags?.some((tag) => {
-    return tag.nsfwLevel > NsfwLevel.R && tag.type === TagType.Moderation;
-  });
-
-  return !hasNsfwTag;
+  return image.tags ? image.tags?.every((tag) => tag.nsfwLevel <= NsfwLevel.R) : true;
 }
 
 export function getRoundedWidthHeight({ width, height }: { width: number; height: number }) {

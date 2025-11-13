@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -17,9 +18,10 @@ type MatureContent = {
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
+    const image = getEdgeUrl('526cbcf4-e335-415c-a4d7-f6eac7428216', { type: 'image' });
+    const video = getEdgeUrl('854ea301-d377-484b-ae05-29686c2fc174', { type: 'video' });
 
-    await invalidateSession(5);
-    res.status(200).send({});
+    res.status(200).send({ image, video });
   } catch (e) {
     console.log(e);
     res.status(400).end();

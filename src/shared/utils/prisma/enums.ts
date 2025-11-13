@@ -342,6 +342,7 @@ export const ImageIngestionStatus = {
   Blocked: 'Blocked',
   NotFound: 'NotFound',
   PendingManualAssignment: 'PendingManualAssignment',
+  Rescan: 'Rescan',
 } as const;
 
 export type ImageIngestionStatus = (typeof ImageIngestionStatus)[keyof typeof ImageIngestionStatus];

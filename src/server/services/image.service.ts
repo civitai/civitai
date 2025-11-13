@@ -160,6 +160,11 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql } from '~/server/db/db-helpers';
+import type { WorkflowStepTemplate } from '@civitai/client';
+import { submitWorkflow } from '@civitai/client';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/common';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
 const {
   cacheHitRequestsTotal,
@@ -644,6 +649,22 @@ export const ingestImage = async ({
       SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
     `;
     image.prompt = prompt;
+  }
+
+  const useOrchestrator = true;
+  if (useOrchestrator) {
+    const workflowResponse = await createImageIngestionRequest({
+      imageId: id,
+      url: getEdgeUrl(url, { type }),
+      callbackUrl,
+    });
+    if (!workflowResponse) return false;
+    await dbClient.$executeRaw`
+        UPDATE "Image"
+        SET "scanRequestedAt" = ${scanRequestedAt}
+        WHERE id = ${id}
+      `;
+    return true;
   }
 
   let scanUrl = `${env.IMAGE_SCANNING_ENDPOINT}/enqueue`;
