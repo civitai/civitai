@@ -657,9 +657,17 @@ export const ingestImage = async ({
       priority: lowPriority ? 'low' : undefined,
     });
     if (!workflowResponse) return false;
+    const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
     await dbClient.$executeRaw`
         UPDATE "Image"
-        SET "scanRequestedAt" = ${scanRequestedAt}
+        SET
+          "scanRequestedAt" = ${scanRequestedAt},
+          "scanJobs" = CASE
+            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
+              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
+            ELSE
+              ${scanJobsJson}::jsonb
+          END
         WHERE id = ${id}
       `;
     return true;

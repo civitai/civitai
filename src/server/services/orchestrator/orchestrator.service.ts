@@ -171,7 +171,6 @@ export async function createImageIngestionRequest({
   const metadata = { imageId };
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
-    query: { wait: 10 },
     body: {
       metadata,
       arguments: {
