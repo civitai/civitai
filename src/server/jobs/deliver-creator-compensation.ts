@@ -121,7 +121,7 @@ export async function runPayout(lastUpdate: Date) {
 	    MAX(FLOOR(amount))::int AS amount
     FROM orchestration.resourceCompensations
     WHERE date = ${date}
-    GROUP BY modelVersionId, accountType 
+    GROUP BY modelVersionId, accountType
     HAVING amount > 0;
   `;
   if (!compensations.length) return;
@@ -168,6 +168,7 @@ export async function runPayout(lastUpdate: Date) {
       return Object.entries(groupedCompensations).map(([accountType, amount]) => ({
         fromAccountId: 0,
         toAccountId: Number(userId),
+        fromAccountType: accountType as BuzzAccountType,
         toAccountType: accountType as BuzzAccountType,
         amount,
         description: `Creator tip compensation (${formatDate(date)})`,
