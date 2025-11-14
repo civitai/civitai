@@ -507,7 +507,7 @@ export function GenerationFormContent() {
             const disableAdditionalResources =
               runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana || isSeedream;
             const disableAdvanced =
-              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana || isSeedream;
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
               isQwen ||
@@ -546,11 +546,18 @@ export function GenerationFormContent() {
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
-              isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7;
-            const disableSteps = isFluxUltra || isFluxKontext;
+              isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7 || isSeedream;
+            const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
-              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7;
-            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7;
+              isSDXL ||
+              isFlux ||
+              isQwen ||
+              isSD3 ||
+              isFluxKontext ||
+              isChroma ||
+              isPonyV7 ||
+              isSeedream;
+            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
@@ -1258,7 +1265,7 @@ export function GenerationFormContent() {
                     </>
                   )}
 
-                  {(isFluxUltra || isSeedream) && <InputSeed name="seed" label="Seed" />}
+                  {isFluxUltra && <InputSeed name="seed" label="Seed" />}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"

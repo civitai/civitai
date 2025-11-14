@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
-import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
+import {
+  styleTags,
+  subjectTags,
+  type TagVotableEntityType,
+  type VotableTagModel,
+} from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -30,7 +35,7 @@ import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
-const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
+const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   // No longer include count since we just have too many now...
