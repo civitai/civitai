@@ -111,10 +111,6 @@ function shouldIgnore(tag: string, source: TagSource) {
 const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
 
 export default WebhookEndpoint(async (req, res) => {
-  if (req.query.type === 'new') {
-    await processImageScanResult(req);
-    return res.status(200).json({ ok: true });
-  }
   if (req.method === 'GET' && req.query.imageId) {
     const imageId = Number(req.query.imageId);
     const image = await getImage(imageId);
@@ -124,6 +120,24 @@ export default WebhookEndpoint(async (req, res) => {
   }
   if (req.method !== 'POST')
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
+
+  if (req.query.type === 'new') {
+    try {
+      await processImageScanResult(req);
+    } catch (e: any) {
+      if (e instanceof Error) {
+        await logToAxiom({
+          name: 'image-scan-result',
+          type: 'error',
+          message: e.message,
+          stack: e?.stack,
+          cause: e?.cause,
+        });
+      }
+      return res.status(400).send({ error: e.message });
+    }
+    return res.status(200).json({ ok: true });
+  }
 
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success)
