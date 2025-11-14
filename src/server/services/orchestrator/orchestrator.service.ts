@@ -211,7 +211,7 @@ export async function createImageIngestionRequest({
       ],
       callbacks: [
         {
-          url: `${callbackUrl}&type=new`,
+          url: `${callbackUrl}`,
           type: ['workflow:succeeded', 'workflow:failed', 'workflow:expired', 'workflow:canceled'],
         },
       ],
