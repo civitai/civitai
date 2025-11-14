@@ -1,5 +1,7 @@
 // Generic TTL cache with access-based refresh
 
+import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
+
 type CacheEntry<T> = {
   data: T;
   expiresAt: number;
@@ -10,6 +12,8 @@ export type TtlCacheOptions = {
   ttl?: number;
   /** Whether to refresh TTL on access (default: true) */
   refreshOnAccess?: boolean;
+  /** Optional name for metrics tracking (default: 'unnamed') */
+  name?: string;
 };
 
 /**
@@ -45,10 +49,12 @@ export class TtlCache<T> {
   private cache: Map<string, CacheEntry<T>> = new Map();
   private ttl: number;
   private refreshOnAccess: boolean;
+  private name: string;
 
   constructor(options: TtlCacheOptions = {}) {
     this.ttl = options.ttl ?? 60 * 60 * 1000; // Default 1 hour
     this.refreshOnAccess = options.refreshOnAccess ?? true;
+    this.name = options.name ?? 'unnamed';
   }
 
   /**
@@ -60,14 +66,21 @@ export class TtlCache<T> {
    */
   get(key: string): T | null {
     const entry = this.cache.get(key);
-    if (!entry) return null;
+    if (!entry) {
+      cacheMissCounter.inc({ cache_name: this.name, cache_type: 'ttlCache' });
+      return null;
+    }
 
     const now = Date.now();
     if (now > entry.expiresAt) {
       // Entry expired, remove it
       this.cache.delete(key);
+      cacheMissCounter.inc({ cache_name: this.name, cache_type: 'ttlCache' });
       return null;
     }
+
+    // Cache hit
+    cacheHitCounter.inc({ cache_name: this.name, cache_type: 'ttlCache' });
 
     // Refresh TTL on access if enabled
     if (this.refreshOnAccess) {

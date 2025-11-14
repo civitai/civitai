@@ -12,6 +12,23 @@ export function registerCounter({ name, help }: { name: string; help: string }) 
   }
 }
 
+export function registerCounterWithLabels<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
+  } catch (e) {
+    return client.register.getSingleMetric(name) as Counter<T>;
+  }
+}
+
 // Auth counters
 export const missingSignedAtCounter = registerCounter({
   name: 'missing_signed_at_total',
@@ -67,6 +84,25 @@ export const rewardFailedCounter = registerCounter({
 export const clavataCounter = registerCounter({
   name: 'clavata_req_total',
   help: 'Clavata requests',
+});
+
+// Cache metrics
+export const cacheHitCounter = registerCounterWithLabels({
+  name: 'cache_hit_total',
+  help: 'Cache hits by cache name and type',
+  labelNames: ['cache_name', 'cache_type'] as const,
+});
+
+export const cacheMissCounter = registerCounterWithLabels({
+  name: 'cache_miss_total',
+  help: 'Cache misses by cache name and type',
+  labelNames: ['cache_name', 'cache_type'] as const,
+});
+
+export const cacheRevalidateCounter = registerCounterWithLabels({
+  name: 'cache_revalidate_total',
+  help: 'Cache revalidations (stale-while-revalidate) by cache name and type',
+  labelNames: ['cache_name', 'cache_type'] as const,
 });
 
 declare global {
