@@ -124,10 +124,11 @@ export async function processImageScanResult(req: NextApiRequest) {
     let { isBlocked, blockedReason } = mediaRating!;
     const { hashes } = mediaHash!;
 
-    const pHash = BigInt('0x' + hashes.perceptual);
+    const bigInt = BigInt('0x' + hashes.perceptual);
+    const pHash = BigInt.asIntN(64, bigInt);
 
     if (!isBlocked) {
-      isBlocked = await getIsImageBlocked('0x' + hashes.perceptual);
+      isBlocked = await getIsImageBlocked(pHash);
       if (isBlocked) blockedReason = 'Similar to blocked content';
     }
     if (isBlocked) {
@@ -275,7 +276,7 @@ export async function processImageScanResult(req: NextApiRequest) {
   }
 }
 
-async function getIsImageBlocked(hash: string) {
+async function getIsImageBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
   const [{ count }] = await clickhouse.$query<{ count: number }>`
