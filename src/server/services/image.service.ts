@@ -5772,8 +5772,10 @@ export async function queueImageSearchIndexUpdate({
     await thumbnailCache.bust(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
-      ...poolCounters.Knight.map((queue) => queue.reset({ id: ids })),
-      ...poolCounters.Templar.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Knight.b.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.a.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.b.map((queue) => queue.reset({ id: ids })),
     ]);
   }
 }
