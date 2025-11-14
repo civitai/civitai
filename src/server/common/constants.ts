@@ -172,10 +172,6 @@ export const constants = {
     voteDuration: 1000 * 60 * 60 * 24,
     upvoteThreshold: 3,
   },
-  imageTags: {
-    styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
-    subjects: ['man', 'woman', 'men', 'women'] as string[],
-  },
   maxTrainingRetries: 2,
   mediaUpload: {
     maxOrchestratorImageFileSize: 60 * 1024 ** 2, // 16MB

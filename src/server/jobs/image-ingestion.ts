@@ -33,13 +33,21 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
   `) ?? []
   ).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
 
+  const rescanImages =
+    (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
+    FROM "Image"
+    WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
+    LIMIT 20000
+  `) ?? [];
+
   // Fetch then filter error images in JS to avoid a slow query
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
   const errorImages = (
     (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as retryCount
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as "retryCount"
     FROM "Image"
-    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR ("nsfwLevel" IS NOT NULL AND "createdAt" > '10/15/2025'))
+    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '24 hours'::interval)
   `) ?? []
   ).filter(
     (img) =>
@@ -52,6 +60,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
 
   if (isProd) {
     await sendImagesForScanBulk(pendingImages);
+    await sendImagesForScanBulk(rescanImages, { lowPriority: true });
     await sendImagesForScanBulk(errorImages, { lowPriority: true });
   }
 

@@ -1353,6 +1353,7 @@ enum ImageIngestionStatus {
   Blocked
   NotFound
   PendingManualAssignment
+  Rescan
 }
 
 enum MediaType {

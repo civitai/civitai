@@ -1,9 +1,12 @@
-import { TimeSpan } from '@civitai/client';
+import type { Priority, WorkflowStepTemplate } from '@civitai/client';
+import { submitWorkflow, TimeSpan } from '@civitai/client';
+import { logToAxiom } from '~/server/logging/client';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import type { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { createVideoEnhancementStep } from '~/server/orchestrator/video-enhancement/video-enhancement';
 import { populateWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/common';
 import { getUpscaleFactor } from '~/shared/constants/generation.constants';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -152,4 +155,79 @@ async function createUpscaleEnhancementStep(args: any) {
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: args.metadata,
   };
+}
+
+export async function createImageIngestionRequest({
+  imageId,
+  url,
+  callbackUrl,
+  priority = 'normal',
+}: {
+  imageId: number;
+  url: string;
+  callbackUrl: string;
+  priority?: Priority;
+}) {
+  const metadata = { imageId };
+  const { data, error, response } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    body: {
+      metadata,
+      arguments: {
+        url,
+      },
+      steps: [
+        {
+          $type: 'wdTagging',
+          name: 'tags',
+          metadata,
+          priority,
+          input: {
+            mediaUrl: url,
+            model: 'wd14-vit.v1',
+            threshold: 0.5,
+          },
+        } as WorkflowStepTemplate,
+        {
+          $type: 'mediaRating',
+          name: 'rating',
+          metadata,
+          priority,
+          input: {
+            mediaUrl: url,
+            engine: 'civitai',
+          },
+        } as WorkflowStepTemplate,
+        {
+          $type: 'mediaHash',
+          name: 'hash',
+          metadata,
+          priority,
+          input: {
+            mediaUrl: url,
+            hashTypes: ['perceptual'],
+          },
+        } as WorkflowStepTemplate,
+      ],
+      callbacks: [
+        {
+          url: `${callbackUrl}&type=new`,
+          type: ['workflow:succeeded', 'workflow:failed', 'workflow:expired', 'workflow:canceled'],
+        },
+      ],
+    },
+  });
+
+  if (!data) {
+    logToAxiom({
+      type: 'error',
+      name: 'image-ingestion',
+      imageId,
+      url,
+      responseStatus: response.status,
+      error,
+    });
+  }
+
+  return data;
 }
