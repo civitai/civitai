@@ -113,7 +113,7 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const { data, error, response } = await clientSubmitWorkflow({
+  const { data, error, response, ...res } = await clientSubmitWorkflow({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
@@ -136,6 +136,7 @@ export async function submitWorkflow({
       console.log('----Workflow Error----');
       console.log({ token });
       console.dir({ error }, { depth: null });
+      console.dir({ res, data }, { depth: null });
       console.log('----Workflow Error Request Body----');
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');

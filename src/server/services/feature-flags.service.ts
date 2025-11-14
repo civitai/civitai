@@ -43,6 +43,7 @@ const featureFlags = createFeatureFlags({
   stripe: ['mod'],
   imageTraining: ['user'],
   videoTraining: ['mod', 'bronze', 'silver', 'gold'],
+  aiToolkitTraining: ['user'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
