@@ -153,8 +153,6 @@ export function createCachedArray<T extends object>({
     // If we have cache misses, we need to fetch from the DB
     if (cacheMisses.size > 0) {
       log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
-      // Track cache misses
-      cacheMissCounter.inc({ cache_name: key, cache_type: 'cachedArray' }, cacheMisses.size);
 
       const dbResults: Record<string, T> = {};
       const lookupBatches = chunk([...cacheMisses], 10000);
@@ -166,14 +164,26 @@ export function createCachedArray<T extends object>({
       const toCache: Record<string, MixedObject> = {};
       const toCacheNotFound: Record<string, MixedObject> = {};
       const cachedAt = new Date();
+      let actualMisses = 0;
       for (const id of cacheMisses) {
         const result = dbResults[id];
         if (!result) {
-          if (cacheNotFound) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+          if (cacheNotFound) {
+            toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+            // Count as miss when we cache notFound markers
+            actualMisses++;
+          }
+          // When cacheNotFound=false, don't count as miss since we don't cache it
           continue;
         }
         results.add(result as T);
+        actualMisses++;
         if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
+      }
+
+      // Track cache misses - only count items we actually fetched or cached as notFound
+      if (actualMisses > 0) {
+        cacheMissCounter.inc({ cache_name: key, cache_type: 'cachedArray' }, actualMisses);
       }
 
       // then cache the results
@@ -360,11 +370,7 @@ export async function fetchThroughCache<T>(
     // Try to set lock. If already locked, do nothing...
     const gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
     if (!gotLock) {
-      if (cachedData) {
-        // Stale cache hit (revalidate triggered by another process)
-        cacheRevalidateCounter.inc({ cache_name: key, cache_type: 'fetchThroughCache' });
-        return cachedData.data;
-      }
+      if (cachedData) return cachedData.data;
       if (retryCount === 0) throw new Error('Failed to fetch data through cache');
 
       // Wait for the fetcher to do their thing...
@@ -375,16 +381,7 @@ export async function fetchThroughCache<T>(
         retryCount: retryCount - 1,
       });
     }
-    // Cache miss or expired
-    if (cachedData) {
-      cacheRevalidateCounter.inc({ cache_name: key, cache_type: 'fetchThroughCache' });
-    } else {
-      cacheMissCounter.inc({ cache_name: key, cache_type: 'fetchThroughCache' });
-    }
-  } else if (cachedData) {
-    cacheHitCounter.inc({ cache_name: key, cache_type: 'fetchThroughCache' });
-    return cachedData.data;
-  }
+  } else if (cachedData) return cachedData.data;
 
   try {
     const data = await fetchFn();
