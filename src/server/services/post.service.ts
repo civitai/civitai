@@ -990,9 +990,10 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     where: { id: image.id },
     data: {
       ...image,
+      updatedAt: new Date(),
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
       // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Rescan' : undefined,
+      ingestion: shouldIngest ? 'Pending' : undefined,
       blockedFor: shouldIngest ? null : undefined,
       metadata: {
         ...((currentImage.metadata as MixedObject) ?? {}),

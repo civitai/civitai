@@ -1,13 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { clickhouse } from '~/server/clickhouse/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { getModeratedTags } from '~/server/services/system-cache';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type MatureContent = {
@@ -15,13 +16,30 @@ type MatureContent = {
   subscriptions: Record<string, number>;
 };
 
+const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
+const IMAGE_SCANNING_RETRY_LIMIT = 6;
+
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    const image = getEdgeUrl('526cbcf4-e335-415c-a4d7-f6eac7428216', { type: 'image' });
-    const video = getEdgeUrl('854ea301-d377-484b-ae05-29686c2fc174', { type: 'video' });
+    const now = new Date();
+    const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
+    const errorImages = (
+      (await dbWrite.$queryRaw<any[]>`
+       SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as "retryCount"
+       FROM "Image"
+       WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR ("nsfwLevel" IS NOT NULL AND "createdAt" > '10/15/2025'))
+     `) ?? []
+    ).filter((img) => {
+      console.log(Number(img.retryCount ?? 0));
+      return (
+        img.scanRequestedAt &&
+        new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
+        Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
+      );
+    });
 
-    res.status(200).send({ image, video });
+    res.status(200).send({ errorImages });
   } catch (e) {
     console.log(e);
     res.status(400).end();

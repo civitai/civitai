@@ -6,7 +6,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/commo
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
-import { ImageIngestionStatus, TagSource } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
   NsfwLevel,
@@ -36,6 +36,7 @@ import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
+import { addImageToQueue } from '~/server/services/games/new-order.service';
 
 type WdTaggingStep = {
   $type: 'wdTagging';
@@ -87,9 +88,10 @@ export async function processImageScanResult(req: NextApiRequest) {
       select: { id: true, scanJobs: true },
     });
     if (image) {
-      const scanJobs = (image.scanJobs ?? {}) as { retryCount?: number };
+      const scanJobs = (image.scanJobs ?? {}) as { retryCount?: number; workflowId?: string };
       scanJobs.retryCount = scanJobs.retryCount ?? 0;
       scanJobs.retryCount++;
+      scanJobs.workflowId = event.workflowId;
 
       await dbWrite.image.updateMany({
         where: { id: image.id },
@@ -208,6 +210,7 @@ export async function processImageScanResult(req: NextApiRequest) {
     const toUpdate: Prisma.ImageUpdateInput = {
       updatedAt: new Date(),
       pHash,
+      scanJobs: { ...(image.scanJobs as Record<string, unknown>), workflowId: event.workflowId },
     };
     if (audit.blockedFor) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
@@ -217,21 +220,25 @@ export async function processImageScanResult(req: NextApiRequest) {
       toUpdate.blockedFor = BlockedReason.AiNotVerified;
     } else {
       toUpdate.ingestion = ImageIngestionStatus.Scanned;
-      toUpdate.scannedAt = image.scannedAt ?? new Date();
       toUpdate.needsReview = audit.reviewKey ?? null;
       toUpdate.minor = audit.minor ?? null;
       toUpdate.poi = audit.poi ?? null;
       toUpdate.blockedFor = null;
+
+      toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
     }
 
     await dbWrite.image.update({ where: { id: image.id }, data: toUpdate });
 
+    // handle blocked image updates
     if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {
       await queueImageSearchIndexUpdate({
         ids: [image.id],
         action: SearchIndexUpdateQueueAction.Delete,
       });
-    } else if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
+    }
+    // handle scanned image updates
+    else if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
       await tagIdsForImagesCache.refresh(image.id);
       if (
         typeof image.metadata === 'object' &&
@@ -253,6 +260,10 @@ export async function processImageScanResult(req: NextApiRequest) {
           imageId: image.id,
           tagIds: tagsForReview.map((x) => x.id),
         });
+      }
+
+      if (!audit.reviewKey && image.type === 'image') {
+        await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
       }
     }
 
@@ -497,4 +508,22 @@ async function getIsNewUser(userId: number) {
         SELECT is_new_user(CAST(${userId} AS INT)) "isNewUser";
       `) ?? [];
   return isNewUser;
+}
+
+const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
+async function addToNewOrderQueue({ imageId, nsfw }: { imageId: number; nsfw: boolean }) {
+  let shouldAddToQueue = true;
+  let priority: 1 | 2 | 3 = 1;
+  const rankType = NewOrderRankType.Knight;
+  if (nsfw) {
+    priority = 2;
+    shouldAddToQueue = Math.random() < KONO_NSFW_SAMPLING_RATE; // Use random sampling for 20% inclusion rate
+  }
+  if (shouldAddToQueue) {
+    await addImageToQueue({
+      imageIds: [imageId],
+      rankType,
+      priority,
+    });
+  }
 }

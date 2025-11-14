@@ -1035,7 +1035,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     const now = new Date();
     const oneWeekAgo = decreaseDate(now, 7, 'days').getTime();
     if (!image.scannedAt) data.scannedAt = now;
-    else if (!image.metadata?.skipScannedAtReassignment && createdAtTime >= oneWeekAgo)
+    else if (
+      !(image.metadata as any)?.skipScannedAtReassignment &&
+      image.ingestion !== 'Rescan' &&
+      createdAtTime >= oneWeekAgo
+    )
       data.scannedAt = now;
   }
 

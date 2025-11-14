@@ -603,10 +603,12 @@ export const ingestImage = async ({
   image,
   lowPriority,
   tx,
+  userId,
 }: {
   image: IngestImageInput;
   lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
+  userId?: number;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
@@ -646,12 +648,13 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  const useOrchestrator = true;
+  const useOrchestrator = userId === 5 || userId === 5418;
   if (useOrchestrator) {
     const workflowResponse = await createImageIngestionRequest({
       imageId: id,
       url: getEdgeUrl(url, { type }),
       callbackUrl,
+      priority: lowPriority ? 'low' : undefined,
     });
     if (!workflowResponse) return false;
     await dbClient.$executeRaw`
@@ -3999,6 +4002,7 @@ export async function createImage({
         width: image.width,
         prompt: image?.meta?.prompt,
       },
+      userId: image.userId,
     });
   }
 
