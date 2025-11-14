@@ -121,7 +121,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST')
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 
-  if (req.query.type === 'new') {
+  if ('workflowId' in req.body) {
     try {
       await processImageScanResult(req);
     } catch (e: any) {
