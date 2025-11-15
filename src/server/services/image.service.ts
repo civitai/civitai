@@ -46,7 +46,7 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
-  userContentOverviewCache,
+  userImageVideoCountCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -4014,7 +4014,7 @@ export async function createImage({
     });
   }
 
-  await userContentOverviewCache.bust(image.userId);
+  await userImageVideoCountCache.bust(image.userId);
 
   return result;
 }

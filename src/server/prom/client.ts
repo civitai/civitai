@@ -8,7 +8,7 @@ export function registerCounter({ name, help }: { name: string; help: string }) 
   try {
     return new client.Counter({ name: PROM_PREFIX + name, help });
   } catch (e) {
-    return client.register.getSingleMetric(name) as Counter<string>;
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<string>;
   }
 }
 
@@ -25,7 +25,7 @@ export function registerCounterWithLabels<T extends string>({
   try {
     return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
   } catch (e) {
-    return client.register.getSingleMetric(name) as Counter<T>;
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<T>;
   }
 }
 

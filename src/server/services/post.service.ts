@@ -8,7 +8,7 @@ import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { postStatCache, thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
+import { postStatCache, thumbnailCache, userPostCountCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
@@ -669,7 +669,7 @@ export const createPost = async ({
   });
 
   await preventReplicationLag('post', post.id);
-  await userContentOverviewCache.bust(userId);
+  await userPostCountCache.bust(userId);
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -710,7 +710,7 @@ export const updatePost = async ({
     },
   });
   await preventReplicationLag('post', post.id);
-  await userContentOverviewCache.bust(post.userId);
+  await userPostCountCache.bust(post.userId);
 
   return post;
 };
@@ -1013,7 +1013,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 
   purgeImageGenerationDataCache(image.id);
-  await userContentOverviewCache.bust(result.userId);
+  await userPostCountCache.bust(result.userId);
 };
 
 export const addResourceToPostImage = async ({

@@ -20,7 +20,7 @@ import {
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import type { GetByIdInput } from '../schema/base.schema';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -173,7 +173,7 @@ export const upsertBountyEntry = async ({
       }
 
       if (entry.userId) {
-        await userContentOverviewCache.bust(entry.userId);
+        await userBountyEntryCountCache.bust(entry.userId);
       }
 
       return entry;
