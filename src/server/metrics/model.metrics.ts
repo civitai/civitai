@@ -365,19 +365,17 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
     return [];
   }
 
-  // TODO.resourceCompensations: we should use the new `resourceCompensations` table instead of this,
-  // But because we did not back-fill, won't be replacing yet.
   const data = await ctx.ch.$query<{ modelVersionId: number }>`
       WITH affected AS (
         SELECT DISTINCT modelVersionId
-        FROM buzz_resource_compensation
+        FROM orchestration.resourceCompensations
         WHERE date = toStartOfDay(${ctx.lastUpdate})
       )
       SELECT
       modelVersionId,
-      SUM(total) as earned,
-      sumIf(total, date >= ${auctionReset}) as earned_week -- Since Auction Reset
-      FROM buzz_resource_compensation
+      floor(SUM(amount)) as earned,
+      floor(sumIf(amount, date >= ${auctionReset})) as earned_week -- Since Auction Reset
+      FROM orchestration.resourceCompensations
       WHERE modelVersionId IN (SELECT modelVersionId FROM affected)
       GROUP BY modelVersionId;
   `;

@@ -11,24 +11,9 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
-const IMAGE_CREATOR_COMP = 0.25;
-const VIDEO_CREATOR_COMP = 0.1;
-const BASE_MODEL_COMP = 0.25;
-const COMPENSATION_BATCH_SIZE = 1000;
-
-type CompensationRecord = {
-  date: Date;
-  modelVersionId: number;
-  comp: number;
-  tip: number;
-  total: number;
-  count: number;
-  final: number;
-};
-
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
-  '15 * * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
+  '15 0 * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
   async () => {
     if (!clickhouse) return;
 
@@ -38,108 +23,17 @@ export const updateCreatorResourceCompensation = createJob(
       new Date()
     );
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
+    if (!shouldPayout) return;
 
-    // If we're preping for payout, we need to grab the last numbers for yesterday.
-    const subtractDays = shouldPayout ? 1 : 0;
-    const addDays = 1;
-
-    console.log('Fetching compensation records...');
-
-    // Step 1: Fetch all compensation records with optimized query
-    const records = await clickhouse.$query<CompensationRecord>`
-      SELECT
-        toStartOfDay(createdAt) as date,
-        modelVersionId,
-        FLOOR(SUM(comp)) as comp,
-        FLOOR(SUM(tip)) AS tip,
-        comp + tip as total,
-        count(*) as count,
-        date < toStartOfDay(now()) as final
-      FROM (
-        SELECT
-        modelVersionId,
-        createdAt,
-        max(jobCost) * (if(isVideo, ${VIDEO_CREATOR_COMP}, ${IMAGE_CREATOR_COMP})) as creator_comp,
-        max(creatorsTip) as full_tip,
-        max(resource_count) as resource_count,
-        creator_comp * if(max(isBaseModel) = 1, ${BASE_MODEL_COMP}, 0) as base_model_comp,
-        creator_comp * ${1 - BASE_MODEL_COMP} / resource_count as resource_comp,
-        base_model_comp + resource_comp as comp,
-        full_tip / resource_count as tip,
-        comp + tip as total
-        FROM (
-          SELECT
-            rj.modelVersionId as modelVersionId,
-            rj.resource_count as resource_count,
-            rj.createdAt as createdAt,
-            rj.jobCost as jobCost,
-            rj.jobId as jobId,
-            rj.creatorsTip as creatorsTip,
-            m.type = 'Checkpoint' as isBaseModel,
-            rj.isVideo as isVideo
-          FROM (
-            SELECT
-              arrayJoin(arrayFilter(x -> x NOT IN (250708, 250712, 106916), resourcesUsed)) AS modelVersionId,
-              length(arrayFilter(x -> x NOT IN (250708, 250712, 106916), resourcesUsed)) as resource_count,
-              createdAt,
-              cost as jobCost,
-              jobId,
-              creatorsTip,
-              jobType = 'comfyVideoGen' as isVideo
-            FROM orchestration.jobs
-            WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
-              AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays})) AND toStartOfDay(addDays(now(),${addDays}))
-              AND cost > 0
-          ) rj
-          GLOBAL JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
-          GLOBAL JOIN civitai_pg.Model m ON m.id = mv.modelId
-        ) resource_job_details
-        GROUP BY modelVersionId, jobId, createdAt, isVideo
-      ) resource_job_values
-      GROUP BY date, modelVersionId
-      HAVING total >= 1
-      ORDER BY total DESC
-    `;
-
-    console.log(`Fetched ${records.length} compensation records. Inserting in batches...`);
-
-    // Step 2: Insert records in batches to avoid timeout
-    const batches = chunk(records, COMPENSATION_BATCH_SIZE);
-    const totalBatches = batches.length;
-    let batchCount = 0;
-
-    for (const batch of batches) {
-      const values = batch
-        .map(
-          (r) =>
-            `(toDate('${formatDate(r.date, 'YYYY-MM-DD')}'), ${r.modelVersionId}, ${r.comp}, ${
-              r.tip
-            }, ${r.total}, ${r.count}, ${r.final})`
-        )
-        .join(',');
-
+    await runPayout(lastPayout);
+    await setLastPayout();
+    try {
       await clickhouse.$query`
-        INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count, final)
-        VALUES ${values};
+        INSERT INTO kafka.manual_events VALUES
+          (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
       `;
-      batchCount++;
-
-      console.log(`Inserted batch ${batchCount}/${totalBatches} (${batch.length} records)`);
-    }
-
-    console.log(`Successfully inserted ${records.length} compensation records`);
-
-    if (shouldPayout) {
-      await runPayout(lastPayout);
-      await setLastPayout();
-      try {
-        await clickhouse.$query`
-          INSERT INTO kafka.manual_events VALUES
-            (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
-        `;
-      } catch (error) {
-        console.error('Error queueing compensation update event', error);
-      }
+    } catch (error) {
+      console.error('Error queueing compensation update event', error);
     }
   }
 );
