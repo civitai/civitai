@@ -10,6 +10,7 @@ import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { creatorCompCreatorsPaidCounter, creatorCompAmountPaidCounter } from '~/server/prom/client';
 
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
@@ -119,6 +120,23 @@ export async function runPayout(lastUpdate: Date) {
   const tasks = [
     ...chunk(compensationTransactions, BATCH_SIZE).map((batch) => async () => {
       await withRetries(() => createBuzzTransactionMany(batch), 1);
+
+      // Track metrics for this batch after successful transaction
+      const batchStats = batch.reduce((acc, tx) => {
+        const accountType = tx.toAccountType;
+        if (!acc[accountType]) {
+          acc[accountType] = { creators: new Set<number>(), amount: 0 };
+        }
+        acc[accountType].creators.add(tx.toAccountId);
+        acc[accountType].amount += tx.amount;
+        return acc;
+      }, {} as Record<BuzzAccountType, { creators: Set<number>; amount: number }>);
+
+      // Record metrics by account type for this batch
+      Object.entries(batchStats).forEach(([accountType, stats]) => {
+        creatorCompCreatorsPaidCounter.inc({ account_type: accountType }, stats.creators.size);
+        creatorCompAmountPaidCounter.inc({ account_type: accountType }, stats.amount);
+      });
     }),
   ];
 

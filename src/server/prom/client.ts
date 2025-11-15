@@ -105,6 +105,19 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
+// Creator compensation metrics
+export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
+  name: 'creator_comp_creators_paid_total',
+  help: 'Total number of creators who received compensation',
+  labelNames: ['account_type'] as const,
+});
+
+export const creatorCompAmountPaidCounter = registerCounterWithLabels({
+  name: 'creator_comp_amount_paid_total',
+  help: 'Total buzz amount paid to creators',
+  labelNames: ['account_type'] as const,
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
