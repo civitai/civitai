@@ -14,6 +14,17 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 const IMAGE_CREATOR_COMP = 0.25;
 const VIDEO_CREATOR_COMP = 0.1;
 const BASE_MODEL_COMP = 0.25;
+const COMPENSATION_BATCH_SIZE = 1000;
+
+type CompensationRecord = {
+  date: Date;
+  modelVersionId: number;
+  comp: number;
+  tip: number;
+  total: number;
+  count: number;
+  final: number;
+};
 
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
@@ -32,8 +43,10 @@ export const updateCreatorResourceCompensation = createJob(
     const subtractDays = shouldPayout ? 1 : 0;
     const addDays = 1;
 
-    await clickhouse.$query`
-      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count, final)
+    console.log('Fetching compensation records...');
+
+    // Step 1: Fetch all compensation records with optimized query
+    const records = await clickhouse.$query<CompensationRecord>`
       SELECT
         toStartOfDay(createdAt) as date,
         modelVersionId,
@@ -66,8 +79,8 @@ export const updateCreatorResourceCompensation = createJob(
             rj.isVideo as isVideo
           FROM (
             SELECT
-              arrayJoin(resourcesUsed) AS modelVersionId,
-              length(arrayFilter(x -> NOT x IN (250708, 250712, 106916), resourcesUsed)) as resource_count,
+              arrayJoin(arrayFilter(x -> x NOT IN (250708, 250712, 106916), resourcesUsed)) AS modelVersionId,
+              length(arrayFilter(x -> x NOT IN (250708, 250712, 106916), resourcesUsed)) as resource_count,
               createdAt,
               cost as jobCost,
               jobId,
@@ -76,17 +89,45 @@ export const updateCreatorResourceCompensation = createJob(
             FROM orchestration.jobs
             WHERE jobType IN ('TextToImageV2', 'comfyVideoGen')
               AND createdAt BETWEEN toStartOfDay(subtractDays(now(),${subtractDays})) AND toStartOfDay(addDays(now(),${addDays}))
-              AND modelVersionId NOT IN (250708, 250712, 106916)
+              AND cost > 0
           ) rj
-          JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
-          JOIN civitai_pg.Model m ON m.id = mv.modelId
+          GLOBAL JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId
+          GLOBAL JOIN civitai_pg.Model m ON m.id = mv.modelId
         ) resource_job_details
         GROUP BY modelVersionId, jobId, createdAt, isVideo
       ) resource_job_values
       GROUP BY date, modelVersionId
       HAVING total >= 1
-      ORDER BY total DESC;
+      ORDER BY total DESC
     `;
+
+    console.log(`Fetched ${records.length} compensation records. Inserting in batches...`);
+
+    // Step 2: Insert records in batches to avoid timeout
+    const batches = chunk(records, COMPENSATION_BATCH_SIZE);
+    const totalBatches = batches.length;
+    let batchCount = 0;
+
+    for (const batch of batches) {
+      const values = batch
+        .map(
+          (r) =>
+            `(toDate('${formatDate(r.date, 'YYYY-MM-DD')}'), ${r.modelVersionId}, ${r.comp}, ${
+              r.tip
+            }, ${r.total}, ${r.count}, ${r.final})`
+        )
+        .join(',');
+
+      await clickhouse.$query`
+        INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count, final)
+        VALUES ${values};
+      `;
+      batchCount++;
+
+      console.log(`Inserted batch ${batchCount}/${totalBatches} (${batch.length} records)`);
+    }
+
+    console.log(`Successfully inserted ${records.length} compensation records`);
 
     if (shouldPayout) {
       await runPayout(lastPayout);
