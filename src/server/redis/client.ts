@@ -479,6 +479,7 @@ export const REDIS_SYS_KEYS = {
     BUZZ: 'new-order:blessed-buzz',
     SMITE: 'new-order:smite-progress',
     QUEUES: 'new-order:queues',
+    ACTIVE_SLOT: 'new-order:active-slot',
     RATINGS: 'new-order:ratings',
     MATCHES: 'new-order:matches',
     JUDGEMENTS: {

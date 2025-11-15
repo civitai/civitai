@@ -2,6 +2,16 @@ import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const knightsNewOrderNotifications = createNotificationProcessor({
+  'new-order-sanity-warning': {
+    displayName: 'Knights of New Order: Sanity Warning',
+    category: NotificationCategory.Other,
+    prepareMessage: ({ details }) => ({
+      message:
+        (details?.message as string) ||
+        'Knights of New Order: Careful! You failed a sanity check. Review your ratings to maintain accuracy.',
+      url: '/games/knights-of-new-order',
+    }),
+  },
   'new-order-smite-received': {
     displayName: 'Knights of New Order: Smite',
     prepareMessage: () => ({
