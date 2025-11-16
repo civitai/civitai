@@ -11,12 +11,18 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { creatorCompCreatorsPaidCounter, creatorCompAmountPaidCounter } from '~/server/prom/client';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('creator-compensation', 'green');
 
 export const updateCreatorResourceCompensation = createJob(
-  'update-creator-resource-compensation',
+  'deliver-creator-compensation',
   '15 0 * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
   async () => {
-    if (!clickhouse) return;
+    if (!clickhouse) {
+      log('ClickHouse not available, skipping job');
+      return;
+    }
 
     // If it's a new day, we need to run the compensation payout job
     const [lastPayout, setLastPayout] = await getJobDate(
@@ -24,17 +30,28 @@ export const updateCreatorResourceCompensation = createJob(
       new Date()
     );
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
-    if (!shouldPayout) return;
+    if (!shouldPayout) {
+      log('Payout already ran today, skipping');
+      return;
+    }
 
-    await runPayout(lastPayout);
-    await setLastPayout();
     try {
-      await clickhouse.$query`
-        INSERT INTO kafka.manual_events VALUES
-          (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
-      `;
+      await runPayout(lastPayout);
+      await setLastPayout();
+      log('Updated last payout date');
+
+      try {
+        await clickhouse.$query`
+          INSERT INTO kafka.manual_events VALUES
+            (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
+        `;
+        log('Queued compensation update event to Kafka');
+      } catch (error) {
+        log('Error queueing compensation update event to Kafka:', error);
+      }
     } catch (error) {
-      console.error('Error queueing compensation update event', error);
+      log('❌ Payout failed:', error);
+      throw error;
     }
   }
 );
@@ -46,10 +63,18 @@ const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
 
 export async function runPayout(lastUpdate: Date) {
-  if (!clickhouse) return;
-  if (lastUpdate < COMP_START_DATE) return;
+  if (!clickhouse) {
+    log('ClickHouse not available, skipping payout');
+    return;
+  }
+  if (lastUpdate < COMP_START_DATE) {
+    log('Last update before compensation start date, skipping payout');
+    return;
+  }
 
   const date = dayjs.utc(lastUpdate).startOf('day').toDate();
+  log(`Starting payout process for date: ${formatDate(date, 'YYYY-MM-DD')}`);
+
   const compensations = await clickhouse.$query<Compensation>`
     SELECT
       modelVersionId,
@@ -60,10 +85,18 @@ export async function runPayout(lastUpdate: Date) {
     GROUP BY modelVersionId, accountType
     HAVING amount > 0;
   `;
-  if (!compensations.length) return;
+
+  log(`Found ${compensations.length} compensations from ClickHouse`);
+
+  if (!compensations.length) {
+    log('No compensations found, skipping payout');
+    return;
+  }
 
   const creatorsToPay: Record<number, Compensation[]> = {};
   const batches = chunk(compensations, BATCH_SIZE);
+  log(`Processing ${batches.length} batches of compensations (batch size: ${BATCH_SIZE})`);
+
   for (const batch of batches) {
     const versionIds = batch.map((c) => c.modelVersionId);
     if (!versionIds.length) continue;
@@ -88,7 +121,14 @@ export async function runPayout(lastUpdate: Date) {
       );
     }
   }
-  if (isEmpty(creatorsToPay)) return;
+
+  const creatorCount = Object.keys(creatorsToPay).length;
+  log(`Mapped compensations to ${creatorCount} creators`);
+
+  if (isEmpty(creatorsToPay)) {
+    log('No creators to pay after mapping, skipping payout');
+    return;
+  }
 
   // Compensations and transactions are now one and the same.
   const compensationTransactions = Object.entries(creatorsToPay)
@@ -117,9 +157,18 @@ export async function runPayout(lastUpdate: Date) {
     })
     .filter((transaction) => transaction.amount > 0);
 
+  const totalBuzz = compensationTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+  log(`Created ${compensationTransactions.length} transactions totaling ${totalBuzz} buzz`);
+
+  const txBatches = chunk(compensationTransactions, BATCH_SIZE);
+  log(`Processing ${txBatches.length} transaction batches (concurrency: 2)`);
+
+  let processedBatches = 0;
   const tasks = [
-    ...chunk(compensationTransactions, BATCH_SIZE).map((batch) => async () => {
+    ...txBatches.map((batch, index) => async () => {
       await withRetries(() => createBuzzTransactionMany(batch), 1);
+      processedBatches++;
+      log(`Processed batch ${processedBatches}/${txBatches.length} (${batch.length} transactions)`);
 
       // Track metrics for this batch after successful transaction
       const batchStats = batch.reduce((acc, tx) => {
@@ -141,4 +190,6 @@ export async function runPayout(lastUpdate: Date) {
   ];
 
   await limitConcurrency(tasks, 2);
+
+  log(`✅ Payout completed successfully: ${creatorCount} creators paid ${totalBuzz} buzz`);
 }
