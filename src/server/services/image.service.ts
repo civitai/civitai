@@ -990,15 +990,13 @@ export const getAllImages = async (
   }
 
   // Hacked this to use the model version image cache instead
-  const useModelVersionCache = await isFlipt(
-    'use-model-version-cache-for-images',
-    modelVersionId?.toString(),
-    {
+  const prioritizeUser = !!prioritizedUserIds?.length;
+  const useModelVersionCache =
+    prioritizeUser &&
+    (await isFlipt('use-model-version-cache-for-images', modelVersionId?.toString(), {
       isModerator: isModerator.toString(),
       userId: userId?.toString() || 'anon',
-    }
-  );
-  const prioritizeUser = !!prioritizedUserIds?.length;
+    }));
   if (prioritizeUser && useModelVersionCache) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (!modelVersionId)
