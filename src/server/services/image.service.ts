@@ -154,7 +154,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 
@@ -930,7 +930,6 @@ export const getAllImages = async (
     // hideAutoResources,
     // hideManualResources,
     reactions,
-    ids,
     includeBaseModel,
     types,
     hidden,
@@ -949,7 +948,7 @@ export const getAllImages = async (
     poiOnly,
     minorOnly,
   } = input;
-  let { browsingLevel, userId: targetUserId } = input;
+  let { browsingLevel, userId: targetUserId, ids } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -990,9 +989,33 @@ export const getAllImages = async (
     targetUserId = targetUser.id;
   }
 
+  // Hacked this to use the model version image cache instead
+  const useModelVersionCache = await isFlipt(
+    'use-model-version-cache-for-images',
+    modelVersionId?.toString(),
+    {
+      isModerator: isModerator.toString(),
+      userId: userId?.toString() || 'anon',
+    }
+  );
+  const prioritizeUser = !!prioritizedUserIds?.length;
+  if (prioritizeUser && useModelVersionCache) {
+    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    if (!modelVersionId)
+      throw new Error('modelVersionId is required when using prioritizedUserIds');
+
+    const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
+    const versionData = cachedData[modelVersionId];
+    if (!versionData || !versionData.images?.length) {
+      return { items: [], nextCursor: undefined };
+    }
+
+    ids = versionData.images.map((img) => img.id);
+  }
+
   // [x]
   if (ids && ids.length > 0) {
-    AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
+    AND.push(Prisma.sql`i."id" = ANY(${ids}::int[])`);
   }
   // [x]
   if (types && types.length > 0) {
@@ -1041,7 +1064,6 @@ export const getAllImages = async (
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content
-  const prioritizeUser = !!prioritizedUserIds?.length; // [x]
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     from = `FROM "ImageResourceNew" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
@@ -1257,7 +1279,7 @@ export const getAllImages = async (
   }
   if (cursorClause) AND.push(cursorClause);
 
-  if (prioritizeUser) {
+  if (prioritizeUser && !useModelVersionCache) {
     // [x]
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
@@ -1574,6 +1596,11 @@ export const getAllImages = async (
       };
     }
   );
+
+  // Put into cached order if prioritizing user (model version showcase)
+  if (prioritizeUser && useModelVersionCache) {
+    images.sort((a, b) => ids!.indexOf(a.id) - ids!.indexOf(b.id));
+  }
 
   return {
     nextCursor,
