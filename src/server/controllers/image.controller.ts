@@ -8,6 +8,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
+import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -249,7 +250,13 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
-  const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
+
+  // Track when useIndex is false or undefined
+  if (input.useIndex === false || input.useIndex == null) {
+    imagesFeedWithoutIndexCounter.inc();
+  }
+
+  const fetchFn = features.imageIndexFeed ? getAllImagesIndex : getAllImages;
   // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
 
   try {

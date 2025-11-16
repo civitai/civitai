@@ -105,6 +105,12 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
+// Image feed metrics
+export const imagesFeedWithoutIndexCounter = registerCounter({
+  name: 'images_feed_without_index_total',
+  help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+});
+
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
   name: 'creator_comp_creators_paid_total',
