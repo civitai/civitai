@@ -256,7 +256,7 @@ export const getInfiniteImagesHandler = async ({
     imagesFeedWithoutIndexCounter.inc();
   }
 
-  const fetchFn = features.imageIndexFeed ? getAllImagesIndex : getAllImages;
+  const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
   // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
 
   try {
