@@ -357,10 +357,10 @@ const newOrderChangeRateTarget = createJob(
         // (images with consensus were already removed via removeImageFromQueue)
         log(`ChangeRateTarget :: ${rank} - Inserting NULL ratings into buffer for processing`);
 
-        const batchChunks = chunk(imagesToPurge, 1000);
-        for (const batchChunk of batchChunks) {
+        const batches = chunk(imagesToPurge, 1000);
+        for (const batch of batches) {
           // Insert NULL ratings into buffer - these will be marked as Inconclusive by processFinalRatings
-          const bufferRecords = batchChunk.map((imageId) => ({
+          const bufferRecords = batch.map((imageId) => ({
             imageId,
             rating: null,
           }));
