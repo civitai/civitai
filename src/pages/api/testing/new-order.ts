@@ -98,8 +98,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
               a: slotAQueues,
               b: slotBQueues,
             },
-            // Legacy format for backward compatibility
-            queues: [...slotAQueues, ...slotBQueues],
           };
         })
     );

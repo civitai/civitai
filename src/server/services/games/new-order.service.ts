@@ -11,6 +11,7 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { NewOrderHighRankType } from '~/server/games/new-order/utils';
 import {
   acolyteFailedJudgments,
   allJudgmentsCounter,
@@ -60,8 +61,6 @@ import {
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
-
-type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 

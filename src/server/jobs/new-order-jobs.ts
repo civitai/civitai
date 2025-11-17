@@ -302,6 +302,7 @@ const newOrderChangeFillTarget = createJob(
   async () => {
     log('ChangeFillTarget :: Starting fill slot rotation');
 
+    // Only Knight rank uses slot rotation; other ranks remain on a single slot
     const ranksToRotate = [NewOrderRankType.Knight] as const;
 
     for (const rank of ranksToRotate) {
@@ -329,6 +330,7 @@ const newOrderChangeRateTarget = createJob(
 
     log('ChangeRateTarget :: Starting rate slot rotation and purge');
 
+    // Only Knight rank uses slot rotation; other ranks remain on a single slot
     const ranksToRotate = [NewOrderRankType.Knight] as const;
 
     for (const rank of ranksToRotate) {

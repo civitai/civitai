@@ -1,4 +1,5 @@
 import dayjs from 'dayjs';
+import { values } from 'idb-keyval';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
@@ -58,7 +59,9 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     }
 
     const data = await sysRedis.hGetAll(key);
-    const entries = withCount ? Object.entries(data) : Object.values(data);
+    const entries = withCount
+      ? Object.entries(data).map(([value, score]) => ({ value, score: Number(score) }))
+      : Object.values(data);
 
     return limit ? entries.slice(offset, offset + limit) : entries;
   }
@@ -356,7 +359,7 @@ export const poolCounters = {
 };
 
 type NewOrderSlot = 'a' | 'b';
-type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
+export type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
 /**
  * Get the currently active slot for a rank and purpose (filling or rating)
