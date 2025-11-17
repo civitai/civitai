@@ -73,7 +73,8 @@ export async function runPayout(lastUpdate: Date) {
   }
 
   const date = dayjs.utc(lastUpdate).startOf('day').toDate();
-  log(`Starting payout process for date: ${formatDate(date, 'YYYY-MM-DD')}`);
+  const dateStr = formatDate(date, 'YYYY-MM-DD', true);
+  log(`Starting payout process for date: ${dateStr} (${formatDate(date, 'MMM D, YYYY', true)})`);
 
   const compensations = await clickhouse.$query<Compensation>`
     SELECT
@@ -147,15 +148,13 @@ export async function runPayout(lastUpdate: Date) {
         fromAccountType: accountType as BuzzAccountType,
         toAccountType: accountType as BuzzAccountType,
         amount,
-        description: `Creator tip compensation (${formatDate(date)})`,
+        description: `Creator tip compensation (${formatDate(date, 'MMM D, YYYY', true)})`,
         type: TransactionType.Compensation,
-        externalTransactionId: `creator-tip-comp-${formatDate(
-          date,
-          'YYYY-MM-DD'
-        )}-${userId}-${accountType}`,
+        externalTransactionId: `creator-tip-comp-${dateStr}-${userId}-${accountType}`,
       }));
     })
     .filter((transaction) => transaction.amount > 0);
+  log(`Sample tx: ${compensationTransactions[0]?.externalTransactionId}`);
 
   const totalBuzz = compensationTransactions.reduce((sum, tx) => sum + tx.amount, 0);
   log(`Created ${compensationTransactions.length} transactions totaling ${totalBuzz} buzz`);
