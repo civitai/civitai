@@ -652,7 +652,8 @@ export const ingestImage = async ({
   if (useOrchestrator) {
     const workflowResponse = await createImageIngestionRequest({
       imageId: id,
-      url: getEdgeUrl(url, { type }),
+      url,
+      type,
       callbackUrl,
       priority: lowPriority ? 'low' : undefined,
     });

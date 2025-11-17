@@ -27,7 +27,10 @@ import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  orchestratorNsfwLevelMap,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -50,7 +53,13 @@ type MediaHashStep = {
   $type: 'mediaHash';
   output: { hashes: { perceptual: string } };
 };
-type ScanResultStep = WdTaggingStep | MediaRatingStep | MediaHashStep;
+type RepeatStep = {
+  $type: 'repeat';
+  output: {
+    steps: Array<MediaRatingStep | WdTaggingStep>;
+  };
+};
+type ScanResultStep = WdTaggingStep | MediaRatingStep | MediaHashStep | RepeatStep;
 
 type NormalizedTag = {
   name: string;
@@ -104,30 +113,37 @@ export async function processImageScanResult(req: NextApiRequest) {
   } else {
     const steps = (data.steps ?? []) as unknown as ScanResultStep[];
 
-    const wdTagging = steps.find((x) => x.$type === 'wdTagging')?.output;
-    const mediaRating = steps.find((x) => x.$type === 'mediaRating')?.output;
+    const wdTagging =
+      steps.find((x) => x.$type === 'wdTagging')?.output ?? aggregateWdTaggingRepeater(steps);
+    const mediaRating =
+      steps.find((x) => x.$type === 'mediaRating')?.output ?? aggregateMediaRatingRepeater(steps);
     const mediaHash = steps.find((x) => x.$type === 'mediaHash')?.output;
 
     const missingSteps: string[] = [];
     if (!wdTagging) missingSteps.push('wdTagging');
     if (!mediaRating) missingSteps.push('mediaRating');
-    if (!mediaHash) missingSteps.push('mediaHash');
 
     if (missingSteps.length > 0)
       throw new Error(
         `Incomplete workflow: ${event.workflowId}. Missing steps: ${missingSteps.join(', ')}`
       );
 
+    if (mediaRating?.nsfwLevel === 'na')
+      throw new Error(`invalid media rating for workflow: ${event.workflowId}`);
+
     const { tags: wdTags } = wdTagging!;
     // TODO - convert nsfwLevel from orchestrator format to tag format (pg13 to pg-13)
     const { nsfwLevel } = mediaRating!;
     let { isBlocked, blockedReason } = mediaRating!;
-    const { hashes } = mediaHash!;
+    const { hashes } = mediaHash ?? {};
 
-    const bigInt = BigInt('0x' + hashes.perceptual);
-    const pHash = BigInt.asIntN(64, bigInt);
+    let pHash: bigint | undefined;
+    if (hashes?.perceptual) {
+      const bigInt = BigInt('0x' + hashes.perceptual);
+      pHash = BigInt.asIntN(64, bigInt);
+    }
 
-    if (!isBlocked) {
+    if (!isBlocked && pHash) {
       isBlocked = await getIsImageBlocked(pHash);
       if (isBlocked) blockedReason = 'Similar to blocked content';
     }
@@ -179,7 +195,7 @@ export async function processImageScanResult(req: NextApiRequest) {
           if (source === TagSource.WD14) name = name.replace(/_/g, ' ');
           return {
             name,
-            confidence,
+            confidence: Math.round(confidence * 100),
             source: source as TagSource,
           };
         })
@@ -527,4 +543,53 @@ async function addToNewOrderQueue({ imageId, nsfw }: { imageId: number; nsfw: bo
       priority,
     });
   }
+}
+
+function aggregateWdTaggingRepeater(steps: ScanResultStep[]) {
+  const step = steps.find(
+    (x) => x.$type === 'repeat' && x.output.steps[0].$type === 'wdTagging'
+  ) as RepeatStep;
+  if (!step) return;
+
+  const wdTaggingSteps = step.output.steps as WdTaggingStep[];
+
+  return wdTaggingSteps.reduce<WdTaggingStep['output']>(
+    (acc, step) => {
+      for (const [tag, confidence] of Object.entries(step.output.tags)) {
+        const current = acc.tags[tag];
+        if (!current) acc.tags[tag] = confidence;
+        else if (confidence > current) acc.tags[tag] = confidence;
+      }
+      for (const [rating, confidence] of Object.entries(step.output.rating)) {
+        const current = acc.tags[rating];
+        if (!current) acc.tags[rating] = confidence;
+        else if (confidence > current) acc.tags[rating] = confidence;
+      }
+      return acc;
+    },
+    { tags: {}, rating: {} }
+  );
+}
+
+function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
+  const step = steps.find(
+    (x) => x.$type === 'repeat' && x.output.steps[0].$type === 'mediaRating'
+  ) as RepeatStep;
+  if (!step) return;
+
+  const mediaRatingSteps = step.output.steps as MediaRatingStep[];
+
+  return mediaRatingSteps.reduce<MediaRatingStep['output']>(
+    (acc, step) => {
+      const { nsfwLevel, isBlocked, blockedReason } = step.output;
+      if (!acc.isBlocked) acc.isBlocked = isBlocked;
+      if (!acc.blockedReason) acc.blockedReason = blockedReason;
+
+      if (orchestratorNsfwLevelMap[nsfwLevel] > orchestratorNsfwLevelMap[acc.nsfwLevel])
+        acc.nsfwLevel = nsfwLevel;
+
+      return acc;
+    },
+    { nsfwLevel: 'pg', isBlocked: false }
+  );
 }

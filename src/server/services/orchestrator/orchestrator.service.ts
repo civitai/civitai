@@ -1,5 +1,6 @@
 import type { Priority, WorkflowStepTemplate } from '@civitai/client';
 import { submitWorkflow, TimeSpan } from '@civitai/client';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { logToAxiom } from '~/server/logging/client';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
@@ -8,6 +9,7 @@ import { createVideoEnhancementStep } from '~/server/orchestrator/video-enhancem
 import { populateWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/common';
 import { getUpscaleFactor } from '~/shared/constants/generation.constants';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -162,53 +164,120 @@ export async function createImageIngestionRequest({
   url,
   callbackUrl,
   priority = 'normal',
+  type = 'image',
 }: {
   imageId: number;
   url: string;
   callbackUrl: string;
   priority?: Priority;
+  type?: MediaType;
 }) {
   const metadata = { imageId };
+  const edgeUrl = getEdgeUrl(url, { type });
+
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
     body: {
       metadata,
       arguments: {
-        url,
+        mediaUrl: edgeUrl,
       },
-      steps: [
-        {
-          $type: 'wdTagging',
-          name: 'tags',
-          metadata,
-          priority,
-          input: {
-            mediaUrl: url,
-            model: 'wd14-vit.v1',
-            threshold: 0.5,
-          },
-        } as WorkflowStepTemplate,
-        {
-          $type: 'mediaRating',
-          name: 'rating',
-          metadata,
-          priority,
-          input: {
-            mediaUrl: url,
-            engine: 'civitai',
-          },
-        } as WorkflowStepTemplate,
-        {
-          $type: 'mediaHash',
-          name: 'hash',
-          metadata,
-          priority,
-          input: {
-            mediaUrl: url,
-            hashTypes: ['perceptual'],
-          },
-        } as WorkflowStepTemplate,
-      ],
+      steps:
+        type === 'image'
+          ? [
+              {
+                $type: 'wdTagging',
+                name: 'tags',
+                metadata,
+                priority,
+                input: {
+                  mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
+                  model: 'wd14-vit.v1',
+                  threshold: 0.5,
+                },
+              } as WorkflowStepTemplate,
+              {
+                $type: 'mediaRating',
+                name: 'rating',
+                metadata,
+                priority,
+                input: {
+                  mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
+                  engine: 'civitai',
+                },
+              } as WorkflowStepTemplate,
+              {
+                $type: 'mediaHash',
+                name: 'hash',
+                metadata,
+                priority,
+                input: {
+                  mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
+                  hashTypes: ['perceptual'],
+                },
+              } as WorkflowStepTemplate,
+            ]
+          : [
+              {
+                $type: 'videoFrameExtraction',
+                name: 'videoFrames',
+                metadata,
+                priority,
+                input: {
+                  videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
+                  frameRate: 1,
+                  uniqueThreshold: 0.9,
+                  maxFrames: 50,
+                },
+              } as WorkflowStepTemplate,
+              {
+                $type: 'repeat',
+                input: {
+                  for: {
+                    $ref: 'videoFrames',
+                    path: 'output.frames',
+                    as: 'frame',
+                  },
+                  template: {
+                    $type: 'wdTagging',
+                    name: 'tags',
+                    metadata,
+                    priority,
+                    input: {
+                      mediaUrl: {
+                        $ref: 'frame',
+                        path: 'url',
+                      },
+                      model: 'wd14-vit.v1',
+                      threshold: 0.5,
+                    },
+                  },
+                },
+              } as WorkflowStepTemplate,
+              {
+                $type: 'repeat',
+                input: {
+                  for: {
+                    $ref: 'videoFrames',
+                    path: 'output.frames',
+                    as: 'frame',
+                  },
+                  template: {
+                    $type: 'mediaRating',
+                    name: 'rating',
+                    metadata,
+                    priority,
+                    input: {
+                      mediaUrl: {
+                        $ref: 'frame',
+                        path: 'url',
+                      },
+                      engine: 'civitai',
+                    },
+                  },
+                },
+              } as WorkflowStepTemplate,
+            ],
       callbacks: [
         {
           url: `${callbackUrl}`,
