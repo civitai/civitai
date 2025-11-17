@@ -280,21 +280,7 @@ export const AdvancedSettings = ({
       {/* AI Toolkit Training Toggle or Required Badge */}
       {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
         <Group mt="md">
-          {isAiToolkitMandatory(selectedRun.baseType) ? (
-            // Show non-interactive badge for mandatory AI Toolkit
-            <Group gap={4} wrap="nowrap">
-              <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
-                <Text>
-                  This model requires AI Toolkit training engine for optimal quality and
-                  compatibility.
-                </Text>
-              </InfoPopover>
-              <Text>AI Toolkit Training</Text>
-              <Badge color="green" size="xs">
-                Required
-              </Badge>
-            </Group>
-          ) : (
+          {!isAiToolkitMandatory(selectedRun.baseType) && (
             // Show toggle for optional AI Toolkit
             <Switch
               label={

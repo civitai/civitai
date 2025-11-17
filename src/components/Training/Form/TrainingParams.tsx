@@ -130,6 +130,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { default: 'musubi' } },
       wan_2_1_i2v_14b_720p: { all: { default: 'musubi' } },
       wan_2_1_t2v_14b: { all: { default: 'musubi' } },
+      qwen_image: { all: { default: 'ai-toolkit' } },
     },
   },
   {
@@ -150,6 +151,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         rapid: { default: 1, min: 1, max: 1 },
       },
       chroma: {
+        all: { default: 5 },
+      },
+      qwen_image: {
         all: { default: 5 },
       },
       // sd3_medium: { all: { default: 5 } },
@@ -188,6 +192,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: 4, max: 4 },
       },
       chroma: {
+        all: { default: 4, max: 4 },
+      },
+      qwen_image: {
         all: { default: 4, max: 4 },
       },
       // sd3_medium: { all: { default: 4, max: 4 } },
@@ -263,6 +270,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       flux_dev: { all: { disabled: true } },
       chroma: { all: { disabled: true } },
+      qwen_image: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
       // sd3_large: { all: { disabled: true } },
       hy_720_fp8: { all: { disabled: true } },
@@ -290,6 +298,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       flux_dev: { all: { disabled: true } },
       chroma: { all: { disabled: true } },
+      qwen_image: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
       // sd3_large: { all: { disabled: true } },
       hy_720_fp8: { all: { disabled: true } },
@@ -355,6 +364,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       anime: { all: { default: 1e-4 } },
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
       chroma: { all: { disabled: true, default: 0, max: 0 } },
+      qwen_image: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_large: { all: { disabled: true, default: 0, max: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
@@ -433,6 +443,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       anime: { all: { default: 16 } },
       flux_dev: { kohya: { default: 2 } },
       chroma: { all: { default: 2 } },
+      qwen_image: { all: { default: 2 } },
       // sd3_medium: { all: { default: 2 } },
       // sd3_large: { all: { default: 2 } },
     },
@@ -518,6 +529,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       chroma: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      qwen_image: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       hy_720_fp8: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
