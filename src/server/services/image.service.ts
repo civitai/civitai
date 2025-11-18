@@ -158,7 +158,6 @@ import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
 const {
@@ -4627,7 +4626,7 @@ export const getImageModerationReviewQueue = async ({
   if (tagReview) {
     tagsVar = await getImageTagsForImages(imageIds);
     // Filter to only include tags that need review to prevent greyed-out images
-    tagsVar = tagsVar?.filter((tag) => tag.needsReview);
+    // tagsVar = tagsVar?.filter((tag) => tag.needsReview);
   }
 
   const reviewTags =
@@ -4756,11 +4755,11 @@ export const getImageModerationReviewQueue = async ({
   );
 
   // Filter out images with no tags needing review to prevent greyed-out images in the queue
-  const filteredImages = tagReview
-    ? images.filter((img) => img.tags && img.tags.length > 0)
-    : images;
+  // const filteredImages = tagReview
+  //   ? images.filter((img) => img.tags && img.tags.length > 0)
+  //   : images;
 
-  return { nextCursor, items: filteredImages };
+  return { nextCursor, items: images };
 };
 
 export async function getImageModerationCounts() {

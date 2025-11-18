@@ -597,6 +597,8 @@ export const getPostsInfiniteWithoutMetrics = async ({
 
   const joins: string[] = [];
   if (!isOwnerRequest) {
+    AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "TagsOnPost" top

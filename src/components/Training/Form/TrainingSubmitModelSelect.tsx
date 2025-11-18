@@ -52,6 +52,7 @@ import {
 } from '~/utils/training';
 import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
 import { useTrainingImageStore } from '~/store/training.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const ModelSelector = ({
   selectedRun,
@@ -206,6 +207,7 @@ export const ModelSelect = ({
   numImages: number | undefined;
 }) => {
   const status = useTrainingServiceStatus();
+  const features = useFeatureFlags();
 
   const { updateRun } = trainingStore;
   const blockedModels = status.blockedModels ?? [blockedCustomModels];
@@ -381,15 +383,17 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2025-10-01')}
                   />
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="orange"
-                    name="Qwen"
-                    value={baseModelQwen}
-                    baseType="qwen"
-                    makeDefaultParams={makeDefaultParams}
-                    isNew={true}
-                  />
+                  {features.aiToolkitTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="Qwen"
+                      value={baseModelQwen}
+                      baseType="qwen"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'video' && (
