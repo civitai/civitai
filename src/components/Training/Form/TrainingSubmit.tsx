@@ -164,8 +164,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       const ecosystem = getAiToolkitEcosystem(formBaseModel);
       const modelVariant = getAiToolkitModelVariant(formBaseModel as TrainingDetailsBaseModelList);
 
-      console.log('AI Toolkit whatIf ecosystem:', ecosystem, formBaseModel);
-
       if (!ecosystem) {
         console.error('Failed to determine ecosystem for AI Toolkt whatIf query');
         return null;
