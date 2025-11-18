@@ -202,7 +202,7 @@ export const getTags = async ({
     FROM "Tag" t
       ${Prisma.raw(
         orderBy.includes('m.')
-          ? `LEFT JOIN "TagMetrics" m ON m."tagId" = t."id" AND m.timeframe = 'AllTime'`
+          ? `LEFT JOIN "TagMetric" m ON m."tagId" = t."id" AND m.timeframe = 'AllTime'`
           : ''
       )}
     WHERE ${Prisma.join(AND, ' AND ')}
