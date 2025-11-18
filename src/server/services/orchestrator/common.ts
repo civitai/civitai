@@ -10,6 +10,7 @@ import type {
   ImageBlob,
   VideoBlob,
   NsfwLevel,
+  VideoUpscalerStep,
 } from '@civitai/client';
 import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
@@ -77,7 +78,8 @@ type WorkflowStepAggregate =
   | ImageGenStep
   | TextToImageStep
   | VideoGenStep
-  | VideoEnhancementStep;
+  | VideoEnhancementStep
+  | VideoUpscalerStep;
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -500,6 +502,7 @@ function formatWorkflowStep(args: {
     case 'imageGen':
       return formatImageGenStep(args);
     case 'videoGen':
+    case 'videoUpscaler':
     case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
@@ -748,6 +751,7 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
     case 'textToImage':
       return step.output?.images.map((image) => ({ ...image, type: 'image' }));
     case 'videoGen':
+    case 'videoUpscaler':
     case 'videoEnhancement':
       return step.output?.video ? [{ ...step.output.video, type: 'video' }] : undefined;
   }
