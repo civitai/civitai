@@ -347,8 +347,6 @@ export const createTrainingWhatIfWorkflow = async ({
 
   const stepRun = createTrainingStep(runArgs);
 
-  console.log(JSON.stringify(stepRun));
-
   const workflow = await submitWorkflow({
     token,
     body: {
