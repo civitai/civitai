@@ -265,12 +265,6 @@ export function getAiToolkitEcosystem(baseModel: string): string | null {
   const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
 
   if (modelInfo?.aiToolkit) {
-    console.log(
-      'AI Toolkit ecosystem:',
-      modelInfo.aiToolkit.ecosystem,
-      'for baseModel:',
-      baseModel
-    );
     return modelInfo.aiToolkit.ecosystem;
   }
 
