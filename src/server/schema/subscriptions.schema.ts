@@ -47,4 +47,5 @@ export const subscriptionMetadata = z.looseObject({
   prepaids: z.partialRecord(productTierSchema, z.number()).optional(),
   proratedDays: z.partialRecord(productTierSchema, z.number()).optional(),
   buzzTransactionIds: z.array(z.string()).optional(),
+  cancellationReason: z.string().optional(),
 });
