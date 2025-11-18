@@ -28,7 +28,7 @@ const data: Record<
           today!
         </Text>
         <Text>
-          Please note, private models can only be used to generate PG (or SFW) content onsite.
+          Please note, private models can only be used to generate PG and PG-13 content onsite.
         </Text>
       </Stack>
     ),

@@ -6,7 +6,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { userContentOverviewCache, articleStatCache } from '~/server/redis/caches';
+import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { logToAxiom } from '~/server/logging/client';
 import type {
   ArticleMetadata,
@@ -774,7 +774,7 @@ export const upsertArticle = async ({
           });
         }
 
-        await userContentOverviewCache.bust(article.userId);
+        await userArticleCountCache.bust(article.userId);
 
         return article;
       });
@@ -875,7 +875,7 @@ export const upsertArticle = async ({
         });
       }
 
-      await userContentOverviewCache.bust(updated.userId);
+      await userArticleCountCache.bust(updated.userId);
 
       return updated;
     });
@@ -1050,7 +1050,7 @@ export async function unpublishArticleById({
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   // Bust user content cache
-  await userContentOverviewCache.bust(article.userId);
+  await userArticleCountCache.bust(article.userId);
 
   return updated;
 }
@@ -1104,7 +1104,7 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   // Re-add to search index
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
-  await userContentOverviewCache.bust(article.userId);
+  await userArticleCountCache.bust(article.userId);
 
   return updated;
 }

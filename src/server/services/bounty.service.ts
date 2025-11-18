@@ -42,7 +42,7 @@ import {
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { userBountyCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { logToAxiom } from '~/server/logging/client';
@@ -280,7 +280,7 @@ export const createBounty = async ({
   );
 
   if (bounty.userId) {
-    await userContentOverviewCache.bust(bounty.userId);
+    await userBountyCountCache.bust(bounty.userId);
   }
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
@@ -391,7 +391,7 @@ export const updateBountyById = async ({
   );
 
   if (bounty?.userId) {
-    await userContentOverviewCache.bust(bounty?.userId);
+    await userBountyCountCache.bust(bounty?.userId);
   }
 
   return bounty;
@@ -824,7 +824,7 @@ export const refundBounty = async ({
   });
 
   if (updated.userId) {
-    await userContentOverviewCache.bust(updated.userId);
+    await userBountyCountCache.bust(updated.userId);
   }
 
   return updated;

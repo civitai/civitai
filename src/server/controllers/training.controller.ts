@@ -1,4 +1,3 @@
-import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import type { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
@@ -83,7 +82,7 @@ const getJobIdFromVersion = async (modelVersionId: number) => {
       },
     },
   });
-  if (!modelFile || modelFile.modelVersion?.trainingStatus !== TrainingStatus.Paused) {
+  if (!modelFile) {
     logWebhook({
       message: 'Could not find modelVersion of type "Paused"',
       data: { modelVersionId, important: true },

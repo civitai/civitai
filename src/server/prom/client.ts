@@ -8,7 +8,24 @@ export function registerCounter({ name, help }: { name: string; help: string }) 
   try {
     return new client.Counter({ name: PROM_PREFIX + name, help });
   } catch (e) {
-    return client.register.getSingleMetric(name) as Counter<string>;
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<string>;
+  }
+}
+
+export function registerCounterWithLabels<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
+  } catch (e) {
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<T>;
   }
 }
 
@@ -67,6 +84,44 @@ export const rewardFailedCounter = registerCounter({
 export const clavataCounter = registerCounter({
   name: 'clavata_req_total',
   help: 'Clavata requests',
+});
+
+// Cache metrics
+export const cacheHitCounter = registerCounterWithLabels({
+  name: 'cache_hit_total',
+  help: 'Cache hits by cache name and type',
+  labelNames: ['cache_name', 'cache_type'] as const,
+});
+
+export const cacheMissCounter = registerCounterWithLabels({
+  name: 'cache_miss_total',
+  help: 'Cache misses by cache name and type',
+  labelNames: ['cache_name', 'cache_type'] as const,
+});
+
+export const cacheRevalidateCounter = registerCounterWithLabels({
+  name: 'cache_revalidate_total',
+  help: 'Cache revalidations (stale-while-revalidate) by cache name and type',
+  labelNames: ['cache_name', 'cache_type'] as const,
+});
+
+// Image feed metrics
+export const imagesFeedWithoutIndexCounter = registerCounter({
+  name: 'images_feed_without_index_total',
+  help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+});
+
+// Creator compensation metrics
+export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
+  name: 'creator_comp_creators_paid_total',
+  help: 'Total number of creators who received compensation',
+  labelNames: ['account_type'] as const,
+});
+
+export const creatorCompAmountPaidCounter = registerCounterWithLabels({
+  name: 'creator_comp_amount_paid_total',
+  help: 'Total buzz amount paid to creators',
+  labelNames: ['account_type'] as const,
 });
 
 declare global {

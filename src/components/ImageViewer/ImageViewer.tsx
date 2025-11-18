@@ -36,7 +36,7 @@ export interface ImageProps {
   hash: string | null;
   width: number | null;
   height: number | null;
-  createdAt: Date | null;
+  createdAt?: Date | null;
   type: MediaType;
   nsfwLevel: NsfwLevel;
   postId?: number | null;

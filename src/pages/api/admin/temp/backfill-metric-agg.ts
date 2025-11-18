@@ -10,7 +10,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
     // Configuration
     const startDate = new Date('2023-01-01T00:00:00Z');
-    const endDate = new Date('2025-11-06T17:49:15Z');
+    const endDate = new Date('2025-11-15T13:57:19Z');
 
     const results: Array<{ month: string; status: string; error?: string; duration?: number }> = [];
 
@@ -39,16 +39,16 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
         // Execute the backfill query for this month
         await clickhouse.$query(`
-          INSERT INTO entityMetricDailyAgg_new
+          INSERT INTO orchestration.daily_resource_generation_counts
           SELECT
-              entityType,
-              entityId,
-              metricType,
-              toDate(createdAt) AS day,
-              sum(metricValue) AS total
-          FROM entityMetricEvents_new
-          WHERE createdAt >= parseDateTime64BestEffort('${startISO}') AND createdAt < parseDateTime64BestEffort('${endISO}')
-          GROUP BY entityType, entityId, metricType, day
+              resource AS modelVersionId,
+              toDate(createdAt) AS createdDate,
+              if(blobsCount=0, 1, blobsCount) AS count
+          FROM orchestration.jobs
+          ARRAY JOIN resourcesUsed AS resource
+          WHERE length(resourcesUsed) > 0
+          AND createdAt >= parseDateTime64BestEffort('${startISO}')
+          AND createdAt < parseDateTime64BestEffort('${endISO}')
         `);
 
         const duration = Date.now() - startTime;

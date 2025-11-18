@@ -43,6 +43,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
       types: undefined,
       include: ['profilePictures', 'cosmetics'],
       browsingLevel,
+      useIndex: true,
     },
     { keepPreviousData: true, enabled: inView }
   );
