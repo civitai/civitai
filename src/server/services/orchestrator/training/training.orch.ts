@@ -338,7 +338,7 @@ export const createTrainingWhatIfWorkflow = async ({
     engine,
     trainingDataImagesCount,
     params,
-    trainingData: 'https://fake',
+    trainingData: '',
     loraName: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,
