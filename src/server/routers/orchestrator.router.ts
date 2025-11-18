@@ -381,7 +381,6 @@ export const orchestratorRouter = router({
   createTrainingWhatif: orchestratorProcedure
     .input(imageTrainingRouterWhatIfSchema)
     .query(async ({ ctx, input }) => {
-      console.log(input);
       const args = {
         ...input,
         token: ctx.token,
