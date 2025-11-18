@@ -433,6 +433,11 @@ export const RewardsList = ({
                     </Text>
                   </Group>
                 )}
+                {reward.cap && !hasAwarded && reward.interval && (
+                  <Text size="xs" c="dimmed">
+                    {reward.cap.toLocaleString()} / {reward.interval}
+                  </Text>
+                )}
               </div>
 
               {/* Watch ad button */}
