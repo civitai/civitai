@@ -77,6 +77,7 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { isFlipt } from '~/server/flipt/client';
 
 type GetAllPostsRaw = {
   id: number;
@@ -125,36 +126,43 @@ const getPostStatsObject = async (data: { id: number }[]) => {
   }
 };
 
-export const getPostsInfinite = async ({
-  limit,
-  cursor,
-  query,
-  username,
-  excludedImageIds,
-  excludedUserIds,
-  period,
-  periodMode,
-  sort,
-  user,
-  tags,
-  modelVersionId,
-  ids,
-  collectionId,
-  include,
-  draftOnly,
-  followed,
-  clubId,
-  browsingLevel,
-  pending,
-  excludedTagIds,
-  disablePoi,
-  disableMinor,
-  poiOnly,
-  minorOnly,
-}: Omit<PostsQueryInput, 'include'> & {
-  user?: SessionUser;
-  include?: string[];
-}) => {
+export const getPostsInfinite = async (
+  input: Omit<PostsQueryInput, 'include'> & {
+    user?: SessionUser;
+    include?: string[];
+  }
+) => {
+  const useWithoutMetrics = await isFlipt('posts-infinite-without-metrics');
+  if (useWithoutMetrics) return getPostsInfiniteWithoutMetrics(input);
+
+  const {
+    limit,
+    cursor,
+    query,
+    username,
+    excludedImageIds,
+    excludedUserIds,
+    period,
+    periodMode,
+    sort,
+    user,
+    tags,
+    modelVersionId,
+    ids,
+    collectionId,
+    include,
+    draftOnly,
+    followed,
+    clubId,
+    browsingLevel,
+    pending,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    poiOnly,
+    minorOnly,
+  } = input;
+
   const AND = [Prisma.sql`1 = 1`];
   const WITH: Prisma.Sql[] = [];
   const cacheTags: string[] = [];
@@ -304,6 +312,367 @@ export const getPostsInfinite = async ({
   } else if (sort === PostSort.MostCollected) {
     orderBy = `pm."collectedCount" DESC`;
     AND.push(Prisma.sql`pm."collectedCount" > 0`);
+  }
+
+  // cursor
+  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  if (cursor) {
+    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+    const cursorValue =
+      cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"'
+        ? new Date(cursor)
+        : Number(cursor);
+    if (cursorProp)
+      AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
+  }
+
+  if (clubId) {
+    cacheTime = 0; //CacheTTL.day;
+    cacheTags.push(`posts-club:${clubId}`);
+
+    WITH.push(Prisma.sql`
+      "clubPosts" AS (
+        SELECT DISTINCT ON (p."id") p."id" as "postId"
+        FROM "EntityAccess" ea
+        JOIN "Post" p ON p."id" = ea."accessToId"
+        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
+        WHERE (
+            (
+             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
+            )
+            OR (
+              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
+            )
+          )
+          AND ea."accessToType" = 'Post'
+      )
+    `);
+
+    joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
+  }
+
+  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+
+  const postsRawQuery = Prisma.sql`
+    ${queryWith}
+    SELECT
+      p.id,
+      p."nsfwLevel",
+      p.title,
+      p."userId",
+      u.username,
+      u.image "userImage",
+      u."deletedAt",
+      u."profilePictureId",
+      p."publishedAt",
+      p."unlisted",
+      p."modelVersionId",
+      p."collectionId",
+      ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
+      p."availability",
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+    FROM "Post" p
+    JOIN "User" u ON u.id = p."userId"
+    ${Prisma.raw(joins.join('\n'))}
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY ${Prisma.raw(orderBy)}
+    LIMIT ${limit + 1}`;
+
+  if (
+    query ||
+    isOwnerRequest ||
+    (!!user && followed) ||
+    !env.POST_QUERY_CACHING ||
+    (collectionId && !!user?.id)
+  ) {
+    cacheTime = 0;
+  }
+
+  const cacheable = queryCache(dbRead, 'getPostsInfinite', 'v1');
+  const postsRaw = await cacheable<GetAllPostsRaw[]>(postsRawQuery, {
+    ttl: cacheTime,
+    tag: cacheTags,
+  });
+
+  let nextCursor: number | Date | undefined | null;
+  if (postsRaw.length > limit) {
+    const nextItem = postsRaw.pop();
+    nextCursor = nextItem?.cursorId;
+  }
+
+  // Fetch post stats from cache
+  const postStats = postsRaw.length > 0 ? await getPostStatsObject(postsRaw) : {};
+
+  const images = postsRaw.length
+    ? await getImagesForPosts({
+        postIds: postsRaw.map((x) => x.id),
+        // excludedIds: excludedImageIds,
+        user,
+        browsingLevel,
+        pending,
+        disablePoi,
+        disableMinor,
+        poiOnly,
+        minorOnly,
+      })
+    : [];
+
+  // Get user cosmetics
+  const userIds = postsRaw.map((i) => i.userId);
+  const userCosmetics = includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined;
+  const cosmetics = includeCosmetics
+    ? await getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
+    : {};
+
+  const profilePictures = await getProfilePicturesForUsers(userIds);
+
+  // Filter to published model versions:
+  const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
+  const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
+  const modelVersions =
+    modelVersionIds.length > 0 && filterByPermissionContent
+      ? await dbRead.modelVersion.findMany({
+          where: { id: { in: postsRaw.map((p) => p.modelVersionId).filter(isDefined) } },
+          select: { status: true, id: true },
+        })
+      : [];
+
+  // Filter to collections with permissions:
+  const collectionIds = postsRaw.map((p) => p.collectionId).filter(isDefined);
+  const collections =
+    collectionIds.length > 0 && filterByPermissionContent
+      ? await dbRead.collection.findMany({
+          where: { id: { in: collectionIds } },
+          select: {
+            id: true,
+            read: true,
+            contributors: user?.id
+              ? { select: { userId: true, permissions: true }, where: { userId: user?.id } }
+              : undefined,
+          },
+        })
+      : [];
+
+  return {
+    nextCursor,
+    items: postsRaw
+      // remove unlisted resources the user has no access to:
+      .filter((p) => {
+        // Allow mods and owners to view all.
+        if (user?.isModerator || p.userId === user?.id) return true;
+
+        // Hide posts from unpublished model versions:
+        if (
+          p.modelVersionId &&
+          modelVersions.find((x) => x.id === p.modelVersionId)?.status !== 'Published'
+        ) {
+          return false;
+        }
+
+        // Hide posts from collections the user has no access to:
+        if (p.collectionId) {
+          const collection = collections.find((x) => x.id === p.collectionId);
+          if (!collection) return false;
+
+          if (
+            collection.read !== CollectionReadConfiguration.Public &&
+            !collection?.contributors[0]?.permissions.includes(CollectionContributorPermission.VIEW)
+          ) {
+            return false;
+          }
+        }
+
+        return true;
+      })
+      .map(({ username, userId: creatorId, userImage, deletedAt, ...post }) => {
+        const _images = images.filter((x) => x.postId === post.id);
+
+        return {
+          ...post,
+          imageCount: _images.length,
+          user: {
+            id: creatorId,
+            username,
+            image: userImage,
+            deletedAt,
+            cosmetics: userCosmetics?.[creatorId] ?? [],
+            profilePicture: profilePictures[creatorId] ?? null,
+          },
+          stats: postStats[post.id] ?? null,
+          images: _images,
+          cosmetic: cosmetics[post.id] ?? null,
+        };
+      })
+      .filter((x) => x.imageCount !== 0),
+  };
+};
+
+export const getPostsInfiniteWithoutMetrics = async ({
+  limit,
+  cursor,
+  query,
+  username,
+  excludedImageIds,
+  excludedUserIds,
+  period,
+  periodMode,
+  sort,
+  user,
+  tags,
+  modelVersionId,
+  ids,
+  collectionId,
+  include,
+  draftOnly,
+  followed,
+  clubId,
+  browsingLevel,
+  pending,
+  excludedTagIds,
+  disablePoi,
+  disableMinor,
+  poiOnly,
+  minorOnly,
+}: Omit<PostsQueryInput, 'include'> & {
+  user?: SessionUser;
+  include?: string[];
+}) => {
+  const AND = [Prisma.sql`1 = 1`];
+  const WITH: Prisma.Sql[] = [];
+  const cacheTags: string[] = [];
+  let cacheTime = CacheTTL.xs;
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
+  const includeCosmetics = !!include?.includes('cosmetics');
+
+  const isOwnerRequest =
+    !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
+
+  let targetUser: number | undefined;
+
+  if (username) {
+    const record = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
+
+    if (record) {
+      targetUser = record.id;
+      AND.push(Prisma.sql`p."userId" = ${targetUser}`);
+      cacheTags.push(`posts-user:${targetUser}`);
+    }
+  }
+
+  if (!isOwnerRequest && !isModerator) {
+    // Makes it so private posts are not shown to the public
+    AND.push(Prisma.sql`p."availability" != 'Private'`);
+  }
+
+  // Filter only followed users
+  if (!!user && followed) {
+    const followedUsers = await dbRead.user.findUnique({
+      where: { id: user.id },
+      select: {
+        engagingUsers: {
+          select: { targetUser: { select: { id: true } } },
+          where: { type: 'Follow' },
+        },
+      },
+    });
+
+    const followedUsersIds =
+      followedUsers?.engagingUsers?.map(({ targetUser }) => targetUser.id) ?? [];
+    AND.push(
+      Prisma.sql`p."userId" IN (${
+        followedUsersIds.length > 0 ? Prisma.join(followedUsersIds) : null
+      })`
+    );
+  }
+
+  if (modelVersionId) {
+    AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+    cacheTags.push(`posts-modelVersion:${modelVersionId}`);
+  }
+
+  const joins: string[] = [];
+  if (!isOwnerRequest) {
+    if (!!tags?.length)
+      AND.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "TagsOnPost" top
+        WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
+      )`);
+
+    if (query) {
+      AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
+    }
+  }
+
+  if (period !== 'AllTime') {
+    const interval = period.toLowerCase();
+    if (draftOnly) {
+      AND.push(
+        Prisma.sql`p."createdAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(interval)}'`
+      );
+    } else {
+      AND.push(
+        Prisma.sql`p."publishedAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(
+          interval
+        )}'`
+      );
+    }
+  }
+
+  if (browsingLevel) {
+    if (pending && (isModerator || userId)) {
+      if (isModerator) {
+        AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
+      } else if (userId) {
+        AND.push(
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+        );
+      }
+    } else {
+      AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
+    }
+  }
+
+  if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
+  if (collectionId) {
+    cacheTime = CacheTTL.day;
+
+    const permissions = await getUserCollectionPermissionsById({
+      userId: user?.id,
+      id: collectionId,
+    });
+
+    if (!permissions.read) {
+      return { items: [] };
+    }
+
+    const displayReviewItems = user?.id
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+      : '';
+
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${collectionId}
+        AND ci."postId" = p.id
+        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+    )`);
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+  }
+
+  // sorting
+  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC NULLS LAST';
+  if (sort === PostSort.MostComments) {
+    orderBy = `p."commentCount" DESC`;
+    AND.push(Prisma.sql`p."commentCount" > 0`);
+  } else if (sort === PostSort.MostReactions) {
+    orderBy = `p."reactionCount" DESC`;
+    AND.push(Prisma.sql`p."reactionCount" > 0`);
+  } else if (sort === PostSort.MostCollected) {
+    orderBy = `p."collectedCount" DESC`;
+    AND.push(Prisma.sql`p."collectedCount" > 0`);
   }
 
   // cursor
