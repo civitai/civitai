@@ -8,7 +8,13 @@ import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { postStatCache, thumbnailCache, userPostCountCache } from '~/server/redis/caches';
+import {
+  modelVersionAccessCache,
+  postStatCache,
+  thumbnailCache,
+  userBasicCache,
+  userPostCountCache,
+} from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
@@ -84,10 +90,6 @@ type GetAllPostsRaw = {
   nsfwLevel: number;
   title: string | null;
   userId: number;
-  username: string | null;
-  userImage: string | null;
-  deletedAt: Date | null;
-  profilePictureId: number | null;
   publishedAt: Date | null;
   cursorId: Date | number | null;
   modelVersionId: number | null;
@@ -419,6 +421,7 @@ export const getPostsInfinite = async (
 
   // Get user cosmetics
   const userIds = postsRaw.map((i) => i.userId);
+  const userData = await userBasicCache.fetch(userIds);
   const userCosmetics = includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined;
   const cosmetics = includeCosmetics
     ? await getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
@@ -484,8 +487,9 @@ export const getPostsInfinite = async (
 
         return true;
       })
-      .map(({ username, userId: creatorId, userImage, deletedAt, ...post }) => {
+      .map(({ userId: creatorId, ...post }) => {
         const _images = images.filter((x) => x.postId === post.id);
+        const { username, image, deletedAt } = userData[creatorId] || {};
 
         return {
           ...post,
@@ -493,7 +497,7 @@ export const getPostsInfinite = async (
           user: {
             id: creatorId,
             username,
-            image: userImage,
+            image,
             deletedAt,
             cosmetics: userCosmetics?.[creatorId] ?? [],
             profilePicture: profilePictures[creatorId] ?? null,
@@ -721,10 +725,6 @@ export const getPostsInfiniteWithoutMetrics = async ({
       p."nsfwLevel",
       p.title,
       p."userId",
-      u.username,
-      u.image "userImage",
-      u."deletedAt",
-      u."profilePictureId",
       p."publishedAt",
       p."unlisted",
       p."modelVersionId",
@@ -733,7 +733,6 @@ export const getPostsInfiniteWithoutMetrics = async ({
       p."availability",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
-    JOIN "User" u ON u.id = p."userId"
     ${Prisma.raw(joins.join('\n'))}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
@@ -761,42 +760,36 @@ export const getPostsInfiniteWithoutMetrics = async ({
     nextCursor = nextItem?.cursorId;
   }
 
-  // Fetch post stats from cache
-  const postStats = postsRaw.length > 0 ? await getPostStatsObject(postsRaw) : {};
-
-  const images = postsRaw.length
-    ? await getImagesForPosts({
-        postIds: postsRaw.map((x) => x.id),
-        // excludedIds: excludedImageIds,
-        user,
-        browsingLevel,
-        pending,
-        disablePoi,
-        disableMinor,
-        poiOnly,
-        minorOnly,
-      })
-    : [];
-
-  // Get user cosmetics
-  const userIds = postsRaw.map((i) => i.userId);
-  const userCosmetics = includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined;
-  const cosmetics = includeCosmetics
-    ? await getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
-    : {};
-
-  const profilePictures = await getProfilePicturesForUsers(userIds);
-
   // Filter to published model versions:
   const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
-  const modelVersions =
-    modelVersionIds.length > 0 && filterByPermissionContent
-      ? await dbRead.modelVersion.findMany({
-          where: { id: { in: postsRaw.map((p) => p.modelVersionId).filter(isDefined) } },
-          select: { status: true, id: true },
+  // Get user data
+  const userIds = postsRaw.map((i) => i.userId);
+  const [images, postStats, userData, cosmetics, modelVersions] = await Promise.all([
+    postsRaw.length
+      ? await getImagesForPosts({
+          postIds: postsRaw.map((x) => x.id),
+          // excludedIds: excludedImageIds,
+          user,
+          browsingLevel,
+          pending,
+          disablePoi,
+          disableMinor,
+          poiOnly,
+          minorOnly,
         })
-      : [];
+      : Promise.resolve([]),
+    postsRaw.length > 0
+      ? getPostStatsObject(postsRaw)
+      : Promise.resolve({} as ReturnType<typeof getPostStatsObject>),
+    userBasicCache.fetch(userIds),
+    includeCosmetics
+      ? getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
+      : Promise.resolve({} as ReturnType<typeof getCosmeticsForEntity>),
+    modelVersionIds.length > 0 && filterByPermissionContent
+      ? modelVersionAccessCache.fetch(modelVersionIds)
+      : Promise.resolve({} as ReturnType<typeof modelVersionAccessCache.fetch>),
+  ]);
 
   // Filter to collections with permissions:
   const collectionIds = postsRaw.map((p) => p.collectionId).filter(isDefined);
@@ -823,10 +816,7 @@ export const getPostsInfiniteWithoutMetrics = async ({
         if (user?.isModerator || p.userId === user?.id) return true;
 
         // Hide posts from unpublished model versions:
-        if (
-          p.modelVersionId &&
-          modelVersions.find((x) => x.id === p.modelVersionId)?.status !== 'Published'
-        ) {
+        if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
           return false;
         }
 
@@ -845,8 +835,9 @@ export const getPostsInfiniteWithoutMetrics = async ({
 
         return true;
       })
-      .map(({ username, userId: creatorId, userImage, deletedAt, ...post }) => {
+      .map(({ userId: creatorId, ...post }) => {
         const _images = images.filter((x) => x.postId === post.id);
+        const { username, image, deletedAt } = userData[creatorId] || {};
 
         return {
           ...post,
@@ -854,13 +845,15 @@ export const getPostsInfiniteWithoutMetrics = async ({
           user: {
             id: creatorId,
             username,
-            image: userImage,
+            image,
             deletedAt,
-            cosmetics: userCosmetics?.[creatorId] ?? [],
-            profilePicture: profilePictures[creatorId] ?? null,
+            cosmetics: [] as Awaited<ReturnType<typeof getCosmeticsForUsers>>[string],
+            profilePicture: null as
+              | Awaited<ReturnType<typeof getProfilePicturesForUsers>>[string]
+              | null,
           },
           stats: postStats[post.id] ?? null,
-          images: _images,
+          images: _images.map(({ postId, ...img }) => img),
           cosmetic: cosmetics[post.id] ?? null,
         };
       })

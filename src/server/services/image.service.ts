@@ -3725,39 +3725,11 @@ export const getImagesForPosts = async ({
   `;
   const imageIds = images.map((i) => i.id);
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);
-  let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (userId) {
-    const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId },
-      select: { imageId: true, reaction: true },
-    });
-    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-      acc[imageId] ??= [] as ReviewReactions[];
-      acc[imageId].push(reaction);
-      return acc;
-    }, {} as Record<number, ReviewReactions[]>);
-  }
-
-  const imageMetrics = await getImageMetricsObject(images);
 
   return images.map((i) => {
-    const match = imageMetrics[i.id];
     return {
       ...i,
       tagIds: tagIds[i.id]?.tags,
-      reactions: userReactions?.[i.id] ?? [],
-
-      likeCount: match?.reactionLike ?? 0,
-      laughCount: match?.reactionLaugh ?? 0,
-      heartCount: match?.reactionHeart ?? 0,
-      cryCount: match?.reactionCry ?? 0,
-
-      commentCount: match?.comment ?? 0,
-      collectedCount: match?.collection ?? 0,
-      tippedAmountCount: match?.buzz ?? 0,
-
-      dislikeCount: 0,
-      viewCount: 0,
     };
   });
 };
