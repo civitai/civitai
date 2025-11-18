@@ -1116,14 +1116,12 @@ export const getPostTags = async ({
                       WHERE tot."toTagId" = t.id), t."nsfwLevel") "nsfwLevel") "nsfwLevel",
            t."isCategory"
     FROM "Tag" t
-    LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    LEFT JOIN "TagMetric" m ON m."tagId" = t.id AND m.timeframe = 'AllTime'
     WHERE ${
       showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`
     }
             ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
-    ORDER BY ${Prisma.raw(
-      showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
-    )}
+    ORDER BY m."postCount" DESC NULLS LAST
     LIMIT ${limit}
   `;
 

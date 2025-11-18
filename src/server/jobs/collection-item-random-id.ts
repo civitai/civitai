@@ -10,12 +10,14 @@ export const updateCollectionItemRandomId = createJob(
     // Updates the random order IDs of items on an hourly basis for contest collections.
     const contestCollectionIds = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT
-      id
+      id,
+      c."createdAt"
       FROM "Collection" c
       WHERE c.mode = 'Contest'
       AND (c."metadata"->'challengeDate') IS NULL
       AND (
-        (c."metadata"->'endsAt') IS NULL OR DATE(c."metadata"->>'endsAt') > NOW()::DATE
+        ((c."metadata"->'endsAt') IS NULL AND c."createdAt" > now() - interval '2 weeks')
+        OR DATE(c."metadata"->>'endsAt') > NOW()::DATE
       );
     `;
 

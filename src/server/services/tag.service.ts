@@ -165,13 +165,11 @@ export const getTags = async ({
   const tagsOrderBy: string[] = [];
   if (query) tagsOrderBy.push(`LENGTH(t."name")`);
   if (isDev) tagsOrderBy.push(`t."name"`); // can't be bothered to update TagRank in gen_seed
-  else if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`);
-  else if (sort === TagSort.MostModels) tagsOrderBy.push(`r."modelCountAllTimeRank"`);
-  else if (sort === TagSort.MostPosts) tagsOrderBy.push(`r."postCountAllTimeRank"`);
-  else if (sort === TagSort.MostArticles) tagsOrderBy.push(`r."articleCountAllTimeRank"`);
-  else if (sort === TagSort.MostHidden) {
-    tagsOrderBy.push(`r."hiddenCountAllTimeRank"`);
-  }
+  // else if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`); // We don't update image tag counts anymore
+  else if (sort === TagSort.MostModels) tagsOrderBy.push(`m."modelCount" DESC NULLS LAST`);
+  else if (sort === TagSort.MostPosts) tagsOrderBy.push(`m."postCount" DESC NULLS LAST`);
+  else if (sort === TagSort.MostArticles) tagsOrderBy.push(`m."articleCount" DESC NULLS LAST`);
+  else if (sort === TagSort.MostHidden) tagsOrderBy.push(`m."hiddenCount" DESC NULLS LAST`);
   const orderBy = tagsOrderBy.length ? tagsOrderBy.join(', ') : `t."name" ASC`;
 
   const isCategory =
@@ -202,7 +200,11 @@ export const getTags = async ({
            ${isCategory}
            ${isNsfwLevel}
     FROM "Tag" t
-      ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+      ${Prisma.raw(
+        orderBy.includes('m.')
+          ? `LEFT JOIN "TagMetrics" m ON m."tagId" = t."id" AND m.timeframe = 'AllTime'`
+          : ''
+      )}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}

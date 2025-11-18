@@ -1,14 +1,7 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import {
-  executeRefresh,
-  executeRefreshWithParams,
-  getAffected,
-  getMetricJson,
-  snippets,
-} from '~/server/metrics/metric-helpers';
+import { executeRefreshWithParams, getAffected } from '~/server/metrics/metric-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -16,14 +9,61 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:collection');
 
+const metrics = ['followerCount', 'contributorCount', 'itemCount'] as const;
+
+type MetricKey = (typeof metrics)[number];
+type CollectionMetricContext = MetricProcessorRunContext & {
+  updates: Record<number, Partial<Record<MetricKey, number>> & { collectionId: number }>;
+};
+
 export const collectionMetrics = createMetricProcessor({
   name: 'Collection',
-  async update(ctx) {
+  async update(baseCtx) {
+    // Update the context to include the update record
+    const ctx = baseCtx as CollectionMetricContext;
+    ctx.updates = {};
+
     // Get the metric tasks
     //---------------------------------------
     const taskBatches = await Promise.all([getItemTasks(ctx), getContributorTasks(ctx)]);
     log('CollectionMetric update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
+
+    // Update the collection metrics
+    //---------------------------------------
+    const metricInsertColumns = metrics.map((key) => `"${key}" INT`).join(', ');
+    const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
+    const metricValues = metrics
+      .map((key) => `COALESCE(d."${key}", im."${key}", 0) as "${key}"`)
+      .join(',\n');
+    const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
+
+    const updateTasks = chunk(Object.values(ctx.updates), 100).map((batch, i) => async () => {
+      ctx.jobContext.checkIfCanceled();
+      log('update metrics', i + 1, 'of', updateTasks.length);
+
+      await executeRefreshWithParams(
+        ctx,
+        `-- update collection metrics
+        WITH data AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS x("collectionId" INT, ${metricInsertColumns}))
+        INSERT INTO "CollectionMetric" ("collectionId", "timeframe", "updatedAt", ${metricInsertKeys})
+        SELECT
+          d."collectionId",
+          'AllTime'::"MetricTimeframe" AS timeframe,
+          NOW() as "updatedAt",
+          ${metricValues}
+        FROM data d
+        LEFT JOIN "CollectionMetric" im ON im."collectionId" = d."collectionId" AND im."timeframe" = 'AllTime'
+        WHERE EXISTS (SELECT 1 FROM "Collection" WHERE id = d."collectionId")
+        ON CONFLICT ("collectionId", "timeframe") DO UPDATE
+          SET
+            ${metricOverrides},
+            "updatedAt" = NOW()`,
+        [JSON.stringify(batch)]
+      );
+      log('update metrics', i + 1, 'of', updateTasks.length, 'done');
+    });
+    await limitConcurrency(updateTasks, 10);
 
     // Update the search index
     //---------------------------------------
@@ -35,23 +75,44 @@ export const collectionMetrics = createMetricProcessor({
       }))
     );
   },
-  async clearDay(ctx) {
-    // Too expensive
-    // await executeRefresh(ctx)`
-    //   UPDATE "CollectionMetric"
-    //     SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0
-    //   WHERE timeframe = 'Day'
-    //     AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    // `;
-  },
-  rank: {
-    table: 'CollectionRank',
-    primaryKey: 'collectionId',
-    refreshInterval: 5 * 60 * 1000,
-  },
+  // Not using day metrics anymore
+  // async clearDay(ctx) {
+  //   await executeRefresh(ctx)`
+  //     UPDATE "CollectionMetric"
+  //       SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0
+  //     WHERE timeframe = 'Day'
+  //       AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+  //   `;
+  // },
+  // Doesn't appear to be used anymore
+  // rank: {
+  //   table: 'CollectionRank',
+  //   primaryKey: 'collectionId',
+  //   refreshInterval: 5 * 60 * 1000,
+  // },
 });
 
-async function getContributorTasks(ctx: MetricProcessorRunContext) {
+async function getMetrics(ctx: CollectionMetricContext, sql: string, params: any[] = []) {
+  const query = await ctx.pg.cancellableQuery<
+    { collectionId: number } & Record<string, string | number>
+  >(sql, params);
+  ctx.jobContext.on('cancel', query.cancel);
+  const data = await query.result();
+  if (!data.length) return;
+
+  for (const row of data) {
+    const collectionId = row.collectionId;
+    ctx.updates[collectionId] ??= { collectionId };
+    for (const key of Object.keys(row) as (keyof typeof row)[]) {
+      if (key === 'collectionId' || key === 'timeframe') continue;
+      const value = row[key];
+      if (value == null) continue;
+      (ctx.updates[collectionId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
+    }
+  }
+}
+
+async function getContributorTasks(ctx: CollectionMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent collection contributors
     SELECT "collectionId" as id
@@ -62,36 +123,27 @@ async function getContributorTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getContributorTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update collection contributor metrics
-      INSERT INTO "CollectionMetric" ("collectionId", timeframe, "followerCount", "contributorCount")
+
+    await getMetrics(
+      ctx,
+      `-- get collection contributor metrics
       SELECT
         "collectionId",
-        tf.timeframe,
-        ${snippets.timeframeSum(
-          '"createdAt"',
-          '1',
-          `'VIEW' = ANY(permissions)`
-        )} as "followerCount",
-        ${snippets.timeframeSum(
-          '"createdAt"',
-          '1',
-          `'ADD' = ANY(permissions)`
-        )} as "contributorCount"
+        SUM(CASE WHEN 'VIEW' = ANY(permissions) THEN 1 ELSE 0 END)::int as "followerCount",
+        SUM(CASE WHEN 'ADD' = ANY(permissions) THEN 1 ELSE 0 END)::int as "contributorCount"
       FROM "CollectionContributor"
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "collectionId" = ANY(${ids}::int[])
-      GROUP BY "collectionId", tf.timeframe
-      ON CONFLICT ("collectionId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "contributorCount" = EXCLUDED."contributorCount", "updatedAt" = NOW()
-    `;
+      WHERE "collectionId" = ANY($1::int[])
+      GROUP BY "collectionId"`,
+      [ids]
+    );
+
     log('getContributorTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
 }
 
-async function getItemTasks(ctx: MetricProcessorRunContext) {
+async function getItemTasks(ctx: CollectionMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent collection items
     SELECT "collectionId" as id
@@ -103,43 +155,17 @@ async function getItemTasks(ctx: MetricProcessorRunContext) {
     ctx.jobContext.checkIfCanceled();
     log('getItemTasks', i + 1, 'of', tasks.length);
 
-    // First, aggregate data into JSON to avoid blocking - only get total count
-    const metrics = await getMetricJson(ctx)`
-      -- Aggregate collection item metrics into JSON (AllTime count only)
-      WITH counts AS (
-        SELECT
-          "collectionId",
-          COUNT(1) as "itemCount"
-        FROM "CollectionItem"
-        WHERE "collectionId" = ANY(${ids}::int[])
-        GROUP BY "collectionId"
-      )
-      SELECT jsonb_agg(
-        jsonb_build_object(
-          'collectionId', "collectionId",
-          'itemCount', "itemCount"
-        )
-      ) as data
-      FROM counts
-    `;
-
-    // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
-    if (metrics) {
-      await executeRefreshWithParams(
-        ctx,
-        `-- Insert collection metrics for all timeframes using the AllTime count
-        INSERT INTO "CollectionMetric" ("collectionId", timeframe, "itemCount")
-        SELECT
-          (value->>'collectionId')::int,
-          tf.timeframe,
-          (value->>'itemCount')::int
-        FROM jsonb_array_elements($1::jsonb) AS value
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        ON CONFLICT ("collectionId", timeframe) DO UPDATE
-          SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()`,
-        [JSON.stringify(metrics)]
-      );
-    }
+    await getMetrics(
+      ctx,
+      `-- get collection item metrics
+      SELECT
+        "collectionId",
+        COUNT(1)::int as "itemCount"
+      FROM "CollectionItem"
+      WHERE "collectionId" = ANY($1::int[])
+      GROUP BY "collectionId"`,
+      [ids]
+    );
 
     log('getItemTasks', i + 1, 'of', tasks.length, 'done');
   });

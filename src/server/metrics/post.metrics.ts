@@ -36,17 +36,16 @@ export const postMetrics = createMetricProcessor({
 
     // Update the post metrics
     //---------------------------------------
+    const metricInsertColumns = metrics.map((key) => `"${key}" INT`).join(', ');
+    const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
+    const metricValues = metrics
+      .map((key) => `COALESCE(d."${key}", im."${key}", 0) as "${key}"`)
+      .join(',\n');
+    const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
+
     const updateTasks = chunk(Object.values(ctx.updates), 100).map((batch, i) => async () => {
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', updateTasks.length);
-
-      const metricInsertColumns = metrics.map((key) => `"${key}" INT`).join(', ');
-      const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
-      const metricValues = metrics
-        .map((key) => `COALESCE(d."${key}", im."${key}", 0) as "${key}"`)
-        .join(',\n');
-      const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
-
       await executeRefresh(ctx)`
         -- update post metrics
         WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("postId" INT, ${metricInsertColumns}))
@@ -76,16 +75,15 @@ export const postMetrics = createMetricProcessor({
       await postStatCache.bust(affectedPostIds);
     }
   },
-  async clearDay() {
-    // No longer needed based on what Justin said
-    // log('clearDay');
-    // await executeRefresh(ctx)`
-    //   UPDATE "PostMetric"
-    //     SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0
-    //   WHERE timeframe = 'Day'
-    //     AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    // `;
-  },
+  // Not using day metrics anymore
+  // async clearDay() {
+  //   await executeRefresh(ctx)`
+  //     UPDATE "PostMetric"
+  //       SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0
+  //     WHERE timeframe = 'Day'
+  //       AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+  //   `;
+  // },
 });
 
 async function getReactionTasks(ctx: MetricContext) {
