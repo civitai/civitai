@@ -44,9 +44,13 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import {
   discountInfo,
   isValidRapid,
+  isAiToolkitSupported,
+  isAiToolkitMandatory,
+  getDefaultEngine,
   rapidEta,
   trainingBaseModelTypesVideo,
 } from '~/utils/training';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const AdvancedSettings = ({
   selectedRun,
@@ -62,7 +66,8 @@ export const AdvancedSettings = ({
   numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
-  const { triggerWord } = useTrainingImageStore(
+  const features = useFeatureFlags();
+  const { triggerWord, imageList } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
@@ -179,6 +184,53 @@ export const AdvancedSettings = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.shuffleCaption]);
 
+  // Pre-fill sample prompts with random captions when AI Toolkit is selected
+  useEffect(() => {
+    if (selectedRun.params.engine !== 'ai-toolkit') return;
+
+    // Check if sample prompts are already filled
+    const allEmpty = selectedRun.samplePrompts.every((prompt) => !prompt || prompt.trim() === '');
+    if (!allEmpty) return;
+
+    // Get captions from uploaded images
+    const captionsWithContent = imageList
+      .filter((img) => img.label && img.label.trim().length > 0)
+      .map((img) => img.label.trim());
+
+    if (captionsWithContent.length === 0) return;
+
+    // Select 3 random captions (or fewer if not enough available)
+    const numPromptsNeeded = mediaType === 'video' ? 2 : 3;
+    const randomCaptions: string[] = [];
+    const usedIndices = new Set<number>();
+
+    while (
+      randomCaptions.length < numPromptsNeeded &&
+      randomCaptions.length < captionsWithContent.length
+    ) {
+      const randomIndex = Math.floor(Math.random() * captionsWithContent.length);
+      if (!usedIndices.has(randomIndex)) {
+        usedIndices.add(randomIndex);
+        randomCaptions.push(captionsWithContent[randomIndex]);
+      }
+    }
+
+    // Fill remaining slots with empty strings if needed
+    while (randomCaptions.length < numPromptsNeeded) {
+      randomCaptions.push('');
+    }
+
+    doUpdate({ samplePrompts: randomCaptions });
+
+    showInfoNotification({
+      title: 'Sample prompts pre-filled',
+      message:
+        'Sample prompts have been pre-filled with random captions from your uploaded images.',
+      autoClose: 8000,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.params.engine, selectedRun.id]);
+
   return (
     <>
       {selectedRun.baseType === 'flux' && (
@@ -190,6 +242,9 @@ export const AdvancedSettings = ({
                   <Text>
                     Your LoRA will be trained in {<b>{rapidEta} minutes</b>} or less so you can get
                     right into generating as fast as possible.
+                    {selectedRun.params.engine === 'ai-toolkit' && (
+                      <> Note: AI Toolkit is currently enabled and must be disabled first.</>
+                    )}
                   </Text>
                 </InfoPopover>
                 <Text>Rapid Training</Text>
@@ -197,6 +252,7 @@ export const AdvancedSettings = ({
             }
             labelPosition="left"
             checked={selectedRun.params.engine === 'rapid'}
+            disabled={selectedRun.params.engine === 'ai-toolkit'}
             onChange={(event) =>
               updateRun(modelId, mediaType, selectedRun.id, {
                 params: { engine: event.currentTarget.checked ? 'rapid' : 'kohya' }, // TODO ideally this would revert to the previous engine, but we only have 1 now
@@ -221,6 +277,45 @@ export const AdvancedSettings = ({
         </Group>
       )}
 
+      {/* AI Toolkit Training Toggle or Required Badge */}
+      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
+        <Group mt="md">
+          {!isAiToolkitMandatory(selectedRun.baseType) && (
+            // Show toggle for optional AI Toolkit
+            <Switch
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                    <Text>
+                      Train using the AI Toolkit engine, offering improved quality and flexibility.
+                      {selectedRun.baseType === 'flux' && selectedRun.params.engine === 'rapid' && (
+                        <> Note: Rapid Training is currently enabled and must be disabled first.</>
+                      )}
+                    </Text>
+                  </InfoPopover>
+                  <Text>AI Toolkit Training</Text>
+                  <Badge color="blue" size="xs">
+                    Beta
+                  </Badge>
+                </Group>
+              }
+              labelPosition="left"
+              checked={selectedRun.params.engine === 'ai-toolkit'}
+              disabled={selectedRun.params.engine === 'rapid'}
+              onChange={(event) => {
+                const newEngine = event.currentTarget.checked
+                  ? 'ai-toolkit'
+                  : getDefaultEngine(selectedRun.baseType);
+
+                updateRun(modelId, mediaType, selectedRun.id, {
+                  params: { ...selectedRun.params, engine: newEngine },
+                });
+              }}
+            />
+          )}
+        </Group>
+      )}
+
       <Title mt="md" order={5}>
         Advanced Settings
       </Title>
@@ -239,11 +334,21 @@ export const AdvancedSettings = ({
         <Accordion.Item value="custom-prompts">
           <Accordion.Control>
             <Stack gap={4}>
-              <Text>Sample Media Prompts</Text>
+              <Group gap="sm">
+                <Text>Sample Media Prompts</Text>
+                {selectedRun.params.engine === 'ai-toolkit' && (
+                  <Badge color="red" size="sm">
+                    Required
+                  </Badge>
+                )}
+              </Group>
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" c="dimmed">
-                  Set your own prompts for any of the {isVideo ? '2' : '3'} sample{' '}
-                  {isVideo ? 'videos' : 'images'} we generate for each epoch.
+                  {selectedRun.params.engine === 'ai-toolkit'
+                    ? `AI Toolkit requires sample prompts. These are pre-filled from your image captions.`
+                    : `Set your own prompts for any of the ${isVideo ? '2' : '3'} sample ${
+                        isVideo ? 'videos' : 'images'
+                      } we generate for each epoch.`}
                 </Text>
               )}
             </Stack>
@@ -252,8 +357,19 @@ export const AdvancedSettings = ({
             <Stack p="sm">
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #1`}
-                placeholder="Automatically set"
+                placeholder={
+                  selectedRun.params.engine === 'ai-toolkit'
+                    ? 'Required - pre-filled from captions'
+                    : 'Automatically set'
+                }
                 value={selectedRun.samplePrompts[0]}
+                required={selectedRun.params.engine === 'ai-toolkit'}
+                error={
+                  selectedRun.params.engine === 'ai-toolkit' &&
+                  !selectedRun.samplePrompts[0]?.trim()
+                    ? 'Required for AI Toolkit'
+                    : undefined
+                }
                 onChange={(event) => {
                   doUpdate({
                     samplePrompts: [
@@ -266,8 +382,19 @@ export const AdvancedSettings = ({
               />
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #2`}
-                placeholder="Automatically set"
+                placeholder={
+                  selectedRun.params.engine === 'ai-toolkit'
+                    ? 'Required - pre-filled from captions'
+                    : 'Automatically set'
+                }
                 value={selectedRun.samplePrompts[1]}
+                required={selectedRun.params.engine === 'ai-toolkit'}
+                error={
+                  selectedRun.params.engine === 'ai-toolkit' &&
+                  !selectedRun.samplePrompts[1]?.trim()
+                    ? 'Required for AI Toolkit'
+                    : undefined
+                }
                 onChange={(event) => {
                   doUpdate({
                     samplePrompts: [
@@ -281,8 +408,19 @@ export const AdvancedSettings = ({
               {!isVideo && (
                 <TextInputWrapper
                   label={`${isVideo ? 'Video' : 'Image'} #3`}
-                  placeholder="Automatically set"
+                  placeholder={
+                    selectedRun.params.engine === 'ai-toolkit'
+                      ? 'Required - pre-filled from captions'
+                      : 'Automatically set'
+                  }
                   value={selectedRun.samplePrompts[2]}
+                  required={selectedRun.params.engine === 'ai-toolkit'}
+                  error={
+                    selectedRun.params.engine === 'ai-toolkit' &&
+                    !selectedRun.samplePrompts[2]?.trim()
+                      ? 'Required for AI Toolkit'
+                      : undefined
+                  }
                   onChange={(event) => {
                     doUpdate({
                       samplePrompts: [
@@ -530,7 +668,11 @@ export const AdvancedSettings = ({
                       ts.label
                     ),
                     value: inp,
-                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux' && !isVideo),
+                    visible: !(
+                      ts.name === 'engine' ||
+                      ((ts.name === 'numRepeats' || ts.name === 'trainBatchSize') &&
+                        selectedRun.params.engine === 'ai-toolkit')
+                    ),
                   };
                 })}
               />

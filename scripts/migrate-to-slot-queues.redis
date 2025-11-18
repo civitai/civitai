@@ -1,0 +1,120 @@
+-- Redis Commands for KONO Slot Queue Migration
+-- Execute these commands in sequence via redis-cli
+-- IMPORTANT: Run during low-traffic period (e.g., 02:00 UTC)
+
+-- ============================================
+-- STEP 1: Migrate existing queues to slot 'a'
+-- ============================================
+
+-- Acolyte queues
+RENAME new-order:queues:Acolyte1 new-order:queues:Acolyte1:a
+RENAME new-order:queues:Acolyte2 new-order:queues:Acolyte2:a
+RENAME new-order:queues:Acolyte3 new-order:queues:Acolyte3:a
+
+-- Knight queues
+RENAME new-order:queues:Knight1 new-order:queues:Knight1:a
+RENAME new-order:queues:Knight2 new-order:queues:Knight2:a
+RENAME new-order:queues:Knight3 new-order:queues:Knight3:a
+
+-- Templar queues
+RENAME new-order:queues:Templar1 new-order:queues:Templar1:a
+RENAME new-order:queues:Templar2 new-order:queues:Templar2:a
+RENAME new-order:queues:Templar3 new-order:queues:Templar3:a
+
+-- Inquisitor queue (moderator queue)
+RENAME new-order:queues:Inquisitor new-order:queues:Inquisitor:a
+
+
+-- ============================================
+-- STEP 2: Initialize active slot pointers
+-- ============================================
+
+-- Acolyte slot pointers (both start at 'a')
+SET new-order:active-slot:Acolyte:filling "a"
+SET new-order:active-slot:Acolyte:rating "a"
+
+-- Knight slot pointers
+SET new-order:active-slot:Knight:filling "a"
+SET new-order:active-slot:Knight:rating "a"
+
+-- Templar slot pointers
+SET new-order:active-slot:Templar:filling "a"
+SET new-order:active-slot:Templar:rating "a"
+
+-- Inquisitor slot pointers
+SET new-order:active-slot:Inquisitor:filling "a"
+SET new-order:active-slot:Inquisitor:rating "a"
+
+
+-- ============================================
+-- STEP 3: Verification Commands
+-- ============================================
+
+-- Check migrated queues (slot 'a')
+ZCARD new-order:queues:Acolyte1:a
+ZCARD new-order:queues:Acolyte2:a
+ZCARD new-order:queues:Acolyte3:a
+ZCARD new-order:queues:Knight1:a
+ZCARD new-order:queues:Knight2:a
+ZCARD new-order:queues:Knight3:a
+ZCARD new-order:queues:Templar1:a
+ZCARD new-order:queues:Templar2:a
+ZCARD new-order:queues:Templar3:a
+ZCARD new-order:queues:Inquisitor:a
+
+-- Verify slot 'b' is empty (should return 0 or nil)
+EXISTS new-order:queues:Knight1:b
+EXISTS new-order:queues:Knight2:b
+EXISTS new-order:queues:Knight3:b
+
+-- Check slot pointers
+GET new-order:active-slot:Acolyte:filling
+GET new-order:active-slot:Acolyte:rating
+GET new-order:active-slot:Knight:filling
+GET new-order:active-slot:Knight:rating
+GET new-order:active-slot:Templar:filling
+GET new-order:active-slot:Templar:rating
+GET new-order:active-slot:Inquisitor:filling
+GET new-order:active-slot:Inquisitor:rating
+
+-- Verify old keys are gone
+EXISTS new-order:queues:Knight1
+EXISTS new-order:queues:Templar1
+EXISTS new-order:queues:Inquisitor
+
+
+-- ============================================
+-- OPTIONAL: Manual Slot Rotation (Testing)
+-- ============================================
+
+-- To manually trigger fill slot rotation (normally at 22:00 UTC):
+-- SET new-order:active-slot:Knight:filling "b"
+-- SET new-order:active-slot:Templar:filling "b"
+-- SET new-order:active-slot:Inquisitor:filling "b"
+
+-- To manually trigger rate slot rotation (normally at 00:00 UTC):
+-- SET new-order:active-slot:Knight:rating "b"
+-- SET new-order:active-slot:Templar:rating "b"
+-- SET new-order:active-slot:Inquisitor:rating "b"
+
+
+-- ============================================
+-- ROLLBACK COMMANDS (Emergency Use Only)
+-- ============================================
+
+-- If migration needs to be rolled back:
+-- RENAME new-order:queues:Knight1:a new-order:queues:Knight1
+-- RENAME new-order:queues:Knight2:a new-order:queues:Knight2
+-- RENAME new-order:queues:Knight3:a new-order:queues:Knight3
+-- RENAME new-order:queues:Templar1:a new-order:queues:Templar1
+-- RENAME new-order:queues:Templar2:a new-order:queues:Templar2
+-- RENAME new-order:queues:Templar3:a new-order:queues:Templar3
+-- RENAME new-order:queues:Inquisitor:a new-order:queues:Inquisitor
+
+-- Delete slot pointers:
+-- DEL new-order:active-slot:Knight:filling
+-- DEL new-order:active-slot:Knight:rating
+-- DEL new-order:active-slot:Templar:filling
+-- DEL new-order:active-slot:Templar:rating
+-- DEL new-order:active-slot:Inquisitor:filling
+-- DEL new-order:active-slot:Inquisitor:rating

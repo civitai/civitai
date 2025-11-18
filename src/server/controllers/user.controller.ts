@@ -460,7 +460,6 @@ export const updateUserHandler = async ({
 
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
-    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
     if (userReferralCode || source || landingPage) {
       await createUserReferral({
         id: updatedUser.id,

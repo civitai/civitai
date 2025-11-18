@@ -48,7 +48,8 @@ import {
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
-  TrainingDetailsParams,
+  // TrainingDetailsParams,
+  TrainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
@@ -74,7 +75,7 @@ type ModalData = {
   id?: number;
   file?: TrainingFileData;
   baseModel?: string;
-  params?: TrainingDetailsParams;
+  params?: TrainingDetailsParamsUnion;
 };
 
 export const trainingStatusFields: {
@@ -301,7 +302,10 @@ export default function UserTrainingModels() {
                 const trainingParams = thisTrainingDetails?.params;
                 const hasTrainingParams = !!trainingParams;
 
-                const numEpochs = trainingParams?.maxTrainEpochs ?? 0;
+                const numEpochs =
+                  trainingParams?.engine === 'ai-toolkit'
+                    ? trainingParams?.epochs ?? 0
+                    : trainingParams?.maxTrainEpochs ?? 0;
                 const epochsDone =
                   (thisFileMetadata?.trainingResults?.version === 2
                     ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0

@@ -67,7 +67,10 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   getTrainingFields,
+  getAiToolkitEcosystem,
+  getAiToolkitModelVariant,
   isInvalidRapid,
+  isInvalidAiToolkit,
   isValidRapid,
   rapidEta,
   type TrainingBaseModelType,
@@ -149,11 +152,67 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
   const whatIfData = useMemo(() => {
-    const retData: ImageTrainingRouterWhatIfSchema = {
+    const baseData = {
       model: getTrainingFields.getModel(formBaseModel),
       priority: getTrainingFields.getPriority(selectedRun.highPriority),
       engine: getTrainingFields.getEngine(selectedRun.params.engine),
       trainingDataImagesCount: thisNumImages ?? 1,
+    };
+
+    // Transform parameters for AI Toolkit
+    if (selectedRun.params.engine === 'ai-toolkit') {
+      const ecosystem = getAiToolkitEcosystem(formBaseModel);
+      const modelVariant = getAiToolkitModelVariant(formBaseModel as TrainingDetailsBaseModelList);
+
+      if (!ecosystem) {
+        console.error('Failed to determine ecosystem for AI Toolkt whatIf query');
+        return null;
+      }
+
+      // Transform lrScheduler: 'cosine_with_restarts' -> 'cosine' (AI Toolkit doesn't support restarts)
+      let lrScheduler = selectedRun.params.lrScheduler;
+      if (lrScheduler === 'cosine_with_restarts') {
+        lrScheduler = 'cosine';
+      }
+
+      // Transform optimizerType: 'AdamW8Bit' -> 'adamw8bit', 'Prodigy' -> 'prodigy', etc.
+      const optimizerTypeMap: Record<string, string> = {
+        AdamW8Bit: 'adamw8bit',
+        Adafactor: 'adafactor',
+        Prodigy: 'prodigy',
+      };
+      const optimizerType =
+        optimizerTypeMap[selectedRun.params.optimizerType] ||
+        selectedRun.params.optimizerType.toLowerCase();
+
+      const retData: ImageTrainingRouterWhatIfSchema = {
+        ...baseData,
+        ecosystem,
+        ...(modelVariant && { modelVariant }),
+        epochs: selectedRun.params.maxTrainEpochs,
+        resolution: selectedRun.params.resolution,
+        lr: selectedRun.params.unetLR,
+        textEncoderLr: selectedRun.params.textEncoderLR || null,
+        trainTextEncoder: !!selectedRun.params.textEncoderLR,
+        lrScheduler: lrScheduler as any,
+        optimizerType: optimizerType as any,
+        networkDim: selectedRun.params.networkDim,
+        networkAlpha: selectedRun.params.networkAlpha,
+        noiseOffset: selectedRun.params.noiseOffset || null,
+        minSnrGamma: selectedRun.params.minSnrGamma || null,
+        flipAugmentation: selectedRun.params.flipAugmentation || false,
+        shuffleTokens: selectedRun.params.shuffleCaption,
+        keepTokens: selectedRun.params.keepTokens,
+      } as any;
+      return retData;
+    }
+
+    // Kohya-style parameters for other engines
+    const retData: ImageTrainingRouterWhatIfSchema = {
+      model: baseData.model,
+      priority: baseData.priority,
+      engine: baseData.engine as any, // Type assertion for discriminated union
+      trainingDataImagesCount: baseData.trainingDataImagesCount,
       resolution: selectedRun.params.resolution,
       trainBatchSize: selectedRun.params.trainBatchSize,
       maxTrainEpochs: selectedRun.params.maxTrainEpochs,
@@ -169,11 +228,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.trainBatchSize,
     selectedRun.params.maxTrainEpochs,
     selectedRun.params.numRepeats,
+    selectedRun.params.unetLR,
+    selectedRun.params.textEncoderLR,
+    selectedRun.params.lrScheduler,
+    selectedRun.params.optimizerType,
+    selectedRun.params.networkDim,
+    selectedRun.params.networkAlpha,
+    selectedRun.params.noiseOffset,
+    selectedRun.params.minSnrGamma,
+    selectedRun.params.flipAugmentation,
+    selectedRun.params.shuffleCaption,
+    selectedRun.params.keepTokens,
   ]);
 
   const [debounced] = useDebouncedValue(whatIfData, 100);
 
-  const dryRunResult = trpc.orchestrator.createTrainingWhatif.useQuery(debounced, {
+  const dryRunResult = trpc.orchestrator.createTrainingWhatif.useQuery(debounced!, {
     enabled: !!debounced,
   });
 
@@ -311,6 +381,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (r.params.engine === 'ai-toolkit') {
+        const numPromptsNeeded = 1;
+        const filledPrompts = r.samplePrompts.filter((p) => p && p.trim().length > 0);
+
+        if (filledPrompts.length < numPromptsNeeded) {
+          showErrorNotification({
+            error: new Error(
+              `AI Toolkit requires at least ${numPromptsNeeded} sample prompt (s) to train.`
+            ),
+            title: 'Sample prompts required',
+            autoClose: false,
+          });
+          return;
+        }
+      }
+
       if (r.params.targetSteps > maxSteps) {
         showErrorNotification({
           error: new Error(
@@ -403,6 +489,70 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
+      if (isInvalidAiToolkit(baseType, paramData.engine)) {
+        showErrorNotification({
+          error: new Error('AI Toolkit training is not supported for this model.'),
+          title: `Parameter error`,
+          autoClose: false,
+        });
+        finishedRuns++;
+        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        return;
+      }
+
+      // Transform params for AI Toolkit if needed
+      let finalParams: any = paramData;
+      if (paramData.engine === 'ai-toolkit') {
+        const ecosystem = getAiToolkitEcosystem(base);
+        const modelVariant = getAiToolkitModelVariant(base as TrainingDetailsBaseModelList);
+
+        if (!ecosystem) {
+          showErrorNotification({
+            error: new Error('Failed to determine ecosystem for AI Toolkit training.'),
+            title: `Parameter error`,
+            autoClose: false,
+          });
+          finishedRuns++;
+          if (finishedRuns === runs.length) setAwaitInvalidate(false);
+          return;
+        }
+
+        // Transform lrScheduler
+        let lrScheduler = paramData.lrScheduler;
+        if (lrScheduler === 'cosine_with_restarts') {
+          lrScheduler = 'cosine';
+        }
+
+        // Transform optimizerType
+        const optimizerTypeMap: Record<string, string> = {
+          AdamW8Bit: 'adamw8bit',
+          Adafactor: 'adafactor',
+          Prodigy: 'prodigy',
+        };
+        const optimizerType =
+          optimizerTypeMap[paramData.optimizerType] || paramData.optimizerType.toLowerCase();
+
+        finalParams = {
+          engine: 'ai-toolkit',
+          ecosystem,
+          ...(modelVariant && { modelVariant }),
+          epochs: paramData.maxTrainEpochs,
+          resolution: paramData.resolution,
+          lr: paramData.unetLR,
+          textEncoderLr: paramData.textEncoderLR || null,
+          trainTextEncoder: !!paramData.textEncoderLR,
+          lrScheduler: lrScheduler as any,
+          optimizerType: optimizerType as any,
+          networkDim: paramData.networkDim,
+          networkAlpha: paramData.networkAlpha,
+          noiseOffset: paramData.noiseOffset || null,
+          minSnrGamma: paramData.minSnrGamma || null,
+          flipAugmentation: paramData.flipAugmentation || false,
+          shuffleTokens: paramData.shuffleCaption,
+          keepTokens: paramData.keepTokens,
+        };
+      }
+
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
         trainingModelInfo[base as TrainingDetailsBaseModelList]?.baseModel ??
@@ -426,7 +576,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) ?? {}),
           baseModel: base,
           baseModelType: baseType,
-          params: paramData,
+          params: finalParams, // Store in the native format (Kohya or AI Toolkit)
           samplePrompts,
           ...(negativePrompt && { negativePrompt }),
           staging,
