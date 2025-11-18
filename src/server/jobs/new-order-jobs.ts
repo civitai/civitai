@@ -337,6 +337,10 @@ const newOrderChangeRateTarget = createJob(
       const currentSlot = await getActiveSlot(rank, 'rating');
       const newSlot = currentSlot === 'a' ? 'b' : 'a';
 
+      // Rotate to the new slot
+      await setActiveSlot(rank, 'rating', newSlot);
+      log(`ChangeRateTarget :: ${rank} rating slot rotated: ${currentSlot} → ${newSlot}`);
+
       log(`ChangeRateTarget :: ${rank} - Purging old slot ${currentSlot} before rotation`);
 
       // Get all image IDs from the current (soon to be old) rating slot
@@ -357,7 +361,7 @@ const newOrderChangeRateTarget = createJob(
         // (images with consensus were already removed via removeImageFromQueue)
         log(`ChangeRateTarget :: ${rank} - Inserting NULL ratings into buffer for processing`);
 
-        const batches = chunk(imagesToPurge, 1000);
+        const batches = chunk(imagesToPurge, 10000);
         for (const batch of batches) {
           // Insert NULL ratings into buffer - these will be marked as Inconclusive by processFinalRatings
           const bufferRecords = batch.map((imageId) => ({
@@ -398,10 +402,6 @@ const newOrderChangeRateTarget = createJob(
       } else {
         log(`ChangeRateTarget :: ${rank} - No images to purge from slot ${currentSlot}`);
       }
-
-      // Rotate to the new slot
-      await setActiveSlot(rank, 'rating', newSlot);
-      log(`ChangeRateTarget :: ${rank} rating slot rotated: ${currentSlot} → ${newSlot}`);
     }
 
     log('ChangeRateTarget :: Rate slot rotation and purge complete');
@@ -412,7 +412,7 @@ export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
   newOrderCleanseSmites,
-  newOrderCleanupQueues,
+  // newOrderCleanupQueues,
   newOrderChangeFillTarget,
   newOrderChangeRateTarget,
 ];

@@ -140,13 +140,20 @@ export const correctJudgmentsCounter = createCounter({
     const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
     const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
 
+    // Optimized query using argMax instead of FINAL for better performance
+    // Groups by imageId to get latest status per rating, then counts Correct ones
     const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM knights_new_order_image_rating FINAL
-      WHERE userId = ${id}
-        AND createdAt >= ${effectiveStartDate}
-        AND status = '${NewOrderImageRatingStatus.Correct}'
+      SELECT COUNT(*) as count
+      FROM (
+        SELECT
+          imageId,
+          argMax(status, createdAt) as latest_status
+        FROM knights_new_order_image_rating
+        WHERE userId = ${id}
+          AND createdAt >= ${effectiveStartDate}
+        GROUP BY imageId
+      )
+      WHERE latest_status = '${NewOrderImageRatingStatus.Correct}'
     `;
     if (!data) return 0;
 
@@ -170,13 +177,20 @@ export const allJudgmentsCounter = createCounter({
     const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
     const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
 
+    // Optimized query using argMax instead of FINAL for better performance
+    // Groups by imageId to get latest status per rating, then counts finalized judgments
     const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM knights_new_order_image_rating FINAL
-      WHERE userId = ${id}
-        AND createdAt >= ${effectiveStartDate}
-        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}', '${NewOrderImageRatingStatus.Inconclusive}')
+      SELECT COUNT(*) as count
+      FROM (
+        SELECT
+          imageId,
+          argMax(status, createdAt) as latest_status
+        FROM knights_new_order_image_rating
+        WHERE userId = ${id}
+          AND createdAt >= ${effectiveStartDate}
+        GROUP BY imageId
+      )
+      WHERE latest_status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}', '${NewOrderImageRatingStatus.Inconclusive}')
     `;
     if (!data) return 0;
 

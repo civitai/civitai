@@ -3,12 +3,12 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 
 export const knightsNewOrderNotifications = createNotificationProcessor({
   'new-order-sanity-warning': {
-    displayName: 'Knights of New Order: Sanity Warning',
+    displayName: 'Knights of New Order: Performance Check Failed',
     category: NotificationCategory.Other,
     prepareMessage: ({ details }) => ({
       message:
         (details?.message as string) ||
-        'Knights of New Order: Careful! You failed a sanity check. Review your ratings to maintain accuracy.',
+        'Knights of New Order: Careful! You incorrectly rated a performance check image. Make sure you rate based on your acolyte training to avoid getting a Smite.',
       url: '/games/knights-of-new-order',
     }),
   },
