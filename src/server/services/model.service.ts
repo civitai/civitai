@@ -130,6 +130,7 @@ import type {
 } from './../schema/model.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Flags } from '~/shared/utils/flags';
+import { isDev } from '~/env/other';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2933,7 +2934,7 @@ export async function ingestModelById({ id }: GetByIdInput) {
 }
 
 export async function ingestModel(data: IngestModelInput) {
-  if (!env.CONTENT_SCAN_ENDPOINT) {
+  if (!env.CONTENT_SCAN_ENDPOINT || isDev) {
     console.log('Skipping model ingestion');
     await dbWrite.model.update({
       where: { id: data.id },

@@ -1,4 +1,10 @@
-import type { ImageResourceTrainingStep, Workflow } from '@civitai/client';
+import type {
+  ImageResourceTrainingStep,
+  ImageResourceTrainingOutput,
+  Workflow,
+  TrainingStep,
+  TrainingOutput,
+} from '@civitai/client';
 import { WorkflowStatus } from '@civitai/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
@@ -23,6 +29,9 @@ const workflowSchema = z.object({
 
 type MetadataType = { modelFileId: number };
 export type CustomImageResourceTrainingStep = ImageResourceTrainingStep & {
+  metadata: MetadataType;
+};
+export type CustomTrainingStep = TrainingStep & {
   metadata: MetadataType;
 };
 
@@ -105,7 +114,7 @@ export default WebhookEndpoint(async (req, res) => {
 export async function updateRecords(workflow: Workflow, status: WorkflowStatus) {
   const { transactions, steps, id: workflowId, createdAt } = workflow;
 
-  const step = steps?.[0] as CustomImageResourceTrainingStep | undefined;
+  const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
   if (!step) throw new Error('Missing step data');
   if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
 
@@ -119,10 +128,45 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
   } = step;
   let trainingStatus = mapTrainingStatus[status];
 
-  // TODO is output nullable?
-  const epochs = (output ?? {}).epochs ?? [];
-  const sampleImagesPrompts = (output ?? {}).sampleImagesPrompts ?? [];
-  const moderationStatus = (output ?? {}).moderationStatus;
+  // Determine step type and extract data accordingly
+  const stepType = step.$type;
+  let epochs: Array<{
+    epochNumber?: number;
+    blobUrl?: string;
+    blobSize?: number | null;
+    sampleImages?: string[];
+  }> = [];
+  let sampleImagesPrompts: string[] = [];
+  let moderationStatus: string | undefined;
+
+  if (stepType === 'training') {
+    // TrainingStep: new AI Toolkit format
+    const trainingStep = step as CustomTrainingStep;
+    moderationStatus = output?.moderationStatus;
+    sampleImagesPrompts = trainingStep.input?.samples?.prompts ?? [];
+
+    // Map TrainingEpochResult to our internal format
+    const trainingOutput = output as TrainingOutput | undefined;
+    epochs = (trainingOutput?.epochs ?? []).map((epoch) => ({
+      epochNumber: epoch.epochNumber ?? -1,
+      blobUrl: epoch.model?.url ?? '',
+      blobSize: 0, // Not provided in TrainingStep
+      sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
+    }));
+  } else if (stepType === 'imageResourceTraining') {
+    // ImageResourceTrainingStep: legacy format
+    const imageOutput = output as ImageResourceTrainingOutput | undefined;
+    epochs = (imageOutput?.epochs ?? []).map((e) => ({
+      epochNumber: e.epochNumber ?? -1,
+      blobUrl: e.blobUrl,
+      blobSize: e.blobSize ?? null,
+      sampleImages: e.sampleImages ?? [],
+    }));
+    sampleImagesPrompts = imageOutput?.sampleImagesPrompts ?? [];
+    moderationStatus = imageOutput?.moderationStatus;
+  } else {
+    throw new Error(`Unsupported step type: ${stepType}`);
+  }
 
   if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
   else if (moderationStatus === 'rejected') trainingStatus = TrainingStatus.Denied;
@@ -174,7 +218,7 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
 
   const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
     epochNumber: e.epochNumber ?? -1,
-    modelUrl: e.blobUrl,
+    modelUrl: e.blobUrl ?? '',
     modelSize: e.blobSize ?? 0,
     sampleImages: e.sampleImages ?? [],
   }));

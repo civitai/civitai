@@ -65,6 +65,7 @@ export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
 export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2v_14b'] as const;
 export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
+export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -72,6 +73,7 @@ const trainingDetailsBaseModelsImage = [
   // ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
   ...trainingDetailsBaseModelsChroma,
+  ...trainingDetailsBaseModelsQwen,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -96,7 +98,7 @@ export const baseModelToTraningDetailsBaseModelMap: Partial<
   'Wan Video 14B t2v': 'wan_2_1_t2v_14b',
 };
 
-export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
+// Kohya-style training parameters (used by frontend and as legacy format)
 export const trainingDetailsParams = z.object({
   unetLR: z.number(),
   textEncoderLR: z.number(),
@@ -110,24 +112,58 @@ export const trainingDetailsParams = z.object({
   loraType: z.enum(loraTypes),
   enableBucket: z.boolean(),
   keepTokens: z.number(),
-
-  // nb: these 3 are not actually optional, but because we added them later, old versions will not have them causing the schema check to fail
   clipSkip: z.number().optional(),
   flipAugmentation: z.boolean().optional(),
   noiseOffset: z.number().optional(),
-
   lrSchedulerNumCycles: z.number(),
   trainBatchSize: z.number(),
   minSnrGamma: z.number(),
-  optimizerArgs: z.string().optional(), // TODO remove
+  optimizerArgs: z.string().optional(),
   shuffleCaption: z.boolean(),
   targetSteps: z.number(),
-  // lrWarmupSteps: z.number(),
-  // seed: null,
-  // gradientAccumulationSteps: 1,
-
   engine: z.enum(engineTypes).optional().default('kohya'),
 });
+export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
+
+// AI Toolkit training parameters (alternate format for database storage)
+const aiToolkitTrainingDetailsParams = z.object({
+  engine: z.literal('ai-toolkit'),
+  ecosystem: z.string(),
+  modelVariant: z.string().optional(),
+  epochs: z.number(),
+  resolution: z.number().nullable(),
+  lr: z.number(),
+  textEncoderLr: z.number().nullable(),
+  trainTextEncoder: z.boolean(),
+  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
+  optimizerType: z.enum([
+    'adam',
+    'adamw',
+    'adamw8bit',
+    'adam8bit',
+    'lion',
+    'lion8bit',
+    'adafactor',
+    'adagrad',
+    'prodigy',
+    'prodigy8bit',
+  ]),
+  networkDim: z.number().nullable(),
+  networkAlpha: z.number().nullable(),
+  noiseOffset: z.number().nullable(),
+  minSnrGamma: z.number().nullable(),
+  flipAugmentation: z.boolean(),
+  shuffleTokens: z.boolean(),
+  keepTokens: z.number(),
+  maxTrainEpochs: z.number().nullable().optional(),
+});
+
+// Union type for database storage - supports both formats
+export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
+  trainingDetailsParams.extend({ engine: z.enum(['kohya', 'rapid', 'musubi'] as const) }),
+  aiToolkitTrainingDetailsParams,
+]);
+export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
 export const trainingDetailsObj = z.object({
@@ -138,7 +174,7 @@ export const trainingDetailsObj = z.object({
   type: z.enum(constants.trainingModelTypes),
   mediaType: z.enum(constants.trainingMediaTypes).optional().default('image'),
   // triggerWord: z.string().optional(),
-  params: trainingDetailsParams.optional(),
+  params: trainingDetailsParamsUnion.optional(), // Support both Kohya and AI Toolkit formats
   samplePrompts: z.array(z.string()).optional(),
   negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),

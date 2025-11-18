@@ -27,6 +27,7 @@ import {
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
 } from '~/server/schema/model-version.schema';
@@ -43,8 +44,14 @@ import {
   trainingStore,
 } from '~/store/training.store';
 import { stringifyAIR } from '~/shared/utils/air';
-import { type TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
+import {
+  getDefaultEngine,
+  isAiToolkitMandatory,
+  type TrainingBaseModelType,
+  trainingModelInfo,
+} from '~/utils/training';
 import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import { useTrainingImageStore } from '~/store/training.store';
 
 const ModelSelector = ({
   selectedRun,
@@ -160,6 +167,10 @@ const ModelSelector = ({
                   ? 'flux'
                   : ([...getBaseModelsByGroup('SD3')] as string[]).includes(baseModel)
                   ? 'sd35'
+                  : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
+                  ? 'qwen'
+                  : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
+                  ? 'chroma'
                   : 'sd15';
 
                 const cLink = stringifyAIR({
@@ -201,10 +212,11 @@ export const ModelSelect = ({
 
   // - Apply default params with overrides and calculations upon base model selection
   const makeDefaultParams = (data: TrainingRunUpdate) => {
-    const defaultParams = getDefaultTrainingParams(
-      data.base!,
-      data.params?.engine ?? (mediaType === 'video' ? defaultEngineVideo : defaultEngine)
-    );
+    // Determine the appropriate engine based on the base type
+    const engineToUse =
+      data.params?.engine ?? (data.baseType ? getDefaultEngine(data.baseType) : defaultEngine);
+
+    const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
 
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
@@ -213,7 +225,46 @@ export const ModelSelect = ({
         defaultParams.trainBatchSize
     );
 
-    updateRun(modelId, mediaType, selectedRun.id, { params: { ...defaultParams }, ...data });
+    // Pre-fill sample prompts if AI Toolkit is mandatory
+    const samplePrompts = data.samplePrompts || selectedRun.samplePrompts || ['', '', ''];
+    if (data.baseType && isAiToolkitMandatory(data.baseType)) {
+      // Get captions from uploaded images
+      const imageList = useTrainingImageStore.getState()[modelId]?.imageList || [];
+      const captionsWithContent = imageList
+        .filter((img) => img.label && img.label.trim().length > 0)
+        .map((img) => img.label.trim());
+
+      if (captionsWithContent.length > 0) {
+        // Select random captions for sample prompts
+        const numPromptsNeeded = mediaType === 'video' ? 2 : 3;
+        const randomCaptions: string[] = [];
+        const usedIndices = new Set<number>();
+
+        while (
+          randomCaptions.length < numPromptsNeeded &&
+          randomCaptions.length < captionsWithContent.length
+        ) {
+          const randomIndex = Math.floor(Math.random() * captionsWithContent.length);
+          if (!usedIndices.has(randomIndex)) {
+            usedIndices.add(randomIndex);
+            randomCaptions.push(captionsWithContent[randomIndex]);
+          }
+        }
+
+        // Fill remaining slots with empty strings if needed
+        while (randomCaptions.length < numPromptsNeeded) {
+          randomCaptions.push('');
+        }
+
+        data.samplePrompts = randomCaptions;
+      }
+    }
+
+    updateRun(modelId, mediaType, selectedRun.id, {
+      params: { ...defaultParams },
+      ...data,
+      samplePrompts: data.samplePrompts || samplePrompts,
+    });
   };
 
   const formBaseModel = selectedRun.base;
@@ -252,6 +303,11 @@ export const ModelSelect = ({
   const baseModelChroma =
     !!formBaseModel &&
     (trainingDetailsBaseModelsChroma as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelQwen =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -324,6 +380,15 @@ export const ModelSelect = ({
                     baseType="chroma"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2025-10-01')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="orange"
+                    name="Qwen"
+                    value={baseModelQwen}
+                    baseType="qwen"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={true}
                   />
                 </>
               )}
