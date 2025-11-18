@@ -238,8 +238,8 @@ export async function processImageScanResult(req: NextApiRequest) {
     } else {
       toUpdate.ingestion = ImageIngestionStatus.Scanned;
       toUpdate.needsReview = audit.reviewKey ?? null;
-      toUpdate.minor = audit.minor ?? null;
-      toUpdate.poi = audit.poi ?? null;
+      toUpdate.minor = audit.minor;
+      toUpdate.poi = audit.poi;
       toUpdate.blockedFor = null;
 
       toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
@@ -444,8 +444,8 @@ async function auditScanResults(args: {
     newUserReview = await getIsNewUser(args.userId);
   }
 
-  const minor = minorTags.length > 0 || associatedEntities.minor;
-  const poi = poiTags.length > 0 || associatedEntities.poi;
+  const minor = minorTags.length > 0 || !!associatedEntities.minor;
+  const poi = poiTags.length > 0 || !!associatedEntities.poi;
 
   let reviewKey: string | undefined;
   if (poiReview) reviewKey = 'poi';
@@ -561,9 +561,9 @@ function aggregateWdTaggingRepeater(steps: ScanResultStep[]) {
         else if (confidence > current) acc.tags[tag] = confidence;
       }
       for (const [rating, confidence] of Object.entries(step.output.rating)) {
-        const current = acc.tags[rating];
-        if (!current) acc.tags[rating] = confidence;
-        else if (confidence > current) acc.tags[rating] = confidence;
+        const current = acc.rating[rating];
+        if (!current) acc.rating[rating] = confidence;
+        else if (confidence > current) acc.rating[rating] = confidence;
       }
       return acc;
     },

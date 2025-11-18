@@ -4,11 +4,15 @@ import type {
   ImageResourceTrainingStepTemplate,
   KohyaImageResourceTrainingInput,
   MusubiImageResourceTrainingInput,
+  TrainingStep,
+  TrainingStepTemplate,
+  TrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import type {
+  AiToolkitTrainingParams,
   ImageTrainingStepSchema,
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
@@ -19,7 +23,12 @@ import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
-import { getTrainingFields, isInvalidRapid, trainingModelInfo } from '~/utils/training';
+import {
+  getTrainingFields,
+  isInvalidRapid,
+  isInvalidAiToolkit,
+  trainingModelInfo,
+} from '~/utils/training';
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -100,7 +109,7 @@ const createTrainingStep_Run = (
   if (engine === 'kohya') {
     const input: KohyaImageResourceTrainingInput = {
       ...inputBase,
-      ...params,
+      ...(params as any),
       engine,
     };
     return {
@@ -119,7 +128,7 @@ const createTrainingStep_Run = (
   } else if (engine === 'musubi') {
     const input: MusubiImageResourceTrainingInput = {
       ...inputBase,
-      ...params,
+      ...(params as any),
       engine,
     };
     return {
@@ -128,6 +137,74 @@ const createTrainingStep_Run = (
     };
   } else {
     throw new Error('Invalid engine for training');
+  }
+};
+
+// NEW: Create training step using the new TrainingStep format (for ai-toolkit)
+const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+  const {
+    model,
+    priority,
+    loraName,
+    trainingData,
+    trainingDataImagesCount,
+    samplePrompts,
+    negativePrompt,
+    modelFileId,
+    params,
+  } = input;
+
+  // Params are already in AI Toolkit format from the database
+  const aiToolkitParams = params as AiToolkitTrainingParams;
+
+  const trainingInput: TrainingInput = {
+    engine: 'ai-toolkit',
+    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
+    model,
+    ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
+    trainingData: {
+      type: 'zip',
+      sourceUrl: trainingData,
+      count: trainingDataImagesCount,
+    },
+    samples: {
+      prompts: samplePrompts,
+    },
+    epochs: aiToolkitParams.epochs,
+    resolution: aiToolkitParams.resolution ?? undefined,
+    lr: aiToolkitParams.lr,
+    textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
+    trainTextEncoder: aiToolkitParams.trainTextEncoder,
+    lrScheduler: aiToolkitParams.lrScheduler,
+    optimizerType: aiToolkitParams.optimizerType,
+    networkDim: aiToolkitParams.networkDim ?? undefined,
+    networkAlpha: aiToolkitParams.networkAlpha ?? undefined,
+    noiseOffset: aiToolkitParams.noiseOffset ?? undefined,
+    minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
+    flipAugmentation: aiToolkitParams.flipAugmentation,
+    shuffleTokens: aiToolkitParams.shuffleTokens,
+    keepTokens: aiToolkitParams.keepTokens,
+  };
+
+  return {
+    $type: 'training',
+    metadata: { modelFileId },
+    priority,
+    retries: constants.maxTrainingRetries,
+    input: trainingInput,
+  };
+};
+
+// Dispatcher to route to the correct training step creator
+const createTrainingStep = (
+  input: ImageTrainingStepSchema
+): ImageResourceTrainingStepTemplate | TrainingStepTemplate => {
+  const { engine } = input;
+
+  if (engine === 'ai-toolkit') {
+    return createTrainingStep_AiToolkit(input);
+  } else {
+    return createTrainingStep_Run(input); // Existing function for kohya, rapid, musubi
   }
 };
 
@@ -185,6 +262,9 @@ export const createTrainingWorkflow = async ({
   if (isInvalidRapid(baseModelType, trainingParams.engine))
     throw throwBadRequestError('Cannot use Rapid Training with a non-flux base model.');
 
+  if (isInvalidAiToolkit(baseModelType, trainingParams.engine))
+    throw throwBadRequestError('AI Toolkit training is not supported for this model.');
+
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 
   if (!(baseModel in trainingModelInfo)) {
@@ -199,25 +279,25 @@ export const createTrainingWorkflow = async ({
   const engine = getTrainingFields.getEngine(trainingParams.engine);
   const loraName = modelVersion.modelName;
   const modelFileId = modelVersion.fileId;
-  const params = {
-    ...trainingParams,
-    engine,
-  };
+
+  // Don't override the engine field in params - it needs to remain as the literal type
+  // from the database for the discriminated union to work properly
+  const params = trainingParams;
 
   const runArgs: ImageTrainingStepSchema = {
     model,
     priority,
     trainingData,
     trainingDataImagesCount,
-    engine,
+    engine, // This uses the OrchEngineTypes enum
     loraName,
     samplePrompts,
     negativePrompt,
     modelFileId,
-    params,
+    params, // This keeps the literal string type in params.engine
   };
 
-  const stepRun = createTrainingStep_Run(runArgs);
+  const stepRun = createTrainingStep(runArgs);
 
   const workflow = await submitWorkflow({
     token,
@@ -250,7 +330,7 @@ export const createTrainingWhatIfWorkflow = async ({
   const params = {
     ...trainingParams,
     engine,
-  };
+  } as any; // Type assertion needed because whatIf schema is a union
 
   const runArgs: ImageTrainingStepSchema = {
     model,
@@ -265,7 +345,7 @@ export const createTrainingWhatIfWorkflow = async ({
     negativePrompt: '',
   };
 
-  const stepRun = createTrainingStep_Run(runArgs);
+  const stepRun = createTrainingStep(runArgs);
 
   const workflow = await submitWorkflow({
     token,

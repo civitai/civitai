@@ -10,12 +10,19 @@ import {
   correctJudgmentsCounter,
   expCounter,
   fervorCounter,
+  getActiveSlot,
   poolCounters,
+  setActiveSlot,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
+import {
+  calculateFervor,
+  cleanseSmite,
+  clearRatedImages,
+  processFinalRatings,
+} from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -195,6 +202,9 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
+    // Step 4: Clear rated images cache for all players in this batch
+    await Promise.all(batch.map((player) => clearRatedImages(player.userId)));
+
     log(`DailyReset:: Batch ${batchCount} of ${batches.length} complete`);
     batchCount++;
   }
@@ -240,46 +250,169 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
   for (const rank of ranksToClean) {
     log(`CleanupQueues :: Cleaning up ${rank} queues`);
 
-    // Fetch current image IDs from the rankType queue
-    const currentImageIds = (
-      await Promise.all(poolCounters[rank].map((pool) => pool.getAll({ limit: 10000 })))
-    )
-      .flat()
-      .map((value) => Number(value));
+    // Clean up both slots (a and b)
+    for (const slot of ['a', 'b'] as const) {
+      log(`CleanupQueues :: Cleaning up ${rank} slot ${slot}`);
 
-    if (currentImageIds.length === 0) {
-      log(`CleanupQueues :: No images found for ${rank}`);
-      continue;
-    }
+      // Fetch current image IDs from the rankType queue slot
+      const currentImageIds = (
+        await Promise.all(poolCounters[rank][slot].map((pool) => pool.getAll()))
+      )
+        .flat()
+        .map((value) => Number(value));
 
-    const chunks = chunk(currentImageIds, 1000);
-    for (const chunk of chunks) {
-      // Check against the database to find non-existing image IDs
-      const existingImages = await dbRead.image.findMany({
-        where: { id: { in: chunk } },
-        select: { id: true, nsfwLevel: true },
-      });
-      const existingImageIds = new Set(existingImages.map((image) => image.id));
-      const blockedImageIds = new Set(
-        existingImages
-          .filter((image) => image.nsfwLevel === NsfwLevel.Blocked)
-          .map((image) => image.id)
-      );
-      const imageIdsToRemove = chunk.filter(
-        (id) => !existingImageIds.has(id) || blockedImageIds.has(id)
-      );
-      if (imageIdsToRemove.length === 0) continue;
+      if (currentImageIds.length === 0) {
+        log(`CleanupQueues :: No images found for ${rank} slot ${slot}`);
+        continue;
+      }
 
-      // Remove non-existing images from the queue
-      await Promise.all([poolCounters[rank].map((pool) => pool.reset({ id: imageIdsToRemove }))]);
+      const chunks = chunk(currentImageIds, 1000);
+      for (const chunkData of chunks) {
+        // Check against the database to find non-existing image IDs
+        const existingImages = await dbRead.image.findMany({
+          where: { id: { in: chunkData } },
+          select: { id: true, nsfwLevel: true },
+        });
+        const existingImageIds = new Set(existingImages.map((image) => image.id));
+        const blockedImageIds = new Set(
+          existingImages
+            .filter((image) => image.nsfwLevel === NsfwLevel.Blocked)
+            .map((image) => image.id)
+        );
+        const imageIdsToRemove = chunkData.filter(
+          (id) => !existingImageIds.has(id) || blockedImageIds.has(id)
+        );
+        if (imageIdsToRemove.length === 0) continue;
+
+        // Remove non-existing images from the queue slot
+        await Promise.all(
+          poolCounters[rank][slot].map((pool) => pool.reset({ id: imageIdsToRemove }))
+        );
+      }
     }
   }
   log('CleanupQueues :: Cleaning up queues :: done');
 });
 
+// Rotate filling slot at 22:00 UTC daily
+// All new images will be added to the new slot
+const newOrderChangeFillTarget = createJob(
+  'new-order-change-fill-target',
+  '0 22 * * *',
+  async () => {
+    log('ChangeFillTarget :: Starting fill slot rotation');
+
+    // Only Knight rank uses slot rotation; other ranks remain on a single slot
+    const ranksToRotate = [NewOrderRankType.Knight] as const;
+
+    for (const rank of ranksToRotate) {
+      const currentSlot = await getActiveSlot(rank, 'filling');
+      const newSlot = currentSlot === 'a' ? 'b' : 'a';
+
+      await setActiveSlot(rank, 'filling', newSlot);
+      log(`ChangeFillTarget :: ${rank} filling slot rotated: ${currentSlot} → ${newSlot}`);
+    }
+
+    log('ChangeFillTarget :: Fill slot rotation complete');
+  }
+);
+
+// Rotate rating slot and purge old slot at 00:00 UTC daily
+// Players will now rate from the new slot, old slot gets purged
+const newOrderChangeRateTarget = createJob(
+  'new-order-change-rate-target',
+  '0 0 * * *',
+  async () => {
+    if (!clickhouse) {
+      log('ChangeRateTarget :: ClickHouse not available, skipping');
+      return;
+    }
+
+    log('ChangeRateTarget :: Starting rate slot rotation and purge');
+
+    // Only Knight rank uses slot rotation; other ranks remain on a single slot
+    const ranksToRotate = [NewOrderRankType.Knight] as const;
+
+    for (const rank of ranksToRotate) {
+      const currentSlot = await getActiveSlot(rank, 'rating');
+      const newSlot = currentSlot === 'a' ? 'b' : 'a';
+
+      // Rotate to the new slot
+      await setActiveSlot(rank, 'rating', newSlot);
+      log(`ChangeRateTarget :: ${rank} rating slot rotated: ${currentSlot} → ${newSlot}`);
+
+      log(`ChangeRateTarget :: ${rank} - Purging old slot ${currentSlot} before rotation`);
+
+      // Get all image IDs from the current (soon to be old) rating slot
+      // No limit - process all images in the slot
+      const imagesToPurge = (
+        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.getAll()))
+      )
+        .flat()
+        .map((value) => Number(value));
+
+      if (imagesToPurge.length > 0) {
+        log(
+          `ChangeRateTarget :: ${rank} - Found ${imagesToPurge.length} images to purge from slot ${currentSlot}`
+        );
+
+        // Mark images as Inconclusive by inserting NULL ratings into buffer
+        // Images still in queue at purge time legitimately didn't reach consensus
+        // (images with consensus were already removed via removeImageFromQueue)
+        log(`ChangeRateTarget :: ${rank} - Inserting NULL ratings into buffer for processing`);
+
+        const batches = chunk(imagesToPurge, 10000);
+        for (const batch of batches) {
+          // Insert NULL ratings into buffer - these will be marked as Inconclusive by processFinalRatings
+          const bufferRecords = batch.map((imageId) => ({
+            imageId,
+            rating: null,
+          }));
+
+          await clickhouse.insert({
+            table: 'knights_rating_updates_buffer',
+            values: bufferRecords,
+            format: 'JSONEachRow',
+          });
+        }
+
+        log(
+          `ChangeRateTarget :: ${rank} - Inserted ${imagesToPurge.length} NULL ratings into buffer`
+        );
+
+        // Process the ratings through the standard pipeline
+        // This will mark them as Inconclusive using the same logic as regular ratings
+        const result = await processFinalRatings();
+        log(
+          `ChangeRateTarget :: ${rank} - processFinalRatings result: ${JSON.stringify(
+            result,
+            null,
+            2
+          )}`
+        );
+
+        log(
+          `ChangeRateTarget :: ${rank} - Processed ${imagesToPurge.length} images as Inconclusive`
+        );
+
+        // Clear all pools in the old slot
+        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.reset({ all: true })));
+
+        log(`ChangeRateTarget :: ${rank} - Cleared all pools in slot ${currentSlot}`);
+      } else {
+        log(`ChangeRateTarget :: ${rank} - No images to purge from slot ${currentSlot}`);
+      }
+    }
+
+    log('ChangeRateTarget :: Rate slot rotation and purge complete');
+  }
+);
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
-  newOrderDailyReset, // Re-enabled with Redis counter sync
+  newOrderDailyReset,
   newOrderCleanseSmites,
-  newOrderCleanupQueues,
+  // newOrderCleanupQueues,
+  newOrderChangeFillTarget,
+  newOrderChangeRateTarget,
 ];
