@@ -88,7 +88,7 @@ function getClickHouse() {
 }
 
 export let clickhouse: CustomClickHouseClient | undefined;
-const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME;
+const shouldConnect = !env.IS_BUILD && env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME;
 if (shouldConnect) {
   if (isProd) clickhouse = getClickHouse();
   else {
