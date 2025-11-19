@@ -209,10 +209,13 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
-  const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
   // Set keys individually to avoid CROSSSLOT errors
   await Promise.all(
-    ids.map((id) => sysRedis.packed.set(`${cachePrefix}${id}` as any, 'false', { EX: 60 * 5 }))
+    ids.map((id) =>
+      sysRedis.packed.set(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}` as const, 'false', {
+        EX: 60 * 5,
+      })
+    )
   );
 };
 
@@ -220,6 +223,7 @@ async function getImageTagsForImages(
   imageIds: number[]
 ): Promise<(VotableTagModel & { imageId: number })[]> {
   const tagsByImage = await imageTagsCache.fetch(imageIds);
+
   return imageIds.flatMap(
     (imageId) =>
       tagsByImage[imageId]?.tags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
@@ -4625,22 +4629,20 @@ export const getImageModerationReviewQueue = async ({
 
   if (tagReview) {
     tagsVar = await getImageTagsForImages(imageIds);
-    // Filter to only include tags that need review to prevent greyed-out images
-    // tagsVar = tagsVar?.filter((tag) => tag.needsReview);
   }
 
   const reviewTags =
     needsReview && imageIds.length > 0
       ? await dbWrite.$queryRaw<ReviewTag[]>`
-    SELECT
-      t.id,
-      t.name,
-      t."nsfwLevel",
-      itr."imageId"
-    FROM "ImageTagForReview" itr
-    JOIN "Tag" t ON itr."tagId" = t.id
-    WHERE itr."imageId" IN (${Prisma.join(imageIds)})
-  `
+          SELECT
+            t.id,
+            t.name,
+            t."nsfwLevel",
+            itr."imageId"
+          FROM "ImageTagForReview" itr
+          JOIN "Tag" t ON itr."tagId" = t.id
+          WHERE itr."imageId" IN (${Prisma.join(imageIds)})
+        `
       : [];
 
   let tosDetails: Map<number, { tosReason: string }> | undefined;
@@ -4753,11 +4755,6 @@ export const getImageModerationReviewQueue = async ({
       tosReason: tosDetails?.get(i.id)?.tosReason,
     })
   );
-
-  // Filter out images with no tags needing review to prevent greyed-out images in the queue
-  // const filteredImages = tagReview
-  //   ? images.filter((img) => img.tags && img.tags.length > 0)
-  //   : images;
 
   return { nextCursor, items: images };
 };

@@ -135,7 +135,7 @@ export const getTags = async ({
   const systemTags = await getSystemTags();
   const categoryTags = (
     entityType
-      ? systemTags.filter((t) => t.name === `${entityType} category`.toLowerCase())
+      ? systemTags.filter((t) => entityType.some((et) => t.name === `${et} category`.toLowerCase()))
       : systemTags.filter((t) => t.name.endsWith('category'))
   ).map((x) => x.id);
   if (categories && categoryTags.length) {
@@ -702,6 +702,8 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
         needsReview: false,
       }))
     );
+
+    await imageTagsCache.bust(entityIds);
   }
 };
 

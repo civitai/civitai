@@ -1011,7 +1011,6 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
         ...imageTagCompositeSelect,
       },
       orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
-      take: 100,
     });
 
     const result = imageTags.reduce((acc, tag) => {
