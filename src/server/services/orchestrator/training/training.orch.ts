@@ -4,9 +4,9 @@ import type {
   ImageResourceTrainingStepTemplate,
   KohyaImageResourceTrainingInput,
   MusubiImageResourceTrainingInput,
-  TrainingStep,
   TrainingStepTemplate,
-  TrainingInput,
+  ZipTrainingData,
+  AiToolkitTrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -157,7 +157,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
   // Params are already in AI Toolkit format from the database
   const aiToolkitParams = params as AiToolkitTrainingParams;
 
-  const trainingInput: TrainingInput = {
+  const trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
     model,
@@ -166,7 +166,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       type: 'zip',
       sourceUrl: trainingData,
       count: trainingDataImagesCount,
-    },
+    } as ZipTrainingData,
     samples: {
       prompts: samplePrompts,
     },
