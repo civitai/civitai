@@ -1352,6 +1352,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     where: { id: image.id },
     data: {
       ...image,
+      id: undefined, // prevent updating the id!
       updatedAt: new Date(),
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
       // If this image was blocked due to missing metadata, we need to set it back to pending
