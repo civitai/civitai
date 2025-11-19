@@ -4,7 +4,7 @@ import { env } from '~/env/server';
 import { emailVerificationEmail } from '~/server/email/templates/emailVerification.email';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { userUpdateCounter } from '~/server/prom/client';
 
 const EMAIL_VERIFICATION_EXPIRY = 15 * 60; // 15 minutes in seconds

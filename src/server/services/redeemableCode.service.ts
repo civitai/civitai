@@ -16,7 +16,7 @@ import type {
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';

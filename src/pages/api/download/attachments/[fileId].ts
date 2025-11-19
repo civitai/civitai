@@ -4,7 +4,7 @@ import * as z from 'zod';
 
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';

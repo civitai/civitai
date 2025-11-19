@@ -5,7 +5,7 @@ import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { addSystemPermission, removeSystemPermission } from '~/server/services/system-cache';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const schema = z.object({

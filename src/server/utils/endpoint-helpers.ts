@@ -10,7 +10,7 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { isDefined } from '~/utils/type-guards';

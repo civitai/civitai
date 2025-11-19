@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getDownloadUrl } from '~/utils/delivery-worker';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbWrite, dbRead } from '~/server/db/client';
 import requestIp from 'request-ip';
 

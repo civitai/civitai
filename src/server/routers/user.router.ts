@@ -98,7 +98,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),

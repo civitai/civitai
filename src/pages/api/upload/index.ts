@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { UploadType } from '~/server/common/enums';
 import { extname } from 'node:path';
 import { filenamize, generateToken } from '~/utils/string-helpers';

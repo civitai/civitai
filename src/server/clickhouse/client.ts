@@ -24,7 +24,7 @@ import type {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
-import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
