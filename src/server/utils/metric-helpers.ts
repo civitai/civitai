@@ -4,9 +4,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
-import { imageMetricsCache } from '~/server/redis/caches';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
+import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 
 const logError = (name: string, details: Record<string, unknown>) => {
   logToAxiom({ type: 'error', name, details }, 'clickhouse').catch(() => {

@@ -25,8 +25,8 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import type { GenerationResourceDataModel } from '~/server/services/model-version.service';
-import { resourceDataCache } from '~/server/services/model-version.service';
+import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { getFeaturedModels } from '~/server/services/model.service';
 import {
   handleLogError,

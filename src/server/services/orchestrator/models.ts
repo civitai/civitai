@@ -3,11 +3,11 @@ import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
-import { resourceDataCache } from '~/server/services/model-version.service';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import {
   createOrchestratorClient,
   internalOrchestratorClient,
-} from '~/server/services/orchestrator/common';
+} from '~/server/services/orchestrator/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
 

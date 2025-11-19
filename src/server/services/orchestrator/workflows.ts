@@ -24,7 +24,7 @@ import type {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { createOrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,

@@ -2,7 +2,7 @@ import poiWords from '~/utils/metadata/lists/words-poi.json';
 import { getWorkflow, type WorkflowEvent } from '@civitai/client';
 import type { NextApiRequest } from 'next';
 import { dbWrite } from '~/server/db/client';
-import { internalOrchestratorClient } from '~/server/services/orchestrator/common';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';

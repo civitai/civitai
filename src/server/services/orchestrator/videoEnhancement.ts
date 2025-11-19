@@ -1,6 +1,6 @@
 import type { VideoEnhancementInput } from '@civitai/client';
 import { invokeVideoEnhancementStepTemplate } from '@civitai/client';
-import { createOrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
 export async function enhanceVideo({ token, ...body }: VideoEnhancementInput & { token: string }) {
