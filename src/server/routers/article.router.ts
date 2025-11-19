@@ -42,9 +42,8 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const isModerator = ctx?.user?.isModerator;
 
   if (!isModerator && !!id) {
-    const ownerId = (
-      await dbRead.article.findUnique({ where: { id }, select: { userId: true } })
-    )?.userId;
+    const ownerId = (await dbRead.article.findUnique({ where: { id }, select: { userId: true } }))
+      ?.userId;
     if (ownerId !== userId) throw throwAuthorizationError();
   }
 

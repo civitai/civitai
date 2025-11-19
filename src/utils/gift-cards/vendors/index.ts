@@ -20,4 +20,12 @@ export function getDefaultVendor(): Vendor | undefined {
   return enabledVendors[0];
 }
 
-export type { Vendor, VendorRegistry, BuzzCard, Membership, MembershipDuration, VendorProducts, VendorPromo } from './types';
+export type {
+  Vendor,
+  VendorRegistry,
+  BuzzCard,
+  Membership,
+  MembershipDuration,
+  VendorProducts,
+  VendorPromo,
+} from './types';
