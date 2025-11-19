@@ -613,19 +613,4 @@ export class Tracker {
   }) {
     return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
   }
-
-  public zkp2pPayment(values: {
-    sessionId: string;
-    eventType: 'attempt' | 'success' | 'error' | 'abandoned';
-    paymentMethod: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'wise' | 'revolut';
-    usdAmount: number;
-    buzzAmount: number;
-    errorMessage?: string;
-  }) {
-    return this.track(
-      'zkp2p_payment_events',
-      { ...values, timestamp: new Date() },
-      { skipActorMeta: true }
-    );
-  }
 }

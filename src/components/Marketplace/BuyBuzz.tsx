@@ -44,13 +44,6 @@ export function BuyBuzz() {
         <Button type="submit" disabled={!amount} fullWidth>
           Proceed to Purchase
         </Button>
-        <Text size="xs" c="dimmed">
-          Payments handled via{' '}
-          <Anchor href="https://zkp2p.xyz" target="_blank" rel="nofollow noreferrer">
-            ZKP2P
-          </Anchor>{' '}
-          secure escrow. Learn More
-        </Text>
       </Form>
     </Card>
   );
