@@ -132,6 +132,7 @@ export const getUsersByIds = async (userIds: number[]) => {
   }));
 };
 
+export type UserCreator = NonNullable<AsyncReturnType<typeof getUserCreator>>;
 export const getUserCreator = async ({
   leaderboardId,
   isModerator,
