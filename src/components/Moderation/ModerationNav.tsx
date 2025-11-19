@@ -42,6 +42,10 @@ export function ModerationNav() {
           hidden: !features.announcements,
         },
         {
+          label: 'Code Gifts',
+          href: '/moderator/code-gifts',
+        },
+        {
           label: 'Blocklists',
           href: '/moderator/blocklists',
           hidden: !features.blocklists,

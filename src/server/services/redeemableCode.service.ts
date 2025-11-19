@@ -1,5 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
-import { constants } from '~/server/common/constants';
+import { constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -7,6 +7,8 @@ import type {
   ConsumeRedeemableCodeInput,
   CreateRedeemableCodeInput,
   DeleteRedeemableCodeInput,
+  UpsertGiftNoticeInput,
+  DeleteGiftNoticeInput,
 } from '~/server/schema/redeemableCode.schema';
 import type {
   SubscriptionMetadata,
@@ -20,6 +22,80 @@ import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
+import { dbRead } from '~/server/db/client';
+
+// Membership tier to Buzz conversion rates (per month)
+const MEMBERSHIP_BUZZ_VALUES = {
+  bronze: 10000,
+  silver: 25000,
+  gold: 50000,
+} as const;
+
+/**
+ * Converts a redeemed code value to Buzz units for gift notice comparison
+ */
+function convertCodeValueToBuzz(
+  type: RedeemableCodeType,
+  unitValue: number,
+  tierName?: string
+): number {
+  if (type === RedeemableCodeType.Buzz) {
+    return unitValue;
+  }
+
+  if (type === RedeemableCodeType.Membership && tierName) {
+    const tier = tierName.toLowerCase() as keyof typeof MEMBERSHIP_BUZZ_VALUES;
+    const buzzPerMonth = MEMBERSHIP_BUZZ_VALUES[tier];
+
+    if (!buzzPerMonth) {
+      // Unknown tier, default to bronze
+      return unitValue * MEMBERSHIP_BUZZ_VALUES.bronze;
+    }
+
+    return unitValue * buzzPerMonth;
+  }
+
+  // Fallback
+  return unitValue;
+}
+
+/**
+ * Gets gift notices that match the redeemed code value and current date
+ */
+async function getMatchingGiftNotices(buzzValue: number): Promise<GiftNotice[]> {
+  const now = new Date();
+
+  // Fetch notices from KeyValue table
+  const noticesRecord = await dbRead.keyValue.findUnique({
+    where: { key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES },
+  });
+
+  if (!noticesRecord?.value) {
+    return [];
+  }
+
+  const allNotices = noticesRecord.value as GiftNotice[];
+
+  // Filter notices by date range and value range
+  const matchingNotices = allNotices.filter((notice) => {
+    const startDate = new Date(notice.startDate);
+    const endDate = new Date(notice.endDate);
+
+    // Check date range (inclusive on both ends)
+    if (now < startDate || now > endDate) {
+      return false;
+    }
+
+    // Check value range
+    const meetsMinValue = buzzValue >= notice.minValue;
+    const meetsMaxValue = notice.maxValue === null || buzzValue <= notice.maxValue;
+
+    return meetsMinValue && meetsMaxValue;
+  });
+
+  return matchingNotices;
+}
 
 export async function createRedeemableCodes({
   unitValue,
@@ -100,7 +176,20 @@ export async function consumeRedeemableCode({
     }
     // let's clear user session just in case.
     await refreshSession(userId);
-    return codeRecord; // Already redeemed by this user, return the record and do nothing.
+
+    // Calculate Buzz value and get matching gift notices even for already-redeemed codes
+    const tierName =
+      codeRecord.type === RedeemableCodeType.Membership
+        ? (codeRecord.price?.product?.metadata as SubscriptionProductMetadata)?.tier
+        : undefined;
+
+    const buzzValue = convertCodeValueToBuzz(codeRecord.type, codeRecord.unitValue, tierName);
+    const giftNotices = await getMatchingGiftNotices(buzzValue);
+
+    return {
+      ...codeRecord,
+      giftNotices,
+    }; // Already redeemed by this user, return the record with gift notices.
   }
 
   if (codeRecord.type === RedeemableCodeType.Membership && !codeRecord.price) {
@@ -427,5 +516,103 @@ export async function consumeRedeemableCode({
     }
   }
 
-  return consumedCode;
+  // Calculate Buzz value and get matching gift notices
+  const tierName =
+    consumedCode.type === RedeemableCodeType.Membership
+      ? (consumedCode.price?.product?.metadata as SubscriptionProductMetadata)?.tier
+      : undefined;
+
+  const buzzValue = convertCodeValueToBuzz(consumedCode.type, consumedCode.unitValue, tierName);
+
+  // Get matching gift notices
+  const giftNotices = await getMatchingGiftNotices(buzzValue);
+
+  // Return consumed code with gift notices
+  return {
+    ...consumedCode,
+    giftNotices,
+  };
+}
+
+/**
+ * Gets all gift notices for admin management
+ */
+export async function getAllGiftNotices(): Promise<Array<GiftNotice & { id: string }>> {
+  const noticesRecord = await dbRead.keyValue.findUnique({
+    where: { key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES },
+  });
+
+  if (!noticesRecord?.value) {
+    return [];
+  }
+
+  const allNotices = noticesRecord.value as Array<GiftNotice & { id: string }>;
+  return allNotices;
+}
+
+/**
+ * Upserts a gift notice (create or update)
+ */
+export async function upsertGiftNotice(input: UpsertGiftNoticeInput): Promise<void> {
+  const noticesRecord = await dbRead.keyValue.findUnique({
+    where: { key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES },
+  });
+
+  const existingNotices = (noticesRecord?.value as Array<GiftNotice & { id: string }>) || [];
+
+  // Convert dates to ISO strings for storage
+  const notice = {
+    id: input.id || generateToken(12),
+    startDate: input.startDate.toISOString(),
+    endDate: input.endDate.toISOString(),
+    minValue: input.minValue,
+    maxValue: input.maxValue,
+    title: input.title,
+    message: input.message,
+    linkUrl: input.linkUrl,
+    linkText: input.linkText,
+  };
+
+  let updatedNotices;
+  if (input.id) {
+    // Update existing notice
+    updatedNotices = existingNotices.map((n) => (n.id === input.id ? notice : n));
+  } else {
+    // Add new notice
+    updatedNotices = [...existingNotices, notice];
+  }
+
+  await dbWrite.keyValue.upsert({
+    where: { key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES },
+    create: {
+      key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES,
+      value: updatedNotices,
+    },
+    update: {
+      value: updatedNotices,
+    },
+  });
+}
+
+/**
+ * Deletes a gift notice
+ */
+export async function deleteGiftNotice(input: DeleteGiftNoticeInput): Promise<void> {
+  const noticesRecord = await dbRead.keyValue.findUnique({
+    where: { key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES },
+  });
+
+  if (!noticesRecord?.value) {
+    throw new Error('No gift notices found');
+  }
+
+  const existingNotices = noticesRecord.value as Array<GiftNotice & { id: string }>;
+  const updatedNotices = existingNotices.filter((n) => n.id !== input.id);
+
+  await dbWrite.keyValue.update({
+    where: { key: KEY_VALUE_KEYS.REDEEM_CODE_GIFT_NOTICES },
+    data: {
+      value: updatedNotices,
+    },
+  });
 }

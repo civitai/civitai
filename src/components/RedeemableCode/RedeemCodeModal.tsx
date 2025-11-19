@@ -11,6 +11,8 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import classes from './RedeemCodeModal.module.scss';
+import { GiftNoticeAlert } from '~/components/RedeemCode/GiftNoticeAlert';
+import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -23,6 +25,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
 
   const [playAnimation, setPlayAnimation] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [giftNotices, setGiftNotices] = useState<GiftNotice[]>([]);
 
   const form = useForm({ schema: consumeRedeemableCodeSchema, defaultValues: { code } });
 
@@ -55,6 +58,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
       }
 
       setSuccessMessage(message);
+      setGiftNotices(consumedCode.giftNotices || []);
       setPlayAnimation(true);
       onSubmit?.();
 
@@ -88,7 +92,11 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
   };
 
   return (
-    <Modal {...dialog} title="Redeem a Code">
+    <Modal
+      {...dialog}
+      title="Redeem a Code"
+      withCloseButton={playAnimation && giftNotices.length > 0}
+    >
       {playAnimation ? (
         <Stack>
           <SuccessAnimation
@@ -97,15 +105,33 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
             align="center"
             justify="center"
           >
-            <Text size="xl" fw={500} align="center">
-              {successMessage || 'Code redeemed successfully'}
-            </Text>
+            <Stack gap="md">
+              <Text size="xl" fw={500} align="center">
+                {successMessage || 'Code redeemed successfully'}
+              </Text>
+
+              {giftNotices.length > 0 && (
+                <Stack gap="md">
+                  {giftNotices.map((notice, index) => (
+                    <GiftNoticeAlert
+                      key={index}
+                      title={notice.title}
+                      message={notice.message}
+                      linkUrl={notice.linkUrl}
+                      linkText={notice.linkText}
+                    />
+                  ))}
+                </Stack>
+              )}
+            </Stack>
           </SuccessAnimation>
-          <Group justify="flex-end">
-            <Button className={classes.submitButton} onClick={dialog.onClose}>
-              Close
-            </Button>
-          </Group>
+          {giftNotices.length === 0 && (
+            <Group justify="flex-end">
+              <Button className={classes.submitButton} onClick={dialog.onClose}>
+                Close
+              </Button>
+            </Group>
+          )}
         </Stack>
       ) : (
         <Form form={form} onSubmit={handleSubmit}>
