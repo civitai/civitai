@@ -16,6 +16,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
+import { userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -364,9 +365,11 @@ export const isUsernamePermitted = (username: string) => {
 export const updateUserById = async ({
   id,
   data,
+  updateSource,
 }: {
   id: number;
   data: Prisma.UserUpdateInput;
+  updateSource?: string;
 }) => {
   if (data.email) {
     const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
@@ -381,6 +384,11 @@ export const updateUserById = async ({
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
+
+  // Track user update with optional source context
+  let location = 'user.service:updateUserById';
+  if (updateSource) location += `:${updateSource}`;
+  userUpdateCounter?.inc({ location });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
@@ -712,6 +720,8 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     }),
   ]);
 
+  userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBasicDataForUser(id);
 
@@ -730,6 +740,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     SET "excludeFromLeaderboards" = ${setTo}
     WHERE id = ${id}
   `);
+  userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
 }
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
@@ -1258,6 +1269,7 @@ export const toggleBan = async ({
   const updatedUser = await updateUserById({
     id,
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
+    updateSource: 'toggleBan',
   });
 
   await invalidateSession(id);
@@ -1331,6 +1343,7 @@ export const toggleContestBan = async ({
   const updatedUser = await updateUserById({
     id,
     data: { meta: updatedMeta },
+    updateSource: 'toggleContestBan',
   });
 
   await refreshSession(id);
@@ -1862,6 +1875,7 @@ export async function updateContentSettings({
       where: { id: userId },
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
+    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
@@ -1919,6 +1933,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
       SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
       WHERE id = ${userId}
     `);
+  userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
 
   const toRemove = Object.entries(settings)
     .filter(([, value]) => value === undefined)
@@ -1929,6 +1944,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
       SET settings = settings - ${toRemove.join(' - ')}}
       WHERE id = ${userId}
     `);
+    userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 
   await userSettingsCache.bust([userId]);

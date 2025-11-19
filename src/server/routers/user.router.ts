@@ -138,7 +138,11 @@ export const userRouter = router({
   updateBrowsingMode: guardedProcedure
     .input(updateBrowsingModeSchema)
     .mutation(async ({ input, ctx }) => {
-      await updateUserById({ id: ctx.user.id, data: input });
+      await updateUserById({
+        id: ctx.user.id,
+        data: input,
+        updateSource: 'updateBrowsingMode',
+      });
       await refreshSession(ctx.user.id);
     }),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),

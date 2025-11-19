@@ -159,7 +159,11 @@ async function reportProhibitedRequest(options: {
       constants.imageGeneration.requestBlocking.notified;
 
     if (count >= limit) {
-      await updateUserById({ id: userId, data: { muted: true } });
+      await updateUserById({
+        id: userId,
+        data: { muted: true },
+        updateSource: 'promptAuditing:autoMute',
+      });
       await refreshSession(userId);
 
       if (track) {

@@ -31,6 +31,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
@@ -44,6 +45,9 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
     const customer = await stripe.customers.create({ email });
 
     await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
+
+    userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
+
     await refreshSession(id);
 
     return customer.id;
@@ -618,6 +622,9 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       where: { id: user.id },
       data: { customerId: invoice.customer as string },
     });
+
+    const { userUpdateCounter } = await import('~/server/prom/client');
+    userUpdateCounter?.inc({ location: 'stripe.service:handleInvoicePaid' });
   }
 
   const purchases = invoice.lines.data.map((data) => ({

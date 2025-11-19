@@ -22,7 +22,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
-import { loginCounter, newUserCounter } from '~/server/prom/client';
+import { loginCounter, newUserCounter, userUpdateCounter } from '~/server/prom/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
@@ -46,6 +46,7 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 import { createLogger } from '~/utils/logging';
 import { getRandomInt } from '~/utils/number-helpers';
 import { generateToken } from '~/utils/string-helpers';
+import { isFlipt } from '~/server/flipt/client';
 
 const log = createLogger('nextauth', 'blue');
 
@@ -61,6 +62,7 @@ const setUserName = async (id: number, setTo: string) => {
         username: true,
       },
     });
+    userUpdateCounter?.inc({ location: 'nextauth:setUserName' });
     return username ? username : undefined;
   } catch (e) {
     return undefined;
@@ -114,7 +116,15 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
         if (startingUsername) {
           let username: string | undefined = undefined;
-          while (!username) username = await setUserName(Number(user.id), startingUsername);
+          let attempts = 0;
+          while (!username) {
+            username = await setUserName(Number(user.id), startingUsername);
+            const canBreak = await isFlipt('nextauth-username-retry-limit');
+            if (canBreak && !username) {
+              attempts++;
+              if (attempts >= 5) break;
+            }
+          }
         }
       },
     },

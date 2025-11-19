@@ -5,6 +5,7 @@ import { emailVerificationEmail } from '~/server/email/templates/emailVerificati
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { refreshSession } from '~/server/utils/session-helpers';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const EMAIL_VERIFICATION_EXPIRY = 15 * 60; // 15 minutes in seconds
 
@@ -121,6 +122,8 @@ export async function confirmEmailChange(token: string) {
     where: { id: userId },
     data: { email: newEmail },
   });
+
+  userUpdateCounter?.inc({ location: 'email-verification.service:confirmEmailChange' });
 
   // Invalidate the user's session after successful email change
   await refreshSession(userId);

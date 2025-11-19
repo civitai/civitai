@@ -131,6 +131,7 @@ import type {
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDev } from '~/env/other';
+import { userUpdateCounter } from '~/server/prom/client';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2729,6 +2730,9 @@ export async function copyGallerySettingsToAllModelsByUser({
         },
       },
     });
+
+    userUpdateCounter?.inc({ location: 'model.service:updateGallerySettings' });
+
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
