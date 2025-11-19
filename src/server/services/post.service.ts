@@ -608,6 +608,9 @@ export const getPostsInfiniteWithoutMetrics = async ({
     if (query) {
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
+  } else {
+    if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    else AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
   }
 
   if (period !== 'AllTime') {

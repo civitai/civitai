@@ -4628,6 +4628,7 @@ export const getImageModerationReviewQueue = async ({
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
 
   if (tagReview) {
+    await imageTagsCache.bust(imageIds);
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
