@@ -545,6 +545,7 @@ export const userPostCountCache = createUserContentCountCache<UserPostCount>(
     FROM "Post"
     WHERE "userId" IN (${Prisma.join(userIds)})
       AND "publishedAt" IS NOT NULL
+      AND "publishedAt" <= NOW()
       AND availability != 'Private'
     GROUP BY "userId"
   `
@@ -566,7 +567,7 @@ export const userImageVideoCountCache = createUserContentCountCache<UserImageVid
         SELECT id
         FROM "Post"
         WHERE "userId" IN (${Prisma.join(userIds)})
-          AND ("publishedAt" IS NULL OR availability = 'Private')
+          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
       )
     GROUP BY "userId"
   `

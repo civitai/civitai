@@ -25,12 +25,8 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
 
   if (search && search.length > 0) {
     where['OR'] = [
-      {
-        title: { contains: search, mode: 'insensitive' },
-      },
-      {
-        content: { contains: search, mode: 'insensitive' },
-      },
+      { title: { contains: search, mode: 'insensitive' } },
+      { content: { contains: search, mode: 'insensitive' } },
     ];
   }
 
@@ -88,14 +84,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
       where,
       take: limit + 1,
       skip,
-      orderBy: [
-        {
-          effectiveAt: sortDir,
-        },
-        {
-          id: sortDir,
-        },
-      ],
+      orderBy: [{ effectiveAt: sortDir }, { id: sortDir }],
     });
 
     const hasMore = data.length > limit;
@@ -103,10 +92,7 @@ export const getChangelogs = async (input: GetChangelogsInput & { hasFeature: bo
       data.pop();
     }
 
-    const whereSticky: Prisma.ChangelogWhereInput = {
-      sticky: true,
-      domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
-    };
+    const whereSticky: Prisma.ChangelogWhereInput = { ...where, sticky: true };
 
     if (!hasFeature) {
       whereSticky['disabled'] = false;
