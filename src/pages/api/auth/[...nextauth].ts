@@ -45,6 +45,7 @@ import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { createLogger } from '~/utils/logging';
 import { getRandomInt } from '~/utils/number-helpers';
+import { generateToken } from '~/utils/string-helpers';
 
 const log = createLogger('nextauth', 'blue');
 
@@ -109,7 +110,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
     events: {
       createUser: async ({ user }) => {
         if (user.username) return; // Somehow this was being run for existing users, so we need to check for username...
-        const startingUsername = user.email?.trim() ?? user.name?.trim() ?? `civ_`;
+        const startingUsername = user.email?.trim() || user.name?.trim() || generateToken(5) + '_';
 
         if (startingUsername) {
           let username: string | undefined = undefined;
