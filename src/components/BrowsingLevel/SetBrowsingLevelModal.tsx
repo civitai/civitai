@@ -14,7 +14,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import classes from './SetBrowsingLevelModal.module.scss';
 import type { NsfwLevel } from '~/server/common/enums';
-import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 
 export default function SetBrowsingLevelModal({
   imageId,
