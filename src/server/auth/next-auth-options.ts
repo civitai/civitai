@@ -31,6 +31,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 import { generateToken } from '~/utils/string-helpers';
 import { civTokenDecrypt } from './civ-token';
 import { isDefined } from '~/utils/type-guards';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
