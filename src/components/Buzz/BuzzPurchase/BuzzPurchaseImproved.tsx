@@ -50,7 +50,7 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 
-import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
+import { useQueryBuzzPackages } from '~/components/Buzz/useQueryBuzzPackages';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
