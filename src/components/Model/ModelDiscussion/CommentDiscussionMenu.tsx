@@ -15,7 +15,7 @@ import {
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
-import { openReportModal } from '~/components/Dialog/dialog-triggers';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

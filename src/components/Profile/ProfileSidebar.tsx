@@ -46,7 +46,7 @@ import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { openUserProfileEditModal } from '~/components/Dialog/dialog-triggers';
+import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';

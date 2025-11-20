@@ -13,7 +13,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openReadOnlyModal } from '~/components/Dialog/dialog-triggers';
+import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';

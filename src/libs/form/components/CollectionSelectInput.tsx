@@ -1,7 +1,7 @@
 import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input, LoadingOverlay, Paper, Text } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
-import { openCollectionSelectModal } from '~/components/Dialog/dialog-triggers';
+import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { withController } from '~/libs/form/hoc/withController';

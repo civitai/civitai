@@ -7,7 +7,7 @@ import React, { createContext, useCallback, useContext } from 'react';
 import { create } from 'zustand';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-triggers';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';

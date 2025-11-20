@@ -51,10 +51,8 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import {
-  openCollectionSelectModal,
-  openResourceReviewEditModal,
-} from '~/components/Dialog/dialog-triggers';
+import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
+import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';

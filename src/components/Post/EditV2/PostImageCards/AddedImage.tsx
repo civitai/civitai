@@ -36,7 +36,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-triggers';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';

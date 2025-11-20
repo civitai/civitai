@@ -52,7 +52,6 @@ import pLimit from 'p-limit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { openImageSelectModal } from '~/components/Dialog/dialog-triggers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -129,6 +128,17 @@ const AutoLabelModal = dynamic(
   () => import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal),
   { ssr: false }
 );
+
+const ImageSelectModal = dynamic(
+  () => import('~/components/Training/Form/ImageSelectModal'),
+  {
+    ssr: false,
+  }
+);
+
+function openImageSelectModal(props: import('~/components/Training/Form/ImageSelectModal').ImageSelectModalProps) {
+  dialogStore.trigger({ component: ImageSelectModal, props });
+}
 
 const MAX_FILES_ALLOWED = 1000;
 
