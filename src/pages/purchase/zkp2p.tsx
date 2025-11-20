@@ -200,7 +200,7 @@ export default function Zkp2pPurchasePage() {
         description="Complete your Buzz purchase securely through ZKP2P"
       />
       <Script src={`${ZKP2P_IFRAME_HOST}/parent-proxy.js`} onLoad={startPeerAuthHook} />
-      <div className="relative w-full h-full min-h-[600px] -mt-4">
+      <div className="relative -mt-4 size-full min-h-[600px]">
         {loading && (
           <Center className="absolute inset-0 z-10">
             <div className="text-center">
@@ -212,7 +212,7 @@ export default function Zkp2pPurchasePage() {
         <iframe
           ref={iframeRef}
           src={iframeUrl}
-          className={`w-full h-full border-0 ${loading ? 'hidden' : 'block'}`}
+          className={`size-full border-0 ${loading ? 'hidden' : 'block'}`}
           allow="clipboard-write"
           title="ZKP2P Payment"
         />

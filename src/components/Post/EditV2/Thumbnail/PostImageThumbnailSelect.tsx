@@ -3,7 +3,7 @@ import { IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { uniq } from 'lodash-es';
 import { useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';

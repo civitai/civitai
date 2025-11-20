@@ -17,7 +17,7 @@ import { useCallback, useState, memo } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';

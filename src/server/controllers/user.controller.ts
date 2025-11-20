@@ -10,7 +10,7 @@ import {
   OnboardingSteps,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';

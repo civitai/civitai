@@ -3,7 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { increaseDate } from '~/utils/date-helpers';
 import { env } from '~/env/server';
 import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';

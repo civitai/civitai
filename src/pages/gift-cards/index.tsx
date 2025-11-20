@@ -382,7 +382,8 @@ export default function GiftCardsPage() {
                   </Text>
                   {selectedVendor.discount?.endDate && (
                     <Text size="sm" c="white" fw={600}>
-                      Time remaining: <Countdown endTime={selectedVendor.discount.endDate} format="short" />
+                      Time remaining:{' '}
+                      <Countdown endTime={selectedVendor.discount.endDate} format="short" />
                     </Text>
                   )}
                 </Stack>

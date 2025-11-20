@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useCollection } from '~/components/Collections/collection.utils';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';

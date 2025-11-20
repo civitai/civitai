@@ -23,7 +23,7 @@ import {
 import { useEffect, useState } from 'react';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-registry';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';

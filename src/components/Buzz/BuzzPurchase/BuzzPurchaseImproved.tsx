@@ -71,7 +71,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Modal } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
 import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';

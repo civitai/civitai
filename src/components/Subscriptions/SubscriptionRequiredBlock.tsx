@@ -1,5 +1,5 @@
 import { Button, Modal, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';

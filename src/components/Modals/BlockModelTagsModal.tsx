@@ -1,6 +1,6 @@
 import { Button, Center, Chip, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { trpc } from '~/utils/trpc';
 

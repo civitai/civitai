@@ -13,7 +13,6 @@ import {
   periodModeSchema,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
-import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
@@ -137,7 +136,7 @@ export const modelSchema = licensingSchema.extend({
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
   modelVersions: z
-    .array(modelVersionUpsertSchema)
+    .array(z.lazy(() => require('~/server/schema/model-version.schema').modelVersionUpsertSchema))
     .min(1, 'At least one model version is required.'),
   // mergePermissions: licensingSchema.array().optional(),
 });

@@ -1,6 +1,6 @@
 import { CloseButton, Modal } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { LoginContent } from '~/components/Login/LoginContent';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 

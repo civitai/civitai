@@ -17,14 +17,14 @@ import {
 } from '~/server/common/constants';
 import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
-import { modelMetrics } from '~/server/metrics';
+import { queueModelMetricUpdate } from '~/server/metrics/metrics-queue';
 import { dataForModelsCache, modelTagCache, userModelCountCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -51,12 +51,7 @@ import type {
 import { ingestModelSchema } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
-import {
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
@@ -67,8 +62,8 @@ import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
-  saveItemInCollections,
-} from '~/server/services/collection.service';
+} from '~/server/services/collection-permissions.service';
+import { saveItemInCollections } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
@@ -1308,7 +1303,9 @@ export const deleteModelById = async ({
   if (deletedModel) {
     await userModelCountCache.bust(deletedModel.userId);
   }
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await searchIndexRegistry.models.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Delete },
+  ]);
   await deleteBidsForModel({ modelId: id });
 
   return deletedModel;
@@ -1392,7 +1389,7 @@ export const permaDeleteModelById = async ({
     // Delete model bids
     await deleteBidsForModel({ modelId: deletedModel.id });
     // Queue model search index updates
-    await modelsSearchIndex.queueUpdate([
+    await searchIndexRegistry.models.queueUpdate([
       { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
     ]);
     // Queue image search index updates
@@ -1647,7 +1644,9 @@ export const upsertModel = async (
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
       await modelTagCache.bust(result.id);
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      await searchIndexRegistry.models.queueUpdate([
+        { id, action: SearchIndexUpdateQueueAction.Update },
+      ]);
     }
 
     const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
@@ -1697,7 +1696,7 @@ export const upsertModel = async (
             )})
           `;
 
-          await imagesSearchIndex.queueUpdate(
+          await searchIndexRegistry.images.queueUpdate(
             imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
           );
         }
@@ -1878,12 +1877,14 @@ export const publishModelById = async ({
   });
 
   // Update search index for model
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await searchIndexRegistry.models.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
   // Update search index for all affected images
-  await imagesSearchIndex.queueUpdate(
+  await searchIndexRegistry.images.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  await imagesMetricsSearchIndex.queueUpdate(
+  await searchIndexRegistry.imagesMetrics.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
@@ -1992,7 +1993,9 @@ export const unpublishModelById = async ({
   });
 
   // Remove this model from search index as it's been unpublished.
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await searchIndexRegistry.models.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Delete },
+  ]);
   // Remove all affected images from search index
   await queueImageSearchIndexUpdate({
     ids: images.map((x) => x.id),
@@ -2901,17 +2904,15 @@ export async function migrateResourceToCollection({
     ),
   ]);
 
-  modelMetrics
-    .queueUpdate(modelIds)
-    .catch((error) =>
-      logToAxiom({ name: 'model-metrics', type: 'error', message: error.message, modelIds })
-    );
+  queueModelMetricUpdate(modelIds).catch((error) =>
+    logToAxiom({ name: 'model-metrics', type: 'error', message: error.message, modelIds })
+  );
 
   // Update search indexes
-  await collectionsSearchIndex.queueUpdate([
+  await searchIndexRegistry.collections.queueUpdate([
     { id: collection.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await modelsSearchIndex.queueUpdate(
+  await searchIndexRegistry.models.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
@@ -3304,7 +3305,7 @@ export const publishPrivateModel = async ({
   });
 
   if (updatedImageIds.length > 0) {
-    await imagesMetricsSearchIndex.queueUpdate(
+    await searchIndexRegistry.imagesMetrics.queueUpdate(
       updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
     );
   }
@@ -3335,7 +3336,9 @@ export const toggleCannotPromote = async ({
     select: { id: true, meta: true },
   });
 
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await searchIndexRegistry.models.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
 
   if (cannotPromote) {
     await deleteBidsForModel({ modelId: id });
@@ -3366,7 +3369,9 @@ export const toggleCannotPublish = async ({
     },
     select: { id: true, meta: true },
   });
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await searchIndexRegistry.models.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
   return {
     id: updated.id,
     meta: updated.meta as ModelMeta | null,

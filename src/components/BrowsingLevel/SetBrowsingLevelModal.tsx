@@ -1,7 +1,7 @@
 import { Group, Modal, Paper, Stack, Text, UnstyledButton } from '@mantine/core';
 import clsx from 'clsx';
 import { useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   browsingLevels,

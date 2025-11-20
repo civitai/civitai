@@ -4,7 +4,7 @@ import { useBankedBuzz } from '~/components/Buzz/CreatorProgramV2/CreatorProgram
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   CAP_DEFINITIONS,

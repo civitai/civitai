@@ -1,15 +1,14 @@
 import { v4 as uuidv4 } from 'uuid';
 import * as z from 'zod';
-import {
-  MAX_DONATION_GOAL,
-  MIN_DONATION_GOAL,
-} from '~/components/Model/ModelVersions/model-version.utils';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { constants } from '~/server/common/constants';
+
+// Donation goal constants (moved from component utils to avoid circular dependency)
+export const MIN_DONATION_GOAL = 1000;
+export const MAX_DONATION_GOAL = 1000000000;
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
-import type { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/types';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   ModelStatus,
@@ -21,14 +20,32 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { isAir } from '~/utils/string-helpers';
-import {
-  engineTypes,
-  loraTypes,
-  lrSchedulerTypes,
-  optimizerTypes,
-  trainingBaseModelType,
-} from '~/utils/training';
 import { baseModels } from '~/shared/constants/base-model.constants';
+
+// Training type constants (moved from utils/training.ts to avoid circular dependency)
+export const trainingBaseModelTypesImage = [
+  'sd15',
+  'sdxl',
+  'sd35',
+  'flux',
+  'chroma',
+  'qwen',
+] as const;
+export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
+export const trainingBaseModelType = [
+  ...trainingBaseModelTypesImage,
+  ...trainingBaseModelTypesVideo,
+] as const;
+export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
+
+export const engineTypes = ['kohya', 'rapid', 'musubi', 'ai-toolkit'] as const;
+export type EngineTypes = (typeof engineTypes)[number];
+
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export type OptimizerTypes = (typeof optimizerTypes)[number];
+
+export const loraTypes = ['lora'] as const;
+export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -193,7 +210,7 @@ export const modelVersionUpsertSchema = z.object({
   steps: z.coerce.number().min(0).nullish(),
   epochs: z.coerce.number().min(0).max(100000).nullish(),
   images: z
-    .array(imageSchema)
+    .array(z.lazy(() => require('~/server/schema/image.schema').imageSchema))
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),

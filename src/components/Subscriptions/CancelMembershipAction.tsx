@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Image, Loader, Menu, Modal, Text } from '@mantine/core';
 import { useCallback } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useMutatePaddle } from '~/components/Paddle/util';

@@ -20,7 +20,7 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
 import {

@@ -1,7 +1,7 @@
 import { Badge, Button, Flex, Grid, Group, Modal, Stack, TextInput } from '@mantine/core';
 import { IconArrowNarrowRight } from '@tabler/icons-react';
 import React, { Fragment, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { ImageDataType } from '~/store/training.store';

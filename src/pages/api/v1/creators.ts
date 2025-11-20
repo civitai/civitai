@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { publicApiContext2 } from '~/server/createContext';
+import { publicApiContext2 } from '~/server/context/createCaller';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 

@@ -3,7 +3,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import type * as z from 'zod';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { commentUpsertInput } from '~/server/schema/comment.schema';

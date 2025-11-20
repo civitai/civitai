@@ -1,7 +1,7 @@
 import { Button, Modal, Text, Title } from '@mantine/core';
 import { IconWorldExclamation, IconAlertCircle } from '@tabler/icons-react';
 
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 export default function ReadOnlyModal() {

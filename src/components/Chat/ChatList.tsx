@@ -37,7 +37,7 @@ import produce from 'immer';
 import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
-import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatContext';
 import { loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';

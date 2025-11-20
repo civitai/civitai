@@ -40,7 +40,7 @@ import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { formatDate } from '~/utils/date-helpers';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import type { PurchasableRewardGetPaged } from '~/types/router';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

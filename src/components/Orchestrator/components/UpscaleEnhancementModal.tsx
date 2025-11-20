@@ -1,5 +1,5 @@
 import { Modal, Notification } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, InputNumberSlider, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';

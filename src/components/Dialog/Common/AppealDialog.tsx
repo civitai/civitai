@@ -4,7 +4,7 @@ import { useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { createEntityAppealSchema } from '~/server/schema/report.schema';
 import { EntityType } from '~/shared/utils/prisma/enums';

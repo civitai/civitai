@@ -9,12 +9,7 @@ import type {
   EquipCosmeticInput,
   GetPaginatedCosmeticsInput,
 } from '~/server/schema/cosmetic.schema';
-import {
-  articlesSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -118,7 +113,7 @@ export async function equipCosmeticToEntity({
   await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
 
   if (equippedToType === 'Model')
-    await modelsSearchIndex.queueUpdate([
+    await searchIndexRegistry.models.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
   if (equippedToType === 'Image')
@@ -127,7 +122,7 @@ export async function equipCosmeticToEntity({
       action: SearchIndexUpdateQueueAction.Update,
     });
   if (equippedToType === 'Article')
-    await articlesSearchIndex.queueUpdate([
+    await searchIndexRegistry.articles.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
@@ -154,7 +149,7 @@ export async function unequipCosmetic({
   await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
 
   if (equippedToType === 'Model')
-    await modelsSearchIndex.queueUpdate([
+    await searchIndexRegistry.models.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
   if (equippedToType === 'Image')
@@ -163,7 +158,7 @@ export async function unequipCosmetic({
       action: SearchIndexUpdateQueueAction.Update,
     });
   if (equippedToType === 'Article')
-    await articlesSearchIndex.queueUpdate([
+    await searchIndexRegistry.articles.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 

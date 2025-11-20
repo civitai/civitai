@@ -1,4 +1,4 @@
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsContext';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 
 export function useDomainColor() {

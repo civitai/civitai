@@ -3,7 +3,7 @@ import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import { useRef } from 'react';
 import * as z from 'zod';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import {
   Form,
   InputCheckbox,

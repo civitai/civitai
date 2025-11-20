@@ -4,7 +4,7 @@ import { AssociateModels } from '~/components/AssociatedModels/AssociateModels';
 import { useToggleResourceRecommendationMutation } from '~/components/AssociatedModels/recommender.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 export default function AssociateModelsModal({
   fromId,

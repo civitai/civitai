@@ -1,7 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { publicApiContext, publicApiContext2 } from '~/server/createContext';
-import { appRouter } from '~/server/routers';
+import { publicApiContext2 } from '~/server/context/createCaller';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {

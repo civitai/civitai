@@ -1,5 +1,5 @@
 import { Divider, Group, Modal, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '../DialogProvider';
+import { useDialogContext } from '../DialogContext';
 import { IconCheck, IconCircleX, IconInfoCircle } from '@tabler/icons-react';
 
 const DIALOG_TYPES = ['success', 'error', 'info'] as const;

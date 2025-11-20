@@ -8,7 +8,7 @@ import {
   useMutateBuzzWithdrawalRequest,
 } from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Form, InputNumber, useForm } from '~/libs/form';
 import { createBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import { Currency } from '~/shared/utils/prisma/enums';

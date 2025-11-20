@@ -53,7 +53,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';

@@ -4,7 +4,7 @@ import matter from 'gray-matter';
 import { join, resolve } from 'path';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 
 const contentRoot = 'src/static-content';
 export async function getStaticContent({ slug, ctx }: { slug: string[]; ctx?: Context }) {

@@ -39,11 +39,7 @@ import type {
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import {
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
@@ -56,7 +52,10 @@ import { uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
-import { createCachedArray } from '~/server/utils/cache-helpers';
+import {
+  resourceDataCache,
+  type GenerationResourceDataModel,
+} from '~/server/services/model-version.cache';
 import {
   throwBadRequestError,
   throwDbError,
@@ -679,13 +678,13 @@ export const publishModelVersionsWithEarlyAccess = async ({
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);
 
         // TODO @Luis do we need to do the below here?
-        // await modelsSearchIndex.queueUpdate([
+        // await searchIndexRegistry.models.queueUpdate([
         //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
         // ]);
-        // await imagesSearchIndex.queueUpdate(
+        // await searchIndexRegistry.images.queueUpdate(
         //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
         // );
-        // await imagesMetricsSearchIndex.queueUpdate(
+        // await searchIndexRegistry.imagesMetrics.queueUpdate(
         //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
         // );
 
@@ -859,13 +858,13 @@ export const publishModelVersionById = async ({
   await preventReplicationLag('modelVersion', id);
 
   // Update search index for model and images
-  await modelsSearchIndex.queueUpdate([
+  await searchIndexRegistry.models.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
+  await searchIndexRegistry.images.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  await imagesMetricsSearchIndex.queueUpdate(
+  await searchIndexRegistry.imagesMetrics.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
@@ -939,13 +938,13 @@ export const unpublishModelVersionById = async ({
     select: { id: true },
   });
 
-  await modelsSearchIndex.queueUpdate([
+  await searchIndexRegistry.models.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
+  await searchIndexRegistry.images.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await imagesMetricsSearchIndex.queueUpdate(
+  await searchIndexRegistry.imagesMetrics.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
 
@@ -1546,7 +1545,7 @@ export const bustMvCache = async (
   // TODO shouldnt this be the model IDs?
   if (modelIds) {
     const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
-    await modelsSearchIndex.queueUpdate(
+    await searchIndexRegistry.models.queueUpdate(
       mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
   }
@@ -1574,86 +1573,9 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   return trainingResults.workflowId ?? null;
 };
 
-export const resourceDataCache = createCachedArray({
-  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-  cacheNotFound: false,
-  lookupFn: async (ids) => {
-    if (!ids.length) return {};
-    const dbResults = await dbWrite.$queryRaw<GenerationResourceDataModel[]>`
-      SELECT
-        mv."id",
-        mv."name",
-        mv."trainedWords",
-        mv."baseModel",
-        mv."settings",
-        mv."availability",
-        mv."clipSkip",
-        mv."vaeId",
-        mv."status",
-        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
-        gc."covered",
-        FALSE AS "hasAccess",
-        (
-          SELECT to_json(obj)
-          FROM (
-            SELECT
-              m."id",
-              m."name",
-              m."type",
-              m."nsfw",
-              m."poi",
-              m."minor",
-              m."userId",
-              m."sfwOnly"
-            FROM "Model" m
-            WHERE m.id = mv."modelId"
-          ) as obj
-        ) as model
-      FROM "ModelVersion" mv
-      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
-      WHERE mv.id IN (${Prisma.join(ids)})
-    `;
-
-    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>((acc, item) => {
-      if (['Public', 'Unsearchable'].includes(item.availability) && item.status === 'Published')
-        item.hasAccess = true;
-
-      return { ...acc, [item.id]: item };
-    }, {});
-    return results;
-  },
-  idKey: 'id',
-  dontCacheFn: (data) => {
-    return !data.hasAccess || !data.covered;
-  },
-  ttl: CacheTTL.hour,
-});
-
-export type GenerationResourceDataModel = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  clipSkip: number | null;
-  vaeId: number | null;
-  baseModel: string;
-  settings: RecommendedSettingsSchema | null;
-  availability: Availability;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
-  covered: boolean | null;
-  status: ModelStatus;
-  hasAccess: boolean;
-  epochNumber?: number;
-  model: {
-    id: number;
-    name: string;
-    type: ModelType;
-    nsfw: boolean;
-    poi: boolean;
-    minor: boolean;
-    userId: number;
-    sfwOnly: boolean;
-  };
-};
+// Re-export cache and types for backwards compatibility
+export { resourceDataCache };
+export type { GenerationResourceDataModel };
 
 export const createModelVersionPostFromTraining = async ({
   modelVersionId,

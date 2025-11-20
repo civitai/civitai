@@ -28,7 +28,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import classes from './SendTipModal.module.scss';
 import { buzzConstants, type BuzzSpendType } from '~/shared/constants/buzz.constants';

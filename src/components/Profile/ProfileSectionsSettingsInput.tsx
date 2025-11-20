@@ -1,5 +1,15 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Card, Group, Input, Paper, Stack, Switch, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import {
+  Card,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Switch,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import React, { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';

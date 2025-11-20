@@ -2,7 +2,7 @@ import { Button, Modal, Stack, ThemeIcon, Text } from '@mantine/core';
 import { IconCloudLock, IconServerBolt } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useCallback } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useMutateVault } from '~/components/Vault/vault.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

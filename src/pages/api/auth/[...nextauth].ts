@@ -15,8 +15,7 @@ import { v4 as uuid } from 'uuid';
 import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
-import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
-import { Tracker } from '~/server/clickhouse/client';
+import { civTokenDecrypt } from '~/server/utils/civ-token-encryption';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -26,7 +25,6 @@ import { loginCounter, newUserCounter, userUpdateCounter } from '~/server/prom/c
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
-import { createNotification } from '~/server/services/notification.service';
 import {
   createUserReferral,
   getSessionUser,
@@ -451,6 +449,8 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const landingPage = req.cookies['ref_landing_page'] as string;
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
+    // Lazy import Tracker to avoid circular dependency
+    const { Tracker } = await import('~/server/clickhouse/tracker');
     const tracker = new Tracker(req, res);
     if (context.isNewUser) {
       newUserCounter?.inc();
@@ -473,6 +473,8 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }
 
       // does this work for email login? it should
+      // Lazy import to avoid circular dependency
+      const { createNotification } = await import('~/server/services/notification.service');
       await createNotification({
         type: 'join-community',
         userId: context.user.id,

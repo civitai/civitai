@@ -21,12 +21,10 @@ import {
 import { useState } from 'react';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import {
-  useInquisitorTools,
-  useQueryPlayersInfinite,
-} from '~/components/Games/KnightsNewOrder.utils';
+import { useInquisitorTools } from '~/components/Games/NewOrder/hooks/useInquisitorTools';
+import { useQueryPlayersInfinite } from '~/components/Games/NewOrder/hooks/useQueryPlayersInfinite';
 import { PlayerStats } from '~/components/Games/PlayerCard';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

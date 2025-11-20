@@ -5,7 +5,7 @@ import {
   upsertAnswer,
 } from './../services/answer.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getAnswers } from '~/server/services/answer.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';

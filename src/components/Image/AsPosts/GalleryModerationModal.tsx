@@ -22,7 +22,7 @@ import {
   browsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';
 import { openConfirmModal } from '@mantine/modals';

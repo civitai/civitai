@@ -14,7 +14,7 @@ import {
   getSetupIntent,
   createCancelSubscriptionSession,
 } from './../services/stripe.service';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type * as Schema from '../schema/stripe.schema';
 
 import { getTRPCErrorFromUnknown } from '@trpc/server';

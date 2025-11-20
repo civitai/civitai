@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import { Form, InputCheckboxGroup, useForm } from '~/libs/form';
 import type * as z from 'zod';
 import type { ClubAdmin } from '../../types/router';
-import { useDialogContext } from '../Dialog/DialogProvider';
+import { useDialogContext } from '../Dialog/DialogContext';
 import { showSuccessNotification } from '../../utils/notifications';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '../../utils/string-helpers';

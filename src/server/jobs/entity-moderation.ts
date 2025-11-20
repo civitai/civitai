@@ -124,12 +124,14 @@ const special = {
 } as const;
 
 type QueueKeys = keyof typeof queues;
-export type AllModKeys = QueueKeys | keyof typeof special;
+// Re-export AllModKeys from types file to maintain backwards compatibility
+export type { AllModKeys } from '~/server/clickhouse/types';
+type AllModKeysInternal = QueueKeys | keyof typeof special;
 type RedisPolicyType = {
-  [K in AllModKeys | 'default']?: string;
+  [K in AllModKeysInternal | 'default']?: string;
 };
 type RedisDisabledType = {
-  [K in AllModKeys]?: boolean;
+  [K in AllModKeysInternal]?: boolean;
 };
 
 function hasIssue(
@@ -137,7 +139,7 @@ function hasIssue(
   modWordBlocklist: ModWordBlocklist,
   modURLBlocklist: ModWordBlocklist,
   useBlocklist: boolean,
-  type: AllModKeys
+  type: AllModKeysInternal
 ) {
   if (!text || text.trim().length === 0) return false;
 
@@ -186,7 +188,7 @@ async function getDisabledEntities() {
   return policies ? (JSON.parse(policies) as RedisDisabledType) : ({} as RedisDisabledType);
 }
 
-function getPolicyFor(entity: AllModKeys, policies: RedisPolicyType) {
+function getPolicyFor(entity: AllModKeysInternal, policies: RedisPolicyType) {
   return policies[entity] || policies.default;
 }
 
@@ -212,7 +214,7 @@ interface ContentItem {
 
 type MetadataType = {
   id: string;
-  type: AllModKeys;
+  type: AllModKeysInternal;
   userId: string;
   value: string;
 };
@@ -224,7 +226,7 @@ const runClavata = async ({
   deleteJob = true,
 }: {
   policyId: string;
-  type: AllModKeys;
+  type: AllModKeysInternal;
   data: ContentItem[];
   deleteJob?: boolean;
 }) => {
@@ -267,7 +269,7 @@ const runClavata = async ({
         };
 
         const onlyNSFW = item.matches?.length === 1 && item.matches[0] === 'NSFW';
-        const allowedNSFWTypes: AllModKeys[] = ['Bounty', 'Model'];
+        const allowedNSFWTypes: AllModKeysInternal[] = ['Bounty', 'Model'];
 
         if (item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type))) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);

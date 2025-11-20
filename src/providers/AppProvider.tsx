@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { useState } from 'react';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { trpc } from '~/utils/trpc';
+import { AppContextInstance } from './AppContext';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -13,19 +14,6 @@ type AppProviderProps = {
   domain: ColorDomain;
 };
 
-type AppContext = {
-  seed: number;
-  canIndex: boolean;
-  region: RegionInfo;
-  allowMatureContent: boolean;
-  domain: Record<ColorDomain, boolean>;
-};
-const Context = createContext<AppContext | null>(null);
-export function useAppContext() {
-  const context = useContext(Context);
-  if (!context) throw new Error('missing AppProvider in tree');
-  return context;
-}
 export function AppProvider({ children, settings, domain, ...appContext }: AppProviderProps) {
   trpc.user.getSettings.useQuery(undefined, { initialData: settings });
   const [state] = useState(() => ({
@@ -38,5 +26,9 @@ export function AppProvider({ children, settings, domain, ...appContext }: AppPr
     },
   }));
 
-  return <Context.Provider value={state}>{children}</Context.Provider>;
+  return <AppContextInstance.Provider value={state}>{children}</AppContextInstance.Provider>;
 }
+
+// Re-export for backward compatibility
+export { useAppContext } from './AppContext';
+export type { AppContext } from './AppContext';

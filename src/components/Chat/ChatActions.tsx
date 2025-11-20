@@ -12,7 +12,7 @@ import {
 } from '@tabler/icons-react';
 import produce from 'immer';
 import React from 'react';
-import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatContext';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';

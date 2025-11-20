@@ -21,19 +21,17 @@ export function CodeGiftsPage() {
     },
   });
 
-  function openEdit(
-    notice?: {
-      id: string;
-      startDate: string;
-      endDate: string;
-      minValue: number;
-      maxValue: number | null;
-      title: string;
-      message: string;
-      linkUrl: string;
-      linkText: string;
-    }
-  ) {
+  function openEdit(notice?: {
+    id: string;
+    startDate: string;
+    endDate: string;
+    minValue: number;
+    maxValue: number | null;
+    title: string;
+    message: string;
+    linkUrl: string;
+    linkText: string;
+  }) {
     // Convert string dates to Date objects for the form
     const noticeForEdit = notice
       ? {
@@ -55,7 +53,7 @@ export function CodeGiftsPage() {
 
   return (
     <div className="container flex flex-col gap-2">
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Code Gift Notices</h1>
         <Button onClick={() => openEdit()}>Create New Gift Notice</Button>
       </div>

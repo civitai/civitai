@@ -5,7 +5,7 @@ import {
   upsertManyUserLinks,
   upsertUserLink,
 } from './../services/user-link.service';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type { UpsertManyUserLinkParams, GetUserLinksQuery } from '~/server/schema/user-link.schema';
 import { getUserLinks } from '~/server/services/user-link.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';

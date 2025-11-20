@@ -2,7 +2,7 @@ import { ActionIcon, Modal } from '@mantine/core';
 import Router from 'next/router';
 import { getCookie, setCookie } from 'cookies-next';
 import { useEffect } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { IconCircleX } from '@tabler/icons-react';
 

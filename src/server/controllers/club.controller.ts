@@ -32,7 +32,7 @@ import {
   userContributingClubs,
 } from '~/server/services/club.service';
 import type { GetByEntityInput, GetByIdInput } from '~/server/schema/base.schema';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getAllBounties, getImagesForBounties } from '~/server/services/bounty.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';

@@ -1,22 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { DialogContext } from '~/components/Dialog/DialogContext';
 import trieMemoize from 'trie-memoize';
 import { Freeze } from '~/components/Freeze/Freeze';
-
-type DialogState = {
-  opened: boolean;
-  onClose: () => void;
-  zIndex?: number;
-  target?: string | HTMLElement;
-  focused?: 'true';
-};
-
-const DialogContext = createContext<DialogState>({
-  opened: false,
-  onClose: () => undefined,
-});
-export const useDialogContext = () => useContext(DialogContext);
 
 const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
   const [opened, setOpened] = useState(false);

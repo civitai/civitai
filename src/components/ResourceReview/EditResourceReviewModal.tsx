@@ -1,5 +1,5 @@
 import { Modal } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
 import type { ResourceReviewPagedModel } from '~/types/router';
 

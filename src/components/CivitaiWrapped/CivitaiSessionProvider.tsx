@@ -1,16 +1,16 @@
-import type { Session, SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
-import { useAppContext } from '~/providers/AppProvider';
-import type { UserMeta } from '~/server/schema/user.schema';
-import { isRegionRestricted } from '~/server/utils/region-blocking';
+import { useAppContext } from '~/providers/AppContext';
 import {
   browsingModeDefaults,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { md5 } from '~/shared/utils/md5';
 import { trpc } from '~/utils/trpc';
+import { isRegionRestricted } from '~/server/utils/region-blocking';
+import { CivitaiSessionContext, type AuthedUser, type UnauthedUser } from './CivitaiSessionContext';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -77,34 +77,6 @@ export function CivitaiSessionProvider({
   );
 }
 
-export type CivitaiSessionUser = SessionUser & {
-  isMember: boolean;
-  refresh: () => Promise<Session | null>;
-  showNsfw: boolean;
-  blurNsfw: boolean;
-  disableHidden?: boolean;
-  browsingLevel: number;
-  meta?: UserMeta;
-  isPaidMember: boolean;
-  emailHash?: string;
-};
-
-type SharedUser = { settings: BrowsingSettings };
-export type AuthedUser = { type: 'authed' } & SharedUser & CivitaiSessionUser;
-export type UnauthedUser = { type: 'unauthed' } & SharedUser;
-
-export type CurrentUser = Omit<
-  AuthedUser,
-  | 'type'
-  | 'allowAds'
-  | 'showNsfw'
-  | 'blurNsfw'
-  | 'browsingLevel'
-  | 'disableHidden'
-  | 'autoplayGifs'
-  | 'settings'
->;
-
 type BrowsingSettings = {
   showNsfw: boolean;
   blurNsfw: boolean;
@@ -114,17 +86,18 @@ type BrowsingSettings = {
   autoplayGifs: boolean;
 };
 
-const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);
-
-export const useCivitaiSessionContext = () => {
-  const context = useContext(CivitaiSessionContext);
-  if (!context) throw new Error('missing CivitaiSessionContext');
-  return context;
-};
-
 const publicContentSettings: BrowsingSettings = {
   ...browsingModeDefaults,
   disableHidden: true,
   allowAds: true,
   autoplayGifs: true,
 };
+
+// Re-export types and hooks from context file for backward compatibility
+export type {
+  CivitaiSessionUser,
+  AuthedUser,
+  UnauthedUser,
+  CurrentUser,
+} from './CivitaiSessionContext';
+export { useCivitaiSessionContext } from './CivitaiSessionContext';

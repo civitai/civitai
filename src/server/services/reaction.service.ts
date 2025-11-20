@@ -2,14 +2,14 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
-  answerMetrics,
-  articleMetrics,
-  bountyEntryMetrics,
-  clubPostMetrics,
-  imageMetrics,
-  postMetrics,
-  questionMetrics,
-} from '~/server/metrics';
+  queueAnswerMetricUpdate,
+  queueArticleMetricUpdate,
+  queueBountyEntryMetricUpdate,
+  queueClubPostMetricUpdate,
+  queueImageMetricUpdate,
+  queuePostMetricUpdate,
+  queueQuestionMetricUpdate,
+} from '~/server/metrics/metrics-queue';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 export const toggleReaction = async ({
@@ -115,14 +115,14 @@ const deleteReaction = async ({
         return;
       }
       await dbWrite.questionReaction.deleteMany({ where: { id } });
-      await questionMetrics.queueUpdate(entityId);
+      await queueQuestionMetricUpdate(entityId);
       return;
     case 'answer':
       if (!id) {
         return;
       }
       await dbWrite.answerReaction.deleteMany({ where: { id } });
-      await answerMetrics.queueUpdate(entityId);
+      await queueAnswerMetricUpdate(entityId);
       return;
     case 'commentOld':
       if (!id) {
@@ -141,14 +141,14 @@ const deleteReaction = async ({
         return;
       }
       await dbWrite.imageReaction.deleteMany({ where: { id } });
-      await imageMetrics.queueUpdate(entityId);
+      await queueImageMetricUpdate(entityId);
       return;
     case 'post':
       if (!id) {
         return;
       }
       await dbWrite.postReaction.deleteMany({ where: { id } });
-      await postMetrics.queueUpdate(entityId);
+      await queuePostMetricUpdate(entityId);
       return;
     case 'resourceReview':
       if (!id) {
@@ -161,7 +161,7 @@ const deleteReaction = async ({
         return;
       }
       await dbWrite.articleReaction.deleteMany({ where: { id } });
-      await articleMetrics.queueUpdate(entityId);
+      await queueArticleMetricUpdate(entityId);
       return;
     case 'bountyEntry':
       if (!entityId || !userId || !reaction) {
@@ -171,7 +171,7 @@ const deleteReaction = async ({
       await dbWrite.bountyEntryReaction.deleteMany({
         where: { userId, reaction, bountyEntryId: entityId },
       });
-      await bountyEntryMetrics.queueUpdate(entityId);
+      await queueBountyEntryMetricUpdate(entityId);
       return;
     case 'clubPost':
       if (!entityId || !userId || !reaction) {
@@ -181,7 +181,7 @@ const deleteReaction = async ({
       await dbWrite.clubPostReaction.deleteMany({
         where: { userId, reaction, clubPostId: entityId },
       });
-      await clubPostMetrics.queueUpdate(entityId);
+      await queueClubPostMetricUpdate(entityId);
       return;
     default:
       throw throwBadRequestError();

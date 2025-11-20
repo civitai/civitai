@@ -2,55 +2,20 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
-import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import type { MediaType } from '~/shared/utils/prisma/enums';
-import type { SimpleUser } from '~/server/selectors/user.selector';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
+import dynamic from 'next/dynamic';
 import { Modal } from '@mantine/core';
-import type { NsfwLevel } from '~/server/common/enums';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
+import type { ImageProps, ImageGuardConnect } from './ImageViewer.types';
 
-type ImageGuardConnect = {
-  entityType:
-    | 'model'
-    | 'modelVersion'
-    | 'review'
-    | 'user'
-    | 'post'
-    | 'collectionItem'
-    | 'collection'
-    | 'bounty'
-    | 'bountyEntry'
-    | 'club'
-    | 'article';
-  entityId: string | number;
-};
+// Re-export types for backward compatibility
+export type { ImageProps, ImageGuardConnect };
 
-// TODO - if we're going to have a common image interface, let's define it elsewhere
-export interface ImageProps {
-  id: number;
-  url: string;
-  name: string | null;
-  meta?: ImageMetaProps | null;
-  hash: string | null;
-  width: number | null;
-  height: number | null;
-  createdAt?: Date | null;
-  type: MediaType;
-  nsfwLevel: NsfwLevel;
-  postId?: number | null;
-  needsReview?: string | null;
-  userId?: number;
-  user?: SimpleUser;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
-  tags?: Array<{ id: number }> | number[];
-  metadata?: MixedObject | null;
-  publishedAt?: Date | null;
-  thumbnailUrl?: string | null;
-  minor?: boolean;
-  poi?: boolean;
-}
+// Use dynamic import to break circular dependency with dialog-registry
+const ImageDetailByProps = dynamic(
+  () =>
+    import('~/components/Image/Detail/ImageDetailByProps').then((mod) => mod.ImageDetailByProps),
+  { ssr: false }
+);
 
 type ImageViewerState = {
   imageId: number | null;

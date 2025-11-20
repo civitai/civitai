@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import * as z from 'zod';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils.server';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -24,10 +24,8 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import {
-  getCollectionById,
-  getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
+import { getUserCollectionPermissionsById } from '~/server/services/collection-permissions.service';
+import { getCollectionById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {

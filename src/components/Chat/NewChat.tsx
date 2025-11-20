@@ -3,7 +3,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
-import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatContext';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';

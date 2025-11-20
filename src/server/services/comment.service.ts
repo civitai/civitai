@@ -5,7 +5,7 @@ import type { SessionUser } from 'next-auth';
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
-import { userMetrics } from '~/server/metrics';
+import { queueUserMetricUpdate } from '~/server/metrics/metrics-queue';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CommentUpsertInput,
@@ -188,7 +188,7 @@ export const deleteCommentById = async ({ id }: GetByIdInput) => {
   if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
 
-  if (model?.userId) await userMetrics.queueUpdate(model.userId);
+  if (model?.userId) await queueUserMetricUpdate(model.userId);
 
   return deleted;
 };

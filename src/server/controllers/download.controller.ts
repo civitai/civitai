@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserDownloads, hideDownload } from '~/server/services/download.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';

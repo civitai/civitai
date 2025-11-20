@@ -9,7 +9,7 @@ import {
   ModelSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';

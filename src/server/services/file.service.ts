@@ -3,8 +3,6 @@ import { env } from '~/env/server';
 import type { ModelFileType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
-import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
-import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 import { getVaeFiles } from '~/server/services/model.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
@@ -16,82 +14,11 @@ import {
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
-import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
 
-export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
-  if (!id && (!ids || ids.length === 0)) {
-    return [];
-  }
-
-  const files = await dbRead.file.findMany({
-    where: { entityId: ids ? { in: ids } : id, entityType: type },
-    select: { id: true, name: true, url: true, sizeKB: true, metadata: true, entityId: true },
-  });
-
-  return files.map(({ metadata, ...file }) => ({
-    ...file,
-    metadata: (metadata as Prisma.JsonObject) ?? {},
-  }));
-};
-
-export const updateEntityFiles = async ({
-  tx,
-  entityId,
-  entityType,
-  files,
-  ownRights,
-}: {
-  tx: Prisma.TransactionClient;
-  entityId: number;
-  entityType: string;
-  files: BaseFileSchema[];
-  ownRights: boolean;
-}) => {
-  const updatedFiles = files.filter((f) => f.id);
-
-  if (updatedFiles.length > 0) {
-    await Promise.all(
-      updatedFiles.map((file) => {
-        return tx.file.update({
-          where: { id: file.id },
-          data: {
-            ...file,
-            metadata: { ...(file.metadata ?? {}), ownRights },
-          },
-        });
-      })
-    );
-  }
-
-  // Delete any files that were removed.
-  const deletedFileIds = files.map((x) => x.id).filter(isDefined);
-
-  if (deletedFileIds.length >= 0) {
-    await tx.file.deleteMany({
-      where: {
-        entityId,
-        entityType,
-        id: { notIn: deletedFileIds },
-      },
-    });
-  }
-
-  const newFiles = files.filter((x) => !x.id);
-
-  if (newFiles.length > 0) {
-    // Create any new files.
-    await tx.file.createMany({
-      data: newFiles.map((file) => ({
-        ...file,
-        entityId,
-        entityType,
-        metadata: { ...(file.metadata ?? {}), ownRights },
-      })),
-    });
-  }
-};
+// Re-export from file-helpers to maintain backward compatibility
+export { getFilesByEntity, updateEntityFiles } from '~/server/services/file-helpers.service';
 
 export const getFileWithPermission = async ({
   fileId,
@@ -111,6 +38,8 @@ export const getFileWithPermission = async ({
 
   switch (file.entityType) {
     case 'BountyEntry': {
+      // Lazy load to avoid circular dependency
+      const { getBountyEntryFilteredFiles } = await import('~/server/services/bountyEntry.service');
       const bountyEntryFiles = await getBountyEntryFilteredFiles({
         id: file.entityId,
         userId,

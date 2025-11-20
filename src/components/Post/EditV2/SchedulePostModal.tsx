@@ -1,4 +1,4 @@
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import * as z from 'zod';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';

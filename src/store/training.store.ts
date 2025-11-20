@@ -10,7 +10,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import type { EngineTypes, TrainingBaseModelType } from '~/utils/training';
+import type { EngineTypes, TrainingBaseModelType } from '~/server/schema/model-version.schema';
 
 export type ImageDataType = {
   url: string;

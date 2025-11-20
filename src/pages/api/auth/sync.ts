@@ -1,4 +1,4 @@
-import { civTokenEncrypt } from '~/pages/api/auth/civ-token';
+import { civTokenEncrypt } from '~/server/utils/civ-token-encryption';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default AuthedEndpoint(async function handler(req, res, user) {

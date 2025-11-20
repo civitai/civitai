@@ -1,16 +1,9 @@
 import { useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { trpc } from '~/utils/trpc';
+import { FeatureFlagsCtx } from './FeatureFlagsContext';
 
-const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
-
-export type UseFeatureFlagsReturn = ReturnType<typeof useFeatureFlags>;
-export const useFeatureFlags = () => {
-  const context = useContext(FeatureFlagsCtx);
-  if (!context) throw new Error('useFeatureFlags can only be used inside FeatureFlagsCtx');
-  return context;
-};
 export const FeatureFlagsProvider = ({
   children,
   flags: initialFlags,
@@ -41,3 +34,7 @@ export const FeatureFlagsProvider = ({
 
   return <FeatureFlagsCtx.Provider value={featureFlags}>{children}</FeatureFlagsCtx.Provider>;
 };
+
+// Re-export for backward compatibility
+export { useFeatureFlags } from './FeatureFlagsContext';
+export type { UseFeatureFlagsReturn } from './FeatureFlagsContext';

@@ -1,6 +1,6 @@
 // import { useState } from 'react';
 // import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
-// import { useDialogContext } from '../Dialog/DialogProvider';
+// import { useDialogContext } from '../Dialog/DialogContext';
 // import { useMutateClub, useQueryClub } from './club.utils';
 // import { useBuzz } from '../Buzz/useBuzz';
 // import { clubTransactionSchema } from '~/server/schema/buzz.schema';

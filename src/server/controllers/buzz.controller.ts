@@ -2,7 +2,7 @@ import { getTRPCErrorFromUnknown } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbWrite } from '~/server/db/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import type {

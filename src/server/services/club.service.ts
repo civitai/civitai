@@ -31,7 +31,7 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ClubSort } from '../common/enums';
-import { clubMetrics } from '../metrics';
+import { queueClubMetricUpdate } from '~/server/metrics/metrics-queue';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { bustCacheTag } from '../utils/cache-helpers';
 import type { NotificationSingleRow } from '~/server/schema/notification.schema';
@@ -656,7 +656,7 @@ export const upsertClubResource = async ({
   const clubIds = clubs.map((c) => c.clubId);
   const contributingClubs = await userContributingClubs({ userId, clubIds });
 
-  await clubMetrics.queueUpdate(clubIds);
+  await queueClubMetricUpdate(clubIds);
 
   if (!isModerator && clubIds.some((c) => !contributingClubs.find((cc) => cc.id === c))) {
     throw throwAuthorizationError(
@@ -1139,7 +1139,7 @@ export const removeClubResource = async ({
     },
   });
 
-  await clubMetrics.queueUpdate(clubId);
+  await queueClubMetricUpdate(clubId);
 
   // Check if it still requires club access:
   const access = await dbWrite.entityAccess.findFirst({

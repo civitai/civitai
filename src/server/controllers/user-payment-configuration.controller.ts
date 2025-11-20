@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { throwDbError } from '../utils/errorHandling';
 import { getUserPaymentConfiguration } from '../services/user-payment-configuration.service';
 

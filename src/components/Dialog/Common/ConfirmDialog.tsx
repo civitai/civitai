@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 export default function ConfirmDialog({
   title,

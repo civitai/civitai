@@ -36,7 +36,7 @@ import { constants } from '~/server/common/constants';
 import type { ClubPostGetAll } from '~/types/router';
 import { ClubPostResource, ClubTier } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { trpc } from '../../../utils/trpc';
 import { ModelCard } from '../../Cards/ModelCard';
 import { ArticleCard } from '../../Cards/ArticleCard';

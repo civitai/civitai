@@ -10,10 +10,10 @@ import GameErrorBoundary from '~/components/Games/GameErrorBoundary';
 import {
   ratingPlayBackRates,
   useAddImageRating,
-  useJoinKnightsNewOrder,
   useKnightsNewOrderListener,
   useQueryKnightsNewOrderImageQueue,
 } from '~/components/Games/KnightsNewOrder.utils';
+import { useJoinKnightsNewOrder } from '~/components/Games/NewOrder/hooks/useJoinKnightsNewOrder';
 import { NewOrderImageRater } from '~/components/Games/NewOrder/NewOrderImageRater';
 import { NewOrderJoin } from '~/components/Games/NewOrder/NewOrderJoin';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

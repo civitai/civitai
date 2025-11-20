@@ -9,7 +9,7 @@ import {
   useEquipContentDecoration,
   useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';

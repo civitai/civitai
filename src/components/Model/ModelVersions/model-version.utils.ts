@@ -10,8 +10,8 @@ import type {
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
-export const MIN_DONATION_GOAL = 1000;
-export const MAX_DONATION_GOAL = 1000000000;
+// Re-export donation goal constants for backward compatibility
+export { MIN_DONATION_GOAL, MAX_DONATION_GOAL } from '~/server/schema/model-version.schema';
 
 export const useQueryModelVersionsEngagement = (
   { modelId, versionId }: { modelId: number; versionId: number },

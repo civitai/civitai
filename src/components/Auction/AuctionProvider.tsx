@@ -4,6 +4,10 @@ import type { ReactNode } from 'react';
 import { createContext, type Dispatch, type SetStateAction, useContext, useState } from 'react';
 import type { GetAllAuctionsReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { MY_BIDS } from '~/shared/constants/auction.constants';
+
+// Re-export for backward compatibility
+export { MY_BIDS };
 
 type AuctionState = {
   selectedAuction: GetAllAuctionsReturn[number] | undefined;
@@ -36,8 +40,6 @@ export const useAuctionContext = () => {
   if (!context) throw new Error('AuctionContext not in tree');
   return context;
 };
-
-export const MY_BIDS = 'my-bids';
 
 export const AuctionContextProvider = ({ children }: { children: ReactNode }) => {
   const [selectedAuction, setSelectedAuction] =

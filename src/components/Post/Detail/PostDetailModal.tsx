@@ -1,4 +1,4 @@
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
 

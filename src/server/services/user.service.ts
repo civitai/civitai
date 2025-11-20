@@ -17,13 +17,11 @@ import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { userUpdateCounter } from '~/server/prom/client';
-import {
-  articleMetrics,
-  imageMetrics,
-  modelMetrics,
-  postMetrics,
-  userMetrics,
-} from '~/server/metrics';
+import { articleMetrics } from '~/server/metrics/article.metrics';
+import { imageMetrics } from '~/server/metrics/image.metrics';
+import { modelMetrics } from '~/server/metrics/model.metrics';
+import { postMetrics } from '~/server/metrics/post.metrics';
+import { userMetrics } from '~/server/metrics/user.metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
@@ -50,15 +48,7 @@ import type {
   UserSubscriptionsByBuzzType,
 } from '~/server/schema/user.schema';
 import { userSettingsSchema } from '~/server/schema/user.schema';
-import {
-  articlesSearchIndex,
-  bountiesSearchIndex,
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-  usersSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
@@ -116,7 +106,6 @@ import type {
 } from './../schema/user.schema';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
-import { clickhouse } from '~/server/clickhouse/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -435,6 +424,9 @@ export async function getUserDownloadedModelVersions({
   userId: number;
   modelVersionIds?: number | number[];
 }) {
+  // Lazy import clickhouse to avoid circular dependency
+  const { clickhouse } = await import('~/server/clickhouse/client');
+
   if (!clickhouse) {
     return [];
   }
@@ -738,7 +730,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
 
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await searchIndexRegistry.users.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Delete },
+  ]);
   await deleteBasicDataForUser(id);
 
   // Cancel their subscription
@@ -785,7 +779,9 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     },
   });
 
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await searchIndexRegistry.users.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Delete },
+  ]);
 
   // this is slightly duplicated in toggleBan
   if (user?.paddleCustomerId) {
@@ -1037,25 +1033,27 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   } catch (e) {}
   await dbWrite.image.deleteMany({ where: { userId: id } });
 
-  await modelsSearchIndex.queueUpdate(
+  await searchIndexRegistry.models.queueUpdate(
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await imagesSearchIndex.queueUpdate(
+  await searchIndexRegistry.images.queueUpdate(
     images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await imagesMetricsSearchIndex.queueUpdate(
+  await searchIndexRegistry.imagesMetrics.queueUpdate(
     images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await articlesSearchIndex.queueUpdate(
+  await searchIndexRegistry.articles.queueUpdate(
     articles.map((a) => ({ id: a.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await collectionsSearchIndex.queueUpdate(
+  await searchIndexRegistry.collections.queueUpdate(
     collections.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await bountiesSearchIndex.queueUpdate(
+  await searchIndexRegistry.bounties.queueUpdate(
     bounties.map((c) => ({ id: c.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await searchIndexRegistry.users.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Delete },
+  ]);
 
   await userMetrics.queueUpdate(id);
   await imageMetrics.queueUpdate(images.map((i) => i.id));
@@ -1697,7 +1695,9 @@ export const claimCosmetic = async ({ id, userId }: { id: number; userId: number
     data: { userId, cosmeticId: cosmetic.id },
   });
 
-  await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
+  await searchIndexRegistry.users.queueUpdate([
+    { id: userId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
 
   return cosmetic;
 };

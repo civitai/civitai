@@ -1,7 +1,7 @@
 import { MetricTimeframe, ModelModifier } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { ModelSort } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';

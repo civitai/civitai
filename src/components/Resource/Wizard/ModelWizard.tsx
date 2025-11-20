@@ -3,6 +3,7 @@ import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import * as z from 'zod';
+import dynamic from 'next/dynamic';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -11,7 +12,7 @@ import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
-import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
+import type { ModelWithTags } from '~/components/Resource/types';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -23,9 +24,10 @@ import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
-export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
-  tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
-};
+// Dynamic import to break circular dependency between ModelWizard and TrainingSelectFile
+const TrainingSelectFile = dynamic(() => import('~/components/Resource/Forms/TrainingSelectFile'), {
+  ssr: false,
+});
 
 const querySchema = z.object({
   id: z.coerce.number().optional(),

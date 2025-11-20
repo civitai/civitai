@@ -20,7 +20,7 @@ import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
-import type { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
+import type { ModelWithTags } from '~/components/Resource/types';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

@@ -8,7 +8,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type {
@@ -256,13 +255,8 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
 //   return [selected, handleSetSelected] as const;
 // }
 
-export const isMadeOnSite = (meta: ImageMetaProps | null) => {
-  if (!meta) return false;
-  if ('civitaiResources' in meta) return true;
-  if (meta.engine && Object.keys(videoGenerationConfig2).includes(meta.engine as string))
-    return true;
-  return false;
-};
+// Re-export from server-safe utilities to avoid circular dependencies
+export { isMadeOnSite } from './generation.utils.server';
 
 export function getStepMeta(step?: WorkflowStepFormatted): any {
   if (!step) return;

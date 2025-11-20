@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { notifDbRead } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
 import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';

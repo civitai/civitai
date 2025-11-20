@@ -1,5 +1,5 @@
 import { Badge, Card, Group, Modal, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import {
   browsingLevels,

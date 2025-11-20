@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Divider, Group, Modal, Radio, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 

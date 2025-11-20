@@ -13,7 +13,7 @@ import type {
   ShowcaseItemSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';

@@ -12,7 +12,7 @@ import {
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { TrainingImagesLabelTypeSelect } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';

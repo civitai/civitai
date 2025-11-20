@@ -21,7 +21,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { usePaddleBuzzTransaction } from '~/components/Paddle/usePaddleCheckout';
 import type { CheckoutEventsData, CurrencyCode } from '@paddle/paddle-js';
 import { usePaddle } from '~/providers/PaddleProvider';

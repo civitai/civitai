@@ -32,7 +32,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import classes from './ChatList.module.css';
 import { clsx } from 'clsx';
 

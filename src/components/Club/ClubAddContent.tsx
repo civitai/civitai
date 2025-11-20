@@ -7,7 +7,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { useDialogContext } from '../Dialog/DialogProvider';
+import { useDialogContext } from '../Dialog/DialogContext';
 import { dialogStore } from '../Dialog/dialogStore';
 import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
 // import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';

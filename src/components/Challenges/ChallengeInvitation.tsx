@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { ChallengeDetails } from '~/components/Challenges/challenge.utils';
 import { useGetActiveChallenges } from '~/components/Challenges/challenge.utils';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';

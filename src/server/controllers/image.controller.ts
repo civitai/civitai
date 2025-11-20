@@ -7,7 +7,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';

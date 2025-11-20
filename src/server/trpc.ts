@@ -8,7 +8,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { Context } from './createContext';
+import type { Context } from './context/types';
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,

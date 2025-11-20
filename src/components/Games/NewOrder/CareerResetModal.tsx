@@ -1,6 +1,6 @@
 import { Button, Group, Modal, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 export function CareerResetModal({ title, message }: { title: string; message: string }) {
   const dialog = useDialogContext();

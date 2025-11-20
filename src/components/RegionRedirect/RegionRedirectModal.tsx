@@ -1,5 +1,5 @@
 import { Modal, Text, Button, Group, Stack } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 interface RegionRedirectModalProps {
   /** Custom title for the modal */

@@ -1,6 +1,6 @@
 import { Availability } from '~/shared/utils/prisma/enums';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type {
   AvailabilityInput,
   GetByEntityInput,

@@ -2,7 +2,7 @@ import { Stack, Title, Button, ThemeIcon, Modal } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import * as z from 'zod';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Form, InputText, useForm } from '~/libs/form';
 

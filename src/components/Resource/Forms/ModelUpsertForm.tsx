@@ -25,7 +25,7 @@ import React, { useEffect } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';

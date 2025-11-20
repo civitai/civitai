@@ -2,7 +2,7 @@ import { Button, List, Loader, Modal, Text, TextInput } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

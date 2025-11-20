@@ -2,7 +2,7 @@ import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
-import type { Context } from '../createContext';
+import type { Context } from '../context/types';
 import type {
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,

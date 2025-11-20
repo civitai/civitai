@@ -12,7 +12,7 @@ import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import type * as z from 'zod';
 import { Collection } from '~/components/Collection/Collection';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Form, InputCheckbox, InputRTE, InputText, useForm } from '~/libs/form';
 import { modelUpsertSchema } from '~/server/schema/model.schema';

@@ -3,7 +3,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Files } from '~/components/Resource/Files';
 import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

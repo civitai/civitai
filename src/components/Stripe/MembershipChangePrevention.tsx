@@ -17,7 +17,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMutatePaddle } from '~/components/Paddle/util';

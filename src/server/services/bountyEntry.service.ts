@@ -11,7 +11,7 @@ import {
   createBuzzTransactionMany,
   getMultiAccountTransactionsByPrefix,
 } from '~/server/services/buzz.service';
-import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
+import { getFilesByEntity, updateEntityFiles } from '~/server/services/file-helpers.service';
 import {
   createEntityImages,
   invalidateManyImageExistence,

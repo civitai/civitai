@@ -12,7 +12,7 @@ import {
   IconLockOpen,
   IconBan,
 } from '@tabler/icons-react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { openReportModal } from '~/components/Dialog/dialog-registry';

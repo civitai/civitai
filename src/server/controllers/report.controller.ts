@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type {
   BulkUpdateReportStatusInput,
   CreateEntityAppealInput,

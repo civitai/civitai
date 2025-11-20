@@ -1,6 +1,6 @@
 import { Modal, Stack, Title, Text, Button, Group } from '@mantine/core';
 import { Badge } from '~/components/Newsroom/Assets/Badge';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 export default function UpdateRequiredModal() {
   const dialog = useDialogContext();
@@ -18,12 +18,7 @@ export default function UpdateRequiredModal() {
         </Button>
         <Group gap={4}>
           <Text>😬</Text>
-          <Text
-            c="yellow"
-            size="xs"
-            onClick={() => dialog.onClose()}
-            style={{ cursor: 'pointer' }}
-          >
+          <Text c="yellow" size="xs" onClick={() => dialog.onClose()} style={{ cursor: 'pointer' }}>
             {`No. I'll continue at my own peril`}
           </Text>
           <Text>😱</Text>

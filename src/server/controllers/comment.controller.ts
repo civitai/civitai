@@ -3,7 +3,7 @@ import { ModelStatus, ReportReason, ReportStatus } from '~/shared/utils/prisma/e
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {

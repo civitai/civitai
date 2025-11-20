@@ -1,4 +1,4 @@
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { createBuzzOrder } from '~/server/services/coinbase.service';
 import coinbaseCaller from '~/server/http/coinbase/coinbase.caller';
@@ -24,4 +24,3 @@ export const createBuzzOrderHandler = async ({
     userId: ctx.user.id,
   });
 };
-

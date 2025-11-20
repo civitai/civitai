@@ -1,7 +1,7 @@
 import { Modal, Stack, Group, Button, Text } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Form, InputText, useForm } from '~/libs/form';
 import type { ConsumeRedeemableCodeInput } from '~/server/schema/redeemableCode.schema';
 import { consumeRedeemableCodeSchema } from '~/server/schema/redeemableCode.schema';

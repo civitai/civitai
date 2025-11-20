@@ -3,7 +3,7 @@ import Image from 'next/image';
 import { useCallback, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
+import { useJoinKnightsNewOrder } from '~/components/Games/NewOrder/hooks/useJoinKnightsNewOrder';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 

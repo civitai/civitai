@@ -3,7 +3,7 @@ import { IconAlertCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { Countdown } from '~/components/Countdown/Countdown';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { useInvalidateWhatIf } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
   useModelVersionPermission,

@@ -3,7 +3,7 @@ import { CloseButton, Group, Stack, Text, Divider, Modal, Anchor } from '@mantin
 import { useTrackEvent } from '../TrackView/track.utils';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzPurchaseImproved } from '~/components/Buzz/BuzzPurchase/BuzzPurchaseImproved';

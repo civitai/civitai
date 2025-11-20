@@ -1,5 +1,5 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { verifyCaptchaToken } from '~/server/recaptcha/client';

@@ -21,7 +21,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { userContributingClubs } from '~/server/services/club.service';
-import { clubMetrics } from '../metrics';
+import { queueClubMetricUpdate } from '~/server/metrics/metrics-queue';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({
   input: { cursor, limit: take, clubId, clubTierId, userId, sort },
@@ -440,7 +440,7 @@ export const clubOwnerRemoveMember = async ({
     );
   }
 
-  await clubMetrics.queueUpdate(membership.clubId);
+  await queueClubMetricUpdate(membership.clubId);
 
   return dbWrite.$transaction(async (tx) => {
     // Remove the user:

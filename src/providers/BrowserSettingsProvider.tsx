@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { createStore, useStore } from 'zustand';
-import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionContext';
 import { Flags } from '~/shared/utils/flags';
 import { setCookie } from '~/utils/cookies-helpers';
 import { createDebouncer } from '~/utils/debouncer';

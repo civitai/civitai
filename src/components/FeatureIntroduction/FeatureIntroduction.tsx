@@ -4,7 +4,7 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { cloneElement, useCallback, useEffect } from 'react';
 import rehypeRaw from 'rehype-raw';
 import { trpc } from '../../utils/trpc';
-import { useDialogContext } from '../Dialog/DialogProvider';
+import { useDialogContext } from '../Dialog/DialogContext';
 import { dialogStore } from '../Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';

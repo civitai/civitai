@@ -20,7 +20,7 @@ import {
   useEquipProfileDecoration,
   useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticPreview } from '~/pages/moderator/cosmetic-store/cosmetics';

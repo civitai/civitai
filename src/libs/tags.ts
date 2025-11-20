@@ -2,12 +2,13 @@ import type { TagSource, TagType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
 import type { NsfwLevel } from '~/server/common/enums';
+import { tagVotableEntitySchema, type TagVotableEntityType } from '~/libs/types';
 
 export const taggableEntitySchema = z.enum(['model', 'image', 'tag', 'article']);
 export type TaggableEntityType = z.infer<typeof taggableEntitySchema>;
 
-export const tagVotableEntitySchema = z.enum(['model', 'image']);
-export type TagVotableEntityType = z.infer<typeof tagVotableEntitySchema>;
+// Re-export for backwards compatibility
+export { tagVotableEntitySchema, type TagVotableEntityType } from '~/libs/types';
 export type VotableTagModel = {
   id: number;
   name: string;

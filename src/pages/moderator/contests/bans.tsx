@@ -16,7 +16,7 @@ import { IconBan, IconTrashOff } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';

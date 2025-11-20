@@ -24,7 +24,7 @@ import {
   useCollection,
   useMutateCollection,
 } from '~/components/Collections/collection.utils';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

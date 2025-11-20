@@ -1,4 +1,4 @@
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   createBuzzOrder,

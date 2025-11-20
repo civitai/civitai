@@ -19,12 +19,7 @@ import type {
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import {
-  articlesSearchIndex,
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -235,13 +230,13 @@ export const createReport = async ({
           break;
         case ReportEntity.Collection:
           await tx.collection.update({ where: { id }, data: { nsfw: true } });
-          await collectionsSearchIndex.queueUpdate([
+          await searchIndexRegistry.collections.queueUpdate([
             { id, action: SearchIndexUpdateQueueAction.Update },
           ]);
           break;
         case ReportEntity.Article:
           await tx.article.update({ where: { id }, data: { nsfw: true } });
-          await articlesSearchIndex.queueUpdate([
+          await searchIndexRegistry.articles.queueUpdate([
             { id, action: SearchIndexUpdateQueueAction.Update },
           ]);
           break;
@@ -281,8 +276,10 @@ export const createReport = async ({
           blockedFor: BlockedReason.CSAM,
         },
       });
-      await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-      await imagesMetricsSearchIndex.queueUpdate([
+      await searchIndexRegistry.images.queueUpdate([
+        { id, action: SearchIndexUpdateQueueAction.Delete },
+      ]);
+      await searchIndexRegistry.imagesMetrics.queueUpdate([
         { id, action: SearchIndexUpdateQueueAction.Delete },
       ]);
     }

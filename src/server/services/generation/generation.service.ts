@@ -19,9 +19,12 @@ import type {
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
+import type {
+  GenerationResource,
+  GenerationResourceBase,
+} from '~/server/common/types/generation.types';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
@@ -506,7 +509,7 @@ export async function toggleUnavailableResource({
     select: { modelId: true },
   });
   if (modelVersion)
-    modelsSearchIndex
+    searchIndexRegistry.models
       .queueUpdate([
         {
           id: modelVersion.modelId,
@@ -540,46 +543,12 @@ export async function getShouldChargeForResources(
   );
 }
 
-type GenerationResourceBase = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  vaeId?: number;
-  baseModel: string;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig;
-  canGenerate: boolean;
-  hasAccess: boolean;
-  // air: string;
-  // covered: boolean;
-  additionalResourceCost?: boolean;
-  availability?: Availability;
-  epochNumber?: number;
-  // settings
-  clipSkip?: number;
-  minStrength: number;
-  maxStrength: number;
-  strength: number;
-};
-
-export type GenerationResource = GenerationResourceBase & {
-  model: {
-    id: number;
-    name: string;
-    type: ModelType;
-    nsfw?: boolean;
-    poi?: boolean;
-    minor?: boolean;
-    sfwOnly?: boolean;
-    // userId: number;
-  };
-  epochDetails?: {
-    jobId: string;
-    fileName: string;
-    epochNumber: number;
-    isExpired: boolean;
-  };
-  substitute?: GenerationResourceBase;
-};
+// GenerationResource types are now imported from ~/server/common/types/generation.types
+// Re-export for backward compatibility
+export type {
+  GenerationResource,
+  GenerationResourceBase,
+} from '~/server/common/types/generation.types';
 
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);

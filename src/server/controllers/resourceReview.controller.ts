@@ -1,4 +1,4 @@
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';

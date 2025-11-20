@@ -1,4 +1,4 @@
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { getUserLinks } from '~/server/services/user-link.service';
 import type {
   GetUserReferralCodesSchema,

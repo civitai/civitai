@@ -3,7 +3,7 @@ import type { BaseModelType } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';

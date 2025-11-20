@@ -19,7 +19,7 @@ import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { articlesSearchIndex } from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
@@ -30,7 +30,7 @@ import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
-} from '~/server/services/collection.service';
+} from '~/server/services/collection-permissions.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -890,7 +890,9 @@ export const upsertArticle = async ({
       }
     }
 
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    await searchIndexRegistry.articles.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {
@@ -933,7 +935,9 @@ export const deleteArticleById = async ({
     });
 
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await searchIndexRegistry.articles.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
 
     return deleted;
   } catch (error) {
@@ -1047,7 +1051,9 @@ export async function unpublishArticleById({
   );
 
   // Update search index (remove from public search)
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await searchIndexRegistry.articles.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Delete },
+  ]);
 
   // Bust user content cache
   await userArticleCountCache.bust(article.userId);
@@ -1102,7 +1108,9 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   );
 
   // Re-add to search index
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await searchIndexRegistry.articles.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
 
   await userArticleCountCache.bust(article.userId);
 

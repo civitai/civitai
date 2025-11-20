@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { Button, Popover, Text } from '@mantine/core';
-import { PaymentMethodConfig, isBrowserSupported } from './zkp2p-config';
+import type { PaymentMethodConfig } from './zkp2p-config';
+import { isBrowserSupported } from './zkp2p-config';
 import { trackZkp2pEvent, generateZkp2pSessionId } from '~/utils/zkp2p-tracking';
 
 type Props = {

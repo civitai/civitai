@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   AddUsersInput,

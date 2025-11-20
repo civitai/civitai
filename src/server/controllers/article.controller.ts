@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import type {
   UpsertArticleInput,
   UnpublishArticleSchema,

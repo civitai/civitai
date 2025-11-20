@@ -1,7 +1,7 @@
 import { EntityMetric_MetricType_Type } from '~/shared/utils/prisma/enums';
 import type { EntityMetric_EntityType_Type } from '~/shared/utils/prisma/enums';
 import { clickhouse } from '~/server/clickhouse/client';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/caches';

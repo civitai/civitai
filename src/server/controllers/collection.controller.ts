@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { logToAxiom } from '~/server/logging/client';
 import { collectedContentReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';

@@ -1,8 +1,7 @@
 import { ActionIcon, Card, Loader, Modal, Paper, Text, Title } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
-import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -14,6 +13,7 @@ import {
   browsingLevels,
   type BrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
+import { useJoinKnightsNewOrder } from '~/components/Games/NewOrder/hooks/useJoinKnightsNewOrder';
 
 export default function NewOrderRulesModal() {
   const { viewedRatingGuide, setViewedRatingGuide } = useJoinKnightsNewOrder();

@@ -40,7 +40,7 @@ import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
-import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatContext';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

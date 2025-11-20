@@ -27,7 +27,7 @@ export const StripePaymentMethodSetupModal = ({ message, title, ...props }: Prop
 };
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 type Props = {
   redirectUrl?: string;

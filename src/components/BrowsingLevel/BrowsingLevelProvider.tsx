@@ -1,7 +1,7 @@
 import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useState } from 'react';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsContext';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   nsfwBrowsingLevelsFlag,

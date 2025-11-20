@@ -2,7 +2,7 @@ import { Grid, useComputedColorScheme } from '@mantine/core';
 import { registerCustomProtocol } from 'linkifyjs';
 import React from 'react';
 import { ChatList } from '~/components/Chat/ChatList';
-import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatStore } from '~/components/Chat/ChatContext';
 import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';

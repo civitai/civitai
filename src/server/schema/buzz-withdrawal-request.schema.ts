@@ -10,10 +10,7 @@ import { buzzConstants } from '~/shared/constants/buzz.constants';
 
 export type CreateBuzzWithdrawalRequestSchema = z.infer<typeof createBuzzWithdrawalRequestSchema>;
 export const createBuzzWithdrawalRequestSchema = z.object({
-  amount: z
-    .number()
-    .min(buzzConstants.minBuzzWithdrawal)
-    .default(buzzConstants.minBuzzWithdrawal),
+  amount: z.number().min(buzzConstants.minBuzzWithdrawal).default(buzzConstants.minBuzzWithdrawal),
   provider: z
     .nativeEnum(UserPaymentConfigurationProvider)
     .default(UserPaymentConfigurationProvider.Tipalti),

@@ -1,2 +1,2 @@
-import { Context } from '~/server/createContext';
+import { Context } from '~/server/context/types';
 import { throwDbError } from '~/server/utils/errorHandling';

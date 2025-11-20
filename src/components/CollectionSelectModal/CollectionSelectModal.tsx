@@ -25,7 +25,7 @@ import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import searchClasses from '~/components/Search/SearchLayout.module.scss';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { ImageCover, ImageSrcCover } from '~/components/Cards/CollectionCard';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { abbreviateNumber } from '~/utils/number-helpers';

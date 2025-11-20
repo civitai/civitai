@@ -12,9 +12,9 @@ import { IconCheck, IconExternalLink, IconMinus, IconX } from '@tabler/icons-rea
 import clsx from 'clsx';
 import Link from 'next/link';
 import { useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
+import { useQueryInfiniteKnightsNewOrderHistory } from '~/components/Games/NewOrder/hooks/useQueryInfiniteKnightsNewOrderHistory';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { useQueryInfiniteKnightsNewOrderHistory } from '~/components/Games/KnightsNewOrder.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';

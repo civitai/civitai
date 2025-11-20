@@ -1,7 +1,7 @@
 import React from 'react';
 import { trpc } from '~/utils/trpc';
 import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { ClubMembershipStatus, ClubTierItem } from '../ClubTierItem';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconClubs } from '@tabler/icons-react';

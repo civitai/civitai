@@ -12,7 +12,7 @@ import {
 } from '@tabler/icons-react';
 
 import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';

@@ -1,5 +1,5 @@
 import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
-import { useDialogContext } from '../Dialog/DialogProvider';
+import { useDialogContext } from '../Dialog/DialogContext';
 import { useMutateClub, useQueryClub } from './club.utils';
 import { clubTransactionSchema } from '~/server/schema/buzz.schema';
 import { Form, InputNumber, useForm } from '~/libs/form';

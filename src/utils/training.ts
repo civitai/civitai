@@ -6,32 +6,23 @@ import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
+import {
+  trainingBaseModelType,
+  trainingBaseModelTypesImage,
+  trainingBaseModelTypesVideo,
+  engineTypes,
+  optimizerTypes,
+  loraTypes,
+  lrSchedulerTypes,
+  type TrainingBaseModelType,
+  type EngineTypes,
+  type OptimizerTypes,
+} from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export const trainingBaseModelTypesImage = [
-  'sd15',
-  'sdxl',
-  'sd35',
-  'flux',
-  'chroma',
-  'qwen',
-] as const;
-export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
-export const trainingBaseModelType = [
-  ...trainingBaseModelTypesImage,
-  ...trainingBaseModelTypesVideo,
-] as const;
-export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
-
-export const engineTypes = ['kohya', 'rapid', 'musubi', 'ai-toolkit'] as const;
-export type EngineTypes = (typeof engineTypes)[number];
-
-export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
-export type OptimizerTypes = (typeof optimizerTypes)[number];
-
-export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
-export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
+// Re-export types for backward compatibility
+export type { TrainingBaseModelType, EngineTypes, OptimizerTypes };
 
 export const trainingModelInfo: {
   [key in TrainingDetailsBaseModelList]: {

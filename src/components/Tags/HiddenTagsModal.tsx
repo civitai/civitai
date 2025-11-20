@@ -1,6 +1,6 @@
 import { Modal } from '@mantine/core';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 export default function HiddenTagsModal() {
   const dialog = useDialogContext();

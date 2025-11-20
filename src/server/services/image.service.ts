@@ -33,7 +33,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
-import { postMetrics } from '~/server/metrics';
+import { queuePostMetricUpdate } from '~/server/metrics/metrics-queue';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
@@ -80,11 +80,7 @@ import type {
 } from '~/server/schema/image.schema';
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import {
-  articlesSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import type {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
@@ -96,11 +92,9 @@ import type { ImageResourceHelperModel } from '~/server/selectors/image.selector
 import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
-import {
-  getUserCollectionPermissionsById,
-  removeEntityFromAllCollections,
-} from '~/server/services/collection.service';
+import { getUserCollectionPermissionsById } from '~/server/services/collection-permissions.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { removeEntityFromAllCollections } from '~/server/utils/collection.utils';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import {
@@ -264,7 +258,7 @@ export const deleteImageById = async ({
         ? [
             updatePostNsfwLevel(image.postId),
             bustCachesForPosts(image.postId),
-            postMetrics.queueUpdate(image.postId),
+            queuePostMetricUpdate(image.postId),
           ]
         : []),
       invalidateExistence,
@@ -301,7 +295,7 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       }),
       updatePostNsfwLevel(idsForPostUpdate),
       bustCachesForPosts(idsForPostUpdate),
-      postMetrics.queueUpdate(idsForPostUpdate),
+      queuePostMetricUpdate(idsForPostUpdate),
       invalidateExistence,
     ]);
 
@@ -4937,7 +4931,7 @@ export async function ingestArticleCoverImages(array: { imageId: number; article
     select: { id: true, url: true, height: true, width: true },
   });
 
-  await articlesSearchIndex.queueUpdate(
+  await searchIndexRegistry.articles.queueUpdate(
     array.map((x) => ({ id: x.articleId, action: SearchIndexUpdateQueueAction.Update }))
   );
 
@@ -5785,8 +5779,8 @@ export async function queueImageSearchIndexUpdate({
   ids: number[];
   action: SearchIndexUpdateQueueAction;
 }) {
-  await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
-  await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+  await searchIndexRegistry.images.queueUpdate(ids.map((id) => ({ id, action })));
+  await searchIndexRegistry.imagesMetrics.queueUpdate(ids.map((id) => ({ id, action })));
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
     // Bust the thumbnail cache for deleted images
@@ -6067,7 +6061,9 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
   });
 
   // Ensure we update the search index:
-  await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await searchIndexRegistry.imagesMetrics.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
 
   return true;
 };
@@ -6085,7 +6081,7 @@ export const updateImagesFlag = async ({
   });
 
   // Ensure we update the search index:
-  await imagesMetricsSearchIndex.queueUpdate(
+  await searchIndexRegistry.imagesMetrics.queueUpdate(
     ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 

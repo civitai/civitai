@@ -17,7 +17,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import produce from 'immer';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
 import { ArticleNsfwForm, ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';

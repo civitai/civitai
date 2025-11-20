@@ -1,5 +1,5 @@
 import { CloseButton, Group, Modal, Stack, Title } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { SupportContent } from '~/components/Support/SupportContent';
 
 export default function SupportModal() {

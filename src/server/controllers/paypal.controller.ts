@@ -1,5 +1,5 @@
 import { createBuzzOrder, processBuzzOrder } from './../services/paypal.service';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 
 import type { PaypalPurchaseBuzzSchema, PaypalOrderSchema } from '../schema/paypal.schema';
 

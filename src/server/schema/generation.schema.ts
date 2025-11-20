@@ -1,16 +1,15 @@
 import * as z from 'zod';
 import type { Sampler } from '~/server/common/constants';
-import { constants, generation } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
-import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
-import type { UserTier } from '~/server/schema/user.schema';
+import type { UserTier } from '~/server/schema/types';
 import { userTierSchema } from '~/server/schema/user.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { baseModels } from '~/shared/constants/base-model.constants';
-import { generationSamplers } from '~/shared/constants/generation.constants';
+import { generationSamplers } from '~/server/schema/generation-samplers.constants';
+import { GENERATION_MAX_VALUES } from '~/server/schema/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
-import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.enum(ModelType),
@@ -49,13 +48,17 @@ const generationResourceSchemaBase = z.object({
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
   earlyAccessEndsAt: z.coerce.date().optional(),
-  earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
+  earlyAccessConfig: z
+    .lazy(() => require('~/server/schema/model-version.schema').modelVersionEarlyAccessConfigSchema)
+    .optional(),
   canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  image: imageSchema
-    .pick({ url: true, type: true })
-    .extend({ url: z.url().or(z.string().uuid()) })
+  image: z
+    .object({
+      url: z.url().or(z.string().uuid()),
+      type: z.string(),
+    })
     .optional(), // TODO there are more here
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
@@ -143,7 +146,7 @@ const sharedGenerationParamsSchema = z.object({
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
     error: 'Invalid sampler',
   }),
-  seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
+  seed: z.coerce.number().min(-1).max(GENERATION_MAX_VALUES.seed).default(-1),
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),

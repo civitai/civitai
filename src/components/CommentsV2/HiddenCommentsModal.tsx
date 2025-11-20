@@ -4,7 +4,7 @@ import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 

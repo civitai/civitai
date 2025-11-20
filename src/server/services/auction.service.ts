@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { uniq } from 'lodash-es';
-import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
+import { getModelTypesForAuction } from '~/server/utils/auction.utils';
+import { miscAuctionName } from '~/shared/constants/auction.constants';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

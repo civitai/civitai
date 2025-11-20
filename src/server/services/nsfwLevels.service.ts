@@ -4,12 +4,7 @@ import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/comm
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import {
-  articlesSearchIndex,
-  bountiesSearchIndex,
-  collectionsSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
@@ -276,7 +271,7 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
       WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
       RETURNING a.id;
     `);
-  await articlesSearchIndex.queueUpdate(
+  await searchIndexRegistry.articles.queueUpdate(
     articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 }
@@ -304,7 +299,7 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
       WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
       RETURNING b.id;
     `);
-  await bountiesSearchIndex.queueUpdate(
+  await searchIndexRegistry.bounties.queueUpdate(
     bounties.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 }
@@ -374,7 +369,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
     AND c."nsfwLevel" != c2."nsfwLevel"
     RETURNING c.id;
   `);
-  await collectionsSearchIndex.queueUpdate(
+  await searchIndexRegistry.collections.queueUpdate(
     collections.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
   return collections;
@@ -403,7 +398,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     WHERE level.id = m.id AND (level."nsfwLevel" != m."nsfwLevel" OR m.nsfw = TRUE)
     RETURNING m.id;
   `);
-  await modelsSearchIndex.queueUpdate(
+  await searchIndexRegistry.models.queueUpdate(
     models.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 }

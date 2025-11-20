@@ -1,5 +1,5 @@
 import { Modal, Alert, Notification } from '@mantine/core';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';

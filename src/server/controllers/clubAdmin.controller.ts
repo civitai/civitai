@@ -1,4 +1,4 @@
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { userContributingClubs } from '~/server/services/club.service';
 import {

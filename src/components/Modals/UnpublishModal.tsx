@@ -5,7 +5,7 @@ import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 const reasonOptions = Object.entries(unpublishReasons).map(([key, { optionLabel }]) => ({
   value: key,

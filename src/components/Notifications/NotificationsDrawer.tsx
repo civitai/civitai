@@ -4,7 +4,7 @@ import { useClickOutside } from '@mantine/hooks';
 import { useState } from 'react';
 import { NotificationsComposed } from '~/components/Notifications/NotificationsComposed';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import classes from './NotificationsDrawer.module.scss';
 
 export default function NotificationsDrawer({ toggleNode }: { toggleNode: HTMLDivElement | null }) {

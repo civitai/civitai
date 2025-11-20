@@ -6,7 +6,7 @@ import type {
   SupportedClubPostEntities,
   UpsertClubPostInput,
 } from '~/server/schema/club.schema';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';

@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
-import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
+import type { ModelGallerySettingsSchema } from '~/server/schema/types';
 // import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';

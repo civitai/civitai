@@ -19,8 +19,8 @@ import {
   openJudgmentHistoryModal,
   openPlayersDirectoryModal,
   openRatingGuideModal,
-  useJoinKnightsNewOrder,
 } from '~/components/Games/KnightsNewOrder.utils';
+import { useJoinKnightsNewOrder } from '~/components/Games/NewOrder/hooks/useJoinKnightsNewOrder';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { PlayerCard } from '~/components/Games/PlayerCard';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';

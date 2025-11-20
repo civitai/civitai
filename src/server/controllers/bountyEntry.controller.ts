@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Context } from '../createContext';
+import type { Context } from '../context/types';
 import type { GetByIdInput } from '../schema/base.schema';
 import {
   handleLogError,

@@ -37,7 +37,7 @@ import type {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
-import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { searchIndexRegistry } from '~/server/search-index/search-index-registry';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
@@ -76,21 +76,15 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import type { CollectionContributorPermissionFlags } from '~/server/services/collection-permissions.service';
+import {
+  getUserCollectionPermissionsById,
+  getAvailableCollectionItemsFilterForUser,
+} from '~/server/services/collection-permissions.service';
 
-export type CollectionContributorPermissionFlags = {
-  collectionId: number;
-  read: boolean;
-  write: boolean;
-  writeReview: boolean;
-  manage: boolean;
-  follow: boolean;
-  isContributor: boolean;
-  isOwner: boolean;
-  followPermissions: CollectionContributorPermission[];
-  publicCollection: boolean;
-  collectionType: CollectionType | null;
-  collectionMode: CollectionMode | null;
-};
+// Re-export for backward compatibility
+export { getUserCollectionPermissionsById, getAvailableCollectionItemsFilterForUser };
+export type { CollectionContributorPermissionFlags };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
   input: { limit, cursor, privacy, types, userId, sort, ids, modes },
@@ -122,135 +116,6 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   });
 
   return collections;
-};
-
-export const getUserCollectionPermissionsById = async ({
-  id,
-  userId,
-  isModerator,
-}: GetByIdInput & {
-  userId?: number;
-  isModerator?: boolean;
-}) => {
-  const permissions: CollectionContributorPermissionFlags = {
-    collectionId: id,
-    read: false,
-    write: false,
-    writeReview: false,
-    manage: false,
-    follow: false,
-    isContributor: false,
-    isOwner: false,
-    publicCollection: false,
-    followPermissions: [],
-    collectionType: null,
-    collectionMode: null,
-  };
-
-  const collection = await dbRead.collection.findFirst({
-    select: {
-      id: true,
-      read: true,
-      write: true,
-      userId: true,
-      type: true,
-      mode: true,
-      contributors: userId
-        ? {
-            select: {
-              permissions: true,
-            },
-            where: {
-              user: {
-                id: userId,
-              },
-            },
-          }
-        : false,
-    },
-    where: {
-      id,
-    },
-  });
-
-  if (!collection) {
-    return permissions;
-  }
-
-  permissions.collectionType = collection.type;
-  permissions.collectionMode = collection.mode;
-
-  if (
-    collection.read === CollectionReadConfiguration.Public ||
-    collection.read === CollectionReadConfiguration.Unlisted
-  ) {
-    permissions.read = true;
-    permissions.follow = true;
-    permissions.followPermissions.push(CollectionContributorPermission.VIEW);
-    permissions.publicCollection = true;
-  }
-
-  if (collection.write === CollectionWriteConfiguration.Public) {
-    // Follow will make it so that they can see the collection in their feed.
-    permissions.follow = true;
-    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
-    permissions.write = true;
-    permissions.followPermissions.push(CollectionContributorPermission.ADD);
-  }
-
-  if (collection.write === CollectionWriteConfiguration.Review) {
-    // Follow will make it so that they can see the collection in their feed.
-    permissions.follow = true;
-
-    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
-    permissions.writeReview = true;
-    permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
-  }
-
-  if (!userId) {
-    return permissions;
-  }
-
-  if (userId === collection.userId) {
-    permissions.isOwner = true;
-    permissions.manage = true;
-    permissions.read = true;
-    permissions.write = true;
-  }
-
-  if (isModerator && !permissions.isOwner) {
-    permissions.manage = true;
-    permissions.read = true;
-    // Makes sure that moderators' stuff still needs to be reviewed.
-    permissions.write = collection.write === CollectionWriteConfiguration.Public;
-    permissions.writeReview = collection.write === CollectionWriteConfiguration.Review;
-  }
-
-  const [contributorItem] = collection.contributors;
-
-  if (!contributorItem || permissions.isOwner) {
-    return permissions;
-  }
-
-  permissions.isContributor = true;
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.VIEW)) {
-    permissions.read = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
-    permissions.write = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
-    permissions.writeReview = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
-    permissions.manage = true;
-  }
-
-  return permissions;
 };
 
 type CollectionForPermission = {
@@ -650,7 +515,7 @@ export const saveItemInCollections = async ({
     ...removeFromCollectionIds,
   ];
   if (affectedCollections.length > 0) {
-    await collectionsSearchIndex.queueUpdate(
+    await searchIndexRegistry.collections.queueUpdate(
       affectedCollections.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
   }
@@ -856,7 +721,9 @@ export const upsertCollection = async ({
       await ingestImage({ image: updated.image });
     }
 
-    await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    await searchIndexRegistry.collections.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
     // nb: doing this will delete a user's own image
     // if (currentCollection.image && !input.image) {
@@ -1302,7 +1169,7 @@ export const deleteCollectionById = async ({
 
   const res = await dbWrite.collection.delete({ where: { id } });
 
-  await collectionsSearchIndex.queueUpdate([
+  await searchIndexRegistry.collections.queueUpdate([
     {
       id,
       action: SearchIndexUpdateQueueAction.Delete,
@@ -1380,52 +1247,6 @@ export const removeContributorFromCollection = async ({
   } catch {
     // Ignore errors
   }
-};
-
-export const getAvailableCollectionItemsFilterForUser = ({
-  statuses,
-  permissions,
-  userId,
-}: {
-  statuses?: CollectionItemStatus[];
-  permissions: CollectionContributorPermissionFlags;
-  userId?: number;
-}) => {
-  const rawAND: Prisma.Sql[] = [];
-  const AND: Prisma.Enumerable<Prisma.CollectionItemWhereInput> = [];
-
-  // A user with relevant permissions can filter & manage these permissions
-  if ((permissions.manage || permissions.isOwner) && statuses) {
-    AND.push({ status: { in: statuses } });
-    rawAND.push(
-      Prisma.sql`ci."status" IN (${Prisma.raw(
-        statuses.map((s) => `'${s}'::"CollectionItemStatus"`).join(', ')
-      )})`
-    );
-
-    return {
-      AND,
-      rawAND,
-    };
-  }
-
-  if (userId) {
-    AND.push({
-      OR: [
-        { status: CollectionItemStatus.ACCEPTED },
-        { AND: [{ status: CollectionItemStatus.REVIEW }, { addedById: userId }] },
-      ],
-    });
-
-    rawAND.push(
-      Prisma.sql`(ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus" OR (ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus" AND ci."addedById" = ${userId}))`
-    );
-  } else {
-    AND.push({ status: CollectionItemStatus.ACCEPTED });
-    rawAND.push(Prisma.sql`ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"`);
-  }
-
-  return { AND, rawAND };
 };
 
 export const updateCollectionItemsStatus = async ({
@@ -2379,7 +2200,7 @@ export const setCollectionItemNsfwLevel = async ({
     data: { nsfwLevel, scannedAt: new Date(), ingestion: ImageIngestionStatus.Scanned },
   });
 
-  await imagesSearchIndex.queueUpdate([
+  await searchIndexRegistry.images.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
 };
@@ -2462,30 +2283,6 @@ export async function randomizeCollectionItems(collectionId: number) {
   `;
 }
 
-export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';
-
-/**
- * Removes an entity (image, model, post, or article) from all collections it's part of.
- * This is called when an entity is deleted or marked as ToS violation.
- *
- * @param entityType - The type of entity ('image', 'model', 'post', 'article')
- * @param entityId - The ID of the entity to remove from collections
- */
-export async function removeEntityFromAllCollections(
-  entityType: CollectionEntityType,
-  entityId: number
-) {
-  // Build the where clause based on entity type
-  const whereClause = {
-    imageId: entityType === 'image' ? entityId : undefined,
-    modelId: entityType === 'model' ? entityId : undefined,
-    postId: entityType === 'post' ? entityId : undefined,
-    articleId: entityType === 'article' ? entityId : undefined,
-  };
-
-  // Delete all collection items for this entity
-  // If entity is not in any collections, this is a no-op (0 rows affected)
-  await dbWrite.collectionItem.deleteMany({
-    where: whereClause,
-  });
-}
+// Re-export for backward compatibility
+export type { CollectionEntityType } from '~/server/utils/collection.utils';
+export { removeEntityFromAllCollections } from '~/server/utils/collection.utils';

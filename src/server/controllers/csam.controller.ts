@@ -1,5 +1,5 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { dbWrite } from '~/server/db/client';
 import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import type { CreateCsamReportSchema } from '~/server/schema/csam.schema';

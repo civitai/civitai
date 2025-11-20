@@ -11,10 +11,8 @@ import type {
   VideoBlob,
   NsfwLevel,
 } from '@civitai/client';
-import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { env } from '~/env/server';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -31,11 +29,6 @@ import type {
   GeneratedImageWorkflow,
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
-import {
-  getWorkflow,
-  queryWorkflows,
-  updateWorkflow as clientUpdateWorkflow,
-} from '~/server/services/orchestrator/workflows';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -71,6 +64,11 @@ import type {
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import {
+  getWorkflow,
+  queryWorkflows,
+  updateWorkflow as clientUpdateWorkflow,
+} from '~/server/services/orchestrator/workflows';
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -78,17 +76,6 @@ type WorkflowStepAggregate =
   | TextToImageStep
   | VideoGenStep
   | VideoEnhancementStep;
-
-export function createOrchestratorClient(token: string) {
-  return createCivitaiClient({
-    baseUrl: env.ORCHESTRATOR_ENDPOINT,
-    env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
-    auth: token,
-  });
-}
-
-/** Used to perform orchestrator operations with the system user account */
-export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(

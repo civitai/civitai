@@ -16,7 +16,7 @@ import { useElementSize } from '@mantine/hooks';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import type { SetUserSettingsInput } from '~/server/schema/user.schema';
 import { showErrorNotification } from '~/utils/notifications';

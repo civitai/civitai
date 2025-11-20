@@ -17,7 +17,7 @@ import { getArticles } from './article.service';
 import type { PostsInfiniteModel } from './post.service';
 import { getPostsInfinite } from './post.service';
 import { ArticleSort, ModelSort, PostSort } from '../common/enums';
-import { clubMetrics } from '../metrics';
+import { queueClubMetricUpdate } from '~/server/metrics/metrics-queue';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SessionUser } from 'next-auth';
 
@@ -223,7 +223,7 @@ export const deleteClubPost = async ({
     throw throwAuthorizationError('You do not have permission to delete this post.');
   }
 
-  await clubMetrics.queueUpdate(post.clubId);
+  await queueClubMetricUpdate(post.clubId);
 
   return dbWrite.clubPost.delete({
     where: {

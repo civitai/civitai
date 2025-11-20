@@ -1,7 +1,7 @@
 import { Divider, Modal, Notification } from '@mantine/core';
 import * as z from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { InputSourceImageUpscale } from '~/components/Generation/Input/SourceImageUpscale';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import {

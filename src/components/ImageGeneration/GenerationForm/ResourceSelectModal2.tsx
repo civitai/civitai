@@ -50,7 +50,7 @@ import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkMan
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { openBlockModelTagsModal, openReportModal } from '~/components/Dialog/dialog-registry';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';

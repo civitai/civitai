@@ -17,7 +17,7 @@ import { trpc } from '~/utils/trpc';
 import type { BountyGetEntries } from '~/types/router';
 import { formatKBytes } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 type Props = { bountyEntry: Omit<BountyGetEntries[number], 'files' | 'stats' | 'reactions'> };
 

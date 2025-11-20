@@ -1,4 +1,4 @@
-import type { TagVotableEntityType } from '~/libs/tags';
+import type { TagVotableEntityType } from '~/libs/types';
 
 export type ModerationCategory = {
   label: string;

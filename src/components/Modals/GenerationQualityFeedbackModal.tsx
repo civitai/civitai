@@ -4,7 +4,7 @@ import React from 'react';
 import * as z from 'zod';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import classes from './GenerationQualityFeedbackModal.module.scss';
 
 const schema = z.object({

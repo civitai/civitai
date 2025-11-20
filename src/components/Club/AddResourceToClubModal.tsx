@@ -18,7 +18,7 @@ import { upsertClubResourceInput } from '~/server/schema/club.schema';
 import type * as z from 'zod';
 import { useMutateClub } from '~/components/Club/club.utils';
 import { showSuccessNotification } from '~/utils/notifications';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ArticleCard } from '~/components/Cards/ArticleCard';

@@ -58,7 +58,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { VaultItemsFiltersDropdown } from '~/components/Vault/VaultItemsFiltersDropdown';
 import { IconX } from '@tabler/icons-react';
 import type { VaultItemGetPaged } from '~/types/router';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

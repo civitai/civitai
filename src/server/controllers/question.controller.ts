@@ -10,7 +10,7 @@ import {
 } from './../services/question.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { GetQuestionsInput, UpsertQuestionInput } from '~/server/schema/question.schema';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 
 export type GetQuestionsProps = AsyncReturnType<typeof getQuestionsHandler>;

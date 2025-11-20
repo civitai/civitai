@@ -1,5 +1,5 @@
 import { createContext, useContext, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import type {
   ResourceFilter,
   ResourceSelectOptions,

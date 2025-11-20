@@ -19,7 +19,7 @@ import { Form, InputCheckboxGroup, InputDatePicker, useForm } from '~/libs/form'
 import type * as z from 'zod';
 import type { ClubAdminInvite } from '../../types/router';
 import { upsertClubAdminInviteInput } from '../../server/schema/clubAdmin.schema';
-import { useDialogContext } from '../Dialog/DialogProvider';
+import { useDialogContext } from '../Dialog/DialogContext';
 import { showSuccessNotification } from '../../utils/notifications';
 import dayjs from '~/shared/utils/dayjs';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';

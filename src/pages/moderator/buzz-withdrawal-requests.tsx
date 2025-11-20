@@ -42,7 +42,7 @@ import {
   useQueryBuzzWithdrawalRequests,
 } from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

@@ -4,7 +4,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 import { CommentSection } from '~/components/CommentSection/CommentSection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

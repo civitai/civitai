@@ -5,19 +5,9 @@ import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { createCallerFactory } from '@trpc/server';
-import { appRouter } from '~/server/routers';
 import { Fingerprint } from '~/server/utils/fingerprint';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
-
-type CacheSettings = {
-  browserTTL?: number;
-  edgeTTL?: number;
-  staleWhileRevalidate?: number;
-  tags?: string[];
-  canCache?: boolean;
-  skip: boolean;
-};
+import type { CacheSettings, Context } from '~/server/context/types';
 
 const origins = [...env.TRPC_ORIGINS];
 const hosts = [
@@ -61,18 +51,19 @@ export const createContext = async ({
     res,
     req,
     domain,
-  };
+  } as Context;
 };
 
-const createCaller = createCallerFactory()(appRouter);
-export const publicApiContext2 = async (req: NextApiRequest, res: NextApiResponse) => {
+export const publicApiContext = async (
+  req: NextApiRequest,
+  res: NextApiResponse
+): Promise<Context> => {
   const domain = getRequestDomainColor(req) ?? 'blue';
 
-  return createCaller({
+  return {
     user: undefined,
     acceptableOrigin: true,
     features: getFeatureFlagsLazy({ req }),
-    fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
     track: new Tracker(req, res),
     ip: requestIp.getClientIp(req) ?? '',
     cache: {
@@ -82,30 +73,9 @@ export const publicApiContext2 = async (req: NextApiRequest, res: NextApiRespons
       canCache: true,
       skip: false,
     },
-    res,
-    req,
-    domain,
-  });
-};
-
-export const publicApiContext = async (req: NextApiRequest, res: NextApiResponse) => {
-  return {
-    user: undefined,
-    acceptableOrigin: true,
-    features: getFeatureFlagsLazy({ req }),
-    track: new Tracker(req, res),
-    ip: requestIp.getClientIp(req) ?? '',
-    cache: {
-      browserCacheTTL: 3 * 60,
-      edgeCacheTTL: 3 * 60,
-      staleWhileRevalidate: 60,
-      canCache: true,
-      skip: false,
-    },
     fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
     res,
     req,
+    domain,
   };
 };
-
-export type Context = AsyncReturnType<typeof createContext>;

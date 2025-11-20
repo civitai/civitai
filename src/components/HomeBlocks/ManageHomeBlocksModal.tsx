@@ -29,7 +29,7 @@ import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/i
 import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 import classes from './ManageHomeBlocksModal.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 

@@ -1,6 +1,6 @@
 import { Text, Modal } from '@mantine/core';
 import { RunPartners } from '~/components/RunStrategy/RunPartners';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useDialogContext } from '~/components/Dialog/DialogContext';
 
 export default function RunStrategyModal({ modelVersionId }: { modelVersionId: number }) {
   const dialog = useDialogContext();

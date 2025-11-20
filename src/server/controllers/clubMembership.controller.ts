@@ -4,7 +4,7 @@ import {
   throwBadRequestError,
   throwDbError,
 } from '~/server/utils/errorHandling';
-import type { Context } from '~/server/createContext';
+import type { Context } from '~/server/context/types';
 import { imageSelect } from '~/server/selectors/image.selector';
 import type {
   ToggleClubMembershipStatusInput,

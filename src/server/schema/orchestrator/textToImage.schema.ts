@@ -2,11 +2,11 @@ import { Priority } from '@civitai/client';
 import * as z from 'zod';
 
 import type { Sampler } from '~/server/common/constants';
-import { generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { baseModelGroups } from '~/shared/constants/base-model.constants';
-import { generationSamplers } from '~/shared/constants/generation.constants';
+import { generationSamplers } from '~/server/schema/generation-samplers.constants';
+import { GENERATION_MAX_VALUES } from '~/server/schema/generation.constants';
 import { defaultCatch } from '~/utils/zod-helpers';
 
 // #region [step input]
@@ -21,7 +21,7 @@ export const textToImageParamsSchema = z.object({
   sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
     error: 'Invalid sampler',
   }),
-  seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
+  seed: z.coerce.number().min(1).max(GENERATION_MAX_VALUES.seed).nullish().catch(null),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
   quantity: z
