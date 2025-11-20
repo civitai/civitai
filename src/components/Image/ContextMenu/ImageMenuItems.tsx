@@ -12,7 +12,6 @@ import {
 import Router from 'next/router';
 import React from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
@@ -197,20 +196,6 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
             Report CSAM
           </Menu.Item>
           {postId && <ToggleSearchableMenuItem entityType="Post" entityId={postId} />}
-          {!postId && (
-            <Menu.Item
-              key="view-image-detail"
-              leftSection={<IconEye size={14} stroke={1.5} />}
-              onClick={() =>
-                triggerRoutedDialog({
-                  name: 'imageDetail',
-                  state: { imageId },
-                })
-              }
-            >
-              View image detail
-            </Menu.Item>
-          )}
         </>
       )}
     </>

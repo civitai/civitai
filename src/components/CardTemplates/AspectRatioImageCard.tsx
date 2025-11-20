@@ -2,7 +2,7 @@ import { Text } from '@mantine/core';
 import clsx from 'clsx';
 import React, { type Key } from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
-import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog-registry';
+import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog/registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';

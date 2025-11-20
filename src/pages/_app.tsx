@@ -2,8 +2,7 @@
 
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
-import type { Session, SessionUser } from 'next-auth';
-import { getToken } from 'next-auth/jwt';
+import type { Session } from 'next-auth';
 import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';

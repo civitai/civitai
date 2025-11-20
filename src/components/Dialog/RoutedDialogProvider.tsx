@@ -2,8 +2,8 @@ import type { ComponentProps, ComponentType } from 'react';
 import React, { useEffect, useRef } from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
-import type { DialogKey } from './routed-dialog-registry';
-import { dialogs } from './routed-dialog-registry';
+import type { DialogKey } from './routed-dialog/registry';
+import { dialogs } from './routed-dialog/registry';
 import {
   setUsingNextRouter,
   getBrowserRouter,
@@ -75,17 +75,18 @@ export function RoutedDialogProvider() {
     const toOpen = keyNamePairs.filter((x) => !openDialogs.includes(x.name));
 
     for (const { key, name } of toOpen) {
-      if (!dialogs[name]) continue;
-      if (dialogs[name].requireAuth && !currentUser) continue;
+      const dialog = dialogs[name];
+      if (!dialog) continue;
+      if ((dialog as any).requireAuth && !currentUser) continue;
       const state = history.state.state;
-      const Dialog = createBrowserRouterSync(dialogs[name].component);
+      const Dialog = createBrowserRouterSync(dialog.component);
       dialogStore.trigger({
         id: key,
         component: Dialog,
         props: { ...browserRouter.query, ...state },
         options: { onClose: () => handleCloseRoutedDialog(name) },
         type: 'routed-dialog',
-        target: dialogs[name].target,
+        target: (dialog as any).target,
       });
     }
 

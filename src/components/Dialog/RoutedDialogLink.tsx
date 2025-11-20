@@ -1,8 +1,8 @@
 import type { ComponentProps } from 'react';
 import React, { cloneElement } from 'react';
 import Router, { useRouter } from 'next/router';
-import type { DialogKey } from './routed-dialog-registry';
-import { dialogs } from './routed-dialog-registry';
+import type { DialogKey } from './routed-dialog/registry';
+import { dialogs } from './routed-dialog/registry';
 import { getBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import type { NextRouter } from 'next/dist/shared/lib/router/router';
 import { resolveHref } from 'next/dist/client/resolve-href';
@@ -96,17 +96,17 @@ function resolveDialog<T extends DialogKey>(
   const dialog = dialogs[name];
   if (!dialog) throw new Error('invalid dialog name');
 
-  const {
-    query: resolvedQuery,
-    asPath = getAsPath(resolvedQuery, router),
-    state: _state,
-  } = dialog.resolve(
+  const result = dialog.resolve(
     {
       ...query,
       dialog: ([] as DialogKey[]).concat(query.dialog ?? []).concat(name),
     },
     state
-  ); // eslint-disable-line
+  ) as { query: Record<string, unknown>; asPath?: any; state?: any }; // eslint-disable-line
+
+  const resolvedQuery = result.query;
+  const asPath = result.asPath ?? getAsPath(resolvedQuery, router);
+  const _state = result.state;
 
   const [_url, _urlAs] = resolveHref(router, { query: resolvedQuery as any }, true);
   const [, _asPath] = asPath ? resolveHref(router, asPath, true) : [_url, _urlAs];
