@@ -416,7 +416,6 @@ if (!env.IS_BUILD) {
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
-    HISTORY_EXCLUSION: 'download:history-exclusion',
   },
   GENERATION: {
     LIMITS: 'generation:limits',

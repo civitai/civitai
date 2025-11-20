@@ -76,7 +76,7 @@ import {
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserDownloads,
+  getUserDownloadedModelVersions,
   getUserEngagedModels,
   getUserEngagedModelVersions,
   getUserList,
@@ -564,7 +564,7 @@ export const getUserEngagedModelVersionsHandler = async ({
 
   try {
     const engagements = await getUserEngagedModelVersions({ userId, modelVersionIds });
-    const downloads = await getUserDownloads({ userId, modelVersionIds });
+    const downloads = await getUserDownloadedModelVersions({ userId, modelVersionIds });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelVersionId as value
     const engagedModelVersions = engagements.reduce<Record<EngagedModelVersionType, number[]>>(

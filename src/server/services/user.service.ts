@@ -116,6 +116,7 @@ import type {
 } from './../schema/user.schema';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
+import { clickhouse } from '~/server/clickhouse/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -427,29 +428,44 @@ export async function getUserEngagedModelVersions({
   });
 }
 
-export async function getUserDownloads({
+export async function getUserDownloadedModelVersions({
   userId,
   modelVersionIds,
 }: {
   userId: number;
   modelVersionIds?: number | number[];
 }) {
-  const where: Prisma.DownloadHistoryWhereInput = {
-    userId,
-  };
-  if (modelVersionIds) {
-    const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
-    where.modelVersionId = { in: versionIds };
+  if (!clickhouse) {
+    return [];
   }
 
-  const { hideDownloadsSince } = await getUserSettings(userId);
-  if (hideDownloadsSince) where.downloadAt = { gt: new Date(hideDownloadsSince) };
+  const versionIds = modelVersionIds
+    ? Array.isArray(modelVersionIds)
+      ? modelVersionIds
+      : [modelVersionIds]
+    : null;
 
-  return dbRead.downloadHistory.findMany({
-    where,
-    select: { modelVersionId: true },
-    distinct: ['modelVersionId'],
-  });
+  const { hideDownloadsSince } = await getUserSettings(userId);
+
+  // Build WHERE conditions
+  const conditions: string[] = [`userId = ${userId}`];
+  if (versionIds && versionIds.length > 0) {
+    conditions.push(`modelVersionId IN (${versionIds.join(', ')})`);
+  }
+  if (hideDownloadsSince) {
+    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  const results = await clickhouse.$query<{ modelVersionId: number }>`
+    SELECT DISTINCT modelVersionId
+    FROM userModelDownloads
+    WHERE ${whereClause}
+  `;
+
+  return results;
 }
 
 export const getUserEngagedModelByModelId = ({
