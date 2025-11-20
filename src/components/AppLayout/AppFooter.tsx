@@ -3,7 +3,7 @@ import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';

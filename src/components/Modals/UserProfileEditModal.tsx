@@ -21,12 +21,10 @@ import {
   Form,
   InputInlineSocialLinkInput,
   InputProfileImageUpload,
-  InputShowcaseItemsInput,
   InputSimpleImageUpload,
   InputText,
   InputTextArea,
   useForm,
-  InputProfileSectionsSettingsInput,
   InputSelect,
   InputCosmeticSelect,
   InputChipGroup,
@@ -65,6 +63,8 @@ import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { isDefined } from '~/utils/type-guards';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { InputProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
+import { InputShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema
@@ -147,6 +147,18 @@ export default function UserProfileEditModal() {
       user
         ? user.cosmetics
             .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
+            .filter((item, index, self) => {
+              const data = (item.cosmetic.data ?? {}) as BadgeCosmetic['data'];
+              const url = (data.url ?? '') as string;
+              // Keep only the first occurrence of each unique URL
+              return (
+                url &&
+                self.findIndex((b) => {
+                  const bData = (b.cosmetic.data ?? {}) as BadgeCosmetic['data'];
+                  return (bData.url ?? '') === url;
+                }) === index
+              );
+            })
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
               ...cosmetic,

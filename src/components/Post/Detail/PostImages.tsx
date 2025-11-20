@@ -3,7 +3,7 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { Fragment, useRef, useState } from 'react';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';

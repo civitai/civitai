@@ -18,12 +18,7 @@ export default function UpdateRequiredModal() {
         </Button>
         <Group gap={4}>
           <Text>😬</Text>
-          <Text
-            c="yellow"
-            size="xs"
-            onClick={() => dialog.onClose()}
-            style={{ cursor: 'pointer' }}
-          >
+          <Text c="yellow" size="xs" onClick={() => dialog.onClose()} style={{ cursor: 'pointer' }}>
             {`No. I'll continue at my own peril`}
           </Text>
           <Text>😱</Text>

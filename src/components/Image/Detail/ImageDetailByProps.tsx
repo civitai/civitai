@@ -30,7 +30,7 @@ import { getQueryKey } from '@trpc/react-query';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';

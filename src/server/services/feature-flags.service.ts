@@ -133,7 +133,6 @@ const featureFlags = createFeatureFlags({
   coinbaseOnramp: ['mod'],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
-  zkp2pPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
   logicalReplica: ['public'],

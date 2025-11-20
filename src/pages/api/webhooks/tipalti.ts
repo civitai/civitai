@@ -195,9 +195,10 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
       const status =
         event.type === 'paymentCompleted'
           ? BuzzWithdrawalRequestStatus.Transferred
-          : event.type === 'paymentDeferred' || event.type === 'paymentSubmitted'
+          : event.type === 'paymentSubmitted'
           ? BuzzWithdrawalRequestStatus.Approved
-          : BuzzWithdrawalRequestStatus.Rejected;
+          : //  paymentDeferred, paymentCanceled, both go to Rejected
+            BuzzWithdrawalRequestStatus.Rejected;
 
       const metadata = {
         ...((request.metadata as MixedObject) ?? {}),

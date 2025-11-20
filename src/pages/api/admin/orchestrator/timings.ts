@@ -5,7 +5,7 @@ import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {

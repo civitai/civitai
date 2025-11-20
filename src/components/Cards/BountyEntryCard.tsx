@@ -1,5 +1,6 @@
 import { Group, Stack, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import React from 'react';
+import dynamic from 'next/dynamic';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -17,9 +18,14 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { openBountyEntryFilesModal } from '~/components/Dialog/dialog-registry';
 import clsx from 'clsx';
 import awardedStyles from './BountyEntryCard.module.scss';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'), {
+  ssr: false,
+});
+const openBountyEntryFilesModal = createDialogTrigger(BountyEntryFilesModal);
 
 const IMAGE_CARD_WIDTH = 450;
 

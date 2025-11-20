@@ -17,13 +17,9 @@ import { TagsInput } from '~/components/Tags/TagsInput';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
 import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManagementInput';
-import { SectionItemsInput } from '~/components/CosmeticShop/SectionItemsInput';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInput';
-import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
-import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
-import { CollectionSelectInput } from '~/libs/form/components/CollectionSelectInput';
 import { CosmeticSelect } from '~/libs/form/components/CosmeticSelect';
 import { FlagInput } from '~/libs/form/components/FlagInput';
 import { MultiFileInputUpload } from '~/libs/form/components/MultiFileInputUpload';
@@ -77,9 +73,7 @@ export const InputTags = withController(TagsInput);
 export const InputTime = withController(TimeInput);
 export const InputNumberSlider = withController(NumberSlider);
 export const InputInlineSocialLinkInput = withController(InlineSocialLinkInput);
-export const InputShowcaseItemsInput = withController(ShowcaseItemsInput);
 export const InputClubResourceManagementInput = withController(ClubResourceManagementInput);
-export const InputProfileSectionsSettingsInput = withController(ProfileSectionsSettingsInput);
 export const InputDateTimePicker = withController(DateTimePicker);
 
 export const InputSwitch = withController(Switch, ({ field }) => ({
@@ -91,8 +85,6 @@ export const InputCheckbox = withController(Checkbox, ({ field }) => ({
   checked: field.value ?? false,
 }));
 export const InputFlag = withController(FlagInput);
-export const InputSectionItems = withController(SectionItemsInput);
 export const InputCosmeticSelect = withController(CosmeticSelect);
-export const InputCollectionSelect = withController(CollectionSelectInput);
 export const InputCustomRadioGroup = withController(CustomRadioGroup);
 export const InputBrowsingLevels = withController(BrowsingLevelsInput);

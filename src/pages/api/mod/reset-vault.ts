@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { numericString } from '~/utils/zod-helpers';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 
 const schema = z.object({
   userId: numericString(),

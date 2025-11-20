@@ -35,7 +35,7 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import merchProducts from '~/utils/shop/civitai-merch-products.json';
 import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
 import clsx from 'clsx';
-import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 
 const merchSections = {

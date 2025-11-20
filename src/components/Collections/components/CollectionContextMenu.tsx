@@ -5,7 +5,7 @@ import { IconEdit, IconHome, IconPencil, IconTrash } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -15,7 +15,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { CollectionFollowAction } from './CollectionFollow';
 
 export function CollectionContextMenu({

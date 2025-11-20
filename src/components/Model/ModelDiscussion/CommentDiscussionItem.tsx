@@ -4,7 +4,7 @@ import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/ico
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

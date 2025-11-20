@@ -11,7 +11,7 @@ import classes from './SimpleImageUpload.module.scss';
 
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import type { DataFromFile } from '~/hooks/useCFImageUpload';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';

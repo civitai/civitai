@@ -3,7 +3,7 @@ import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons-r
 import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 import { useCommentV2Context } from '~/components/CommentsV2/Comment/CommentProvider';
 import { DeleteComment } from '~/components/CommentsV2/Comment/DeleteComment';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReportEntity } from '~/server/schema/report.schema';

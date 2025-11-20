@@ -3,7 +3,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useQueryImages } from '~/components/Image/image.utils';

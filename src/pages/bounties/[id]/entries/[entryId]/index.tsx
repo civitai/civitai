@@ -78,7 +78,7 @@ import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCaro
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { Notifications } from '@mantine/notifications';
 
 const querySchema = z.object({

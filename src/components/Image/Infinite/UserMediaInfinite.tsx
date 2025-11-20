@@ -40,6 +40,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       tools = [],
       techniques = [],
       requiringMeta = false,
+      notPublished = undefined,
       ...query
     },
   } = useImageQueryParams();
@@ -151,6 +152,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                   userId: viewingReactions ? undefined : user.id,
                   username: viewingReactions ? undefined : username,
+                  notPublished,
                   followed,
                   baseModels,
                   tools,

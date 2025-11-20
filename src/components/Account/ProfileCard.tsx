@@ -21,7 +21,7 @@ import { Form, InputText, useForm } from '~/libs/form';
 import { usernameInputSchema } from '~/server/schema/user.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 
 const schema = z.object({
   id: z.number(),

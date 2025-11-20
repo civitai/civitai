@@ -62,7 +62,7 @@ export const EmailLogin = ({
         onStatusChange('idle');
         return;
       } else if (result?.error) {
-        console.log(result?.error)
+        console.log(result?.error);
         router.replace({ query: { error: 'TooManyRequests' } }, undefined, { shallow: true });
         onStatusChange('idle');
         return;

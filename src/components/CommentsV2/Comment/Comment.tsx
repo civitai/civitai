@@ -33,7 +33,7 @@ import {
   useRootThreadContext,
 } from '~/components/CommentsV2/CommentsProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

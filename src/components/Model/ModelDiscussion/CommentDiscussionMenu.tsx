@@ -13,9 +13,9 @@ import {
   IconBan,
 } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

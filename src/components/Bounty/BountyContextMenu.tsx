@@ -10,7 +10,7 @@ import { useMutateBounty } from './bounty.utils';
 import { ReportMenuItem } from '../MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 
 export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) {

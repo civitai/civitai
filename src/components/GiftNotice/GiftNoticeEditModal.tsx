@@ -1,14 +1,7 @@
 import { Button, Modal } from '@mantine/core';
 import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import {
-  Form,
-  InputDatePicker,
-  InputNumber,
-  InputText,
-  InputTextArea,
-  useForm,
-} from '~/libs/form';
+import { Form, InputDatePicker, InputNumber, InputText, InputTextArea, useForm } from '~/libs/form';
 import type { UpsertGiftNoticeInput } from '~/server/schema/redeemableCode.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -19,9 +12,12 @@ const schema = z.object({
   linkUrl: z
     .string()
     .min(1)
-    .refine((val) => val.startsWith('/') || val.startsWith('http://') || val.startsWith('https://'), {
-      message: 'Must be a valid URL or relative path starting with /',
-    }),
+    .refine(
+      (val) => val.startsWith('/') || val.startsWith('http://') || val.startsWith('https://'),
+      {
+        message: 'Must be a valid URL or relative path starting with /',
+      }
+    ),
   linkText: z.string().min(1, 'Link text is required'),
   minValue: z.number().min(0, 'Must be 0 or greater'),
   maxValue: z.number().min(0, 'Must be 0 or greater').nullable(),

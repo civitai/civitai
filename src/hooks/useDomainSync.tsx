@@ -41,7 +41,7 @@ export function useDomainSync(currentUser: SessionUser | undefined, status: stri
         message: `Switching to ${username} account`,
       });
       setTimeout(() => {
-        swapAccount(token).catch(() => {});
+        swapAccount(token).catch(() => undefined);
       }, 1000);
     });
   }, [status]);

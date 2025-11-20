@@ -12,14 +12,17 @@ import {
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
-import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 // import { constants } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+
+const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'), { ssr: false });
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   const { isRestricted } = useIsRegionRestricted();
@@ -122,7 +125,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                   onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    openHiddenTagsModal();
+                    dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });
                   }}
                   span
                 >

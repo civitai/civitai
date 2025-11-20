@@ -31,7 +31,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { MediaHash } from '~/components/ImageHash/ImageHash';

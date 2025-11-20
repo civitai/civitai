@@ -2,8 +2,15 @@ import type { ActionIconProps } from '@mantine/core';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { IconProps } from '@tabler/icons-react';
 import { IconSettings } from '@tabler/icons-react';
-import { openManageHomeBlocksModal } from '~/components/Dialog/dialog-registry';
+import dynamic from 'next/dynamic';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const ManageHomeBlocksModal = dynamic(
+  () => import('~/components/HomeBlocks/ManageHomeBlocksModal'),
+  { ssr: false }
+);
+const openManageHomeBlocksModal = createDialogTrigger(ManageHomeBlocksModal);
 
 export function ManageHomepageButton({
   iconProps,

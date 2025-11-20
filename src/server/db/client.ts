@@ -14,7 +14,7 @@ declare global {
 
 const logFor = (target: 'write' | 'read') =>
   async function logQuery(e: { query: string; params: string; duration: number }) {
-    // if (e.duration < 2000) return;
+    if (e.duration < 2000) return;
     let query = e.query;
     const params = JSON.parse(e.params);
     // Replace $X variables with params in query so it's possible to copy/paste and optimize

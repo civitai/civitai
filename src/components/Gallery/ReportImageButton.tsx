@@ -1,6 +1,6 @@
 import type React from 'react';
 import { cloneElement } from 'react';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 export const ReportImageButton = ({

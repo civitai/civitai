@@ -14,14 +14,14 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { useRouter } from 'next/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openUnpublishModal } from '~/components/Dialog/dialog-registry';
+import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 
 export function ModelVersionMenu({
   modelVersionId,

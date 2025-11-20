@@ -10,7 +10,7 @@ import { ImageSort } from '~/server/common/enums';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { baseModels } from '~/shared/constants/base-model.constants';

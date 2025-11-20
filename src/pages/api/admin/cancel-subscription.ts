@@ -5,7 +5,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import type { SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 
 const cancelSubscriptionSchema = z.object({
