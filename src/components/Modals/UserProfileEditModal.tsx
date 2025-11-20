@@ -147,6 +147,18 @@ export default function UserProfileEditModal() {
       user
         ? user.cosmetics
             .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
+            .filter((item, index, self) => {
+              const data = (item.cosmetic.data ?? {}) as BadgeCosmetic['data'];
+              const url = (data.url ?? '') as string;
+              // Keep only the first occurrence of each unique URL
+              return (
+                url &&
+                self.findIndex((b) => {
+                  const bData = (b.cosmetic.data ?? {}) as BadgeCosmetic['data'];
+                  return (bData.url ?? '') === url;
+                }) === index
+              );
+            })
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
               ...cosmetic,
