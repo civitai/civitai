@@ -29,8 +29,8 @@ import { refreshSession } from '~/server/auth/session-invalidation';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import { generateToken } from '~/utils/string-helpers';
-import { isFlipt } from '~/server/flipt/client';
 import { civTokenDecrypt } from './civ-token';
+import { isDefined } from '~/utils/type-guards';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -44,6 +44,7 @@ const setUserName = async (id: number, setTo: string) => {
         username: true,
       },
     });
+    userUpdateCounter?.inc({ location: 'nextauth:setUserName' });
     return username ? username : undefined;
   } catch (e) {
     return undefined;
@@ -141,19 +142,18 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
     events: {
       createUser: async ({ user }) => {
         if (user.username) return; // Somehow this was being run for existing users, so we need to check for username...
-        const startingUsername = user.email?.trim() || user.name?.trim() || generateToken(5) + '_';
+        const potentialUsernames = [user.email?.trim(), user.name?.trim(), generateToken(5) + '_']
+          .filter(isDefined)
+          .map((x) => x.split('@')[0].replace(/[^A-Za-z0-9_]/g, ''));
 
-        if (startingUsername) {
+        for (const startingUsername of potentialUsernames) {
+          let attempts = 2;
           let username: string | undefined = undefined;
-          let attempts = 0;
-          while (!username) {
+          while (!username && attempts > 0) {
             username = await setUserName(Number(user.id), startingUsername);
-            const canBreak = await isFlipt('nextauth-username-retry-limit');
-            if (canBreak && !username) {
-              attempts++;
-              if (attempts >= 5) break;
-            }
+            attempts--;
           }
+          if (username) break;
         }
       },
     },
