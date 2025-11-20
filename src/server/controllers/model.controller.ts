@@ -59,7 +59,6 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { addUserDownload } from '~/server/services/download.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -864,7 +863,6 @@ export const getDownloadCommandHandler = async ({
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
-    await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
 
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.

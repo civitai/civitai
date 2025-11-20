@@ -2,7 +2,7 @@ import { Client } from '@axiomhq/axiom-node';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 
-const shouldConnect = env.AXIOM_TOKEN && env.AXIOM_ORG_ID;
+const shouldConnect = !env.IS_BUILD && env.AXIOM_TOKEN && env.AXIOM_ORG_ID;
 const axiom = shouldConnect
   ? new Client({
       token: env.AXIOM_TOKEN,

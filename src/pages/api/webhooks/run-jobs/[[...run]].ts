@@ -2,7 +2,6 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
-import { archiveDownloadHistory } from '~/server/jobs/archive-download-history';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
@@ -84,7 +83,6 @@ export const jobs: Job[] = [
   sendNotificationsJob,
   sendWebhooksJob,
   addOnDemandRunStrategiesJob,
-  archiveDownloadHistory,
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   resetImageViewCounts,

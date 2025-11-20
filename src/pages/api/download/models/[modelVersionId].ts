@@ -6,7 +6,6 @@ import { constants } from '~/server/common/constants';
 import { colorDomains, getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { dbRead } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
-import { addUserDownload } from '~/server/services/download.service';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -162,9 +161,6 @@ export default PublicEndpoint(
         earlyAccess: fileResult.inEarlyAccess,
         time: now,
       });
-
-      const userId = session?.user?.id;
-      await addUserDownload({ userId, modelVersionId, downloadAt: now });
 
       // Increment download count for user
       await downloadLimiter.increment(userKey);

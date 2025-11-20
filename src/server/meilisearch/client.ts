@@ -7,7 +7,7 @@ import type { JobContext } from '~/server/jobs/job';
 
 const log = createLogger('search', 'green');
 
-const shouldConnectToSearch = !!env.SEARCH_HOST && !!env.SEARCH_API_KEY;
+const shouldConnectToSearch = !env.IS_BUILD && !!env.SEARCH_HOST && !!env.SEARCH_API_KEY;
 export const searchClient = shouldConnectToSearch
   ? new MeiliSearch({
       host: env.SEARCH_HOST as string,
@@ -15,7 +15,8 @@ export const searchClient = shouldConnectToSearch
     })
   : null;
 
-const shouldConnectToMetricsSearch = !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
+const shouldConnectToMetricsSearch =
+  !env.IS_BUILD && !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
 export const metricsSearchClient = shouldConnectToMetricsSearch
   ? new MeiliSearch({
       host: env.METRICS_SEARCH_HOST as string,

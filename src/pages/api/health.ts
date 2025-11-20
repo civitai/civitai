@@ -151,6 +151,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   >;
   return res.status(healthy ? 200 : 500).json({
     podname,
+    version: process.env.version,
     healthy,
     ...results,
   });
