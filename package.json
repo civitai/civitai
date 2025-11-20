@@ -21,7 +21,7 @@
     "build:analyze": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" ANALYZE=true next build",
     "postbuild": "next-sitemap",
     "deploy": "npm run build && npm run db:deploy",
-    "postinstall": "prisma generate --no-hints",
+    "postinstall": "npm run db:generate",
     "typecheck": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc --noEmit",
     "lint": "next lint",
     "prettier:check": "prettier --check \"**/*.{ts,tsx}\"",
