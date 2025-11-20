@@ -22,10 +22,9 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 
-const AssociateModelsModal = dynamic(
-  () => import('~/components/Modals/AssociateModelsModal'),
-  { ssr: false }
-);
+const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'), {
+  ssr: false,
+});
 const openAssociateModelsModal = createDialogTrigger(AssociateModelsModal);
 
 export function AssociatedModels({

@@ -33,10 +33,9 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 
-const ArticleUnpublishModal = dynamic(
-  () => import('~/components/Modals/ArticleUnpublishModal'),
-  { ssr: false }
-);
+const ArticleUnpublishModal = dynamic(() => import('~/components/Modals/ArticleUnpublishModal'), {
+  ssr: false,
+});
 const openArticleUnpublishModal = createDialogTrigger(ArticleUnpublishModal);
 
 export function ArticleContextMenu({ article, ...props }: Props) {

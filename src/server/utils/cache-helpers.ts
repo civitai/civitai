@@ -1,11 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
-import {
-  cacheHitCounter,
-  cacheMissCounter,
-  cacheRevalidateCounter,
-} from '~/server/prom/client';
+import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sleep } from '~/server/utils/concurrency-helpers';

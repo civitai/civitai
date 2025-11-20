@@ -61,7 +61,10 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
+import type {
+  ImageSelectModalProps,
+  SelectedImage,
+} from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   blankTagStr,
@@ -129,14 +132,11 @@ const AutoLabelModal = dynamic(
   { ssr: false }
 );
 
-const ImageSelectModal = dynamic(
-  () => import('~/components/Training/Form/ImageSelectModal'),
-  {
-    ssr: false,
-  }
-);
+const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
+  ssr: false,
+});
 
-function openImageSelectModal(props: import('~/components/Training/Form/ImageSelectModal').ImageSelectModalProps) {
+function openImageSelectModal(props: ImageSelectModalProps) {
   dialogStore.trigger({ component: ImageSelectModal, props });
 }
 

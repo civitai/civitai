@@ -1044,7 +1044,10 @@ export default function ModelDetailsV2({
                             <Menu.Label>Advanced</Menu.Label>
                             <Menu.Item
                               onClick={() =>
-                                dialogStore.trigger({ component: MigrateModelToCollection, props: { modelId: model.id } })
+                                dialogStore.trigger({
+                                  component: MigrateModelToCollection,
+                                  props: { modelId: model.id },
+                                })
                               }
                             >
                               Migrate to Collection

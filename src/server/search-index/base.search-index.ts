@@ -247,7 +247,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             )
           : {
               content: [],
-              commit: async () => {}, // noop
+              commit: async () => undefined, // noop
             };
       const queuedDeletes =
         !queues || queues.includes('delete')
@@ -258,7 +258,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             )
           : {
               content: [],
-              commit: async () => {}, // noop
+              commit: async () => undefined, // noop
             };
 
       const newItemsTasks = Math.ceil((endId - startId) / batchSize);
