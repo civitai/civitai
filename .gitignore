@@ -13,7 +13,8 @@
 /prisma/db.sqlite-journal
 
 # Generated slim schema - edit schema.full.prisma instead
-prisma/schema.prisma
+# Remove temporarily.
+# prisma/schema.prisma 
 
 # next.js
 /.next/

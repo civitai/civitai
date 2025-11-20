@@ -34,7 +34,7 @@
     "db:applied": "node scripts/prisma-mark-migration-applied.mjs",
     "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p && npm run db:program",
     "db:program": "node scripts/prisma-prepare-programmability.mjs",
-    "db:generate": "node scripts/generate-slim-schema.js && prisma generate --no-hints",
+    "db:generate": "prisma generate --no-hints",
     "db:seed": "prisma db seed",
     "share": "ngrok http 3000",
     "prepare": "husky",
