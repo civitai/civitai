@@ -62,6 +62,7 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+
 model SessionInvalidation {
   userId        Int
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -209,6 +210,7 @@ model CashWithdrawal {
   @@index([userId])
 }
 
+
 model CryptoWallet {
   userId       Int     @id
   user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -226,6 +228,7 @@ enum CryptoTransactionStatus {
   SweepFailed // Sweep tx failed
   Complete // Sweep tx completed, Buzz paid
 }
+
 
 model CryptoTransaction {
   key         String                  @id @default(cuid())
@@ -475,6 +478,7 @@ model UserEngagement {
   @@index([type, userId])
 }
 
+
 model UserMetric {
   user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId            Int
@@ -626,6 +630,7 @@ enum ModelModifier {
   TakenDown
 }
 
+
 enum ContentType {
   Image
   Character
@@ -723,12 +728,14 @@ model ModelFlag {
   @@index([status])
 }
 
+
 model License {
   id     Int     @id @default(autoincrement())
   name   String
   url    String
   models Model[]
 }
+
 
 model ModelInterest {
   userId    Int
@@ -764,6 +771,7 @@ enum ModelVersionSponsorshipSettingsType {
   Bidding
 }
 
+
 model ModelVersionSponsorshipSettings {
   id                         Int                                 @id @default(autoincrement())
   modelVersionMonetizationId Int                                 @unique
@@ -781,6 +789,7 @@ enum ModelVersionMonetizationType {
   MySubscribersOnly
   Sponsored
 }
+
 
 model ModelVersionMonetization {
   id                  Int                              @id @default(autoincrement())
@@ -1002,6 +1011,7 @@ model ModelVersionMetric {
   @@id([modelVersionId, timeframe])
 }
 
+
 model ModelMetricDaily {
   modelId        Int
   model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
@@ -1037,6 +1047,7 @@ model ModelAssociations {
   @@index([toArticleId], type: Hash)
 }
 
+
 model DownloadHistory {
   userId         Int
   modelVersionId Int
@@ -1048,6 +1059,7 @@ model DownloadHistory {
   @@id([userId, modelVersionId])
   @@index([userId, downloadAt])
 }
+
 
 model ModActivity {
   id         Int      @id @default(autoincrement())
@@ -1107,6 +1119,7 @@ model Report {
   automated      ReportAutomated?
 }
 
+
 model ResourceReviewReport {
   resourceReviewId Int
   resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id], onDelete: Cascade)
@@ -1116,6 +1129,7 @@ model ResourceReviewReport {
   @@id([reportId, resourceReviewId])
   @@index([resourceReviewId], type: Hash)
 }
+
 
 model ModelReport {
   modelId  Int
@@ -1127,6 +1141,7 @@ model ModelReport {
   @@index([modelId], type: Hash)
 }
 
+
 model CommentReport {
   commentId Int
   comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
@@ -1136,6 +1151,7 @@ model CommentReport {
   @@id([reportId, commentId])
   @@index([commentId], type: Hash)
 }
+
 
 model CommentV2Report {
   commentV2Id Int
@@ -1147,6 +1163,7 @@ model CommentV2Report {
   @@index([commentV2Id], type: Hash)
 }
 
+
 model ImageReport {
   imageId  Int
   image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -1156,6 +1173,7 @@ model ImageReport {
   @@id([reportId, imageId])
   @@index([imageId], type: Hash)
 }
+
 
 model ArticleReport {
   articleId Int
@@ -1167,6 +1185,7 @@ model ArticleReport {
   @@index([articleId], type: Hash)
 }
 
+
 model PostReport {
   postId   Int
   post     Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -1176,6 +1195,7 @@ model PostReport {
   @@id([reportId, postId])
   @@index([postId], type: Hash)
 }
+
 
 model UserReport {
   userId   Int
@@ -1187,6 +1207,7 @@ model UserReport {
   @@index([userId], type: Hash)
 }
 
+
 model CollectionReport {
   collectionId Int
   collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
@@ -1196,6 +1217,7 @@ model CollectionReport {
   @@id([reportId, collectionId])
   @@index([collectionId], type: Hash)
 }
+
 
 model BountyReport {
   bountyId Int
@@ -1207,6 +1229,7 @@ model BountyReport {
   @@index([bountyId], type: Hash)
 }
 
+
 model BountyEntryReport {
   bountyEntryId Int
   bountyEntry   BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
@@ -1216,6 +1239,7 @@ model BountyEntryReport {
   @@id([reportId, bountyEntryId])
   @@index([bountyEntryId], type: Hash)
 }
+
 
 model ChatReport {
   chatId   Int
@@ -1313,6 +1337,7 @@ model Post {
   @@index([publishedAt])
 }
 
+
 model PostMetric {
   postId         Int
   post           Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -1353,6 +1378,7 @@ enum ImageIngestionStatus {
   Blocked
   NotFound
   PendingManualAssignment
+  Rescan
 }
 
 enum MediaType {
@@ -1439,6 +1465,7 @@ model Image {
   @@index([sortAt])
 }
 
+
 model ImageTagForReview {
   imageId Int
   image   Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -1447,6 +1474,7 @@ model ImageTagForReview {
   @@id([imageId, tagId])
   @@index([tagId])
 }
+
 
 model ImageFlag {
   imageId       Int     @id
@@ -1460,6 +1488,7 @@ enum BlockImageReason {
   CSAM
   TOS
 }
+
 
 model BlockedImage {
   hash      BigInt           @id
@@ -1494,6 +1523,7 @@ model ImageEngagement {
   @@index([imageId])
 }
 
+
 model ImageResource {
   id             Int           @id @default(autoincrement())
   modelVersionId Int?
@@ -1522,6 +1552,7 @@ model ImageResourceNew {
   @@index([modelVersionId])
 }
 
+
 model ResourceOverride {
   hash           String
   modelVersionId Int
@@ -1530,6 +1561,7 @@ model ResourceOverride {
 
   @@id([hash])
 }
+
 
 model ImageMetric {
   image             Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -1564,6 +1596,7 @@ model ImageRatingRequest {
   @@id([imageId, userId])
 }
 
+
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
@@ -1575,6 +1608,7 @@ model CollectionMetric {
 
   @@id([collectionId, timeframe])
 }
+
 
 enum ImageOnModelType {
   Example
@@ -1682,6 +1716,7 @@ model TagsOnModelsVote {
   @@index([userId], type: Hash)
 }
 
+
 model TagsOnQuestions {
   question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   questionId Int
@@ -1705,6 +1740,7 @@ enum TagSource {
   SpineRating
 }
 
+
 model TagsOnImageNew {
   imageId    Int
   image      Image @relation(fields: [imageId], references: [id])
@@ -1714,6 +1750,7 @@ model TagsOnImageNew {
   @@id([imageId, tagId])
   @@index([tagId])
 }
+
 
 model ShadowTagsOnImage {
   imageId    Int
@@ -1754,6 +1791,7 @@ model TagsOnPost {
   @@index([postId], type: Hash)
 }
 
+
 model TagsOnArticle {
   articleId Int
   article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
@@ -1765,6 +1803,7 @@ model TagsOnArticle {
   @@index([articleId], type: Hash)
 }
 
+
 model TagsOnBounty {
   bountyId  Int
   bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
@@ -1775,6 +1814,7 @@ model TagsOnBounty {
   @@id([tagId, bountyId])
   @@index([bountyId], type: Hash)
 }
+
 
 model TagsOnPostVote {
   postId    Int
@@ -1791,6 +1831,7 @@ model TagsOnPostVote {
   @@index([userId], type: Hash)
 }
 
+
 model TagMetric {
   tag           Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagId         Int
@@ -1805,6 +1846,7 @@ model TagMetric {
 
   @@id([tagId, timeframe])
 }
+
 
 model SavedModel {
   model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
@@ -1975,6 +2017,7 @@ model Question {
   thread    Thread?
 }
 
+
 model QuestionMetric {
   questionId   Int
   question     Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
@@ -2014,6 +2057,7 @@ model AnswerVote {
 
   @@id([answerId, userId])
 }
+
 
 model AnswerMetric {
   answerId     Int
@@ -2322,6 +2366,7 @@ model CosmeticShopSectionItem {
   @@id([shopItemId, shopSectionId])
 }
 
+
 model UserCosmeticShopPurchases {
   userId            Int
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2424,6 +2469,7 @@ model ArticleEngagement {
   @@index([articleId], type: Hash)
 }
 
+
 model ArticleMetric {
   article           Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
   articleId         Int
@@ -2484,6 +2530,7 @@ model ModelVersionExploration {
   @@id([modelVersionId, name])
 }
 
+
 enum GenerationSchedulers {
   EulerA
   Euler
@@ -2504,6 +2551,7 @@ enum GenerationSchedulers {
   DPMSDEKarras
   DDIM
 }
+
 
 model GenerationServiceProvider {
   name       String
@@ -2828,6 +2876,7 @@ model BountyEngagement {
   @@index([userId], type: Hash)
 }
 
+
 model TipConnection {
   transactionId String // guid
   entityId      Int
@@ -2835,6 +2884,7 @@ model TipConnection {
 
   @@id([entityType, entityId, transactionId])
 }
+
 
 model BountyMetric {
   bounty          Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
@@ -2850,6 +2900,7 @@ model BountyMetric {
 
   @@id([bountyId, timeframe])
 }
+
 
 model BountyEntryMetric {
   bountyEntry       BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
@@ -2888,6 +2939,7 @@ model CsamReport {
   type             CsamReportType @default(Image)
   // modelVersionIds  Int[]     @default([])
 }
+
 
 model Link {
   id         Int      @id @default(autoincrement())
@@ -2939,10 +2991,12 @@ model EntityCollaborator {
   @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
+
 model EcosystemCheckpoints {
   id   Int    @id
   name String
 }
+
 
 model GenerationBaseModel {
   baseModel String @id
@@ -3098,6 +3152,7 @@ model ClubPostReaction {
   @@unique([clubPostId, userId, reaction])
 }
 
+
 model ClubPostMetric {
   clubPost     ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
   clubPostId   Int
@@ -3110,6 +3165,7 @@ model ClubPostMetric {
 
   @@id([clubPostId, timeframe])
 }
+
 
 model ClubMetric {
   club          Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
@@ -3675,11 +3731,13 @@ model ReportAutomated {
   createdAt DateTime @default(now())
 }
 
+
 model RestrictedBaseModels {
   baseModel String @id
 }
 
 /// @view
+
 model QuestionRank {
   questionId              Int      @id
   question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
@@ -3716,6 +3774,7 @@ model QuestionRank {
 }
 
 /// @view
+
 model AnswerRank {
   answerId                Int    @id
   answer                  Answer @relation(fields: [answerId], references: [id], onDelete: NoAction)
@@ -3762,6 +3821,7 @@ model AnswerRank {
 }
 
 /// @view
+
 model ModelReportStat {
   model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
   modelId                  Int   @id
@@ -3784,6 +3844,7 @@ model ModelReportStat {
 }
 
 /// @view
+
 model ArticleStat {
   articleId                Int     @id
   article                  Article @relation(fields: [articleId], references: [id], onDelete: NoAction)
@@ -3855,6 +3916,7 @@ model ArticleStat {
 }
 
 /// @view
+
 model ArticleRank {
   articleId                    Int     @id
   article                      Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
@@ -4007,6 +4069,7 @@ model UserStat {
 }
 
 /// @view
+
 model UserRank {
   user                         User    @relation(fields: [userId], references: [id], onDelete: NoAction)
   userId                       Int     @id
@@ -4062,6 +4125,7 @@ model UserRank {
 }
 
 /// @view
+
 model TagStat {
   tag                  Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
   tagId                Int @id
@@ -4093,6 +4157,7 @@ model TagStat {
 }
 
 /// @view
+
 model TagRank {
   tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
   tagId                    Int @id
@@ -4129,6 +4194,7 @@ model TagRank {
 }
 
 /// @view
+
 model ImageStat {
   imageId                  Int   @id
   image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
@@ -4190,6 +4256,7 @@ model ImageStat {
 }
 
 /// @view
+
 model ImageModHelper {
   imageId         Int      @id
   image           Image    @relation(fields: [imageId], references: [id], onDelete: NoAction)
@@ -4198,6 +4265,7 @@ model ImageModHelper {
 }
 
 /// @view
+
 model ModelHash {
   modelId        Int           @id
   model          Model         @relation(fields: [modelId], references: [id])
@@ -4209,6 +4277,7 @@ model ModelHash {
 }
 
 /// @view
+
 model PostHelper {
   postId  Int     @id
   post    Post    @relation(fields: [postId], references: [id], onDelete: NoAction)
@@ -4216,6 +4285,7 @@ model PostHelper {
 }
 
 /// @view
+
 model PostStat {
   postId               Int  @id
   post                 Post @relation(fields: [postId], references: [id], onDelete: NoAction)
@@ -4257,6 +4327,7 @@ model PostStat {
 }
 
 /// @view
+
 model CollectionStat {
   collection              Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
   collectionId            Int        @id
@@ -4278,6 +4349,7 @@ model CollectionStat {
 }
 
 /// @view
+
 model CollectionRank {
   collectionId                Int        @id
   collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
@@ -4299,6 +4371,7 @@ model CollectionRank {
 }
 
 /// @view
+
 model ImageTag {
   imageId      Int
   image        Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -4389,6 +4462,7 @@ model PostResourceHelper {
 }
 
 /// @view
+
 model PostImageTag {
   postId Int
   post   Post @relation(fields: [postId], references: [id], onDelete: NoAction)
@@ -4398,6 +4472,7 @@ model PostImageTag {
 }
 
 /// @view
+
 model PostTag {
   postId    Int
   post      Post    @relation(fields: [postId], references: [id])
@@ -4413,6 +4488,7 @@ model PostTag {
 }
 
 /// @view
+
 model ResourceReviewHelper {
   resourceReviewId Int            @id
   resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id])
@@ -4448,6 +4524,7 @@ model UserProfile {
 }
 
 /// @view
+
 model BountyStat {
   bountyId               Int    @id
   Bounty                 Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
@@ -4484,6 +4561,7 @@ model BountyStat {
 }
 
 /// @view
+
 model BountyRank {
   bountyId                   Int    @id
   Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
@@ -4520,6 +4598,7 @@ model BountyRank {
 }
 
 /// @view
+
 model BountyEntryStat {
   bountyEntryId            Int         @id
   BountyEntry              BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
@@ -4571,6 +4650,7 @@ model BountyEntryStat {
 }
 
 /// @view
+
 model BountyEntryRank {
   bountyEntryId                Int         @id
   BountyEntry                  BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
@@ -4622,6 +4702,7 @@ model BountyEntryRank {
 }
 
 /// @view
+
 model ClubStat {
   clubId               Int  @id
   Club                 Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
@@ -4643,6 +4724,7 @@ model ClubStat {
 }
 
 /// @view
+
 model ClubRank {
   clubId                   Int  @id
   Club                     Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
@@ -4663,6 +4745,7 @@ model ClubRank {
   clubPostCountAllTimeRank Int  @default(0)
 }
 
+
 enum EntityMetric_EntityType_Type {
   Image
 }
@@ -4677,6 +4760,7 @@ enum EntityMetric_MetricType_Type {
   Buzz
 }
 
+
 model EntityMetric {
   entityType  EntityMetric_EntityType_Type
   entityId    Int
@@ -4687,6 +4771,7 @@ model EntityMetric {
 }
 
 /// @view
+
 model EntityMetricImage {
   imageId       Int  @id
   reactionLike  Int?

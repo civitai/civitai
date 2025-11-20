@@ -396,26 +396,26 @@ function getSysClient() {
 }
 
 export let redis: CustomRedisClientCache;
-if (isProd) {
-  redis = getCacheClient();
-} else {
-  if (!global.globalRedis) global.globalRedis = getCacheClient();
-  redis = global.globalRedis;
-}
-
 export let sysRedis: CustomRedisClientSys;
-if (isProd) {
-  sysRedis = getSysClient();
+if (!env.IS_BUILD) {
+  if (isProd) {
+    redis = getCacheClient();
+    sysRedis = getSysClient();
+  } else {
+    if (!global.globalRedis) global.globalRedis = getCacheClient();
+    redis = global.globalRedis;
+
+    if (!global.globalSysRedis) global.globalSysRedis = getSysClient();
+    sysRedis = global.globalSysRedis;
+  }
 } else {
-  if (!global.globalSysRedis) global.globalSysRedis = getSysClient();
-  sysRedis = global.globalSysRedis;
+  log('Skipping Redis initialization (build phase)');
 }
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
-    HISTORY_EXCLUSION: 'download:history-exclusion',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -479,6 +479,7 @@ export const REDIS_SYS_KEYS = {
     BUZZ: 'new-order:blessed-buzz',
     SMITE: 'new-order:smite-progress',
     QUEUES: 'new-order:queues',
+    ACTIVE_SLOT: 'new-order:active-slot',
     RATINGS: 'new-order:ratings',
     MATCHES: 'new-order:matches',
     JUDGEMENTS: {

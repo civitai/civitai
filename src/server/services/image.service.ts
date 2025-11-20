@@ -46,7 +46,7 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
-  userContentOverviewCache,
+  userImageVideoCountCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -141,8 +141,6 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
   EntityType,
   ImageIngestionStatus,
   MediaType,
@@ -156,11 +154,11 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS } from '../flipt/client';
+import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
-import { getExplainSql } from '~/server/db/db-helpers';
-import images from '~/pages/images';
+
+import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
 const {
   cacheHitRequestsTotal,
@@ -211,10 +209,13 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
-  const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
   // Set keys individually to avoid CROSSSLOT errors
   await Promise.all(
-    ids.map((id) => sysRedis.packed.set(`${cachePrefix}${id}` as any, 'false', { EX: 60 * 5 }))
+    ids.map((id) =>
+      sysRedis.packed.set(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}` as const, 'false', {
+        EX: 60 * 5,
+      })
+    )
   );
 };
 
@@ -222,6 +223,7 @@ async function getImageTagsForImages(
   imageIds: number[]
 ): Promise<(VotableTagModel & { imageId: number })[]> {
   const tagsByImage = await imageTagsCache.fetch(imageIds);
+
   return imageIds.flatMap(
     (imageId) =>
       tagsByImage[imageId]?.tags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
@@ -604,10 +606,12 @@ export const ingestImage = async ({
   image,
   lowPriority,
   tx,
+  userId,
 }: {
   image: IngestImageInput;
   lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
+  userId?: number;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
@@ -645,6 +649,32 @@ export const ingestImage = async ({
       SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
     `;
     image.prompt = prompt;
+  }
+
+  const useOrchestrator = userId === 5 || userId === 5418;
+  if (useOrchestrator) {
+    const workflowResponse = await createImageIngestionRequest({
+      imageId: id,
+      url,
+      type,
+      callbackUrl,
+      priority: lowPriority ? 'low' : undefined,
+    });
+    if (!workflowResponse) return false;
+    const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
+    await dbClient.$executeRaw`
+        UPDATE "Image"
+        SET
+          "scanRequestedAt" = ${scanRequestedAt},
+          "scanJobs" = CASE
+            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
+              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
+            ELSE
+              ${scanJobsJson}::jsonb
+          END
+        WHERE id = ${id}
+      `;
+    return true;
   }
 
   let scanUrl = `${env.IMAGE_SCANNING_ENDPOINT}/enqueue`;
@@ -904,7 +934,6 @@ export const getAllImages = async (
     // hideAutoResources,
     // hideManualResources,
     reactions,
-    ids,
     includeBaseModel,
     types,
     hidden,
@@ -923,7 +952,7 @@ export const getAllImages = async (
     poiOnly,
     minorOnly,
   } = input;
-  let { browsingLevel, userId: targetUserId } = input;
+  let { browsingLevel, userId: targetUserId, ids } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -964,9 +993,31 @@ export const getAllImages = async (
     targetUserId = targetUser.id;
   }
 
+  // Hacked this to use the model version image cache instead
+  const prioritizeUser = !!prioritizedUserIds?.length;
+  const useModelVersionCache =
+    prioritizeUser &&
+    (await isFlipt('use-model-version-cache-for-images', modelVersionId?.toString(), {
+      isModerator: isModerator.toString(),
+      userId: userId?.toString() || 'anon',
+    }));
+  if (prioritizeUser && useModelVersionCache) {
+    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    if (!modelVersionId)
+      throw new Error('modelVersionId is required when using prioritizedUserIds');
+
+    const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
+    const versionData = cachedData[modelVersionId];
+    if (!versionData || !versionData.images?.length) {
+      return { items: [], nextCursor: undefined };
+    }
+
+    ids = versionData.images.map((img) => img.id);
+  }
+
   // [x]
   if (ids && ids.length > 0) {
-    AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
+    AND.push(Prisma.sql`i."id" = ANY(${ids}::int[])`);
   }
   // [x]
   if (types && types.length > 0) {
@@ -1015,7 +1066,6 @@ export const getAllImages = async (
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content
-  const prioritizeUser = !!prioritizedUserIds?.length; // [x]
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     from = `FROM "ImageResourceNew" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
@@ -1231,7 +1281,7 @@ export const getAllImages = async (
   }
   if (cursorClause) AND.push(cursorClause);
 
-  if (prioritizeUser) {
+  if (prioritizeUser && !useModelVersionCache) {
     // [x]
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
@@ -1548,6 +1598,11 @@ export const getAllImages = async (
       };
     }
   );
+
+  // Put into cached order if prioritizing user (model version showcase)
+  if (prioritizeUser && useModelVersionCache) {
+    images.sort((a, b) => ids!.indexOf(a.id) - ids!.indexOf(b.id));
+  }
 
   return {
     nextCursor,
@@ -3673,39 +3728,11 @@ export const getImagesForPosts = async ({
   `;
   const imageIds = images.map((i) => i.id);
   const tagIds = await tagIdsForImagesCache.fetch(imageIds);
-  let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (userId) {
-    const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId },
-      select: { imageId: true, reaction: true },
-    });
-    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-      acc[imageId] ??= [] as ReviewReactions[];
-      acc[imageId].push(reaction);
-      return acc;
-    }, {} as Record<number, ReviewReactions[]>);
-  }
-
-  const imageMetrics = await getImageMetricsObject(images);
 
   return images.map((i) => {
-    const match = imageMetrics[i.id];
     return {
       ...i,
       tagIds: tagIds[i.id]?.tags,
-      reactions: userReactions?.[i.id] ?? [],
-
-      likeCount: match?.reactionLike ?? 0,
-      laughCount: match?.reactionLaugh ?? 0,
-      heartCount: match?.reactionHeart ?? 0,
-      cryCount: match?.reactionCry ?? 0,
-
-      commentCount: match?.comment ?? 0,
-      collectedCount: match?.collection ?? 0,
-      tippedAmountCount: match?.buzz ?? 0,
-
-      dislikeCount: 0,
-      viewCount: 0,
     };
   });
 };
@@ -3984,10 +4011,11 @@ export async function createImage({
         width: image.width,
         prompt: image?.meta?.prompt,
       },
+      userId: image.userId,
     });
   }
 
-  await userContentOverviewCache.bust(image.userId);
+  await userImageVideoCountCache.bust(image.userId);
 
   return result;
 }
@@ -4601,22 +4629,20 @@ export const getImageModerationReviewQueue = async ({
 
   if (tagReview) {
     tagsVar = await getImageTagsForImages(imageIds);
-    // Filter to only include tags that need review to prevent greyed-out images
-    tagsVar = tagsVar?.filter((tag) => tag.needsReview);
   }
 
   const reviewTags =
     needsReview && imageIds.length > 0
       ? await dbWrite.$queryRaw<ReviewTag[]>`
-    SELECT
-      t.id,
-      t.name,
-      t."nsfwLevel",
-      itr."imageId"
-    FROM "ImageTagForReview" itr
-    JOIN "Tag" t ON itr."tagId" = t.id
-    WHERE itr."imageId" IN (${Prisma.join(imageIds)})
-  `
+          SELECT
+            t.id,
+            t.name,
+            t."nsfwLevel",
+            itr."imageId"
+          FROM "ImageTagForReview" itr
+          JOIN "Tag" t ON itr."tagId" = t.id
+          WHERE itr."imageId" IN (${Prisma.join(imageIds)})
+        `
       : [];
 
   let tosDetails: Map<number, { tosReason: string }> | undefined;
@@ -4730,12 +4756,7 @@ export const getImageModerationReviewQueue = async ({
     })
   );
 
-  // Filter out images with no tags needing review to prevent greyed-out images in the queue
-  const filteredImages = tagReview
-    ? images.filter((img) => img.tags && img.tags.length > 0)
-    : images;
-
-  return { nextCursor, items: filteredImages };
+  return { nextCursor, items: images };
 };
 
 export async function getImageModerationCounts() {
@@ -5772,8 +5793,10 @@ export async function queueImageSearchIndexUpdate({
     await thumbnailCache.bust(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
-      ...poolCounters.Knight.map((queue) => queue.reset({ id: ids })),
-      ...poolCounters.Templar.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Knight.b.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.a.map((queue) => queue.reset({ id: ids })),
+      ...poolCounters.Templar.b.map((queue) => queue.reset({ id: ids })),
     ]);
   }
 }

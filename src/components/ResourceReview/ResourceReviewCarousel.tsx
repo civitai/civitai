@@ -37,9 +37,9 @@ export function ResourceReviewCarousel({
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
     limit: 10,
+    useIndex: true,
   };
 
-  // TODO get images by reviewid
   const { data, images, isLoading } = useQueryImages(filters);
 
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;

@@ -10,7 +10,6 @@ const sharedMetadata = z.object({
   profilePicture: z.boolean().optional(),
   username: z.string().optional(),
   userId: z.number().optional(),
-  skipScannedAtReassignment: z.boolean().optional(),
   nsfwLevelReason: z.string().nullish(),
 });
 
@@ -32,3 +31,5 @@ export const videoMetadataSchema = sharedMetadata.extend({
   parentId: z.number().optional(),
   // hasSound: z.boolean().default(false), not accessible from HTMLVideoElement
 });
+
+export type MediaMetadata = ImageMetadata | VideoMetadata;

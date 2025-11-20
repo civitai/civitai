@@ -172,10 +172,6 @@ export const constants = {
     voteDuration: 1000 * 60 * 60 * 24,
     upvoteThreshold: 3,
   },
-  imageTags: {
-    styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
-    subjects: ['man', 'woman', 'men', 'women'] as string[],
-  },
   maxTrainingRetries: 2,
   mediaUpload: {
     maxOrchestratorImageFileSize: 60 * 1024 ** 2, // 16MB
@@ -1353,3 +1349,7 @@ export const EARLY_ACCESS_CONFIG: {
     [({ features }: { features?: FeatureAccess }) => features?.thirtyDayEarlyAccess ?? false, 30],
   ],
 };
+
+export const KEY_VALUE_KEYS = {
+  REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
+} as const;

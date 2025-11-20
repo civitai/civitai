@@ -1,3 +1,5 @@
+import type { NsfwLevel } from '~/server/common/enums';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { TagSource } from '~/shared/utils/prisma/enums';
 
 const tagCombos: ComputedTagCombo[] = [
@@ -305,3 +307,31 @@ type ComputedTagCombo = {
   temp?: boolean;
   sources?: TagSource[];
 };
+
+type TagForReview<T = { name: string; confidence: number }> = {
+  condition: (tag: T, ctx: { nsfwLevel: NsfwLevel; tags: T[] }) => boolean;
+  tags: string[];
+};
+const tagsForReview: TagForReview[] = [
+  {
+    condition: (tag, { nsfwLevel }) =>
+      tag.name === 'unconscious' && sfwBrowsingLevelsFlag < nsfwLevel,
+    tags: ['unconscious'],
+  },
+  {
+    condition: (tag, ctx) => tag.name === 'bestiality' && ctx.tags.some((t) => t.name === 'animal'),
+    tags: ['bestiality'],
+  },
+];
+
+export function getConditionalTagsForReview<T extends { name: string; confidence: number }>(
+  tags: T[],
+  nsfwLevel: NsfwLevel
+) {
+  const toReview: T[] = [];
+  for (const tag of tags) {
+    const match = tagsForReview.find(({ condition }) => condition(tag, { tags, nsfwLevel }));
+    if (match) toReview.push(...tags.filter((tag) => match.tags.includes(tag.name)));
+  }
+  return toReview;
+}

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1220",
+  "version": "5.0.1240",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -34,7 +34,7 @@
     "db:applied": "node scripts/prisma-mark-migration-applied.mjs",
     "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p && npm run db:program",
     "db:program": "node scripts/prisma-prepare-programmability.mjs",
-    "db:generate": "prisma generate --no-hints",
+    "db:generate": "node scripts/generate-slim-schema.js && prisma generate --no-hints",
     "db:seed": "prisma db seed",
     "share": "ngrok http 3000",
     "prepare": "husky",
@@ -63,7 +63,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.2.0-beta.11",
+    "@civitai/client": "^0.2.0-beta.14",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",

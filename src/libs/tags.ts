@@ -71,3 +71,6 @@ export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
     'white supremacy',
   ],
 };
+
+export const styleTags = ['anime', 'cartoon', 'comics', 'manga'];
+export const subjectTags = ['man', 'woman', 'men', 'women'];

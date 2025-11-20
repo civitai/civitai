@@ -3,9 +3,8 @@ import type { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
+import { styleTags, tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
 import {
   BlockedReason,
   ImageScanType,
@@ -24,7 +23,6 @@ import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
   getImagesModRules,
-  getTagNamesForImages,
   queueImageSearchIndexUpdate,
   imageScanTypes,
 } from '~/server/services/image.service';
@@ -62,6 +60,7 @@ import { normalizeText } from '~/utils/normalize-text';
 import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
+import { processImageScanResult } from '~/server/services/image-scan-result.service';
 
 // const REQUIRED_SCANS = 2;
 
@@ -87,7 +86,6 @@ const tagSchema = z.object({
 type BodyProps = z.infer<typeof schema>;
 const schema = z.object({
   id: z.number(),
-  isValid: z.boolean(),
   tags: tagSchema
     .array()
     .nullish()
@@ -104,28 +102,15 @@ const schema = z.object({
       blockedReason: z.string().nullish(),
     })
     .nullish(),
-  result: z
-    .object({
-      age: z.number(),
-      tags: tagSchema.array(),
-      dimensions: z.object({
-        top: z.number(),
-        bottom: z.number(),
-        left: z.number(),
-        right: z.number(),
-      }),
-    })
-    .array()
-    .nullish(),
 });
 
 function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 5;
+const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
 
-export default WebhookEndpoint(async function imageTags(req, res) {
+export default WebhookEndpoint(async (req, res) => {
   if (req.method === 'GET' && req.query.imageId) {
     const imageId = Number(req.query.imageId);
     const image = await getImage(imageId);
@@ -135,6 +120,24 @@ export default WebhookEndpoint(async function imageTags(req, res) {
   }
   if (req.method !== 'POST')
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
+
+  if ('workflowId' in req.body) {
+    try {
+      await processImageScanResult(req);
+    } catch (e: any) {
+      if (e instanceof Error) {
+        await logToAxiom({
+          name: 'image-scan-result',
+          type: 'error',
+          message: e.message,
+          stack: e?.stack,
+          cause: e?.cause,
+        });
+      }
+      return res.status(400).send({ error: e.message });
+    }
+    return res.status(200).json({ ok: true });
+  }
 
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success)
@@ -251,6 +254,7 @@ async function updateImage(
 
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
+      // - this is still active
       if (image.type === MediaType.image) {
         // #region [NewOrder]
         // New Order Queue Management. Only added when scan is succesful.
@@ -263,8 +267,8 @@ async function updateImage(
         let shouldAddToQueue = true;
         if (flags.nsfw) {
           queueDetails.priority = 2;
-          // Use image ID for deterministic sampling (20% inclusion rate)
-          shouldAddToQueue = id % KONO_NSFW_SAMPLING_RATE === 0; // 1/5 = 20%
+          // Use random sampling for 20% inclusion rate
+          shouldAddToQueue = Math.random() < KONO_NSFW_SAMPLING_RATE;
         }
 
         if (reviewKey) {
@@ -721,7 +725,6 @@ type TagDetails = {
   name: string;
   nsfwLevel: number;
   confidence: number;
-  disabled: boolean;
   blocked?: boolean;
 };
 
@@ -787,7 +790,6 @@ async function processScanResult({
   source,
   context,
   hash,
-  result,
 }: BodyProps) {
   switch (source) {
     case TagSource.ImageHash: {
@@ -832,9 +834,9 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   const negativePrompt = normalizeText(image.meta?.['negativePrompt'] as string | undefined);
 
   const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
-    { id: number; name: string; nsfwLevel: number; confidence: number; disabled: boolean }[]
+    { id: number; name: string; nsfwLevel: number; confidence: number }[]
   >`
-      SELECT t.id, t.name, t."nsfwLevel", toi.confidence, toi.disabled
+      SELECT t.id, t.name, t."nsfwLevel", toi.confidence
       FROM "TagsOnImageDetails" toi
       JOIN "Tag" t ON t.id = toi."tagId"
       WHERE toi."imageId" = ${image.id} AND toi.automated AND NOT toi.disabled
@@ -871,7 +873,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
       flags.hasMinorTag = true;
       flags.minor = true;
       minorTags.push(tag);
-    } else if (constants.imageTags.styles.includes(tag.name)) flags.hasCartoonTag = true;
+    } else if (styleTags.includes(tag.name)) flags.hasCartoonTag = true;
     else if (['adult'].includes(tag.name)) flags.hasAdultTag = true;
   }
 
@@ -990,6 +992,7 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     if (isNewUser) flags.newUserReview = true;
   }
 
+  // Don't need to determine reviewer
   const reviewerResult = determineReviewer({
     tags: tags.map((tag) => ({ ...tag, tag: tag.name })),
   });
@@ -998,8 +1001,6 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     if (reviewer === 'moderators') {
       flags.tagReview = true;
       reviewTags.push(...tags.filter((x) => tagNames.includes(x.name)));
-    } else if (reviewer === 'knights') {
-      // TODO @manuelurenah - Add knight review logic
     }
   }
 
@@ -1048,7 +1049,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     const now = new Date();
     const oneWeekAgo = decreaseDate(now, 7, 'days').getTime();
     if (!image.scannedAt) data.scannedAt = now;
-    else if (!image.metadata?.skipScannedAtReassignment && createdAtTime >= oneWeekAgo)
+    else if (
+      !(image.metadata as any)?.skipScannedAtReassignment &&
+      image.ingestion !== 'Rescan' &&
+      createdAtTime >= oneWeekAgo
+    )
       data.scannedAt = now;
   }
 

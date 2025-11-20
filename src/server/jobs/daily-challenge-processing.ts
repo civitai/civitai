@@ -297,7 +297,7 @@ async function reviewEntries() {
     // Update pending entries
     // ----------------------------------------------
     const reviewing = Date.now();
-    // Set their status to 'REJECTED' if they are not safe or don't have a required resource
+    // Set their status to 'REJECTED' if they are not safe, don't have a required resource, or are too old
     const reviewedCount = await dbWrite.$executeRaw`
     WITH source AS (
       SELECT
@@ -305,7 +305,8 @@ async function reviewEntries() {
       i."nsfwLevel" = 1 as "isSafe",
       EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" IN (${Prisma.join(
         currentChallenge.modelVersionIds
-      )}) AND ir."imageId" = i.id) as "hasResource"
+      )}) AND ir."imageId" = i.id) as "hasResource",
+      i."createdAt" >= ${currentChallenge.date} as "isRecent"
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"
       WHERE ci."collectionId" = ${currentChallenge.collectionId}
@@ -314,7 +315,7 @@ async function reviewEntries() {
     )
     UPDATE "CollectionItem" ci SET
       status = CASE
-        WHEN "isSafe" AND "hasResource" THEN 'ACCEPTED'::"CollectionItemStatus"
+        WHEN "isSafe" AND "hasResource" AND "isRecent" THEN 'ACCEPTED'::"CollectionItemStatus"
         ELSE 'REJECTED'::"CollectionItemStatus"
       END,
       "reviewedAt" = now(),

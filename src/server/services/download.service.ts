@@ -1,18 +1,11 @@
 import { Prisma } from '@prisma/client';
-
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-type DownloadHistoryRaw = {
-  downloadAt: Date;
-  modelId: number;
-  name: string;
-  version: string;
-  modelVersionId: number;
-};
 export const getUserDownloads = async ({
   limit = DEFAULT_PAGE_SIZE,
   userId,
@@ -20,87 +13,119 @@ export const getUserDownloads = async ({
 }: Partial<GetUserDownloadsSchema> & {
   userId: number;
 }) => {
-  const AND = [Prisma.sql`dh."userId" = ${userId}`, Prisma.sql`dh.hidden = false`];
-  if (cursor) AND.push(Prisma.sql`dh."downloadAt" < ${cursor}`);
+  let { hideDownloadsSince } = await getUserSettings(userId);
+  hideDownloadsSince = undefined;
 
-  const { hideDownloadsSince } = await getUserSettings(userId);
-  if (hideDownloadsSince) AND.push(Prisma.sql`dh."downloadAt" > ${new Date(hideDownloadsSince)}`);
+  if (!clickhouse) {
+    return { items: [] };
+  }
 
-  const downloadHistory = await dbRead.$queryRaw<DownloadHistoryRaw[]>`
+  // Build WHERE conditions
+  const conditions: string[] = [`userId = ${userId}`];
+  if (cursor) {
+    const cursorDate = new Date(cursor).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    conditions.push(`lastDownloaded < parseDateTime64BestEffort('${cursorDate}')`);
+  }
+  if (hideDownloadsSince) {
+    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  const downloadHistory = await clickhouse.$query<{
+    modelVersionId: number;
+    downloadAt: Date;
+  }>`
     SELECT
-      dh."downloadAt",
-      m.id as "modelId",
-      m."name" as "name",
-      mv."name" as "version",
-      dh."modelVersionId"
-    FROM "DownloadHistory" dh
-    JOIN "ModelVersion" mv ON mv.id = dh."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY dh."downloadAt" DESC
+      modelVersionId,
+      max(lastDownloaded) as downloadAt
+    FROM userModelDownloads
+    WHERE ${whereClause}
+    GROUP BY modelVersionId
+    ORDER BY max(lastDownloaded) DESC
     LIMIT ${limit}
   `;
 
-  const items = downloadHistory.map((dh) => ({
-    downloadAt: dh.downloadAt,
-    modelVersion: {
-      id: dh.modelVersionId,
-      name: dh.version,
+  if (downloadHistory.length === 0) {
+    return { items: [] };
+  }
+
+  // Get model/version IDs from download history
+  const downloadedVersionIds = downloadHistory.map((dh) => dh.modelVersionId);
+
+  // Check which of these downloads are hidden
+  const hiddenDownloads = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
+    SELECT "modelVersionId"
+    FROM "HiddenDownload"
+    WHERE "userId" = ${userId}
+      AND "modelVersionId" IN (${Prisma.join(downloadedVersionIds)})
+  `;
+  const hiddenIds = hiddenDownloads.map((h) => h.modelVersionId);
+
+  // Filter out hidden downloads
+  const visibleDownloads = downloadHistory.filter((dh) => !hiddenIds.includes(dh.modelVersionId));
+
+  if (visibleDownloads.length === 0) {
+    return { items: [] };
+  }
+
+  // Get model/version names from PostgreSQL in a separate query
+  const modelVersionIds = visibleDownloads.map((dh) => dh.modelVersionId);
+
+  const modelVersions = await dbRead.modelVersion.findMany({
+    where: { id: { in: modelVersionIds } },
+    select: {
+      id: true,
+      name: true,
       model: {
-        id: dh.modelId,
-        name: dh.name,
+        select: {
+          id: true,
+          name: true,
+        },
       },
     },
-  }));
+  });
+
+  // Create a map for quick lookup
+  const versionMap = new Map(modelVersions.map((mv) => [mv.id, mv]));
+
+  // Combine the data
+  const items = visibleDownloads.map((dh) => {
+    const version = versionMap.get(dh.modelVersionId);
+    return {
+      downloadAt: dh.downloadAt,
+      modelVersion: {
+        id: dh.modelVersionId,
+        name: version?.name ?? 'Unknown',
+        model: {
+          id: version?.model.id ?? 0,
+          name: version?.model.name ?? 'Unknown',
+        },
+      },
+    };
+  });
 
   return { items };
 };
 
-export async function addUserDownload({
-  userId,
+export const hideDownload = async ({
   modelVersionId,
-  downloadAt,
-}: {
-  userId?: number;
-  modelVersionId: number;
-  downloadAt?: Date;
-}) {
-  if (!userId) return;
+  userId,
+  all = false,
+}: HideDownloadInput & { userId: number }) => {
+  if (all) {
+    // Hide all downloads using hideDownloadsSince setting
+    return setUserSetting(userId, { hideDownloadsSince: Date.now() });
+  }
 
-  const excludedUsers = await sysRedis.packed.sMembers<number>(
-    REDIS_SYS_KEYS.DOWNLOAD.HISTORY_EXCLUSION
-  );
-  if (excludedUsers.includes(userId)) return;
+  if (!modelVersionId) {
+    throw new Error('modelVersionId is required to hide individual downloads');
+  }
 
   await dbWrite.$executeRaw`
-    -- Update user history
-    INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
-    VALUES (${userId}, ${modelVersionId}, ${downloadAt ?? new Date()}, false)
-    ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
+    INSERT INTO "HiddenDownload" ("userId", "modelVersionId", "createdAt")
+    VALUES (${userId}, ${modelVersionId}, NOW())
+    ON CONFLICT ("userId", "modelVersionId") DO NOTHING
   `;
-}
-
-export async function excludeUserDownloadHistory(userIds: number | number[]) {
-  if (!Array.isArray(userIds)) userIds = [userIds];
-  await sysRedis.packed.sAdd(REDIS_SYS_KEYS.DOWNLOAD.HISTORY_EXCLUSION, userIds);
-}
-
-export const updateUserActivityById = ({
-  modelVersionId,
-  userId,
-  data,
-  all = false,
-}: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput; userId: number }) => {
-  if (all) {
-    setUserSetting(userId, { hideDownloadsSince: Date.now() });
-  } else {
-    return dbWrite.downloadHistory.updateMany({
-      where: {
-        modelVersionId: !all ? modelVersionId : undefined,
-        userId,
-        hidden: { equals: false },
-      },
-      data,
-    });
-  }
 };

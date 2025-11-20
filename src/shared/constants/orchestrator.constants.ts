@@ -16,7 +16,7 @@ export const COMPLETE_STATUSES: WorkflowStatus[] = [
 ];
 
 const matureNsfwLevels: NsfwLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
-const privateGenNsfwLevels: NsfwLevel[] = [NsfwLevel.PG];
+const privateGenNsfwLevels: NsfwLevel[] = [NsfwLevel.PG, NsfwLevel.P_G13];
 
 export function isMature(nsfwLevel?: NsfwLevel) {
   return nsfwLevel && matureNsfwLevels.includes(nsfwLevel);

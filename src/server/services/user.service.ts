@@ -16,6 +16,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
+import { userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -115,6 +116,7 @@ import type {
 } from './../schema/user.schema';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
+import { clickhouse } from '~/server/clickhouse/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -364,9 +366,11 @@ export const isUsernamePermitted = (username: string) => {
 export const updateUserById = async ({
   id,
   data,
+  updateSource,
 }: {
   id: number;
   data: Prisma.UserUpdateInput;
+  updateSource?: string;
 }) => {
   if (data.email) {
     const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
@@ -381,6 +385,11 @@ export const updateUserById = async ({
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
+
+  // Track user update with optional source context
+  let location = 'user.service:updateUserById';
+  if (updateSource) location += `:${updateSource}`;
+  userUpdateCounter?.inc({ location });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
@@ -419,29 +428,44 @@ export async function getUserEngagedModelVersions({
   });
 }
 
-export async function getUserDownloads({
+export async function getUserDownloadedModelVersions({
   userId,
   modelVersionIds,
 }: {
   userId: number;
   modelVersionIds?: number | number[];
 }) {
-  const where: Prisma.DownloadHistoryWhereInput = {
-    userId,
-  };
-  if (modelVersionIds) {
-    const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
-    where.modelVersionId = { in: versionIds };
+  if (!clickhouse) {
+    return [];
   }
 
-  const { hideDownloadsSince } = await getUserSettings(userId);
-  if (hideDownloadsSince) where.downloadAt = { gt: new Date(hideDownloadsSince) };
+  const versionIds = modelVersionIds
+    ? Array.isArray(modelVersionIds)
+      ? modelVersionIds
+      : [modelVersionIds]
+    : null;
 
-  return dbRead.downloadHistory.findMany({
-    where,
-    select: { modelVersionId: true },
-    distinct: ['modelVersionId'],
-  });
+  const { hideDownloadsSince } = await getUserSettings(userId);
+
+  // Build WHERE conditions
+  const conditions: string[] = [`userId = ${userId}`];
+  if (versionIds && versionIds.length > 0) {
+    conditions.push(`modelVersionId IN (${versionIds.join(', ')})`);
+  }
+  if (hideDownloadsSince) {
+    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  const results = await clickhouse.$query<{ modelVersionId: number }>`
+    SELECT DISTINCT modelVersionId
+    FROM userModelDownloads
+    WHERE ${whereClause}
+  `;
+
+  return results;
 }
 
 export const getUserEngagedModelByModelId = ({
@@ -712,6 +736,8 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     }),
   ]);
 
+  userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBasicDataForUser(id);
 
@@ -730,6 +756,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     SET "excludeFromLeaderboards" = ${setTo}
     WHERE id = ${id}
   `);
+  userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
 }
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
@@ -1166,68 +1193,62 @@ export const getUserBookmarkedModels = async ({ userId }: { userId: number }) =>
 };
 
 export const updateLeaderboardRank = async ({
-  userIds,
   leaderboardIds,
 }: {
-  userIds?: number | number[];
   leaderboardIds?: string | string[];
 } = {}) => {
-  if (userIds && !Array.isArray(userIds)) userIds = [userIds];
   if (leaderboardIds && !Array.isArray(leaderboardIds)) leaderboardIds = [leaderboardIds];
 
-  const WHERE = [Prisma.sql`1=1`];
-  if (userIds) WHERE.push(Prisma.sql`"userId" IN (${Prisma.join(userIds as number[])})`);
-  if (leaderboardIds)
-    WHERE.push(Prisma.sql`"leaderboardId" IN (${Prisma.join(leaderboardIds as string[])})`);
+  const leaderboardFilter = leaderboardIds
+    ? Prisma.sql`AND lr."leaderboardId" IN (${Prisma.join(leaderboardIds as string[])})`
+    : Prisma.empty;
 
   await dbWrite.$transaction([
+    // Truncate the table - much faster than DELETE and we're rebuilding anyway
+    dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
+    // Only insert users with top 100 ranks (position <= 100)
     dbWrite.$executeRaw`
-      UPDATE "UserRank"
-      SET "leaderboardRank"     = null,
-          "leaderboardId"       = null,
-          "leaderboardTitle"    = null,
-          "leaderboardCosmetic" = null
-      WHERE ${Prisma.join(WHERE, ' AND ')};
-    `,
-    dbWrite.$executeRaw`
-      WITH user_positions AS (SELECT lr."userId",
-                                     lr."leaderboardId",
-                                     l."title",
-                                     lr.position,
-                                     row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
-                              FROM "User" u
-                                     JOIN "LeaderboardResult" lr ON lr."userId" = u.id
-                                     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-                              WHERE lr.date = current_date
-                                AND (
-                                u."leaderboardShowcase" IS NULL
-                                  OR lr."leaderboardId" = u."leaderboardShowcase"
-                                )),
-           lowest_position AS (SELECT up."userId",
-                                      up.position,
-                                      up."leaderboardId",
-                                      up."title"   "leaderboardTitle",
-                                      (SELECT data ->> 'url'
-                                       FROM "Cosmetic" c
-                                       WHERE c."leaderboardId" = up."leaderboardId"
-                                         AND up.position <= c."leaderboardPosition"
-                                       ORDER BY c."leaderboardPosition"
-                                       LIMIT 1) as "leaderboardCosmetic"
-                               FROM user_positions up
-                               WHERE row_num = 1)
-      INSERT
-      INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
-      SELECT "userId",
-             position,
-             "leaderboardId",
-             "leaderboardTitle",
-             "leaderboardCosmetic"
-      FROM lowest_position
-      WHERE ${Prisma.join(WHERE, ' AND ')}
-      ON CONFLICT ("userId") DO UPDATE SET "leaderboardId"       = excluded."leaderboardId",
-                                           "leaderboardRank"     = excluded."leaderboardRank",
-                                           "leaderboardTitle"    = excluded."leaderboardTitle",
-                                           "leaderboardCosmetic" = excluded."leaderboardCosmetic";
+      WITH user_positions AS (
+        SELECT
+          lr."userId",
+          lr."leaderboardId",
+          l."title",
+          lr.position,
+          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
+        FROM "User" u
+        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+        WHERE lr.date = current_date
+          AND lr.position <= 100
+          ${leaderboardFilter}
+          AND (
+            u."leaderboardShowcase" IS NULL
+            OR lr."leaderboardId" = u."leaderboardShowcase"
+          )
+      ),
+      lowest_position AS (
+        SELECT
+          up."userId",
+          up.position,
+          up."leaderboardId",
+          up."title" "leaderboardTitle",
+          (SELECT data ->> 'url'
+           FROM "Cosmetic" c
+           WHERE c."leaderboardId" = up."leaderboardId"
+             AND up.position <= c."leaderboardPosition"
+           ORDER BY c."leaderboardPosition"
+           LIMIT 1) as "leaderboardCosmetic"
+        FROM user_positions up
+        WHERE row_num = 1
+      )
+      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+      SELECT
+        "userId",
+        position,
+        "leaderboardId",
+        "leaderboardTitle",
+        "leaderboardCosmetic"
+      FROM lowest_position;
     `,
   ]);
 };
@@ -1264,6 +1285,7 @@ export const toggleBan = async ({
   const updatedUser = await updateUserById({
     id,
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
+    updateSource: 'toggleBan',
   });
 
   await invalidateSession(id);
@@ -1337,6 +1359,7 @@ export const toggleContestBan = async ({
   const updatedUser = await updateUserById({
     id,
     data: { meta: updatedMeta },
+    updateSource: 'toggleContestBan',
   });
 
   await refreshSession(id);
@@ -1868,6 +1891,7 @@ export async function updateContentSettings({
       where: { id: userId },
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
+    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
@@ -1925,6 +1949,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
       SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
       WHERE id = ${userId}
     `);
+  userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
 
   const toRemove = Object.entries(settings)
     .filter(([, value]) => value === undefined)
@@ -1935,6 +1960,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
       SET settings = settings - ${toRemove.join(' - ')}}
       WHERE id = ${userId}
     `);
+    userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 
   await userSettingsCache.bust([userId]);

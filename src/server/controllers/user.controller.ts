@@ -76,7 +76,7 @@ import {
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserDownloads,
+  getUserDownloadedModelVersions,
   getUserEngagedModels,
   getUserEngagedModelVersions,
   getUserList,
@@ -434,6 +434,7 @@ export const updateUserHandler = async ({
             }
           : undefined,
       },
+      updateSource: 'updateUser',
     });
 
     // Delete old profilePic and ingest new one
@@ -460,7 +461,6 @@ export const updateUserHandler = async ({
 
     if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
 
-    if (data.leaderboardShowcase !== undefined) await updateLeaderboardRank({ userIds: id });
     if (userReferralCode || source || landingPage) {
       await createUserReferral({
         id: updatedUser.id,
@@ -564,7 +564,7 @@ export const getUserEngagedModelVersionsHandler = async ({
 
   try {
     const engagements = await getUserEngagedModelVersions({ userId, modelVersionIds });
-    const downloads = await getUserDownloads({ userId, modelVersionIds });
+    const downloads = await getUserDownloadedModelVersions({ userId, modelVersionIds });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelVersionId as value
     const engagedModelVersions = engagements.reduce<Record<EngagedModelVersionType, number[]>>(
@@ -980,7 +980,11 @@ export const toggleMuteHandler = async ({
   const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-  const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
+  const updatedUser = await updateUserById({
+    id,
+    data: { muted: !user.muted },
+    updateSource: 'toggleMute',
+  });
   await refreshSession(id);
 
   await ctx.track.userActivity({
@@ -1186,7 +1190,11 @@ export const reportProhibitedRequestHandler = async ({
       constants.imageGeneration.requestBlocking.muted -
       constants.imageGeneration.requestBlocking.notified;
     if (count >= limit) {
-      await updateUserById({ id: userId, data: { muted: true } });
+      await updateUserById({
+        id: userId,
+        data: { muted: true },
+        updateSource: 'imageGenBlocking:autoMute',
+      });
       await refreshSession(userId);
 
       await ctx.track.userActivity({

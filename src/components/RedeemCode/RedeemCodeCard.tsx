@@ -11,6 +11,8 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { formatDate } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { GiftNoticeAlert } from './GiftNoticeAlert';
+import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -56,6 +58,7 @@ interface RedeemState {
   successMessage?: string;
   showSuccessModal?: boolean;
   redeemedAt?: Date;
+  giftNotices?: GiftNotice[];
 }
 
 export function RedeemCodeCard({
@@ -110,6 +113,7 @@ export function RedeemCodeCard({
         successMessage: message,
         showSuccessModal: true,
         redeemedAt: consumedCode.redeemedAt ?? new Date(),
+        giftNotices: consumedCode.giftNotices || [],
       });
 
       await Promise.all([
@@ -119,8 +123,11 @@ export function RedeemCodeCard({
         queryUtils.subscriptions.getUserSubscription.invalidate(),
       ]);
 
-      // Reset state after 3 seconds
-      setTimeout(() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }), 5000);
+      // Only auto-close if there are no gift notices
+      const hasGiftNotices = (consumedCode.giftNotices || []).length > 0;
+      if (!hasGiftNotices) {
+        setTimeout(() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }), 5000);
+      }
     },
     onError: (error) => {
       setRedeemState((prev) => ({ ...prev, status: 'idle' }));
@@ -237,8 +244,8 @@ export function RedeemCodeCard({
 
       <Modal
         opened={!!redeemState.showSuccessModal}
-        onClose={() => setRedeemState((prev) => ({ ...prev, showSuccessModal: false }))}
-        withCloseButton={false}
+        onClose={() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false })}
+        withCloseButton={!!(redeemState.giftNotices && redeemState.giftNotices.length > 0)}
         closeOnClickOutside={false}
         closeOnEscape={false}
         withOverlay={false}
@@ -254,14 +261,30 @@ export function RedeemCodeCard({
             align="center"
             justify="center"
           >
-            <Stack>
-              <Text size="xl" fw={500} ta="center">
-                {redeemState.successMessage || 'Code redeemed successfully'}
-              </Text>
-              {redeemState.redeemedAt && (
-                <Text size="sm" c="dimmed" ta="center">
-                  Redeemed on {formatDate(redeemState.redeemedAt)}
+            <Stack gap="md">
+              <Stack gap="xs">
+                <Text size="xl" fw={500} ta="center">
+                  {redeemState.successMessage || 'Code redeemed successfully'}
                 </Text>
+                {redeemState.redeemedAt && (
+                  <Text size="sm" c="dimmed" ta="center">
+                    Redeemed on {formatDate(redeemState.redeemedAt)}
+                  </Text>
+                )}
+              </Stack>
+
+              {redeemState.giftNotices && redeemState.giftNotices.length > 0 && (
+                <Stack gap="md">
+                  {redeemState.giftNotices.map((notice, index) => (
+                    <GiftNoticeAlert
+                      key={index}
+                      title={notice.title}
+                      message={notice.message}
+                      linkUrl={notice.linkUrl}
+                      linkText={notice.linkText}
+                    />
+                  ))}
+                </Stack>
               )}
             </Stack>
           </SuccessAnimation>
