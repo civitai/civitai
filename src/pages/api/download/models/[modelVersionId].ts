@@ -8,7 +8,7 @@ import { dbRead } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';

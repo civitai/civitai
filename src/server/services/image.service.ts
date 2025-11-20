@@ -40,15 +40,15 @@ import {
   getUserFollows,
   imageMetaCache,
   imageMetadataCache,
-  imageMetricsCache,
-  imagesForModelVersionsCache,
   imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
   userImageVideoCountCache,
 } from '~/server/redis/caches';
+import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { createCachedObject } from '~/server/utils/cache-helpers';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -3562,6 +3562,38 @@ export const getImagesForModelVersion = async ({
 
   return images;
 };
+
+type CachedImagesForModelVersions = {
+  modelVersionId: number;
+  images: ImagesForModelVersions[];
+};
+export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
+  key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
+  idKey: 'modelVersionId',
+  ttl: CacheTTL.sm,
+  // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
+  lookupFn: async (ids) => {
+    const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
+
+    const records: Record<number, CachedImagesForModelVersions> = {};
+    for (const image of images) {
+      if (!records[image.modelVersionId])
+        records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
+      records[image.modelVersionId].images.push(image);
+    }
+
+    return records;
+  },
+  appendFn: async (records) => {
+    const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
+    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
+    for (const entry of records) {
+      for (const image of entry.images) {
+        image.tags = tagIdsVar?.[image.id]?.tags ?? [];
+      }
+    }
+  },
+});
 
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
   const images = await imagesForModelVersionsCache.fetch(modelVersionIds);

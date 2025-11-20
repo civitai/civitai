@@ -51,7 +51,7 @@ import {
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,

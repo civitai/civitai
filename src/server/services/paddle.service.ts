@@ -52,7 +52,7 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';

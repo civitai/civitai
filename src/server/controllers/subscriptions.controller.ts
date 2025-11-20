@@ -1,8 +1,15 @@
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import type { Context } from '~/server/createContext';
-import type { GetPlansSchema, GetUserSubscriptionInput } from '~/server/schema/subscriptions.schema';
-import { getPlans, getUserSubscription, getAllUserSubscriptions } from '~/server/services/subscriptions.service';
+import type {
+  GetPlansSchema,
+  GetUserSubscriptionInput,
+} from '~/server/schema/subscriptions.schema';
+import {
+  getPlans,
+  getUserSubscription,
+  getAllUserSubscriptions,
+} from '~/server/services/subscriptions.service';
 
 export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; ctx: Context }) => {
   const paddleSupported =

@@ -1,7 +1,7 @@
 import { Button, Card, Text } from '@mantine/core';
 import { IconHierarchy } from '@tabler/icons-react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '../image.utils';

@@ -3,7 +3,7 @@ import { IconPlus, IconTrash } from '@tabler/icons-react';
 import type { MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { useCallback, useMemo, useState } from 'react';
-import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { useUnsupportedResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { Meta } from '~/components/Meta/Meta';

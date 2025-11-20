@@ -56,7 +56,7 @@ import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
 import type { ClubGetById } from '~/types/router';
-import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const tooltipProps: Partial<TooltipProps> = {

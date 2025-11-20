@@ -5,18 +5,13 @@ import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { pgDbRead } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import { populateEntityMetrics } from '~/server/redis/entity-metric-populate';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
-import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
@@ -154,38 +149,6 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
     return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
   },
   ttl: CacheTTL.day,
-});
-
-type CachedImagesForModelVersions = {
-  modelVersionId: number;
-  images: ImagesForModelVersions[];
-};
-export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
-  key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
-  idKey: 'modelVersionId',
-  ttl: CacheTTL.sm,
-  // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
-  lookupFn: async (ids) => {
-    const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
-
-    const records: Record<number, CachedImagesForModelVersions> = {};
-    for (const image of images) {
-      if (!records[image.modelVersionId])
-        records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
-      records[image.modelVersionId].images.push(image);
-    }
-
-    return records;
-  },
-  appendFn: async (records) => {
-    const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
-    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
-    for (const entry of records) {
-      for (const image of entry.images) {
-        image.tags = tagIdsVar?.[image.id]?.tags ?? [];
-      }
-    }
-  },
 });
 
 type EntityCosmeticLookupRaw = {
@@ -808,76 +771,6 @@ export const thumbnailCache = createCachedObject<{
   dontCacheFn: (data) => !data.nsfwLevel,
   ttl: CacheTTL.day,
 });
-
-type ImageMetricLookup = {
-  imageId: number;
-  reactionLike: number | null;
-  reactionHeart: number | null;
-  reactionLaugh: number | null;
-  reactionCry: number | null;
-  comment: number | null;
-  collection: number | null;
-  buzz: number | null;
-};
-// Direct Redis entity metrics fetch with ClickHouse population
-// Implements the same interface as CachedObject for compatibility
-export const imageMetricsCache: Pick<
-  CachedObject<ImageMetricLookup>,
-  'fetch' | 'bust' | 'refresh' | 'flush'
-> = {
-  fetch: async (ids: number | number[]): Promise<Record<string, ImageMetricLookup>> => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return {};
-
-    // Use imported modules
-
-    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
-    await populateEntityMetrics('Image', ids);
-
-    // Fetch from Redis
-    const metricsMap = await entityMetricRedis.getBulkMetrics('Image', ids);
-
-    const results: Record<string, ImageMetricLookup> = {};
-    for (const id of ids) {
-      const metrics = metricsMap.get(id);
-      results[id] = {
-        imageId: id,
-        reactionLike: metrics?.ReactionLike || null,
-        reactionHeart: metrics?.ReactionHeart || null,
-        reactionLaugh: metrics?.ReactionLaugh || null,
-        reactionCry: metrics?.ReactionCry || null,
-        comment: metrics?.Comment || null,
-        collection: metrics?.Collection || null,
-        buzz: metrics?.Buzz || null,
-      };
-    }
-    return results;
-  },
-
-  bust: async (ids: number | number[]) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Use imported module
-
-    // Delete from Redis to force re-fetch from ClickHouse
-    await Promise.all(ids.map((id) => entityMetricRedis.delete('Image', id)));
-  },
-
-  refresh: async (ids: number | number[], skipCache?: boolean) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Use imported module
-
-    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
-    await populateEntityMetrics('Image', ids, true);
-  },
-
-  flush: async () => {
-    // Clear all image metrics from Redis - Not Supported
-  },
-};
 
 type ArticleStatLookup = {
   articleId: number;

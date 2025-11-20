@@ -1,4 +1,5 @@
-import { createSafeContext, MantineSpacing } from '@mantine/core';
+import type { MantineSpacing } from '@mantine/core';
+import { createSafeContext } from '@mantine/core';
 
 interface GridContextValue {
   gutter: MantineSpacing;

@@ -38,6 +38,7 @@ import {
   IconVideo,
 } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
   civitaiLinkStatusColors,
@@ -49,10 +50,15 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
-import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-registry';
 import classes from './CivitaiLinkPopover.module.scss';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const CivitaiLinkWizardModal = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'), {
+  ssr: false,
+});
+const openCivitaiLinkWizardModal = createDialogTrigger(CivitaiLinkWizardModal);
 
 export function CivitaiLinkPopover() {
   return (

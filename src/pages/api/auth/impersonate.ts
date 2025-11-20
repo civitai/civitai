@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { civTokenEncrypt } from '~/pages/api/auth/civ-token';
+import { civTokenEncrypt } from '~/server/auth/civ-token';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';

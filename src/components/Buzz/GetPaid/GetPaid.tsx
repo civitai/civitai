@@ -82,10 +82,6 @@ export function GetPaid() {
             </Grid.Col>
           ))}
         </Grid>
-
-        <Text size="xs" c="dimmed" className={styles.poweredByText}>
-          Powered by ZKP2P to preserve privacy and ensure a seamless experience.
-        </Text>
       </Stack>
     </Paper>
   );

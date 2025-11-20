@@ -19,7 +19,7 @@ import type {
   ImageSelectProfileFilter,
   ImageSelectTrainingFilter,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { trainingStatusFields } from '~/components/User/UserTrainingModels';
+import { trainingStatusFields } from '~/shared/constants/training.constants';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { BaseModel } from '~/shared/constants/base-model.constants';

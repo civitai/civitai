@@ -1,7 +1,13 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons-react';
-import { openRunStrategyModal } from '~/components/Dialog/dialog-registry';
+import dynamic from 'next/dynamic';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'), {
+  ssr: false,
+});
+const openRunStrategyModal = createDialogTrigger(RunStrategyModal);
 
 export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
   return (

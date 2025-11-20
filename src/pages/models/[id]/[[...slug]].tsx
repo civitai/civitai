@@ -62,14 +62,18 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
-import {
-  openAddToCollectionModal,
-  openMigrateModelToCollectionModal,
-  openBlockModelTagsModal,
-  openReportModal,
-  openUnpublishModal,
-} from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
+import dynamic from 'next/dynamic';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+
+const MigrateModelToCollection = dynamic(
+  () => import('~/components/Model/Actions/MigrateModelToCollection'),
+  { ssr: false }
+);
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -1040,7 +1044,10 @@ export default function ModelDetailsV2({
                             <Menu.Label>Advanced</Menu.Label>
                             <Menu.Item
                               onClick={() =>
-                                openMigrateModelToCollectionModal({ modelId: model.id })
+                                dialogStore.trigger({
+                                  component: MigrateModelToCollection,
+                                  props: { modelId: model.id },
+                                })
                               }
                             >
                               Migrate to Collection

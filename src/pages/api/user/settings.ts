@@ -1,6 +1,6 @@
 import { getUserSettings } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
 export default PublicEndpoint(
   async function handler(req, res) {

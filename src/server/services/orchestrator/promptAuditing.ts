@@ -7,7 +7,7 @@ import { updateUserById } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,

@@ -6,7 +6,7 @@ import {
   updateWorkflowStep,
 } from '@civitai/client';
 
-import { createOrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import type { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
 import type { PatchWorkflowStepParams } from '~/server/schema/orchestrator/workflows.schema';
 

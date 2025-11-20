@@ -49,7 +49,7 @@ import {
   ImageSelectFiltersTrainingDropdown,
 } from '~/components/Training/Form/ImageSelectFilters';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { trainingStatusFields } from '~/components/User/UserTrainingModels';
+import { trainingStatusFields } from '~/shared/constants/training.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { ImageMetaProps } from '~/server/schema/image.schema';

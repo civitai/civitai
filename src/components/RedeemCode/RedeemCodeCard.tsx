@@ -126,7 +126,10 @@ export function RedeemCodeCard({
       // Only auto-close if there are no gift notices
       const hasGiftNotices = (consumedCode.giftNotices || []).length > 0;
       if (!hasGiftNotices) {
-        setTimeout(() => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }), 5000);
+        setTimeout(
+          () => setRedeemState({ status: 'idle', code: '', showSuccessModal: false }),
+          5000
+        );
       }
     },
     onError: (error) => {

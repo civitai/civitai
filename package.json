@@ -24,6 +24,7 @@
     "postinstall": "npm run db:generate",
     "typecheck": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc --noEmit",
     "lint": "next lint",
+    "eslint": "cross-env TIMING=1 eslint src/ --quiet --cache --cache-strategy metadata",
     "prettier:check": "prettier --check \"**/*.{ts,tsx}\"",
     "prettier:write": "prettier --write \"**/*.{ts,tsx}\"",
     "db:ui": "prisma studio",

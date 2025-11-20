@@ -21,12 +21,10 @@ import {
   Form,
   InputInlineSocialLinkInput,
   InputProfileImageUpload,
-  InputShowcaseItemsInput,
   InputSimpleImageUpload,
   InputText,
   InputTextArea,
   useForm,
-  InputProfileSectionsSettingsInput,
   InputSelect,
   InputCosmeticSelect,
   InputChipGroup,
@@ -65,6 +63,8 @@ import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { isDefined } from '~/utils/type-guards';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { InputProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
+import { InputShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema

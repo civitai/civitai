@@ -1,7 +1,7 @@
 import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
 export default PublicEndpoint(
   async function handler(req, res) {

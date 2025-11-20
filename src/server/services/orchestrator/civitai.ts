@@ -1,5 +1,5 @@
 import { env } from '~/env/server';
-import { createOrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 
 export async function invalidateCivitaiUser({ userId }: { userId: number | string }) {
   if (!env.ORCHESTRATOR_ACCESS_TOKEN) {

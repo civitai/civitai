@@ -9,7 +9,7 @@ import {
   IconHelpHexagon,
 } from '@tabler/icons-react';
 import { useState, useMemo, useCallback } from 'react';
-import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsMobile } from '~/hooks/useIsMobile';

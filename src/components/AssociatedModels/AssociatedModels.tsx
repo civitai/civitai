@@ -11,6 +11,7 @@ import {
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff, IconSparkles } from '@tabler/icons-react';
 import React from 'react';
+import dynamic from 'next/dynamic';
 import { useQueryRecommendedResources } from '~/components/AssociatedModels/recommender.utils';
 
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -19,7 +20,12 @@ import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openAssociateModelsModal } from '~/components/Dialog/dialog-registry';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'), {
+  ssr: false,
+});
+const openAssociateModelsModal = createDialogTrigger(AssociateModelsModal);
 
 export function AssociatedModels({
   fromId,

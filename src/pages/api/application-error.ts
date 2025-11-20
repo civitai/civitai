@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { parse as parseStackTrace } from 'stacktrace-parser';
 import { SourceMapConsumer } from 'source-map';
 

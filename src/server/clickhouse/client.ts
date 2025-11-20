@@ -24,7 +24,7 @@ import type {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
-import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -612,20 +612,5 @@ export class Tracker {
     valid?: boolean;
   }) {
     return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
-  }
-
-  public zkp2pPayment(values: {
-    sessionId: string;
-    eventType: 'attempt' | 'success' | 'error' | 'abandoned';
-    paymentMethod: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'wise' | 'revolut';
-    usdAmount: number;
-    buzzAmount: number;
-    errorMessage?: string;
-  }) {
-    return this.track(
-      'zkp2p_payment_events',
-      { ...values, timestamp: new Date() },
-      { skipActorMeta: true }
-    );
   }
 }

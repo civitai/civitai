@@ -13,7 +13,7 @@ import {
 import produce from 'immer';
 import React from 'react';
 import { useChatStore } from '~/components/Chat/ChatProvider';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { ChatListMessage } from '~/types/router';

@@ -1,0 +1,15 @@
+.root {
+  user-select: none;
+  background-color: theme('colors.blue.8/.2');
+  color: theme('colors.white');
+  padding-left: 8px;
+  padding-right: 8px;
+
+  & > span {
+    line-height: 1;
+  }
+}
+
+.red {
+  background-color: theme('colors.red.9/.6');
+}

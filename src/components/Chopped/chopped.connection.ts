@@ -42,7 +42,7 @@ socket
 
     socket.emit('reconnect', token);
   })
-  .on('disconnect', () => {})
+  .on('disconnect', () => undefined)
   .on('updateGlobal', (global) => {
     console.log(`socket.on('updateGlobal')`, global);
     store.setGlobal(global);

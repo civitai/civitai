@@ -2,7 +2,6 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
-import { Freeze } from '~/components/Freeze/Freeze';
 
 type DialogState = {
   opened: boolean;

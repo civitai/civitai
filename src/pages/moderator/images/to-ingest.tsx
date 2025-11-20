@@ -3,7 +3,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { trpc } from '~/utils/trpc';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 
 export default function ImagesToIngest() {
   const { data, isLoading } = trpc.image.getAllImagesPendingIngestion.useQuery();
