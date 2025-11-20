@@ -2815,7 +2815,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         if (hit.blockedFor && !isOwnContent) return false;
 
         // User can see their own scheduled or unpublished content
-        if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
+        if (
+          (!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) &&
+          (!isOwnContent || notPublished === false)
+        )
           return false;
 
         // User can see their own unscanned content
@@ -3642,10 +3645,7 @@ export const getImagesForPosts = async ({
   const isModerator = user?.isModerator ?? false;
 
   if (!Array.isArray(postIds)) postIds = [postIds];
-  const imageWhere: Prisma.Sql[] = [
-    Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
-    Prisma.sql`i."needsReview" IS NULL`,
-  ];
+  const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
 
   //   if (!!excludedIds?.length)
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
@@ -3660,6 +3660,8 @@ export const getImagesForPosts = async ({
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
+    } else {
+      imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);

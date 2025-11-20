@@ -77,6 +77,7 @@ export const useQueryPosts = (
     data: flatData,
     isRefetching: rest.isRefetching,
   });
+
   return { data, posts, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
