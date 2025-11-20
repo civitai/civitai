@@ -52,7 +52,7 @@ import pLimit from 'p-limit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
+import { openImageSelectModal } from '~/components/Dialog/dialog-triggers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';

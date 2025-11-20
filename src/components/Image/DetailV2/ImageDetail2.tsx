@@ -46,7 +46,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
-import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-triggers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';

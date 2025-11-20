@@ -54,7 +54,7 @@ import {
 import {
   openCollectionSelectModal,
   openResourceReviewEditModal,
-} from '~/components/Dialog/dialog-registry';
+} from '~/components/Dialog/dialog-triggers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';

@@ -49,7 +49,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
-import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-registry';
+import { openCivitaiLinkWizardModal } from '~/components/Dialog/dialog-triggers';
 import classes from './CivitaiLinkPopover.module.scss';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';

@@ -21,7 +21,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openUnpublishModal } from '~/components/Dialog/dialog-registry';
+import { openUnpublishModal } from '~/components/Dialog/dialog-triggers';
 
 export function ModelVersionMenu({
   modelVersionId,

@@ -22,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-registry';
+import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-triggers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';

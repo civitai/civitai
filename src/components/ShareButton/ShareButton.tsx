@@ -12,7 +12,7 @@ import type { CollectItemInput } from '~/server/schema/collection.schema';
 import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { openAddToCollectionModal, openChatShareModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openChatShareModal } from '~/components/Dialog/dialog-triggers';
 
 export function ShareButton({
   children,

@@ -13,7 +13,7 @@ import Router from 'next/router';
 import React from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-triggers';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';

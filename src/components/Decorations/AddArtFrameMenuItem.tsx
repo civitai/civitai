@@ -1,7 +1,7 @@
 import { Menu } from '@mantine/core';
 import { IconDeviceTabletStar } from '@tabler/icons-react';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
-import { openCardDecorationModal } from '~/components/Dialog/dialog-registry';
+import { openCardDecorationModal } from '~/components/Dialog/dialog-triggers';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
 
 export function AddArtFrameMenuItem(props: CardDecorationModalProps) {

@@ -56,7 +56,7 @@ import {
   openAddToCollectionModal,
   openBlockModelTagsModal,
   openReportModal,
-} from '~/components/Dialog/dialog-registry';
+} from '~/components/Dialog/dialog-triggers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';

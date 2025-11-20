@@ -68,7 +68,7 @@ import {
   openBlockModelTagsModal,
   openReportModal,
   openUnpublishModal,
-} from '~/components/Dialog/dialog-registry';
+} from '~/components/Dialog/dialog-triggers';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';

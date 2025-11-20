@@ -2,7 +2,7 @@ import type { ActionIconProps } from '@mantine/core';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { IconProps } from '@tabler/icons-react';
 import { IconSettings } from '@tabler/icons-react';
-import { openManageHomeBlocksModal } from '~/components/Dialog/dialog-registry';
+import { openManageHomeBlocksModal } from '~/components/Dialog/dialog-triggers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ManageHomepageButton({

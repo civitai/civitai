@@ -6,7 +6,7 @@ import {
   openAddToCollectionModal,
   openBlockModelTagsModal,
   openReportModal,
-} from '~/components/Dialog/dialog-registry';
+} from '~/components/Dialog/dialog-triggers';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';

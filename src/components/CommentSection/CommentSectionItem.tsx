@@ -9,7 +9,7 @@ import {
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/dialog-triggers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

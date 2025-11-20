@@ -15,7 +15,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/dialog-triggers';
 import { CollectionFollowAction } from './CollectionFollow';
 
 export function CollectionContextMenu({

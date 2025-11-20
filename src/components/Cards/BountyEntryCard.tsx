@@ -17,7 +17,7 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { openBountyEntryFilesModal } from '~/components/Dialog/dialog-registry';
+import { openBountyEntryFilesModal } from '~/components/Dialog/dialog-triggers';
 import clsx from 'clsx';
 import awardedStyles from './BountyEntryCard.module.scss';
 

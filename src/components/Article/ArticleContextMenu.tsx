@@ -31,7 +31,7 @@ import {
   openAddToCollectionModal,
   openArticleUnpublishModal,
   openReportModal,
-} from '~/components/Dialog/dialog-registry';
+} from '~/components/Dialog/dialog-triggers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ArticleContextMenu({ article, ...props }: Props) {

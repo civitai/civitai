@@ -49,7 +49,7 @@ import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { openBlockModelTagsModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import { openBlockModelTagsModal, openReportModal } from '~/components/Dialog/dialog-triggers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';

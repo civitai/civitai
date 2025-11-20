@@ -19,7 +19,7 @@ import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openAssociateModelsModal } from '~/components/Dialog/dialog-registry';
+import { openAssociateModelsModal } from '~/components/Dialog/dialog-triggers';
 
 export function AssociatedModels({
   fromId,

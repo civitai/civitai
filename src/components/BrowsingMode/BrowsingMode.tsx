@@ -13,7 +13,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
-import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
+import { openHiddenTagsModal } from '~/components/Dialog/dialog-triggers';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 // import { constants } from '~/server/common/constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';

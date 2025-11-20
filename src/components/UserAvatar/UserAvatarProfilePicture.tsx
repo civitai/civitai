@@ -1,4 +1,4 @@
-import { ActionIcon, Center, rgba, useMantineTheme } from '@mantine/core';
+import { Center, rgba, useMantineTheme } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';

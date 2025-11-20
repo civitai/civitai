@@ -3,7 +3,7 @@ import { Center, Group, Loader } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-triggers';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';

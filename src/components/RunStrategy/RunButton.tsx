@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Tooltip } from '@mantine/core';
 import { IconPlayerPlay } from '@tabler/icons-react';
-import { openRunStrategyModal } from '~/components/Dialog/dialog-registry';
+import { openRunStrategyModal } from '~/components/Dialog/dialog-triggers';
 
 export function RunButton({ modelVersionId, ...props }: { modelVersionId: number } & ButtonProps) {
   return (

@@ -72,7 +72,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { openAddToCollectionModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/dialog-triggers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = { postId: number };
