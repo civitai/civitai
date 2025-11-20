@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Install Prisma Client - remove if not using Prisma
 
-COPY prisma ./
+COPY prisma ./prisma
 
 # Install dependencies based on the preferred package manager
 
@@ -31,6 +31,8 @@ ARG NEXT_PUBLIC_MAINTENANCE_MODE
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Restore generated schema.prisma from deps (COPY . . overwrites it with source which doesn't have it)
+COPY --from=deps /app/prisma/schema.prisma ./prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
