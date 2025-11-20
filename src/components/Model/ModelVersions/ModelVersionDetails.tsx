@@ -55,7 +55,7 @@ import { openCollectionSelectModal } from '~/components/Dialog/triggers/collecti
 import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { FileInfo } from '~/components/FileInfo/FileInfo';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

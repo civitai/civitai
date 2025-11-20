@@ -13,7 +13,7 @@ import {
   IconBan,
 } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

@@ -14,6 +14,9 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import dynamic from 'next/dynamic';
+
+const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -93,7 +96,6 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
         'noreferrer'
       );
     } else {
-      const BuyBuzzModal = (await import('~/components/Modals/BuyBuzzModal')).default;
       dialogStore.trigger({
         id: 'buy-buzz-modal',
         component: BuyBuzzModal,

@@ -27,7 +27,6 @@ import {
   IconTrendingUp,
   IconTicket,
   IconExternalLink,
-  IconUsers,
   IconBrandApple,
   IconBrandGoogle,
   IconBrandPaypal,
@@ -43,7 +42,7 @@ import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
+import { buzzBulkBonusMultipliers } from '~/server/common/constants';
 import type { Price } from '~/shared/utils/prisma/models';
 import {
   formatCurrencyForDisplay,

@@ -8,7 +8,7 @@ import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 
 export function GenericImageCard({
   image,

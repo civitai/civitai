@@ -14,7 +14,7 @@ import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@table
 import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
