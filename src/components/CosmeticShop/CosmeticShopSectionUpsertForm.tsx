@@ -5,7 +5,6 @@ import {
   Form,
   InputCheckbox,
   InputRTE,
-  InputSectionItems,
   InputSimpleImageUpload,
   InputText,
   useForm,
@@ -16,6 +15,7 @@ import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.u
 import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { upsertCosmeticShopSectionInput } from '~/server/schema/cosmetic-shop.schema';
 import { constants } from '~/server/common/constants';
+import { InputSectionItems } from '~/components/CosmeticShop/SectionItemsInput';
 
 const formSchema = upsertCosmeticShopSectionInput.extend({
   items: z

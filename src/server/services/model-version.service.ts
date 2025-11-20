@@ -19,10 +19,7 @@ import {
   modelVersionResourceCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
-import {
-  resourceDataCache,
-  type GenerationResourceDataModel,
-} from '~/server/redis/resource-data.redis';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -1577,7 +1574,6 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
   return trainingResults.workflowId ?? null;
 };
-
 
 export const createModelVersionPostFromTraining = async ({
   modelVersionId,
