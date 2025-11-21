@@ -124,30 +124,18 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   return collections;
 };
 
-export const getUserCollectionPermissionsById = async ({
-  id,
+export async function getUserCollectionPermissionsByIds({
+  ids,
   userId,
   isModerator,
-}: GetByIdInput & {
+}: {
+  ids: number[];
   userId?: number;
   isModerator?: boolean;
-}) => {
-  const permissions: CollectionContributorPermissionFlags = {
-    collectionId: id,
-    read: false,
-    write: false,
-    writeReview: false,
-    manage: false,
-    follow: false,
-    isContributor: false,
-    isOwner: false,
-    publicCollection: false,
-    followPermissions: [],
-    collectionType: null,
-    collectionMode: null,
-  };
+}): Promise<CollectionContributorPermissionFlags[]> {
+  if (ids.length === 0) return [];
 
-  const collection = await dbRead.collection.findFirst({
+  const collections = await dbRead.collection.findMany({
     select: {
       id: true,
       read: true,
@@ -169,89 +157,133 @@ export const getUserCollectionPermissionsById = async ({
         : false,
     },
     where: {
-      id,
+      id: { in: ids },
     },
   });
 
-  if (!collection) {
+  const collectionMap = new Map(collections.map(c => [c.id, c]));
+
+  const results = ids.map((id) => {
+    const collection = collectionMap.get(id);
+
+    if (!collection) {
+      return createEmptyPermissions(id);
+    }
+
+    const permissions: CollectionContributorPermissionFlags = {
+      collectionId: collection.id,
+      read: false,
+      write: false,
+      writeReview: false,
+      manage: false,
+      follow: false,
+      isContributor: false,
+      isOwner: false,
+      publicCollection: false,
+      followPermissions: [],
+      collectionType: collection.type,
+      collectionMode: collection.mode,
+    };
+
+    if (
+      collection.read === CollectionReadConfiguration.Public ||
+      collection.read === CollectionReadConfiguration.Unlisted
+    ) {
+      permissions.read = true;
+      permissions.follow = true;
+      permissions.followPermissions.push(CollectionContributorPermission.VIEW);
+      permissions.publicCollection = true;
+    }
+
+    if (collection.write === CollectionWriteConfiguration.Public) {
+      permissions.follow = true;
+      permissions.write = true;
+      permissions.followPermissions.push(CollectionContributorPermission.ADD);
+    }
+
+    if (collection.write === CollectionWriteConfiguration.Review) {
+      permissions.follow = true;
+      permissions.writeReview = true;
+      permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
+    }
+
+    if (!userId) {
+      return permissions;
+    }
+
+    if (userId === collection.userId) {
+      permissions.isOwner = true;
+      permissions.manage = true;
+      permissions.read = true;
+      permissions.write = true;
+    }
+
+    if (isModerator && !permissions.isOwner) {
+      permissions.manage = true;
+      permissions.read = true;
+      permissions.write = collection.write === CollectionWriteConfiguration.Public;
+      permissions.writeReview = collection.write === CollectionWriteConfiguration.Review;
+    }
+
+    const [contributorItem] = collection.contributors;
+
+    if (!contributorItem || permissions.isOwner) {
+      return permissions;
+    }
+
+    permissions.isContributor = true;
+
+    if (contributorItem.permissions.includes(CollectionContributorPermission.VIEW)) {
+      permissions.read = true;
+    }
+
+    if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
+      permissions.write = true;
+    }
+
+    if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
+      permissions.writeReview = true;
+    }
+
+    if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
+      permissions.manage = true;
+    }
+
     return permissions;
-  }
+  });
 
-  permissions.collectionType = collection.type;
-  permissions.collectionMode = collection.mode;
+  return results;
+}
 
-  if (
-    collection.read === CollectionReadConfiguration.Public ||
-    collection.read === CollectionReadConfiguration.Unlisted
-  ) {
-    permissions.read = true;
-    permissions.follow = true;
-    permissions.followPermissions.push(CollectionContributorPermission.VIEW);
-    permissions.publicCollection = true;
-  }
+export async function getUserCollectionPermissionsById({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<CollectionContributorPermissionFlags> {
+  const results = await getUserCollectionPermissionsByIds({ ids: [id], userId, isModerator });
+  return results[0] ?? createEmptyPermissions(id);
+}
 
-  if (collection.write === CollectionWriteConfiguration.Public) {
-    // Follow will make it so that they can see the collection in their feed.
-    permissions.follow = true;
-    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
-    permissions.write = true;
-    permissions.followPermissions.push(CollectionContributorPermission.ADD);
-  }
-
-  if (collection.write === CollectionWriteConfiguration.Review) {
-    // Follow will make it so that they can see the collection in their feed.
-    permissions.follow = true;
-
-    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
-    permissions.writeReview = true;
-    permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
-  }
-
-  if (!userId) {
-    return permissions;
-  }
-
-  if (userId === collection.userId) {
-    permissions.isOwner = true;
-    permissions.manage = true;
-    permissions.read = true;
-    permissions.write = true;
-  }
-
-  if (isModerator && !permissions.isOwner) {
-    permissions.manage = true;
-    permissions.read = true;
-    // Makes sure that moderators' stuff still needs to be reviewed.
-    permissions.write = collection.write === CollectionWriteConfiguration.Public;
-    permissions.writeReview = collection.write === CollectionWriteConfiguration.Review;
-  }
-
-  const [contributorItem] = collection.contributors;
-
-  if (!contributorItem || permissions.isOwner) {
-    return permissions;
-  }
-
-  permissions.isContributor = true;
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.VIEW)) {
-    permissions.read = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
-    permissions.write = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
-    permissions.writeReview = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
-    permissions.manage = true;
-  }
-
-  return permissions;
-};
+function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
+  return {
+    collectionId,
+    read: false,
+    write: false,
+    writeReview: false,
+    manage: false,
+    follow: false,
+    isContributor: false,
+    isOwner: false,
+    publicCollection: false,
+    followPermissions: [],
+    collectionType: null,
+    collectionMode: null,
+  };
+}
 
 type CollectionForPermission = {
   id: number;

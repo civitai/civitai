@@ -98,6 +98,7 @@ import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
   getUserCollectionPermissionsById,
+  getUserCollectionPermissionsByIds,
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -159,6 +160,7 @@ import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-im
 import client from 'prom-client';
 
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { number } from 'zod';
 
 const {
   cacheHitRequestsTotal,
@@ -5680,28 +5682,22 @@ export const getImageContestCollectionDetails = async ({
       id: true,
       imageId: true,
       status: true,
-      createdAt: true,
-      reviewedAt: true,
       collection: { select: collectionSelect },
       scores: { select: { userId: true, score: true } },
       tag: true,
     },
   });
 
-  const permissions = await Promise.all(
-    items.map(async (item) => {
-      const permissions = await getUserCollectionPermissionsById({
-        id: item.collection.id as number,
-        userId,
-      });
-
-      return permissions;
-    })
-  );
+  // Fetch all permissions in one query instead of N queries
+  const collectionIds = items.map((i) => i.collection.id as number);
+  const allPermissions = await getUserCollectionPermissionsByIds({
+    ids: collectionIds,
+    userId,
+  });
 
   return items.map((i) => ({
     ...i,
-    permissions: permissions.find((p) => p.collectionId === i.collection.id),
+    permissions: allPermissions.find((p) => p.collectionId === i.collection.id),
     collection: {
       ...i.collection,
       metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
