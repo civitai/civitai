@@ -61,7 +61,6 @@ import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { logToAxiom } from '~/server/logging/client';
 import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
 
 type ArticleRaw = {

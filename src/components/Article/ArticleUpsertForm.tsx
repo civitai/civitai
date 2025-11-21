@@ -10,7 +10,7 @@ import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
-import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
