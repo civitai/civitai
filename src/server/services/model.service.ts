@@ -580,8 +580,6 @@ export const getModelsRaw = async ({
     orderBy = `mm."commentCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.MostCollected)
     orderBy = `mm."collectedCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
-  // else if (sort === ModelSort.MostTipped)
-  //   orderBy = `mm."tippedAmountCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.ImageCount)
     orderBy = `mm."imageCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC, m."id"`;
@@ -1034,8 +1032,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   //   orderBy = { rank: { [`commentCount${period}Rank`]: 'asc' } };
   // else if (sort === ModelSort.MostCollected)
   //   orderBy = { rank: { [`collectedCount${period}Rank`]: 'asc' } };
-  // else if (sort === ModelSort.MostTipped)
-  //   orderBy = { rank: { [`tippedAmountCount${period}Rank`]: 'asc' } };
   // else if (sort === ModelSort.ImageCount)
   //   orderBy = { rank: { [`imageCount${period}Rank`]: 'asc' } };
 
