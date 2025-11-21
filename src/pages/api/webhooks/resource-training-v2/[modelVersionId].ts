@@ -266,43 +266,48 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
     } catch {}
   }
 
-  try {
-    const bodyData: TrainingUpdateSignalSchema = {
-      modelId: model.id,
-      modelVersionId: modelVersion.id,
-      status: trainingStatus,
-      fileMetadata: newMetadata,
-    };
-    await fetch(
-      `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyData),
-      }
-    );
-  } catch (e: unknown) {
-    logWebhook({
-      message: 'Failed to send signal for update',
-      data: { error: (e as Error)?.message, cause: (e as Error)?.cause, workflowId: workflow.id },
-    });
-  }
+  if (last?.status !== trainingStatus) {
+    try {
+      const bodyData: TrainingUpdateSignalSchema = {
+        modelId: model.id,
+        modelVersionId: modelVersion.id,
+        status: trainingStatus,
+        fileMetadata: newMetadata,
+      };
+      await fetch(
+        `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyData),
+        }
+      );
+    } catch (e: unknown) {
+      logWebhook({
+        message: 'Failed to send signal for update',
+        data: { error: (e as Error)?.message, cause: (e as Error)?.cause, workflowId: workflow.id },
+      });
+    }
 
-  if (trainingStatus === TrainingStatus.InReview) {
-    trainingCompleteEmail
-      .send({
-        model,
-        mName: modelVersion.name,
-        user: model.user,
-      })
-      .catch((error) => logWebhook({ message: 'Failed to send training complete email', error }));
-  } else if (trainingStatus === TrainingStatus.Failed || trainingStatus === TrainingStatus.Denied) {
-    trainingFailEmail
-      .send({
-        model,
-        mName: modelVersion.name,
-        user: model.user,
-      })
-      .catch((error) => logWebhook({ message: 'Failed to send training fail email', error }));
+    if (trainingStatus === TrainingStatus.InReview) {
+      trainingCompleteEmail
+        .send({
+          model,
+          mName: modelVersion.name,
+          user: model.user,
+        })
+        .catch((error) => logWebhook({ message: 'Failed to send training complete email', error }));
+    } else if (
+      trainingStatus === TrainingStatus.Failed ||
+      trainingStatus === TrainingStatus.Denied
+    ) {
+      trainingFailEmail
+        .send({
+          model,
+          mName: modelVersion.name,
+          user: model.user,
+        })
+        .catch((error) => logWebhook({ message: 'Failed to send training fail email', error }));
+    }
   }
 }

@@ -226,8 +226,7 @@ async function getModelMetrics(ctx: ModelMetricContext, sql: string, params: any
       if (key === 'modelId') continue;
       const value = row[key];
       if (value == null) continue;
-      (ctx.modelUpdates[modelId] as any)[key] =
-        typeof value === 'string' ? parseInt(value) : value;
+      (ctx.modelUpdates[modelId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
     }
   }
 }
