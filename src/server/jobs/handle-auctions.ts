@@ -6,7 +6,6 @@ import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { purgeWeeklyEarnedStats } from '~/server/metrics/model.metrics';
 import type {
   DetailsFailedRecurringBid,
   DetailsWonAuction,
@@ -29,7 +28,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { resourceDataCache } from '~/server/services/model-version.service';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -242,8 +241,19 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
 
 type AuctionRow = Awaited<ReturnType<typeof _fetchAuctionsWithBids>>[number];
 const _fetchAuctionsWithBids = async (now: Dayjs) => {
-  return dbWrite.auction.findMany({
-    where: { finalized: false, endAt: { lte: now.toDate() } },
+  const canFetchFinalizedAuctions = now.isBefore(dayjs.utc().startOf('day'));
+
+  const auctions = await dbWrite.auction.findMany({
+    where: canFetchFinalizedAuctions
+      ? {
+          finalized: true,
+          // Only fetch auctions that ended on this specific day
+          endAt: {
+            gte: now.startOf('day').toDate(),
+            lt: now.add(1, 'day').startOf('day').toDate(),
+          },
+        }
+      : { finalized: false, endAt: { lte: now.toDate() } },
     select: {
       ...auctionSelect,
       validFrom: true,
@@ -254,6 +264,7 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
           id: true,
           userId: true,
           transactionIds: true,
+          isRefunded: true,
         },
       },
       auctionBase: {
@@ -265,6 +276,8 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
       },
     },
   });
+
+  return auctions;
 };
 
 const TOP_EARNER_LIMIT = 20;
@@ -424,7 +437,24 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
 
 const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerType[]) => {
   const loserEntities = losers.map((l) => l.entityId);
-  const lostBids = auctionRow.bids.filter((b) => !b.deleted && loserEntities.includes(b.entityId));
+
+  // Log diagnostic information for manual reruns
+  log('Processing refunds for auction:', auctionRow.id);
+  log('Total loser entities:', loserEntities.length);
+
+  const allBidsForLosers = auctionRow.bids.filter((b) => loserEntities.includes(b.entityId));
+  log('Total bids for losers:', allBidsForLosers.length);
+  log('  - Deleted bids:', allBidsForLosers.filter((b) => b.deleted).length);
+  log('  - Already refunded:', allBidsForLosers.filter((b) => b.isRefunded).length);
+
+  // Filter out deleted and already refunded bids
+  const lostBids = allBidsForLosers.filter((b) => !b.deleted && !b.isRefunded);
+  log('  - Bids to refund:', lostBids.length);
+
+  if (lostBids.length === 0) {
+    log('No bids need refunding (all already refunded or deleted)');
+    return;
+  }
 
   const refundedBidIds: number[] = [];
   // TODO limit concurrency
@@ -439,11 +469,18 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
                 const res = await refundMultiAccountTransaction({
                   externalTransactionIdPrefix: tid,
                   description: 'Refund for lost bid',
+                  details: {
+                    bidId: lostBid.id,
+                    auctionId: lostBid.auctionId,
+                  },
                 });
 
                 transactionId = res.refundedTransactions[0]?.originalTransactionId ?? null;
               } else {
-                const res = await refundTransaction(tid, 'Lost bid.');
+                const res = await refundTransaction(tid, 'Lost bid.', {
+                  bidId: lostBid.id,
+                  auctionId: lostBid.auctionId,
+                });
                 transactionId = res.transactionId;
               }
 
@@ -670,13 +707,4 @@ const createNewAuctions = async (now: Dayjs) => {
     skipDuplicates: true,
   });
   log(newAuctions.length, 'new auctions');
-
-  // If new checkpoint auction, clear prior week earned stats
-  const checkpointAuctionBase = auctionBases.find((ab) => ab.slug === 'featured-checkpoints');
-  const checkpointAuction = newAuctions.some((a) => a.auctionBaseId === checkpointAuctionBase?.id);
-  if (checkpointAuction) {
-    log('Checkpoint auction created, purging weekly stats');
-    await purgeWeeklyEarnedStats(dbWrite);
-    log('Purged weekly stats');
-  }
 };

@@ -30,18 +30,33 @@ export function PostReorderImages() {
     const { active, over } = event;
     if (!over) return;
     if (active.id !== over.id) {
-      setImages((images) => {
-        const ids = images.map((x): UniqueIdentifier => x.data.url);
-        const oldIndex = ids.indexOf(active.id);
-        const newIndex = ids.indexOf(over.id);
-        const sorted = arrayMove(images, oldIndex, newIndex);
-        return sorted.map(
+      setImages((storeImages) => {
+        // Filter and sort the same way as the displayed images
+        const addedImages = storeImages
+          .filter((x) => x.type === 'added' && x.data.id)
+          .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0));
+
+        // Find indices in the sorted, filtered array (matching what's displayed)
+        const oldIndex = addedImages.findIndex((x) => x.data.url === active.id);
+        const newIndex = addedImages.findIndex((x) => x.data.url === over.id);
+
+        if (oldIndex === -1 || newIndex === -1) return storeImages;
+
+        // Reorder the added images
+        const reordered = arrayMove(addedImages, oldIndex, newIndex);
+
+        // Update indices for the reordered images
+        const updatedImages = reordered.map(
           (image, index) =>
             ({
               type: image.type,
               data: { ...image.data, index: index + 1 },
             } as ControlledImage)
         );
+
+        // Merge back with non-added images
+        const nonAddedImages = storeImages.filter((x) => x.type !== 'added' || !x.data.id);
+        return [...updatedImages, ...nonAddedImages];
       });
     }
   }

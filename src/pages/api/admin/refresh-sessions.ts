@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { invalidateAllSessions } from '~/server/utils/session-helpers';
+import { invalidateAllSessions } from '~/server/auth/session-invalidation';
 
 const refreshSessionsSchema = z.object({
   asOf: z.preprocess((v) => (v ? new Date(String(v)) : undefined), z.date().optional()).optional(),

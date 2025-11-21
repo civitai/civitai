@@ -1,3 +1,5 @@
+import dayjs from 'dayjs';
+import { values } from 'idb-keyval';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
@@ -15,6 +17,8 @@ type CounterOptions = {
   ttl?: number;
   ordered?: boolean;
 };
+
+export type NewOrderCounter = ReturnType<typeof createCounter>;
 
 function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: CounterOptions) {
   async function populateCount(id: number | string) {
@@ -41,25 +45,25 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     withCount: true;
   }): Promise<{ score: number; value: string }[]>;
   async function getAll(opts?: { limit?: number; offset?: number; withCount?: boolean }) {
-    const { limit = 100, offset = 0, withCount = false } = opts ?? {};
+    const { limit, offset = 0, withCount = false } = opts ?? {};
     // Returns all ids in the range of min and max
     // If ordered, returns the ids by the score in descending order.
     if (ordered) {
       const data = await sysRedis.zRangeWithScores(key, Infinity, -Infinity, {
         BY: 'SCORE',
         REV: true,
-        LIMIT: { offset, count: limit },
+        LIMIT: limit ? { offset, count: limit } : undefined,
       });
 
       return withCount ? data : data.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
-    return withCount
-      ? Object.entries(data)
-          .map(([value, score]) => ({ score, value }))
-          .slice(offset, offset + limit)
-      : Object.values(data).slice(offset, offset + limit);
+    const entries = withCount
+      ? Object.entries(data).map(([value, score]) => ({ value, score: Number(score) }))
+      : Object.values(data);
+
+    return limit ? entries.slice(offset, offset + limit) : entries;
   }
 
   async function getCount(id: number | string) {
@@ -132,19 +136,30 @@ export const correctJudgmentsCounter = createCounter({
     });
     if (!player) return 0;
 
+    // Use 7-day rolling window for fervor calculation, but respect career resets
+    const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+    const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
+
+    // Optimized query using argMax instead of FINAL for better performance
+    // Groups by imageId to get latest status per rating, then counts Correct ones
     const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM knights_new_order_image_rating
-      WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
-        AND status = '${NewOrderImageRatingStatus.Correct}'
+      SELECT COUNT(*) as count
+      FROM (
+        SELECT
+          imageId,
+          argMax(status, createdAt) as latest_status
+        FROM knights_new_order_image_rating
+        WHERE userId = ${id}
+          AND createdAt >= ${effectiveStartDate}
+        GROUP BY imageId
+      )
+      WHERE latest_status = '${NewOrderImageRatingStatus.Correct}'
     `;
     if (!data) return 0;
 
     return data[0]?.count ?? 0;
   },
-  ttl: CacheTTL.week,
+  ttl: CacheTTL.day, // Shorter TTL for rolling window
 });
 
 export const allJudgmentsCounter = createCounter({
@@ -158,25 +173,42 @@ export const allJudgmentsCounter = createCounter({
     });
     if (!player) return 0;
 
+    // Use 7-day rolling window for fervor calculation, but respect career resets
+    const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+    const effectiveStartDate = player.startAt > sevenDaysAgo ? player.startAt : sevenDaysAgo;
+
+    // Optimized query using argMax instead of FINAL for better performance
+    // Groups by imageId to get latest status per rating, then counts finalized judgments
     const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM knights_new_order_image_rating
-      WHERE userId = ${id}
-        AND createdAt >= ${player.startAt}
-        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+      SELECT COUNT(*) as count
+      FROM (
+        SELECT
+          imageId,
+          argMax(status, createdAt) as latest_status
+        FROM knights_new_order_image_rating
+        WHERE userId = ${id}
+          AND createdAt >= ${effectiveStartDate}
+        GROUP BY imageId
+      )
+      WHERE latest_status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}', '${NewOrderImageRatingStatus.Inconclusive}')
     `;
     if (!data) return 0;
 
     return data[0]?.count ?? 0;
   },
-  ttl: CacheTTL.week,
+  ttl: CacheTTL.day, // Shorter TTL for rolling window
 });
 
 export const acolyteFailedJudgments = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
   fetchCount: async () => 0,
   ttl: CacheTTL.week,
+});
+
+export const sanityCheckFailuresCounter = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.FAILURES,
+  fetchCount: async () => 0,
+  ttl: CacheTTL.day,
 });
 
 export const fervorCounter = createCounter({
@@ -190,7 +222,7 @@ export const fervorCounter = createCounter({
 
     return data.fervor;
   },
-  ttl: CacheTTL.week,
+  ttl: 0, // Changed from CacheTTL.week - recalculated daily by newOrderDailyReset job
   ordered: true,
 });
 
@@ -227,58 +259,155 @@ export const expCounter = createCounter({
 });
 
 export const poolKeys = {
-  [NewOrderRankType.Acolyte]: [
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte2`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte3`,
-  ],
-  [NewOrderRankType.Knight]: [
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2`,
-    // Temporarily disabled Knight3 queue
-    // `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
-  ],
-  [NewOrderRankType.Templar]: [
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar1`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar2`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar3`,
-  ],
+  [NewOrderRankType.Acolyte]: {
+    a: [
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1:a`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte2:a`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte3:a`,
+    ],
+    b: [
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1:b`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte2:b`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte3:b`,
+    ],
+  },
+  [NewOrderRankType.Knight]: {
+    a: [
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1:a`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2:a`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3:a`,
+    ],
+    b: [
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1:b`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2:b`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3:b`,
+    ],
+  },
+  [NewOrderRankType.Templar]: {
+    a: [
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar1:a`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar2:a`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar3:a`,
+    ],
+    b: [
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar1:b`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar2:b`,
+      `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar3:b`,
+    ],
+  },
 };
 
 export const poolCounters = {
-  [NewOrderRankType.Acolyte]: poolKeys[NewOrderRankType.Acolyte].map((key) =>
-    createCounter({
-      key: key as NewOrderRedisKey,
-      fetchCount: async () => 0,
-      ttl: 0,
-      ordered: true,
-    })
-  ),
-  [NewOrderRankType.Knight]: poolKeys[NewOrderRankType.Knight].map((key) =>
-    createCounter({
-      key: key as NewOrderRedisKey,
-      fetchCount: async () => 0,
-      ttl: CacheTTL.week,
-      ordered: true,
-    })
-  ),
-  [NewOrderRankType.Templar]: poolKeys[NewOrderRankType.Templar].map((key) =>
-    createCounter({
-      key: key as NewOrderRedisKey,
-      fetchCount: async () => 0,
-      ttl: CacheTTL.week,
-      ordered: true,
-    })
-  ),
-  Inquisitor: [
-    createCounter({
-      key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Inquisitor`,
-      fetchCount: async () => 0,
-      ttl: 0,
-      ordered: true,
-    }),
-  ],
+  [NewOrderRankType.Acolyte]: {
+    a: poolKeys[NewOrderRankType.Acolyte].a.map((key) =>
+      createCounter({
+        key: key as NewOrderRedisKey,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      })
+    ),
+    b: poolKeys[NewOrderRankType.Acolyte].b.map((key) =>
+      createCounter({
+        key: key as NewOrderRedisKey,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      })
+    ),
+  },
+  [NewOrderRankType.Knight]: {
+    a: poolKeys[NewOrderRankType.Knight].a.map((key) =>
+      createCounter({
+        key: key as NewOrderRedisKey,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      })
+    ),
+    b: poolKeys[NewOrderRankType.Knight].b.map((key) =>
+      createCounter({
+        key: key as NewOrderRedisKey,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      })
+    ),
+  },
+  [NewOrderRankType.Templar]: {
+    a: poolKeys[NewOrderRankType.Templar].a.map((key) =>
+      createCounter({
+        key: key as NewOrderRedisKey,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      })
+    ),
+    b: poolKeys[NewOrderRankType.Templar].b.map((key) =>
+      createCounter({
+        key: key as NewOrderRedisKey,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      })
+    ),
+  },
+  Inquisitor: {
+    a: [
+      createCounter({
+        key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Inquisitor:a`,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      }),
+    ],
+    b: [
+      createCounter({
+        key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Inquisitor:b`,
+        fetchCount: async () => 0,
+        ttl: 0,
+        ordered: true,
+      }),
+    ],
+  },
 };
+
+type NewOrderSlot = 'a' | 'b';
+export type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
+
+/**
+ * Get the currently active slot for a rank and purpose (filling or rating)
+ * @param rank - The rank type to check
+ * @param purpose - Whether this is for filling (adding images) or rating (fetching images)
+ * @returns The active slot ('a' or 'b')
+ */
+export async function getActiveSlot(
+  rank: NewOrderHighRankType,
+  purpose: 'filling' | 'rating'
+): Promise<NewOrderSlot> {
+  if (!sysRedis) return 'a'; // Default fallback
+
+  const key = `${REDIS_SYS_KEYS.NEW_ORDER.ACTIVE_SLOT}:${rank}:${purpose}` as const;
+  const slot = await sysRedis.get(key);
+  return (slot as NewOrderSlot) || 'a'; // Default to 'a' if not set
+}
+
+/**
+ * Set the active slot for a rank and purpose
+ * @param rank - The rank type to update
+ * @param purpose - Whether this is for filling or rating
+ * @param slot - The slot to set as active ('a' or 'b')
+ */
+export async function setActiveSlot(
+  rank: NewOrderHighRankType,
+  purpose: 'filling' | 'rating',
+  slot: NewOrderSlot
+): Promise<void> {
+  if (!sysRedis) return;
+
+  const key = `${REDIS_SYS_KEYS.NEW_ORDER.ACTIVE_SLOT}:${rank}:${purpose}` as const;
+  await sysRedis.set(key, slot);
+}
 
 export const getImageRatingsCounter = (imageId: number) => {
   const key = `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`;

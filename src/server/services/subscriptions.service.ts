@@ -1,14 +1,15 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import type {
-  GetUserSubscriptionInput,
-  SubscriptionMetadata,
-  SubscriptionProductMetadata,
+import {
+  subscriptionProductMetadataSchema,
+  type GetUserSubscriptionInput,
+  type SubscriptionMetadata,
 } from '~/server/schema/subscriptions.schema';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -59,20 +60,6 @@ export const getPlans = async ({
 
   // Only show the default price for a subscription product
   return products
-    .filter(({ metadata }) => {
-      const productMeta = metadata as SubscriptionProductMetadata;
-
-      // Filter by tier (membership products)
-      const hasTier = env.TIER_METADATA_KEY
-        ? !!(metadata as any)?.[env.TIER_METADATA_KEY] &&
-          ((metadata as any)?.[env.TIER_METADATA_KEY] !== 'free' || includeFree)
-        : true;
-
-      // Filter by buzzType if provided
-      const matchesBuzzType = buzzType ? (productMeta.buzzType ?? 'yellow') === buzzType : true;
-
-      return hasTier && matchesBuzzType;
-    })
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
       const price = prices.filter((x) => x.id === product.defaultPriceId)[0] ?? prices[0];
@@ -81,8 +68,23 @@ export const getPlans = async ({
         ...product,
         price,
         prices,
+        metadata: subscriptionProductMetadataSchema.parse(product.metadata),
       };
     })
+    .filter(({ metadata }) => {
+      // Filter by tier (membership products)
+      let hasTier = true;
+      if (env.TIER_METADATA_KEY) {
+        const key = env.TIER_METADATA_KEY as keyof typeof metadata;
+        hasTier = !!metadata[key] && (metadata[key] !== 'free' || includeFree);
+      }
+
+      // Filter by buzzType if provided
+      const matchesBuzzType = buzzType ? metadata.buzzType === buzzType : true;
+
+      return hasTier && matchesBuzzType;
+    })
+
     .sort((a, b) => (a.price?.unitAmount ?? 0) - (b.price?.unitAmount ?? 0));
 };
 
@@ -137,7 +139,7 @@ export const getUserSubscription = async ({
   )
     return null;
 
-  const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
+  const productMeta = subscriptionProductMetadataSchema.parse(subscription.product.metadata);
 
   const subscriptionMeta = (subscription.metadata ?? {}) as SubscriptionMetadata;
   if (subscriptionMeta.renewalEmailSent) {
@@ -157,6 +159,10 @@ export const getUserSubscription = async ({
     ),
     tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
     productMeta,
+    product: {
+      ...subscription.product,
+      metadata: productMeta,
+    },
   };
 };
 
@@ -206,7 +212,7 @@ export const getAllUserSubscriptions = async (userId: number) => {
 
   return subscriptions
     .map((subscription) => {
-      const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
+      const productMeta = subscriptionProductMetadataSchema.parse(subscription.product.metadata);
       const subscriptionMeta = (subscription.metadata ?? {}) as SubscriptionMetadata;
 
       // Filter out renewalEmailSent subscriptions
@@ -231,6 +237,26 @@ export const getAllUserSubscriptions = async (userId: number) => {
 
 export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscriptions>>;
 
+/**
+ * Get the highest tier subscription for a user
+ * @param userId - The user ID
+ * @returns The subscription with the highest tier, or null if no subscriptions found
+ */
+export const getHighestTierSubscription = async (userId: number) => {
+  const subscriptions = await getAllUserSubscriptions(userId);
+
+  if (subscriptions.length === 0) return null;
+
+  // Find the subscription with the highest tier using the tier hierarchy from constants
+  return subscriptions.reduce((highest, current) => {
+    const highestTierIndex = constants.memberships.tierOrder.indexOf(highest.tier as any);
+    const currentTierIndex = constants.memberships.tierOrder.indexOf(current.tier as any);
+
+    // If tier not found in hierarchy, treat as lowest (-1 < any valid index)
+    return currentTierIndex > highestTierIndex ? current : highest;
+  });
+};
+
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
   const priceIds = data.items.map((i) => i.price?.id).filter(isDefined);
 
@@ -246,7 +272,7 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
   });
 
   const nonFreeProducts = products.filter((p) => {
-    const meta = p.metadata as SubscriptionProductMetadata;
+    const meta = subscriptionProductMetadataSchema.parse(p.metadata);
     return meta?.[env.TIER_METADATA_KEY] !== 'free';
   });
 
@@ -274,7 +300,7 @@ export const deliverMonthlyCosmetics = async ({
 
   await client.$executeRaw`
       with users_affected AS (
-        SELECT 
+        SELECT
           "userId",
           COALESCE(pdl.id, pr.id) "productId",
           NOW() as "createdAt"

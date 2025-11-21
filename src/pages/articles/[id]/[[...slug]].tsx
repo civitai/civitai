@@ -50,7 +50,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -60,6 +59,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -72,6 +72,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
+import { useInView } from 'react-intersection-observer';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -106,6 +107,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
+
+  // Intersection observer for lazy loading comments
+  const { ref: commentsRef, inView: commentsInView } = useInView({
+    triggerOnce: true,
+    rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px; this delays loading and may worsen perceived performance)
+    threshold: 0.1, // Trigger when 10% of the element is visible
+  });
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
@@ -323,6 +331,35 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </div>
               </AlertWithIcon>
             )}
+            {article.status === ArticleStatus.UnpublishedViolation && (
+              <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
+                <div>
+                  <Text weight={600} size="lg" mb="xs">
+                    This article has been unpublished due to a Terms of Service violation
+                  </Text>
+                  {article.metadata?.unpublishedReason &&
+                    article.metadata.unpublishedReason !== 'other' && (
+                      <Text>
+                        <strong>Reason:</strong>{' '}
+                        {
+                          unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
+                            ?.notificationMessage
+                        }
+                      </Text>
+                    )}
+                  {article.metadata?.customMessage && (
+                    <Text>
+                      <strong>Additional details:</strong> {article.metadata.customMessage}
+                    </Text>
+                  )}
+                  {!isModerator && (
+                    <Text mt="sm" size="sm">
+                      If you believe this was done in error, please contact support.
+                    </Text>
+                  )}
+                </div>
+              </AlertWithIcon>
+            )}
             {article.status === ArticleStatus.Processing && isOwner && (
               <ArticleScanStatus
                 articleId={article.id}
@@ -414,9 +451,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
             </ContainerGrid2.Col>
           </ContainerGrid2>
-          {article.id !== 13632 && (
-            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-          )}
+          <div ref={commentsRef}>
+            {commentsInView && (
+              <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+            )}
+          </div>
         </Container>
       </SensitiveShield>
     </>

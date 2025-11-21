@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';

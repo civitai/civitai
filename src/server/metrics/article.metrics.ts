@@ -12,6 +12,7 @@ import {
   getMetricJson,
   snippets,
 } from '~/server/metrics/metric-helpers';
+import { articleStatCache } from '~/server/redis/caches';
 
 const log = createLogger('metrics:article');
 
@@ -40,15 +41,21 @@ export const articleMetrics = createMetricProcessor({
         action: SearchIndexUpdateQueueAction.Update,
       }))
     );
+
+    // Bust article stat cache for all affected articles
+    //---------------------------------------
+    log('bust article stat cache', ctx.affected.size, 'articles');
+    await articleStatCache.bust([...ctx.affected]);
   },
-  async clearDay(ctx) {
-    await executeRefresh(ctx)`
-      UPDATE "ArticleMetric"
-        SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "viewCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
-  },
+  // Not using day metrics anymore
+  // async clearDay(ctx) {
+  //   await executeRefresh(ctx)`
+  //     UPDATE "ArticleMetric"
+  //       SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "viewCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
+  //     WHERE timeframe = 'Day'
+  //       AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+  //   `;
+  // },
   rank: {
     table: 'ArticleRank',
     primaryKey: 'articleId',

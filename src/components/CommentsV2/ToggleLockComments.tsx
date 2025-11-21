@@ -22,26 +22,31 @@ export function ToggleLockComments({
   onSuccess,
 }: ToggleLockCommentsProps) {
   const queryUtils = trpc.useUtils();
-  const { data: thread } = trpc.commentv2.getThreadDetails.useQuery({
+
+  // Use dedicated getThreadDetails for thread metadata
+  const { data: threadMeta } = trpc.commentv2.getThreadDetails.useQuery({
     entityId,
     entityType,
   });
+
   const { mutate, isLoading } = trpc.commentv2.toggleLockThread.useMutation({
     onMutate: async () => {
+      // Update the dedicated threadMeta cache
       queryUtils.commentv2.getThreadDetails.setData(
         { entityId, entityType },
         produce((old) => {
-          if (!old) return;
+          if (!old) return old;
           old.locked = !old.locked;
         })
       );
     },
     onSuccess,
     onError: () => {
+      // Revert cache on error
       queryUtils.commentv2.getThreadDetails.setData(
         { entityType, entityId },
         produce((old) => {
-          if (!old) return;
+          if (!old) return old;
           old.locked = !old.locked;
         })
       );
@@ -50,7 +55,7 @@ export function ToggleLockComments({
 
   const handleClick = () => mutate({ entityId, entityType });
 
-  if (!thread) return null;
+  if (!threadMeta) return null;
 
-  return children({ toggle: handleClick, isLoading, locked: thread.locked });
+  return children({ toggle: handleClick, isLoading, locked: threadMeta.locked });
 }

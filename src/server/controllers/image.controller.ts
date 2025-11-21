@@ -8,10 +8,15 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
+import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getUserCollectionPermissionsById,
+  removeEntityFromAllCollections,
+} from '~/server/services/collection.service';
 import {
   isImageInQueue,
   updatePendingImageRatings,
@@ -22,6 +27,7 @@ import {
   deleteImageById,
   getAllImagesIndex,
   getPostDetailByImageId,
+  invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageAcceptableMinor,
@@ -83,24 +89,16 @@ export const moderateImageHandler = async ({
       moderatorId: ctx.user.id,
     });
     if (input.reviewAction === 'block') {
-      const ids = images.map((x) => x.id);
-      const imageTags = await getTagNamesForImages(ids);
-      const imageResources = await getResourceIdsForImages(ids);
       await Limiter().process(images, (images) =>
         ctx.track.images(
           images.map(({ id, userId, nsfwLevel, needsReview }) => {
-            const tosReason = needsReview ?? 'other';
-            const tags = imageTags[id] ?? [];
-            tags.push(tosReason);
-            const resources = imageResources[id] ?? [];
-
             return {
               type: 'DeleteTOS',
               imageId: id,
               nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-              tags,
-              resources,
-              tosReason: tosReason,
+              tags: [],
+              resources: [],
+              tosReason: needsReview ?? 'other',
               ownerId: userId,
             };
           })
@@ -121,15 +119,10 @@ export const deleteImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const imageTags = await dbRead.imageTag.findMany({
-      where: {
-        imageId: input.id,
-        concrete: true,
-      },
-      select: {
-        tagName: true,
-      },
-    });
+    const tagsByImage = await imageTagsCache.fetch(input.id);
+    const imageTags = (tagsByImage[input.id]?.tags ?? [])
+      .filter((tag) => tag.concrete)
+      .map((tag) => ({ tagName: tag.tagName }));
 
     const image = await deleteImageById(input);
 
@@ -220,6 +213,10 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+    await invalidateManyImageExistence([id]);
+
+    // Remove image from all collections
+    await removeEntityFromAllCollections('image', id);
 
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
@@ -253,6 +250,12 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
+
+  // Track when useIndex is false or undefined
+  if (input.useIndex === false || input.useIndex == null) {
+    imagesFeedWithoutIndexCounter.inc();
+  }
+
   const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
   // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
 

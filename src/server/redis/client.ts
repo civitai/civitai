@@ -396,26 +396,26 @@ function getSysClient() {
 }
 
 export let redis: CustomRedisClientCache;
-if (isProd) {
-  redis = getCacheClient();
-} else {
-  if (!global.globalRedis) global.globalRedis = getCacheClient();
-  redis = global.globalRedis;
-}
-
 export let sysRedis: CustomRedisClientSys;
-if (isProd) {
-  sysRedis = getSysClient();
+if (!env.IS_BUILD) {
+  if (isProd) {
+    redis = getCacheClient();
+    sysRedis = getSysClient();
+  } else {
+    if (!global.globalRedis) global.globalRedis = getCacheClient();
+    redis = global.globalRedis;
+
+    if (!global.globalSysRedis) global.globalSysRedis = getSysClient();
+    sysRedis = global.globalSysRedis;
+  }
 } else {
-  if (!global.globalSysRedis) global.globalSysRedis = getSysClient();
-  sysRedis = global.globalSysRedis;
+  log('Skipping Redis initialization (build phase)');
 }
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
-    HISTORY_EXCLUSION: 'download:history-exclusion',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
@@ -479,12 +479,23 @@ export const REDIS_SYS_KEYS = {
     BUZZ: 'new-order:blessed-buzz',
     SMITE: 'new-order:smite-progress',
     QUEUES: 'new-order:queues',
+    ACTIVE_SLOT: 'new-order:active-slot',
     RATINGS: 'new-order:ratings',
     MATCHES: 'new-order:matches',
     JUDGEMENTS: {
       ALL: 'new-order:judgments:all',
       CORRECT: 'new-order:judgments:correct',
       ACOLYTE_FAILED: 'new-order:judgments:acolyte-failed',
+    },
+    SANITY_CHECKS: {
+      POOL: 'new-order:sanity-checks',
+      FAILURES: 'new-order:sanity-failures',
+    },
+    PROCESSING: {
+      LAST_PROCESSED_AT: 'new-order:processing:last-processed-at',
+      BATCH_CUTOFF: 'new-order:processing:batch-cutoff',
+      PENDING_COUNT: 'new-order:processing:pending-count',
+      LOCK: 'new-order:processing:lock',
     },
   },
   ENTITY_MODERATION: {
@@ -590,11 +601,14 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models',
+    HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
     THUMBNAILS: 'packed:caches:thumbnails',
     IMAGE_METRICS: 'packed:caches:image-metrics',
+    ARTICLE_STATS: 'packed:caches:article-stats',
+    POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
     IMAGE_TAGS: 'packed:caches:image-tags',

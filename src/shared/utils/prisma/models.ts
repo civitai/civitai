@@ -68,7 +68,7 @@ export type ImageGenerationProcess = "txt2img" | "txt2imgHiRes" | "img2img" | "i
 
 export type NsfwLevel = "None" | "Soft" | "Mature" | "X" | "Blocked";
 
-export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" | "NotFound" | "PendingManualAssignment";
+export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" | "NotFound" | "PendingManualAssignment" | "Rescan";
 
 export type MediaType = "image" | "video" | "audio";
 
@@ -104,7 +104,7 @@ export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
 export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
-export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "Processing";
+export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "UnpublishedViolation" | "Processing";
 
 export type ArticleEngagementType = "Favorite" | "Hide";
 
@@ -1594,6 +1594,7 @@ export interface CommentV2 {
   metadata: JsonValue | null;
   hidden: boolean | null;
   pinnedAt: Date | null;
+  reactionCount: number;
   reactions?: CommentV2Reaction[];
   reports?: CommentV2Report[];
 }
@@ -2122,7 +2123,7 @@ export interface BountyBenefactor {
   awardedToId: number | null;
   awartedTo?: BountyEntry | null;
   currency: Currency;
-  buzzTransactionId: string | null;
+  buzzTransactionId: string[];
 }
 
 export interface BountyEngagement {

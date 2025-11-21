@@ -1,4 +1,5 @@
-import { openLoginModal } from '~/components/Dialog/dialog-registry';
+import dynamic from 'next/dynamic';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 
 export function requireLogin({
@@ -18,7 +19,8 @@ export function requireLogin({
     uiEvent.preventDefault();
     uiEvent.stopPropagation();
     uiEvent.nativeEvent.stopImmediatePropagation();
-    openLoginModal({
+    dialogStore.trigger({
+      component: dynamic(() => import('~/components/Login/LoginModal'), { ssr: false }),
       props: {
         message,
         reason,

@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import type { Context } from '~/server/createContext';
-import type { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
+import type {
+  ToggleHideCommentInput,
+  GetCommentsInfiniteInput,
+} from '~/server/schema/commentv2.schema';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -23,6 +26,7 @@ import {
   getComment,
   getCommentCount,
   getCommentsThreadDetails2,
+  getCommentsInfinite,
   toggleHideComment,
   toggleLockCommentsThread,
   upsertComment,
@@ -181,6 +185,7 @@ export const getCommentsThreadDetailsHandler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
+    // Fetch thread metadata including hiddenCount (needs excludedUserIds for accurate count)
     const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (x) => x.id
@@ -243,6 +248,27 @@ export const toggleHideCommentHandler = async ({
     return updatedComment;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getCommentsInfiniteHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetCommentsInfiniteInput;
+}) => {
+  try {
+    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
+      (x) => x.id
+    );
+    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+
+    return await getCommentsInfinite({ ...input, excludedUserIds });
+  } catch (error) {
     throw throwDbError(error);
   }
 };

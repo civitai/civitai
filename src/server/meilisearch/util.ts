@@ -4,6 +4,15 @@ import { searchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import {
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+  ARTICLES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 
 const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
@@ -162,6 +171,118 @@ const waitForTasksWithRetries = async (
 
     throw e;
   }
+};
+
+/**
+ * Remove all user content from search indexes
+ * This function iterates through all available search indexes and removes documents
+ * associated with the specified userId, if the index has userId as a filterable attribute.
+ */
+export const removeUserContentFromSearchIndex = async (userId: number) => {
+  if (!searchClient) {
+    return;
+  }
+
+  // Get all available indexes from constants
+  const allIndexes = [
+    IMAGES_SEARCH_INDEX,
+    MODELS_SEARCH_INDEX,
+    ARTICLES_SEARCH_INDEX,
+    COLLECTIONS_SEARCH_INDEX,
+    BOUNTIES_SEARCH_INDEX,
+    USERS_SEARCH_INDEX,
+  ];
+
+  const results = {
+    processed: [] as string[],
+    skipped: [] as string[],
+    deleted: 0,
+  };
+
+  for (const indexName of allIndexes) {
+    try {
+      const index = await getOrCreateIndex(indexName, undefined, searchClient);
+
+      if (!index) {
+        results.skipped.push(indexName);
+        continue;
+      }
+
+      // Get filterable attributes for this index
+      const settings = await index.getSettings();
+      const filterableAttributes = settings.filterableAttributes || [];
+
+      // Determine which filter to use based on available attributes
+      let filter: string | undefined;
+      if (filterableAttributes.includes('user.id')) {
+        filter = `user.id = ${userId}`;
+      } else if (filterableAttributes.includes('userId')) {
+        filter = `userId = ${userId}`;
+      } else if (filterableAttributes.includes('id') && indexName === USERS_SEARCH_INDEX) {
+        // For users index, filter by id directly
+        filter = `id = ${userId}`;
+      } else {
+        // Skip indexes that don't have a userId-related filterable attribute
+        console.log(
+          `removeUserContentFromSearchIndex :: Skipping ${indexName} - no userId filterable attribute`
+        );
+        results.skipped.push(indexName);
+        continue;
+      }
+
+      // Search for documents matching the userId
+      const data = await index.search('', {
+        filter,
+        limit: 10000, // Increase limit to handle users with many documents
+      });
+
+      if (data.hits.length === 0) {
+        console.log(`removeUserContentFromSearchIndex :: No documents found in ${indexName}`);
+        results.processed.push(indexName);
+        continue;
+      }
+
+      const documentIds = data.hits.map((hit) => (hit as Record<string, unknown>).id) as number[];
+
+      console.log(
+        `removeUserContentFromSearchIndex :: Deleting ${documentIds.length} documents from ${indexName}`
+      );
+
+      // Log to Axiom for tracking user content deletions
+      await logToAxiom({
+        name: 'remove-user-search-index-content',
+        type: 'info',
+        userId,
+        indexName,
+        documentCount: documentIds.length,
+      }).catch();
+
+      await index.deleteDocuments(documentIds);
+      results.deleted += documentIds.length;
+      results.processed.push(indexName);
+    } catch (error) {
+      console.error(`removeUserContentFromSearchIndex :: Error processing ${indexName}:`, error);
+      results.skipped.push(indexName);
+    }
+  }
+
+  console.log(
+    `removeUserContentFromSearchIndex :: Complete - Processed: ${results.processed.join(
+      ', '
+    )}, Skipped: ${results.skipped.join(', ')}, Total deleted: ${results.deleted}`
+  );
+
+  // Log summary to Axiom
+  await logToAxiom({
+    name: 'remove-user-search-index-content-summary',
+    type: 'info',
+    userId,
+    processedIndexes: results.processed,
+    skippedIndexes: results.skipped,
+    totalDeleted: results.deleted,
+  }).catch();
+
+  return results;
 };
 
 export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };

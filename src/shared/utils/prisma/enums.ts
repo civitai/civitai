@@ -342,6 +342,7 @@ export const ImageIngestionStatus = {
   Blocked: 'Blocked',
   NotFound: 'NotFound',
   PendingManualAssignment: 'PendingManualAssignment',
+  Rescan: 'Rescan',
 } as const;
 
 export type ImageIngestionStatus = (typeof ImageIngestionStatus)[keyof typeof ImageIngestionStatus];
@@ -503,6 +504,7 @@ export const ArticleStatus = {
   Draft: 'Draft',
   Published: 'Published',
   Unpublished: 'Unpublished',
+  UnpublishedViolation: 'UnpublishedViolation',
   Processing: 'Processing',
 } as const;
 

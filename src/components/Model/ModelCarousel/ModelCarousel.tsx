@@ -2,7 +2,7 @@ import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import {
   ExplainHiddenImages,

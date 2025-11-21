@@ -46,6 +46,7 @@ import {
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
@@ -506,7 +507,7 @@ export function GenerationFormContent() {
             const disableAdditionalResources =
               runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana || isSeedream;
             const disableAdvanced =
-              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana || isSeedream;
+              isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
               isQwen ||
@@ -545,11 +546,18 @@ export function GenerationFormContent() {
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
-              isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7;
-            const disableSteps = isFluxUltra || isFluxKontext;
+              isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7 || isSeedream;
+            const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
-              isSDXL || isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7;
-            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7;
+              isSDXL ||
+              isFlux ||
+              isQwen ||
+              isSD3 ||
+              isFluxKontext ||
+              isChroma ||
+              isPonyV7 ||
+              isSeedream;
+            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
@@ -1257,7 +1265,7 @@ export function GenerationFormContent() {
                     </>
                   )}
 
-                  {(isFluxUltra || isSeedream) && <InputSeed name="seed" label="Seed" />}
+                  {isFluxUltra && <InputSeed name="seed" label="Seed" />}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
@@ -1503,6 +1511,7 @@ export function GenerationFormContent() {
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                   <DailyBoostRewardClaim />
+                  <MembershipUpsell />
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
@@ -1665,7 +1674,6 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { allowMatureContent } = useAppContext();
   const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();

@@ -130,7 +130,9 @@ export default function UserBuzzDashboard() {
           {/* Redeem Buzz Code Section */}
           {selectedAccountType === 'yellow' && <RedeemCodeCard />}
 
-          <EarningBuzz withCTA accountType={selectedAccountType} />
+          {selectedAccountType !== 'blue' && (
+            <EarningBuzz withCTA accountType={selectedAccountType} />
+          )}
 
           <Paper className={classes.tileCard} h="100%">
             <Stack p="md">
@@ -189,20 +191,6 @@ export default function UserBuzzDashboard() {
             .
           </Text>
           <GeneratedImagesReward />
-          {features.creatorComp && (
-            <DismissibleAlert
-              title="Compensation Under Review"
-              color="yellow"
-              id="compensation-issues-10-15-2025"
-              storage="sessionStorage"
-              mb="-md"
-            >
-              <p>
-                We&rsquo;re actively reviewing reports related to creator compensation for October
-                15th. We expect things to be resolved before the next compensation period.
-              </p>
-            </DismissibleAlert>
-          )}
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
           {selectedAccountType === 'green' && (
             <Alert color="yellow" title="Green Creator Program Temporarily Disabled">

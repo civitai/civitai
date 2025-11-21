@@ -100,7 +100,6 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           FROM "Model"
           WHERE id BETWEEN ${start} AND ${end}
           AND status = 'Published'
-          AND nsfw = false
         `;
 
         const updatesToMake: {
@@ -113,9 +112,13 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.name].filter(Boolean).join(' ');
-          const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, matchedWords } = profanityFilter.evaluateContent(
+            textToCheck,
+            { diversityThreshold: 3, shortContentWordLimit: 1 }
+          );
 
-          if (isProfane && !record.nsfw) {
+          // Case 1: Mark as NSFW if threshold exceeded
+          if (shouldMarkNSFW) {
             const newLockedProperties =
               record.lockedProperties && !record.lockedProperties.includes('nsfw')
                 ? [...record.lockedProperties, 'nsfw']
@@ -124,11 +127,42 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             const updatedMeta = {
               ...(record.meta || {}),
               profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
             };
 
             updatesToMake.push({
               id: record.id,
               nsfw: true,
+              lockedProperties: newLockedProperties,
+              meta: updatedMeta,
+            });
+            searchIndexUpdates.push({ id: record.id });
+          }
+          // Case 2: Unmark NSFW if threshold NOT exceeded but was previously marked by profanity system
+          else if (
+            !shouldMarkNSFW &&
+            record.nsfw &&
+            record.meta?.profanityMatches &&
+            record.meta.profanityMatches.length > 0
+          ) {
+            const newLockedProperties = record.lockedProperties
+              ? record.lockedProperties.filter((prop) => prop !== 'nsfw')
+              : [];
+
+            const updatedMeta = {
+              ...(record.meta || {}),
+              profanityMatches: record.meta.profanityMatches, // Keep for audit trail
+              profanityEvaluation: {
+                reason: 'threshold_correction',
+                metrics,
+                previousReason: record.meta.profanityEvaluation?.reason,
+                correctedAt: new Date().toISOString(),
+              },
+            };
+
+            updatesToMake.push({
+              id: record.id,
+              nsfw: false,
               lockedProperties: newLockedProperties,
               meta: updatedMeta,
             });
@@ -249,7 +283,6 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           FROM "Article"
           WHERE id BETWEEN ${start} AND ${end}
           AND status = 'Published'
-          AND nsfw = false
         `;
 
         const updatesToMake: {
@@ -263,9 +296,11 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.title, record.content].filter(Boolean).join(' ');
-          const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, suggestedLevel, matchedWords } =
+            profanityFilter.evaluateContent(textToCheck);
 
-          if (isProfane && (record.userNsfwLevel <= NsfwLevel.PG13 || !record.nsfw)) {
+          // Case 1: Mark as NSFW if threshold exceeded and not properly marked
+          if (shouldMarkNSFW && record.userNsfwLevel <= NsfwLevel.PG13) {
             const newLockedProperties = [
               ...(record.lockedProperties || []),
               'nsfw',
@@ -275,12 +310,46 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             const updatedMetadata = {
               ...(record.metadata || {}),
               profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
             };
 
             updatesToMake.push({
               id: record.id,
               nsfw: true,
-              userNsfwLevel: NsfwLevel.R,
+              userNsfwLevel: suggestedLevel,
+              lockedProperties: newLockedProperties,
+              metadata: updatedMetadata,
+            });
+            searchIndexUpdates.push({ id: record.id });
+          }
+          // Case 2: Unmark NSFW if threshold NOT exceeded but was previously marked by profanity system
+          else if (
+            !shouldMarkNSFW &&
+            record.nsfw &&
+            record.metadata?.profanityMatches &&
+            record.metadata.profanityMatches.length > 0
+          ) {
+            const newLockedProperties = record.lockedProperties
+              ? record.lockedProperties.filter(
+                  (prop) => prop !== 'nsfw' && prop !== 'userNsfwLevel'
+                )
+              : [];
+
+            const updatedMetadata = {
+              ...(record.metadata || {}),
+              profanityMatches: record.metadata.profanityMatches, // Keep for audit trail
+              profanityEvaluation: {
+                reason: 'threshold_correction',
+                metrics,
+                previousReason: record.metadata.profanityEvaluation?.reason,
+                correctedAt: new Date().toISOString(),
+              },
+            };
+
+            updatesToMake.push({
+              id: record.id,
+              nsfw: false,
+              userNsfwLevel: suggestedLevel,
               lockedProperties: newLockedProperties,
               metadata: updatedMetadata,
             });
@@ -399,7 +468,6 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           SELECT id, name, description, nsfw, "lockedProperties", details
           FROM "Bounty"
           WHERE id BETWEEN ${start} AND ${end}
-          AND nsfw = false
         `;
 
         const updatesToMake: {
@@ -412,9 +480,11 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
 
         for (const record of records) {
           const textToCheck = [record.name, record.description].filter(Boolean).join(' ');
-          const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+          const { shouldMarkNSFW, metrics, reason, matchedWords } =
+            profanityFilter.evaluateContent(textToCheck);
 
-          if (isProfane && !record.nsfw) {
+          // Case 1: Mark as NSFW if threshold exceeded
+          if (shouldMarkNSFW) {
             const newLockedProperties =
               record.lockedProperties && !record.lockedProperties.includes('nsfw')
                 ? [...record.lockedProperties, 'nsfw']
@@ -423,6 +493,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
             const updatedDetails = {
               ...(record.details || {}),
               profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
             };
 
             updatesToMake.push({
@@ -432,6 +503,36 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
               details: updatedDetails,
             });
             searchIndexUpdates.push({ id: record.id, nsfw: true });
+          }
+          // Case 2: Unmark NSFW if threshold NOT exceeded but was previously marked by profanity system
+          else if (
+            !shouldMarkNSFW &&
+            record.nsfw &&
+            record.details?.profanityMatches &&
+            record.details.profanityMatches.length > 0
+          ) {
+            const newLockedProperties = record.lockedProperties
+              ? record.lockedProperties.filter((prop) => prop !== 'nsfw')
+              : [];
+
+            const updatedDetails = {
+              ...(record.details || {}),
+              profanityMatches: record.details.profanityMatches, // Keep for audit trail
+              profanityEvaluation: {
+                reason: 'threshold_correction',
+                metrics,
+                previousReason: record.details.profanityEvaluation?.reason,
+                correctedAt: new Date().toISOString(),
+              },
+            };
+
+            updatesToMake.push({
+              id: record.id,
+              nsfw: false,
+              lockedProperties: newLockedProperties,
+              details: updatedDetails,
+            });
+            searchIndexUpdates.push({ id: record.id, nsfw: false });
           }
         }
 
@@ -524,5 +625,7 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
     console.log('\n=== CSV OUTPUT ===');
     console.log(csvContent);
     console.log(`\nTotal records with profanity: ${csvRecords.length}`);
+
+    return res.send(csvContent);
   }
 }

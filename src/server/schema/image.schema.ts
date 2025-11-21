@@ -449,6 +449,13 @@ export const imageRatingReviewInput = z.object({
   cursor: z.number().optional(),
 });
 
+export type DownleveledReviewOutput = z.infer<typeof downleveledReviewInput>;
+export const downleveledReviewInput = z.object({
+  limit: z.number(),
+  cursor: z.string().optional(),
+  originalLevel: z.nativeEnum(NsfwLevel).optional(),
+});
+
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;
 export const reportCsamImagesSchema = z.object({
   imageIds: z.array(z.number()).min(1),

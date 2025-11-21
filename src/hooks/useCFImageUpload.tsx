@@ -6,6 +6,7 @@ import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { v4 as uuidv4 } from 'uuid';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type TrackedFileStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
 type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
@@ -49,6 +50,7 @@ const pendingTrackedFile = {
 };
 
 export const useCFImageUpload: UseCFImageUpload = () => {
+  const currentUser = useCurrentUser();
   const [files, setFiles] = useState<TrackedFile[]>([]);
 
   const resetFiles = () => {
@@ -57,7 +59,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
   // eslint-disable-next-line @typescript-eslint/no-shadow
   const uploadToCF: UploadToCF = async (file, metadata = {}) => {
-    const imageData = await getDataFromFile(file);
+    const imageData = await getDataFromFile(file, { allowAnimatedWebP: currentUser?.isModerator });
     if (!imageData) throw new Error();
 
     const filename = encodeURIComponent(file.name);
@@ -163,8 +165,8 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 };
 
 export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
-export const getDataFromFile = async (file: File) => {
-  const processed = await preprocessFile(file);
+export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
+  const processed = await preprocessFile(file, options);
   const { blockedFor } = await auditImageMeta(
     processed.type === MediaType.image ? processed.meta : undefined,
     false

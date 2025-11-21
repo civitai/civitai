@@ -119,7 +119,6 @@ export function MembershipPlans({
         // Ensures we have products from the current provider.
         !(products ?? []).some((p) => p.provider === subscription.product.provider)));
 
-  const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const activeSubscriptionIsNotDefaultProvider =
     !features.disablePayments && subscription && subscriptionPaymentProvider !== paymentProvider;
   const isHolidays = isHolidaysTime();
@@ -290,39 +289,6 @@ export function MembershipPlans({
             </Center>
           ) : (
             <ContainerGrid2 justify="center">
-              <ContainerGrid2.Col span={{ base: 12, sm: 6, md: 3 }}>
-                <Card className={classes.card}>
-                  <Stack style={{ height: '100%' }}>
-                    <Stack gap="md" mb="md">
-                      <Title className={clsx(classes.cardTitle, 'text-center')} order={2} mb="sm">
-                        Free
-                      </Title>
-                      <Center style={{ opacity: 0.3 }}>
-                        <EdgeMedia
-                          src={freePlanDetails.image}
-                          width={128}
-                          className={classes.image}
-                        />
-                      </Center>
-                      <Group justify="center" gap={4} align="flex-end" mb={24}>
-                        <Text className={classes.price} align="center" lh={1} mt={undefined}>
-                          $0
-                        </Text>
-                      </Group>
-                      {!isFreeTier ? (
-                        <Button radius="xl" color="gray" component={Link} href="/user/membership">
-                          Downgrade to free
-                        </Button>
-                      ) : (
-                        <Button radius="xl" disabled color="gray">
-                          Current
-                        </Button>
-                      )}
-                    </Stack>
-                    <PlanBenefitList benefits={freePlanDetails.benefits} defaultBenefitsDisabled />
-                  </Stack>
-                </Card>
-              </ContainerGrid2.Col>
               {products.map((product) => (
                 <ContainerGrid2.Col key={product.id} span={{ base: 12, sm: 6, md: 3 }}>
                   <PlanCard

@@ -2,7 +2,7 @@ import { Menu, useMantineTheme } from '@mantine/core';
 import { IconEdit, IconFlag, IconTrash, IconInfoCircle, IconShieldHalf } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';

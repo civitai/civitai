@@ -38,7 +38,7 @@ export function GeneratedImageActions({
   const router = useRouter();
   const { images, data } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
-  const selectableImages = images.filter((x) => x.status === 'succeeded');
+  const selectableImages = images.filter((x) => x.status === 'succeeded' && !x.blockedReason);
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
   const selected = orchestratorImageSelect
@@ -58,7 +58,7 @@ export function GeneratedImageActions({
     const grouped = data.flatMap((workflow) =>
       workflow.steps.flatMap((step) =>
         step.images
-          .filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id))
+          .filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id) && !x.blockedReason)
           .map((image, index) => ({ ...image, createdAt: workflow.createdAt, index: index + 1 }))
       )
     );

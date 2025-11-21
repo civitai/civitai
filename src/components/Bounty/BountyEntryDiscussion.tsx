@@ -1,4 +1,4 @@
-import { Stack, Group, Text, Loader, Center, Divider, Paper } from '@mantine/core';
+import { Stack, Text, Loader, Center, Divider, Button } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -19,8 +19,17 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
       limit={3}
       badges={userId ? [{ userId, label: 'op', color: 'violet' }] : []}
     >
-      {({ data, created, isLoading, remaining, showMore, toggleShowMore, activeComment }) =>
-        isLoading ? (
+      {({
+        data,
+        created,
+        isLoading,
+        isFetching,
+        isFetchingNextPage,
+        showMore,
+        toggleShowMore,
+        activeComment,
+      }) =>
+        isLoading || isFetching ? (
           <Center>
             <Loader type="bars" />
           </Center>
@@ -41,17 +50,17 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
               {data?.map((comment) => (
                 <Comment key={comment.id} comment={comment} borderless />
               ))}
-              {!!remaining && !showMore && (
-                <div className="flex justify-center">
-                  <Text
-                    c="blue.4"
-                    className="cursor-pointer text-sm"
+              {showMore && (
+                <Center>
+                  <Button
                     onClick={toggleShowMore}
-                    inherit
+                    loading={isFetchingNextPage}
+                    variant="subtle"
+                    size="md"
                   >
-                    Show {remaining} More
-                  </Text>
-                </div>
+                    Load More Comments
+                  </Button>
+                </Center>
               )}
               {created.map((comment) => (
                 <Comment key={comment.id} comment={comment} borderless />

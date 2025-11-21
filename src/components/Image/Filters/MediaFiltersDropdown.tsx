@@ -320,13 +320,15 @@ export function MediaFiltersDropdown({
             <div className="flex gap-2">
               <FilterChip
                 checked={mergedFilters.notPublished}
-                onChange={(checked) => handleChange({ notPublished: checked })}
+                onChange={(checked) =>
+                  handleChange({ notPublished: checked ? checked : undefined })
+                }
               >
                 <span>Not Published</span>
               </FilterChip>
               <FilterChip
                 checked={mergedFilters.scheduled}
-                onChange={(checked) => handleChange({ scheduled: checked })}
+                onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
               >
                 <span>Scheduled</span>
               </FilterChip>

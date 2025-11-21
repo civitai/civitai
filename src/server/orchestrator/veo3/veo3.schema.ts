@@ -1,4 +1,5 @@
 import type { Veo3VideoGenInput } from '@civitai/client';
+import { Veo3Version } from '@civitai/client';
 import * as z from 'zod';
 import { VideoGenerationConfig2 } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import type { ResourceInput } from '~/server/orchestrator/infrastructure/base.schema';
@@ -17,6 +18,7 @@ import { numberEnum } from '~/utils/zod-helpers';
 
 export const veo3AspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const veo3Durations = [4, 6, 8];
+export const veo3Versions = Object.values(Veo3Version);
 
 export const veo3ModelOptions = [
   {
@@ -85,6 +87,7 @@ const schema = baseVideoGenerationSchema.extend({
   seed: seedSchema,
   resources: resourceSchema.array().nullable().default(null),
   images: sourceImageSchema.array().nullish(),
+  version: z.enum(veo3Versions).default(Veo3Version['3_0']).catch(Veo3Version['3_0']),
 });
 
 export const veo3GenerationConfig = VideoGenerationConfig2({
@@ -93,6 +96,7 @@ export const veo3GenerationConfig = VideoGenerationConfig2({
   metadataDisplayProps: ['process', 'aspectRatio', 'duration', 'seed'],
   schema,
   defaultValues: {
+    version: Veo3Version['3_0'],
     aspectRatio: '16:9',
     generateAudio: false,
     resources: [getVeo3Models()[0]],

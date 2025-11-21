@@ -23,6 +23,7 @@ import { imageToJpegBlob } from '~/shared/utils/canvas-utils';
 import { preprocessFile } from '~/utils/media-preprocessors';
 import { getMetadata, encodeMetadata, ExifParser } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
@@ -71,6 +72,7 @@ export default function MetadataTester() {
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           maxFiles={1}
           maxSize={50 * 1024 ** 2}
+          useFsAccessApi={!isAndroidDevice()}
         >
           <Dropzone.Accept>
             <IconUpload

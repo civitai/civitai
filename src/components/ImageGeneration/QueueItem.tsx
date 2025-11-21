@@ -64,6 +64,9 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useAppContext } from '~/providers/AppProvider';
+import { isDefined } from '~/utils/type-guards';
+import type { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -83,6 +86,7 @@ export function QueueItem({
   const step = request.steps[0];
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const { domain } = useAppContext();
   const [ref, inView] = useInViewDynamic({ id });
 
   const generationStatus = useGenerationStatus();
@@ -94,7 +98,7 @@ export function QueueItem({
   const { status } = request;
   const { params, resources = [] } = step;
 
-  const { images } = step;
+  const images = step.images as BlobData[];
 
   const failureReason = step.errors
     ? step.errors.join(',\n')
@@ -180,7 +184,12 @@ export function QueueItem({
       ? (step.metadata.params.version as string)
       : undefined;
 
-  const queuePosition = images[0]?.queuePosition;
+  const queuePosition = request.steps?.[0]?.queuePosition;
+
+  const displayImages = images.filter((x) =>
+    domain.green ? !x.blockedReason : !x.blockedReason || x.canUpgrade
+  );
+  const blockedReasons = images.map((x) => x.blockedReason).filter(isDefined);
 
   return (
     <Card ref={ref} withBorder px="xs" id={id}>
@@ -290,15 +299,11 @@ export function QueueItem({
                 [classes.asSidebar]: !features.largerGenerationImages,
               })}
             >
-              {images
-                .filter((x) => !x.blockedReason)
-                .map((image, index) => (
-                  <GeneratedImage key={index} image={image} request={request} step={step} />
-                ))}
+              {displayImages.map((image, index) => (
+                <GeneratedImage key={index} image={image} request={request} step={step} />
+              ))}
               <BlockedBlocks
-                blockedReasons={images
-                  .filter((x) => !!x.blockedReason)
-                  .map((x) => x.blockedReason!)}
+                blockedReasons={blockedReasons}
                 workflowId={request.id}
                 transactions={request.transactions}
               />
@@ -535,10 +540,12 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
   'Child Sexual - Anime': 'Inappropriate minor content detected.',
   'Child Sexual - Realistic': 'Inappropriate minor content detected.',
   NsfwLevel: 'Mature content restriction.',
+  NSFWLevel:
+    'One or more resources used in this generation cannot be used to generate mature content',
   NSFWLevelSourceImageRestricted:
     'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
   // the following keys are managed in generationRequestHooks.ts
-  privateGen: 'Private Generation is limited to PG content.',
+  privateGen: 'Private Generation is limited to PG and PG-13 content.',
   siteRestricted: 'Images with mature ratings are unavailable on this site',
   enableNsfw: EnableNsfwBlock,
   canUpgrade: CanUpgradeBlock,
@@ -562,7 +569,7 @@ function BlockedBlocks(props: {
   return (
     <>
       {items.map(({ value, count }) => {
-        const message = imageBlockedReasonMap[value];
+        const message = imageBlockedReasonMap[value] ?? value;
 
         return (
           <TwCard

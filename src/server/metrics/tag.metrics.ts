@@ -1,22 +1,33 @@
+import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { createLogger } from '~/utils/logging';
+import { executeRefreshWithParams, getAffected } from '~/server/metrics/metric-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import {
-  executeRefresh,
-  executeRefreshWithParams,
-  getAffected,
-  getMetricJson,
-  snippets,
-} from '~/server/metrics/metric-helpers';
-import { chunk } from 'lodash-es';
+import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:tag');
 
+const metrics = [
+  'followerCount',
+  'hiddenCount',
+  'modelCount',
+  'imageCount',
+  'postCount',
+  'articleCount',
+] as const;
+
+type MetricKey = (typeof metrics)[number];
+type TagMetricContext = MetricProcessorRunContext & {
+  updates: Record<number, Partial<Record<MetricKey, number>> & { tagId: number }>;
+};
+
 export const tagMetrics = createMetricProcessor({
   name: 'Tag',
-  async update(ctx) {
+  async update(baseCtx) {
+    // Update the context to include the update record
+    const ctx = baseCtx as TagMetricContext;
+    ctx.updates = {};
+
     // Get the metric tasks
     //---------------------------------------
     const taskBatches = await Promise.all([
@@ -29,26 +40,76 @@ export const tagMetrics = createMetricProcessor({
     log('tagMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
 
+    // Update the tag metrics
+    //---------------------------------------
+    const metricInsertColumns = metrics.map((key) => `"${key}" INT`).join(', ');
+    const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
+    const metricValues = metrics
+      .map((key) => `COALESCE(d."${key}", im."${key}", 0) as "${key}"`)
+      .join(',\n');
+    const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
+
+    const updateTasks = chunk(Object.values(ctx.updates), 100).map((batch, i) => async () => {
+      ctx.jobContext.checkIfCanceled();
+      log('update metrics', i + 1, 'of', updateTasks.length);
+
+      await executeRefreshWithParams(
+        ctx,
+        `-- update tag metrics
+        WITH data AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS x("tagId" INT, ${metricInsertColumns}))
+        INSERT INTO "TagMetric" ("tagId", "timeframe", "updatedAt", ${metricInsertKeys})
+        SELECT
+          d."tagId",
+          'AllTime'::"MetricTimeframe" AS timeframe,
+          NOW() as "updatedAt",
+          ${metricValues}
+        FROM data d
+        LEFT JOIN "TagMetric" im ON im."tagId" = d."tagId" AND im."timeframe" = 'AllTime'
+        WHERE EXISTS (SELECT 1 FROM "Tag" WHERE id = d."tagId")
+        ON CONFLICT ("tagId", "timeframe") DO UPDATE
+          SET
+            ${metricOverrides},
+            "updatedAt" = NOW()`,
+        [JSON.stringify(batch)]
+      );
+      log('update metrics', i + 1, 'of', updateTasks.length, 'done');
+    });
+    await limitConcurrency(updateTasks, 10);
+
     // Update the search index
     //---------------------------------------
     log('update search index');
   },
-  async clearDay(ctx) {
-    await executeRefresh(ctx)`
-      UPDATE "TagMetric"
-        SET "followerCount" = 0, "modelCount" = 0, "hiddenCount" = 0, "postCount" = 0, "imageCount" = 0, "articleCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
-  },
-  rank: {
-    table: 'TagRank',
-    primaryKey: 'tagId',
-    refreshInterval: 5 * 60 * 1000,
-  },
+  // Replaced TagRank references with direct metric queries
+  // rank: {
+  //   table: 'TagRank',
+  //   primaryKey: 'tagId',
+  //   refreshInterval: 5 * 60 * 1000,
+  // },
 });
 
-async function getEngagementTasks(ctx: MetricProcessorRunContext) {
+async function getMetrics(ctx: TagMetricContext, sql: string, params: any[] = []) {
+  const query = await ctx.pg.cancellableQuery<{ tagId: number } & Record<string, string | number>>(
+    sql,
+    params
+  );
+  ctx.jobContext.on('cancel', query.cancel);
+  const data = await query.result();
+  if (!data.length) return;
+
+  for (const row of data) {
+    const tagId = row.tagId;
+    ctx.updates[tagId] ??= { tagId };
+    for (const key of Object.keys(row) as (keyof typeof row)[]) {
+      if (key === 'tagId' || key === 'timeframe') continue;
+      const value = row[key];
+      if (value == null) continue;
+      (ctx.updates[tagId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
+    }
+  }
+}
+
+async function getEngagementTasks(ctx: TagMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent tag engagements
     SELECT
@@ -61,48 +122,18 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
     ctx.jobContext.checkIfCanceled();
     log('getEngagementTasks', i + 1, 'of', tasks.length);
 
-    // First, aggregate data into JSON to avoid blocking - only get total counts
-    const metrics = await getMetricJson(ctx)`
-      -- Aggregate tag engagement metrics into JSON (AllTime counts only)
-      WITH counts AS (
-        SELECT
-          "tagId",
-          SUM(CASE WHEN type = 'Follow' THEN 1 ELSE 0 END) as "followerCount",
-          SUM(CASE WHEN type = 'Hide' THEN 1 ELSE 0 END) as "hiddenCount"
-        FROM "TagEngagement"
-        WHERE "tagId" = ANY(${ids}::int[])
-        GROUP BY "tagId"
-      )
-      SELECT jsonb_agg(
-        jsonb_build_object(
-          'tagId', "tagId",
-          'followerCount', "followerCount",
-          'hiddenCount', "hiddenCount"
-        )
-      ) as data
-      FROM counts
-    `;
-
-    // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
-    if (metrics) {
-      await executeRefreshWithParams(
-        ctx,
-        `-- Insert tag engagement metrics for all timeframes using the AllTime counts
-        INSERT INTO "TagMetric" ("tagId", timeframe, "followerCount", "hiddenCount")
-        SELECT
-          (value->>'tagId')::int,
-          tf.timeframe,
-          (value->>'followerCount')::int,
-          (value->>'hiddenCount')::int
-        FROM jsonb_array_elements($1::jsonb) AS value
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        ON CONFLICT ("tagId", timeframe) DO UPDATE
-          SET "followerCount" = EXCLUDED."followerCount",
-              "hiddenCount" = EXCLUDED."hiddenCount",
-              "updatedAt" = NOW()`,
-        [JSON.stringify(metrics)]
-      );
-    }
+    await getMetrics(
+      ctx,
+      `-- get tag engagement metrics
+      SELECT
+        "tagId",
+        SUM(CASE WHEN type = 'Follow' THEN 1 ELSE 0 END)::int as "followerCount",
+        SUM(CASE WHEN type = 'Hide' THEN 1 ELSE 0 END)::int as "hiddenCount"
+      FROM "TagEngagement"
+      WHERE "tagId" = ANY($1::int[])
+      GROUP BY "tagId"`,
+      [ids]
+    );
 
     log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -126,7 +157,7 @@ const tagCountMap = {
     sourceTable: 'Article',
   },
 } as const;
-async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof typeof tagCountMap) {
+async function getTagCountTasks(ctx: TagMetricContext, entity: keyof typeof tagCountMap) {
   const { id, table, column, sourceTable } = tagCountMap[entity];
   const affected = await getAffected(ctx)`
     -- get recent tag counts
@@ -140,44 +171,18 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
     ctx.jobContext.checkIfCanceled();
     log(`get ${table} counts`, i + 1, 'of', tasks.length);
 
-    // First, aggregate data into JSON to avoid blocking - only get total count
-    const metrics = await getMetricJson(ctx)`
-      -- Aggregate tag count metrics into JSON (AllTime count only)
-      WITH counts AS (
-        SELECT
-          "tagId",
-          COUNT(1) as "count"
-        FROM "${table}" t
-        JOIN "${sourceTable}" s ON s.id = t."${id}"
-        WHERE "tagId" = ANY(${ids}::int[])
-        GROUP BY "tagId"
-      )
-      SELECT jsonb_agg(
-        jsonb_build_object(
-          'tagId', "tagId",
-          'count', "count"
-        )
-      ) as data
-      FROM counts
-    `;
-
-    // Then perform the insert from the aggregated data with CROSS JOIN for all timeframes
-    if (metrics) {
-      await executeRefreshWithParams(
-        ctx,
-        `-- Insert tag count metrics for all timeframes using the AllTime count
-        INSERT INTO "TagMetric" ("tagId", timeframe, "${column}")
-        SELECT
-          (value->>'tagId')::int,
-          tf.timeframe,
-          (value->>'count')::int
-        FROM jsonb_array_elements($1::jsonb) AS value
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        ON CONFLICT ("tagId", timeframe) DO UPDATE
-          SET "${column}" = EXCLUDED."${column}", "updatedAt" = NOW()`,
-        [JSON.stringify(metrics)]
-      );
-    }
+    await getMetrics(
+      ctx,
+      `-- get tag count metrics
+      SELECT
+        "tagId",
+        COUNT(1)::int as "${column}"
+      FROM "${table}" t
+      JOIN "${sourceTable}" s ON s.id = t."${id}"
+      WHERE "tagId" = ANY($1::int[])
+      GROUP BY "tagId"`,
+      [ids]
+    );
 
     log(`get ${table} counts`, i + 1, 'of', tasks.length, 'done');
   });
@@ -185,18 +190,18 @@ async function getTagCountTasks(ctx: MetricProcessorRunContext, entity: keyof ty
   return tasks;
 }
 
-async function getModelTasks(ctx: MetricProcessorRunContext) {
+async function getModelTasks(ctx: TagMetricContext) {
   return getTagCountTasks(ctx, 'Models');
 }
 
-async function getImageTasks(ctx: MetricProcessorRunContext) {
+async function getImageTasks(ctx: TagMetricContext) {
   return getTagCountTasks(ctx, 'Images');
 }
 
-async function getPostTasks(ctx: MetricProcessorRunContext) {
+async function getPostTasks(ctx: TagMetricContext) {
   return getTagCountTasks(ctx, 'Posts');
 }
 
-async function getArticleTasks(ctx: MetricProcessorRunContext) {
+async function getArticleTasks(ctx: TagMetricContext) {
   return getTagCountTasks(ctx, 'Articles');
 }

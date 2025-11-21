@@ -2,7 +2,7 @@ import type { ButtonProps, GroupProps, InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect } from 'react';
-import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
   ResourceSelectOptions,
   ResourceSelectSource,

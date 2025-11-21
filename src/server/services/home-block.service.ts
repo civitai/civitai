@@ -1,7 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from 'next-auth';
+import { CacheTTL } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetHomeBlockByIdInputSchema,
@@ -24,6 +26,7 @@ import {
   getFeaturedModels,
   getModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -37,61 +40,77 @@ import {
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
-export const getHomeBlocks = async <
-  TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
->({
-  select,
+const homeBlockSelect = {
+  id: true,
+  metadata: true,
+  type: true,
+  userId: true,
+  sourceId: true,
+  index: true,
+} as const;
+
+export const getHomeBlocks = async ({
   userId,
-  ...input
+  ownedOnly,
+  ids,
+  includeSource = false,
 }: {
-  select: TSelect;
   userId?: number;
   ownedOnly?: boolean;
   ids?: number[];
+  includeSource?: boolean;
 }) => {
   const hasCustomHomeBlocks = await userHasCustomHomeBlocks(userId);
-
-  const { ownedOnly, ids } = input;
 
   if (ownedOnly && !userId) {
     throw throwBadRequestError('You must be logged in to view your home blocks.');
   }
 
   if (!hasCustomHomeBlocks && !ownedOnly && !ids) {
-    // If the user doesn't have any custom home blocks, we can just return the default Civitai ones.
     return getSystemHomeBlocks({ input: {} });
   }
 
-  return dbRead.homeBlock.findMany({
+  const select = {
+    ...homeBlockSelect,
+    ...(includeSource && { source: { select: { userId: true } } }),
+  };
+
+  const where: Prisma.HomeBlockWhereInput = ownedOnly
+    ? { userId }
+    : { id: ids ? { in: ids } : undefined };
+
+  const userBlocks = await dbRead.homeBlock.findMany({
     select,
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
-    where: ownedOnly
-      ? { userId }
-      : {
-          id: ids ? { in: ids } : undefined,
-          OR: [
-            {
-              // Either the user has custom home blocks of their own,
-              // or we return the default Civitai ones (user -1).
-              userId: hasCustomHomeBlocks ? userId : -1,
-            },
-            {
-              permanent: true,
-            },
-          ],
-        },
+    where: { ...where, userId: hasCustomHomeBlocks ? userId : -1 },
   });
+
+  if (ownedOnly || ids) return userBlocks;
+
+  // Fetch permanent blocks through cache since they rarely change
+  const permanentBlocks = await fetchThroughCache(
+    REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT,
+    async () =>
+      dbRead.homeBlock.findMany({
+        select,
+        orderBy: { index: { sort: 'asc', nulls: 'last' } },
+        where: { permanent: true },
+      }),
+    { ttl: CacheTTL.day }
+  );
+
+  // Combine and deduplicate - user blocks take precedence over permanent
+  const blockMap = new Map(userBlocks.map((b) => [b.id, b]));
+  for (const block of permanentBlocks) {
+    if (!blockMap.has(block.id)) blockMap.set(block.id, block);
+  }
+
+  return Array.from(blockMap.values()).sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 };
 
 export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlocksInputSchema }) => {
   const homeBlocks = await dbRead.homeBlock.findMany({
-    select: {
-      id: true,
-      metadata: true,
-      type: true,
-      userId: true,
-      index: true,
-    },
+    select: homeBlockSelect,
     orderBy: { index: { sort: 'asc', nulls: 'last' } },
     where: {
       userId: -1,
@@ -460,11 +479,6 @@ export const setHomeBlocksOrder = async ({
 
   if (homeBlocksToClone.length) {
     const homeBlockData = await getHomeBlocks({
-      select: {
-        id: true,
-        metadata: true,
-        type: true,
-      },
       ids: homeBlocksToClone.map((i) => i.id),
     });
 

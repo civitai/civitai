@@ -92,16 +92,34 @@ export async function createCsamReport({
   const isInternalReport = userId === -1;
   const reportedUserId = !isInternalReport ? userId : undefined;
 
-  const report = await dbWrite.csamReport.create({
-    data: {
-      userId: reportedUserId,
-      reportedById,
-      details,
-      type,
-      //map imageIds to objects so that we can append additional data to them later
-      images: imageIds?.map((id) => ({ id })) ?? [],
-    },
+  const exists = await dbWrite.csamReport.findFirst({
+    where: { userId: reportedUserId },
+    select: { id: true, reportSentAt: true },
   });
+
+  const report =
+    exists && !exists.reportSentAt
+      ? await dbWrite.csamReport.update({
+          where: { id: exists.id },
+          data: {
+            userId: reportedUserId,
+            reportedById,
+            details,
+            type,
+            //map imageIds to objects so that we can append additional data to them later
+            images: imageIds?.map((id) => ({ id })) ?? [],
+          },
+        })
+      : await dbWrite.csamReport.create({
+          data: {
+            userId: reportedUserId,
+            reportedById,
+            details,
+            type,
+            //map imageIds to objects so that we can append additional data to them later
+            images: imageIds?.map((id) => ({ id })) ?? [],
+          },
+        });
 
   if (imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({

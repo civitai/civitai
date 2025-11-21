@@ -1,6 +1,6 @@
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Alert, Text } from '@mantine/core';
-import { openReadOnlyModal } from '~/components/Dialog/dialog-registry';
+import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 
 export const ReadOnlyAlert = ({ message }: { message?: string }) => {
   const features = useFeatureFlags();

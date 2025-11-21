@@ -4,7 +4,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { publicApiContext2 } from '~/server/createContext';
-import { appRouter } from '~/server/routers';
 import { getAllUsersInput } from '~/server/schema/user.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 

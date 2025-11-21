@@ -6,7 +6,6 @@ export enum FLIPT_FEATURE_FLAGS {
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-
 }
 
 class FliptSingleton {
@@ -37,6 +36,7 @@ class FliptSingleton {
           authentication: {
             clientToken: internalAuthHeader,
           },
+          updateInterval: 60, // Fetch feature flag updates (default: 120 seconds)
         });
 
         await fliptClient.refresh();
@@ -63,6 +63,50 @@ class FliptSingleton {
     })();
 
     return this.initializing;
+  }
+}
+
+export async function isFlipt(
+  flag: string,
+  entityId = 'global',
+  context: Record<string, string> = {}
+) {
+  const fliptClient = await FliptSingleton.getInstance();
+  if (!fliptClient) return false;
+
+  try {
+    const evaluation = fliptClient.evaluateBoolean({
+      flagKey: flag,
+      entityId,
+      context,
+    });
+
+    return evaluation.enabled;
+  } catch (e) {
+    console.error('Flipt evaluation error:', e);
+    return false;
+  }
+}
+
+export async function getFliptVariant(
+  flag: string,
+  entityId = 'global',
+  context: Record<string, string> = {}
+): Promise<string | null> {
+  const fliptClient = await FliptSingleton.getInstance();
+  if (!fliptClient) return null;
+
+  try {
+    const evaluation = fliptClient.evaluateVariant({
+      flagKey: flag,
+      entityId,
+      context,
+    });
+
+    return evaluation.variantKey;
+  } catch (e) {
+    console.error('Flipt variant evaluation error:', e);
+    return null;
   }
 }
 

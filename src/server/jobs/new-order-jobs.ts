@@ -1,9 +1,8 @@
-import { removeDuplicates } from '@tiptap/react';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { newOrderConfig } from '~/server/common/constants';
-import { NewOrderImageRatingStatus, NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudgmentsCounter,
@@ -11,14 +10,19 @@ import {
   correctJudgmentsCounter,
   expCounter,
   fervorCounter,
+  getActiveSlot,
   poolCounters,
+  setActiveSlot,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
-import { createNotification } from '~/server/services/notification.service';
-import { claimCosmetic } from '~/server/services/user.service';
+import {
+  calculateFervor,
+  cleanseSmite,
+  clearRatedImages,
+  processFinalRatings,
+} from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -33,41 +37,37 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   const startDate = dayjs().subtract(3, 'day').startOf('day').toDate();
   const endDate = dayjs().subtract(3, 'day').endOf('day').toDate();
 
-  // Get all correct judgments for the last 3 days
+  // Get all judgments from exactly 3 days ago
   log(
-    `BlessedBuzz :: Getting correct judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
+    `BlessedBuzz :: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
-  const judgments = await clickhouse.$query<{ userId: number; balance: number }>`
+  const judgments = await clickhouse.$query<{ userId: number; balance: number; totalExp: number }>`
     SELECT
       userId,
-      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance
-    FROM knights_new_order_image_rating
+      floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance,
+      SUM(grantedExp * multiplier) as totalExp
+    FROM knights_new_order_image_rating FINAL
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
       AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
-    HAVING balance > 0
   `;
 
-  const positiveBalanceJudgments = judgments.filter((j) => j.balance > 0);
-
-  if (!positiveBalanceJudgments.length) {
+  if (!judgments.length) {
     log('BlessedBuzz :: No correct judgments found');
     return;
   }
-  log(`BlessedBuzz :: Found ${positiveBalanceJudgments.length} correct judgments`);
+  log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
 
   // Get current player data for knights and templars only
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
-      userId: { in: positiveBalanceJudgments.map((j) => j.userId) },
+      userId: { in: judgments.map((j) => j.userId) },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     select: { userId: true },
   });
 
-  const validPlayers = positiveBalanceJudgments.filter((j) =>
-    players.some((p) => p.userId === j.userId)
-  );
+  const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
 
   if (!validPlayers.length) {
     log('BlessedBuzz :: No valid players found');
@@ -79,22 +79,25 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   let loopCount = 1;
   for (const batch of batches) {
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-    const transactions = batch.map((validPlayer) => ({
-      fromAccountId: 0,
-      toAccountId: validPlayer.userId,
-      amount: validPlayer.balance,
-      type: TransactionType.Reward,
-      description: 'Content Moderation Correct Judgment',
-      externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-    }));
 
-    await createBuzzTransactionMany(transactions);
+    const transactions = batch
+      .filter((player) => player.balance > 0)
+      .map((validPlayer) => ({
+        fromAccountId: 0,
+        toAccountId: validPlayer.userId,
+        amount: validPlayer.balance,
+        type: TransactionType.Reward,
+        description: 'Content Moderation Correct Judgment',
+        externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
+      }));
 
-    // Deduct the blessed buzz from the counter
+    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
+
+    // Deduct the actual EXP from the blessed buzz counter
+    // Counter stores EXP values, not converted buzz, so we deduct totalExp
     await Promise.all(
       batch.map((player) => {
-        const blessedBuzzValue = player.balance / newOrderConfig.blessedBuzzConversionRatio;
-        return blessedBuzzCounter.decrement({ id: player.userId, value: blessedBuzzValue });
+        return blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp });
       })
     );
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
@@ -110,100 +113,86 @@ type DailyResetQueryResult = {
   correctJudgments: number;
   failedJudgments: number;
   totalJudgments: number;
+  fervor?: number;
 };
 
+// Updated to sync PostgreSQL from Redis counters instead of ClickHouse
+// This is more efficient and respects the real-time counter updates
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
-  if (!clickhouse) return;
-  log('DailyReset:: Running daily reset');
+  log('DailyReset:: Starting fervor recalculation and PostgreSQL sync');
 
-  const endDate = new Date();
-  // Apr. 10, 2025 as Start Date
-  const startDate = dayjs('2025-04-10').startOf('day').toDate();
-
-  log(`DailyReset:: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
-
-  const users = await dbRead.newOrderPlayer.findMany({
-    select: { userId: true, startAt: true },
+  // Get all players to sync their stats
+  const allPlayers = await dbRead.newOrderPlayer.findMany({
+    select: { userId: true },
   });
 
-  if (!users.length) {
-    log('DailyReset:: No users found');
+  if (!allPlayers.length) {
+    log('DailyReset:: No players found');
     return;
   }
 
-  const userBatches = chunk(users, 1000);
-  log(`DailyReset:: Processing ${users.length} users in ${userBatches.length} batches`);
-  let userData: DailyResetQueryResult[] = [];
-  let userLoopCount = 1;
-  for (const batch of userBatches) {
-    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length}`);
+  log(`DailyReset:: Processing ${allPlayers.length} players`);
 
-    const tuples = batch.map((u) => `(${u.userId},'${u.startAt.toISOString()}')`).join(',');
-    const data = await clickhouse.$query<DailyResetQueryResult>`
-    WITH u AS (
-      SELECT
-        arrayJoin([${tuples}]) as user_tuple,
-        user_tuple.1 as userId,
-        user_tuple.2 as startAt
-    )
-    SELECT
-      knoir."userId",
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt), 1, 0) *
-        grantedExp * multiplier
-      ) as exp,
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = '${NewOrderImageRatingStatus.Correct}', 1, 0)
-      ) as correctJudgments,
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = '${NewOrderImageRatingStatus.Failed}', 1, 0)
-      ) as failedJudgments,
-      SUM(
-        -- Make it so we ignore elements before a reset.
-        -- Exclude 'AcolyteCorrect' and 'AcolyteFailed' statuses from total judgments as they represent auxiliary actions not directly tied to the primary judgment process.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}'), 1, 0)
-      ) as totalJudgments
-    FROM knights_new_order_image_rating knoir
-    JOIN u ON knoir."userId" = CAST(u.userId as Int32)
-    WHERE knoir."createdAt" BETWEEN ${startDate} AND ${endDate}
-    GROUP BY knoir."userId"
-  `;
+  // Process in batches of 200 for optimal performance
+  const batches = chunk(allPlayers, 200);
+  let batchCount = 1;
 
-    if (data.length) {
-      userData = [...userData, ...data];
-    }
-
-    log(`DailyReset:: Processing users :: ${userLoopCount} of ${userBatches.length} :: done`);
-    userLoopCount++;
-  }
-
-  if (!userData.length) {
-    log('DailyReset:: No judgments found');
-    return;
-  }
-
-  const batches = chunk(userData, 200);
-  let loopCount = 1;
   for (const batch of batches) {
-    log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length}`);
-    const batchWithFervor = batch.map((b) => ({
-      ...b,
-      fervor: calculateFervor({
-        correctJudgments: b.correctJudgments,
-        allJudgments: b.totalJudgments,
-      }),
-    }));
+    log(`DailyReset:: Processing batch ${batchCount} of ${batches.length}`);
 
+    // Step 1: Recalculate fervor for each player using 7-day rolling window
+    const playerStats = await Promise.all(
+      batch.map(async (player) => {
+        // Fetch 7-day judgment counts from ClickHouse (via counters)
+        const [exp, correctJudgments, allJudgments, oldFervor] = await Promise.all([
+          expCounter.getCount(player.userId),
+          correctJudgmentsCounter.getCount(player.userId),
+          allJudgmentsCounter.getCount(player.userId),
+          fervorCounter.getCount(player.userId),
+        ]);
+
+        // Recalculate fervor using same formula as service
+        const newFervor = calculateFervor({ correctJudgments, allJudgments });
+
+        return {
+          userId: player.userId,
+          exp,
+          fervor: newFervor,
+          oldFervor,
+          needsUpdate: newFervor !== oldFervor,
+        };
+      })
+    );
+
+    // Step 2: Update Redis fervor counter for players whose fervor changed
+    await Promise.all(
+      playerStats.map(async ({ userId, fervor, oldFervor, needsUpdate }) => {
+        if (!needsUpdate) return;
+
+        if (fervor === 0) {
+          // Player has no activity in 7-day window - remove from leaderboard
+          await fervorCounter.reset({ id: userId });
+          log(`DailyReset:: Removed inactive player ${userId} (fervor: ${oldFervor} → 0)`);
+        } else {
+          // Update fervor value (reset + increment pattern)
+          await fervorCounter.reset({ id: userId });
+          await fervorCounter.increment({ id: userId, value: fervor });
+
+          if (Math.abs(fervor - oldFervor) > 100) {
+            log(`DailyReset:: Large fervor change for player ${userId}: ${oldFervor} → ${fervor}`);
+          }
+        }
+      })
+    );
+
+    // Step 3: Bulk update PostgreSQL with exp and recalculated fervor
     await dbWrite.$queryRaw`
       WITH affected AS (
         SELECT
           (value ->> 'userId')::int as "userId",
           (value ->> 'exp')::int as "exp",
           (value ->> 'fervor')::int as "fervor"
-        FROM json_array_elements(${JSON.stringify(batchWithFervor)}::json)
+        FROM json_array_elements(${JSON.stringify(playerStats)}::json)
       )
       UPDATE "NewOrderPlayer"
       SET
@@ -213,135 +202,18 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
-    log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length} :: done`);
-    loopCount++;
-  }
-  log('DailyReset:: Processing judgments :: done');
+    // Step 4: Clear rated images cache for all players in this batch
+    await Promise.all(batch.map((player) => clearRatedImages(player.userId)));
 
-  // Clean up counters
-  const userIds = userData.map((j) => j.userId);
-  await Promise.all([
-    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => allJudgmentsCounter.reset({ id })),
-    ...userIds.map((id) => fervorCounter.reset({ id })),
-    ...userIds.map((id) => expCounter.reset({ id })),
-  ]);
-  log('DailyReset:: Cleared counters');
+    log(`DailyReset:: Batch ${batchCount} of ${batches.length} complete`);
+    batchCount++;
+  }
+
+  log(`DailyReset:: PostgreSQL sync complete - ${allPlayers.length} players updated`);
 });
 
-const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * *', async () => {
-  if (!clickhouse) return;
-  log('PickTemplars :: Picking templars');
-
-  const startDate = dayjs().subtract(7, 'day').startOf('day').toDate();
-  const endDate = new Date();
-  const judgments = await clickhouse.$query<{ userId: number; status: NewOrderImageRatingStatus }>`
-    SELECT userId, status
-    FROM knights_new_order_image_rating
-    WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-      AND status NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
-  `;
-
-  if (!judgments.length) {
-    log('PickTemplars :: No judgments found');
-    return;
-  }
-
-  const userIds = removeDuplicates(judgments.map((j) => j.userId));
-  const players = await dbRead.newOrderPlayer.findMany({
-    where: {
-      userId: { in: userIds },
-      rankType: {
-        in: [NewOrderRankType.Knight, NewOrderRankType.Templar],
-      },
-    },
-    select: { userId: true },
-  });
-
-  if (!players.length) {
-    log('PickTemplars :: No players found');
-    return;
-  }
-
-  // Get correct judgments and total judgments count for each player
-  const playersFervor = players.reduce((acc, player) => {
-    const allJudgments = judgments.filter((j) => j.userId === player.userId);
-    const correctJudgments = allJudgments.filter(
-      (j) => j.status === NewOrderImageRatingStatus.Correct
-    );
-    const totalCount = allJudgments.length;
-    const correctCount = correctJudgments.length;
-    const fervor = calculateFervor({ correctJudgments: correctCount, allJudgments: totalCount });
-
-    acc[player.userId] = fervor;
-
-    return acc;
-  }, {} as Record<number, number>);
-
-  // Pick the top 24 players based on fervor
-  const candidates = Object.entries(playersFervor)
-    .sort((a, b) => b[1] - a[1]) // Sort by fervor descending
-    .slice(0, newOrderConfig.limits.templarPicks) // Take the top 24
-    .map(([userId]) => Number(userId)); // Extract userIds
-  if (candidates.length === 0) {
-    log('PickTemplars :: No candidates found');
-    return;
-  }
-
-  log(`PickTemplars :: Candidates: ${candidates.join(', ')}`);
-
-  // Update the new templars:
-  const selectedTemplars = await dbWrite.newOrderPlayer.updateManyAndReturn({
-    select: { userId: true },
-    where: {
-      userId: { in: candidates },
-      rankType: { not: NewOrderRankType.Acolyte },
-    },
-    data: { rankType: NewOrderRankType.Templar },
-  });
-
-  // Grant cosmetic to new templars
-  for (const templar of selectedTemplars) {
-    createNotification({
-      category: NotificationCategory.Other,
-      type: 'new-order-templar-promotion',
-      key: `new-order-templar-promotion:${templar.userId}:${endDate.valueOf()}`,
-      userId: templar.userId,
-      details: {},
-    }).catch();
-
-    await claimCosmetic({
-      id: newOrderConfig.cosmetics.badgeIds.templar,
-      userId: templar.userId,
-    }).catch(() => null); // Ignore if it fails
-  }
-  log(`PickTemplars :: Granted templar badge to ${selectedTemplars.length} players`);
-
-  // Get a list of players who are not candidates
-  const nonCandidates = players.filter((p) => !candidates.includes(p.userId)).map((p) => p.userId);
-
-  // Update the demoted knights:
-  const demotedKnights = await dbWrite.newOrderPlayer.updateManyAndReturn({
-    select: { userId: true },
-    where: {
-      userId: { in: nonCandidates },
-      rankType: { not: NewOrderRankType.Acolyte },
-    },
-    data: { rankType: NewOrderRankType.Knight },
-  });
-
-  for (const knight of demotedKnights) {
-    createNotification({
-      category: NotificationCategory.Other,
-      type: 'new-order-knight-demoted',
-      key: `new-order-knight-demoted:${knight.userId}:${endDate.valueOf()}`,
-      userId: knight.userId,
-      details: {},
-    }).catch();
-  }
-
-  log('PickTemplars :: Picking templars :: done');
-});
+// Templar selection job removed as part of Knights of New Order redesign
+// Templars rank has been eliminated, keeping only Acolyte and Knight ranks
 
 // Cleanse smites that are older than 7 days
 const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *', async () => {
@@ -378,47 +250,169 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
   for (const rank of ranksToClean) {
     log(`CleanupQueues :: Cleaning up ${rank} queues`);
 
-    // Fetch current image IDs from the rankType queue
-    const currentImageIds = (
-      await Promise.all(poolCounters[rank].map((pool) => pool.getAll({ limit: 10000 })))
-    )
-      .flat()
-      .map((value) => Number(value));
+    // Clean up both slots (a and b)
+    for (const slot of ['a', 'b'] as const) {
+      log(`CleanupQueues :: Cleaning up ${rank} slot ${slot}`);
 
-    if (currentImageIds.length === 0) {
-      log(`CleanupQueues :: No images found for ${rank}`);
-      continue;
-    }
+      // Fetch current image IDs from the rankType queue slot
+      const currentImageIds = (
+        await Promise.all(poolCounters[rank][slot].map((pool) => pool.getAll()))
+      )
+        .flat()
+        .map((value) => Number(value));
 
-    const chunks = chunk(currentImageIds, 1000);
-    for (const chunk of chunks) {
-      // Check against the database to find non-existing image IDs
-      const existingImages = await dbRead.image.findMany({
-        where: { id: { in: chunk } },
-        select: { id: true, nsfwLevel: true },
-      });
-      const existingImageIds = new Set(existingImages.map((image) => image.id));
-      const blockedImageIds = new Set(
-        existingImages
-          .filter((image) => image.nsfwLevel === NsfwLevel.Blocked)
-          .map((image) => image.id)
-      );
-      const imageIdsToRemove = chunk.filter(
-        (id) => !existingImageIds.has(id) || blockedImageIds.has(id)
-      );
-      if (imageIdsToRemove.length === 0) continue;
+      if (currentImageIds.length === 0) {
+        log(`CleanupQueues :: No images found for ${rank} slot ${slot}`);
+        continue;
+      }
 
-      // Remove non-existing images from the queue
-      await Promise.all([poolCounters[rank].map((pool) => pool.reset({ id: imageIdsToRemove }))]);
+      const chunks = chunk(currentImageIds, 1000);
+      for (const chunkData of chunks) {
+        // Check against the database to find non-existing image IDs
+        const existingImages = await dbRead.image.findMany({
+          where: { id: { in: chunkData } },
+          select: { id: true, nsfwLevel: true },
+        });
+        const existingImageIds = new Set(existingImages.map((image) => image.id));
+        const blockedImageIds = new Set(
+          existingImages
+            .filter((image) => image.nsfwLevel === NsfwLevel.Blocked)
+            .map((image) => image.id)
+        );
+        const imageIdsToRemove = chunkData.filter(
+          (id) => !existingImageIds.has(id) || blockedImageIds.has(id)
+        );
+        if (imageIdsToRemove.length === 0) continue;
+
+        // Remove non-existing images from the queue slot
+        await Promise.all(
+          poolCounters[rank][slot].map((pool) => pool.reset({ id: imageIdsToRemove }))
+        );
+      }
     }
   }
   log('CleanupQueues :: Cleaning up queues :: done');
 });
 
+// Rotate filling slot at 22:00 UTC daily
+// All new images will be added to the new slot
+const newOrderChangeFillTarget = createJob(
+  'new-order-change-fill-target',
+  '0 22 * * *',
+  async () => {
+    log('ChangeFillTarget :: Starting fill slot rotation');
+
+    // Only Knight rank uses slot rotation; other ranks remain on a single slot
+    const ranksToRotate = [NewOrderRankType.Knight] as const;
+
+    for (const rank of ranksToRotate) {
+      const currentSlot = await getActiveSlot(rank, 'filling');
+      const newSlot = currentSlot === 'a' ? 'b' : 'a';
+
+      await setActiveSlot(rank, 'filling', newSlot);
+      log(`ChangeFillTarget :: ${rank} filling slot rotated: ${currentSlot} → ${newSlot}`);
+    }
+
+    log('ChangeFillTarget :: Fill slot rotation complete');
+  }
+);
+
+// Rotate rating slot and purge old slot at 00:00 UTC daily
+// Players will now rate from the new slot, old slot gets purged
+const newOrderChangeRateTarget = createJob(
+  'new-order-change-rate-target',
+  '0 0 * * *',
+  async () => {
+    if (!clickhouse) {
+      log('ChangeRateTarget :: ClickHouse not available, skipping');
+      return;
+    }
+
+    log('ChangeRateTarget :: Starting rate slot rotation and purge');
+
+    // Only Knight rank uses slot rotation; other ranks remain on a single slot
+    const ranksToRotate = [NewOrderRankType.Knight] as const;
+
+    for (const rank of ranksToRotate) {
+      const currentSlot = await getActiveSlot(rank, 'rating');
+      const newSlot = currentSlot === 'a' ? 'b' : 'a';
+
+      // Rotate to the new slot
+      await setActiveSlot(rank, 'rating', newSlot);
+      log(`ChangeRateTarget :: ${rank} rating slot rotated: ${currentSlot} → ${newSlot}`);
+
+      log(`ChangeRateTarget :: ${rank} - Purging old slot ${currentSlot} before rotation`);
+
+      // Get all image IDs from the current (soon to be old) rating slot
+      // No limit - process all images in the slot
+      const imagesToPurge = (
+        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.getAll()))
+      )
+        .flat()
+        .map((value) => Number(value));
+
+      if (imagesToPurge.length > 0) {
+        log(
+          `ChangeRateTarget :: ${rank} - Found ${imagesToPurge.length} images to purge from slot ${currentSlot}`
+        );
+
+        // Mark images as Inconclusive by inserting NULL ratings into buffer
+        // Images still in queue at purge time legitimately didn't reach consensus
+        // (images with consensus were already removed via removeImageFromQueue)
+        log(`ChangeRateTarget :: ${rank} - Inserting NULL ratings into buffer for processing`);
+
+        const batches = chunk(imagesToPurge, 10000);
+        for (const batch of batches) {
+          // Insert NULL ratings into buffer - these will be marked as Inconclusive by processFinalRatings
+          const bufferRecords = batch.map((imageId) => ({
+            imageId,
+            rating: null,
+          }));
+
+          await clickhouse.insert({
+            table: 'knights_rating_updates_buffer',
+            values: bufferRecords,
+            format: 'JSONEachRow',
+          });
+        }
+
+        log(
+          `ChangeRateTarget :: ${rank} - Inserted ${imagesToPurge.length} NULL ratings into buffer`
+        );
+
+        // Process the ratings through the standard pipeline
+        // This will mark them as Inconclusive using the same logic as regular ratings
+        const result = await processFinalRatings();
+        log(
+          `ChangeRateTarget :: ${rank} - processFinalRatings result: ${JSON.stringify(
+            result,
+            null,
+            2
+          )}`
+        );
+
+        log(
+          `ChangeRateTarget :: ${rank} - Processed ${imagesToPurge.length} images as Inconclusive`
+        );
+
+        // Clear all pools in the old slot
+        await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.reset({ all: true })));
+
+        log(`ChangeRateTarget :: ${rank} - Cleared all pools in slot ${currentSlot}`);
+      } else {
+        log(`ChangeRateTarget :: ${rank} - No images to purge from slot ${currentSlot}`);
+      }
+    }
+
+    log('ChangeRateTarget :: Rate slot rotation and purge complete');
+  }
+);
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
-  newOrderPickTemplars,
   newOrderCleanseSmites,
-  newOrderCleanupQueues,
+  // newOrderCleanupQueues,
+  newOrderChangeFillTarget,
+  newOrderChangeRateTarget,
 ];

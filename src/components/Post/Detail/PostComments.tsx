@@ -1,14 +1,4 @@
-import {
-  Stack,
-  Group,
-  Text,
-  Loader,
-  Center,
-  Divider,
-  Title,
-  Button,
-  LoadingOverlay,
-} from '@mantine/core';
+import { Stack, Group, Text, Loader, Center, Divider, Title, Button } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -38,7 +28,6 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
         created,
         isLoading,
         isFetching,
-        remaining,
         showMore,
         toggleShowMore,
         activeComment,
@@ -93,28 +82,21 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
               <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
                 <CreateComment />
                 <Stack className="relative">
-                  <LoadingOverlay visible={isFetching} />
                   {data?.map((comment) => (
                     <Comment key={comment.id} comment={comment} />
                   ))}
                 </Stack>
-                {!!remaining && !showMore && (
-                  <Divider
-                    label={
-                      <Group gap="xs" align="center">
-                        <Text
-                          c="blue.4"
-                          style={{ cursor: 'pointer' }}
-                          onClick={toggleShowMore}
-                          inherit
-                        >
-                          Show {remaining} More
-                        </Text>
-                      </Group>
-                    }
-                    labelPosition="center"
-                    variant="dashed"
-                  />
+                {showMore && (
+                  <Center>
+                    <Button
+                      onClick={toggleShowMore}
+                      loading={isFetching}
+                      variant="subtle"
+                      size="md"
+                    >
+                      Load More Comments
+                    </Button>
+                  </Center>
                 )}
                 {created.map((comment) => (
                   <Comment key={comment.id} comment={comment} />

@@ -43,6 +43,7 @@ const featureFlags = createFeatureFlags({
   stripe: ['mod'],
   imageTraining: ['user'],
   videoTraining: ['mod', 'bronze', 'silver', 'gold'],
+  aiToolkitTraining: ['mod'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
@@ -98,7 +99,7 @@ const featureFlags = createFeatureFlags({
   draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
-  impersonation: ['granted'],
+  impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
   experimentalGen: ['mod'],
@@ -132,7 +133,6 @@ const featureFlags = createFeatureFlags({
   coinbaseOnramp: ['mod'],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
-  zkp2pPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
   logicalReplica: ['public'],
@@ -263,6 +263,7 @@ const hasFeature = (
         return true;
       return host === domain;
     });
+
     // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;
   }

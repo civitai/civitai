@@ -24,7 +24,7 @@ import type {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { createOrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -105,9 +105,7 @@ export async function submitWorkflow({
   //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
   // }
 
-  if (body.allowMatureContent === false) {
-    body.upgradeMode = 'manual';
-  }
+  body.upgradeMode = 'manual';
 
   if (isDev) {
     console.log('------');
@@ -115,7 +113,7 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const { data, error, response } = await clientSubmitWorkflow({
+  const { data, error, response, ...res } = await clientSubmitWorkflow({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
@@ -125,12 +123,20 @@ export async function submitWorkflow({
     const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
       messages?: string[];
     };
-    const message = messages?.length ? messages.join(',\n') : handleError(error);
+    let message = messages?.length ? messages.join(',\n') : handleError(error);
+    if (
+      body.allowMatureContent === false &&
+      message === 'Prompt requires mature content but workflow does not allow it' &&
+      body.currencies?.includes('green')
+    )
+      message =
+        'The prompt has been blocked due to mature content which is not supported by the current model';
 
     if (!isProd) {
       console.log('----Workflow Error----');
       console.log({ token });
       console.dir({ error }, { depth: null });
+      console.dir({ res, data }, { depth: null });
       console.log('----Workflow Error Request Body----');
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');

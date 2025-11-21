@@ -1,6 +1,5 @@
 import type { MenuItemProps } from '@mantine/core';
 import {
-  Anchor,
   Checkbox,
   Menu,
   Modal,
@@ -76,8 +75,6 @@ import { getStepMeta } from './GenerationForm/generation.utils';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import classes from './GeneratedImage.module.css';
 import { useGenerationEngines } from '~/components/Generation/Video/VideoGenerationProvider';
-import { capitalize } from '~/utils/string-helpers';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
@@ -85,23 +82,13 @@ import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imag
 import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { NsfwLevel } from '@civitai/client';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
-import { useAppContext } from '~/providers/AppProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
   step: NormalizedGeneratedImageStep;
 };
-
-// const matureDictionary: Record<string, boolean> = {
-//   [NsfwLevel.P_G13]: true,
-//   [NsfwLevel.R]: true,
-//   [NsfwLevel.X]: true,
-//   [NsfwLevel.XXX]: true,
-// };
 
 export function GeneratedImage({
   image,
@@ -114,10 +101,7 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
   isLightbox?: boolean;
 }) {
-  const { allowMatureContent } = useAppContext();
-  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
   const [ref, inView] = useInViewDynamic({ id: image.id });
-  const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
     stepName: step.name,
@@ -125,11 +109,10 @@ export function GeneratedImage({
   });
   const isSelecting = orchestratorImageSelect.useIsSelecting();
 
-  const [nsfwLevelError, setNsfwLevelError] = useState(false);
-
   const { updateImages } = useUpdateImageStepMetadata();
 
   const { running, helpers } = useTourContext();
+  const available = image.status === 'succeeded';
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -138,7 +121,7 @@ export function GeneratedImage({
     );
 
   const handleImageClick = () => {
-    if (!image || !available || isLightbox || nsfwLevelError) return;
+    if (!image || !available || isLightbox) return;
 
     if (isSelecting) {
       handleToggleSelect();
@@ -150,10 +133,6 @@ export function GeneratedImage({
       });
     }
   };
-
-  const feedback = step.metadata?.images?.[image.id]?.feedback;
-  const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-  const available = image.status === 'succeeded';
 
   const [state, setState] = useGeneratedItemStore({
     id: `${request.id}_${step.name}_${image.id}`,
@@ -221,22 +200,7 @@ export function GeneratedImage({
     );
   }
 
-  if (!available) return <></>;
-
-  function handleLoad() {
-    setLoaded(true);
-  }
-
-  function handleError() {
-    if (
-      step.metadata &&
-      step.metadata.hasOwnProperty('isPrivateGeneration') &&
-      // @ts-ignore This value can exist and we confirmed above.
-      step.metadata.isPrivateGeneration
-    ) {
-      setNsfwLevelError(true);
-    }
-  }
+  if (image.status !== 'succeeded') return <></>;
 
   function handleDataTransfer(e: DragEvent<HTMLVideoElement> | DragEvent<HTMLImageElement>) {
     const url = e.currentTarget.currentSrc;
@@ -257,8 +221,6 @@ export function GeneratedImage({
     toggleSelect(value);
     if (running && value) helpers?.next();
   }
-
-  if (image.blockedReason || nsfwLevelError) return null;
 
   return (
     <TwCard
@@ -291,14 +253,10 @@ export function GeneratedImage({
               controls={isLightbox}
               disableWebm
               disablePoster
-              onLoad={handleLoad}
-              onError={handleError}
               imageProps={{
                 onDragStart: handleDragImage,
               }}
               videoProps={{
-                onLoadedData: handleLoad,
-                onError: handleError,
                 onDragStart: handleDragVideo,
                 draggable: true,
                 autoPlay: true,
@@ -307,7 +265,7 @@ export function GeneratedImage({
           }
           <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
 
-          {!isLightbox && (
+          {!isLightbox && !image.blockedReason && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
@@ -316,85 +274,93 @@ export function GeneratedImage({
               />
             </label>
           )}
-          <Menu zIndex={400} withinPortal>
-            <Menu.Target>
-              <div className="absolute right-3 top-3">
-                <LegacyActionIcon variant="transparent">
-                  <IconDotsVertical
-                    size={26}
-                    color="#fff"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  />
-                </LegacyActionIcon>
-              </div>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <GeneratedImageWorkflowMenuItems step={step} image={image} workflowId={request.id} />
-            </Menu.Dropdown>
-          </Menu>
-
-          <div
-            className={clsx(
-              classes.actionsWrapper,
-              isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
-              'absolute flex flex-wrap items-center gap-1 p-1'
-            )}
-          >
-            <LegacyActionIcon
-              size="md"
-              className={state.favorite ? classes.favoriteButton : undefined}
-              variant={state.favorite ? 'light' : 'subtle'}
-              color={state.favorite ? 'red' : 'gray'}
-              onClick={() => handleToggleFavorite(!state.favorite)}
-            >
-              <IconHeart size={16} />
-            </LegacyActionIcon>
-
-            <Menu
-              zIndex={400}
-              trigger="hover"
-              openDelay={100}
-              closeDelay={100}
-              transitionProps={{
-                transition: 'fade',
-                duration: 150,
-              }}
-              withinPortal
-              position="top"
-            >
+          {!image.blockedReason && (
+            <Menu zIndex={400} withinPortal>
               <Menu.Target>
-                <LegacyActionIcon size="md">
-                  <IconWand size={16} />
-                </LegacyActionIcon>
+                <div className="absolute right-3 top-3">
+                  <LegacyActionIcon variant="transparent">
+                    <IconDotsVertical
+                      size={26}
+                      color="#fff"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    />
+                  </LegacyActionIcon>
+                </div>
               </Menu.Target>
-              <Menu.Dropdown className={classes.improveMenu}>
+              <Menu.Dropdown>
                 <GeneratedImageWorkflowMenuItems
                   step={step}
                   image={image}
                   workflowId={request.id}
-                  workflowsOnly
                 />
               </Menu.Dropdown>
             </Menu>
+          )}
 
-            <LegacyActionIcon
-              size="md"
-              variant={state.feedback === 'liked' ? 'light' : 'subtle'}
-              color={state.feedback === 'liked' ? 'green' : 'gray'}
-              onClick={() => handleToggleFeedback('liked')}
+          {!image.blockedReason && (
+            <div
+              className={clsx(
+                classes.actionsWrapper,
+                isLightbox && image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+                'absolute flex flex-wrap items-center gap-1 p-1'
+              )}
             >
-              <IconThumbUp size={16} />
-            </LegacyActionIcon>
+              <LegacyActionIcon
+                size="md"
+                className={state.favorite ? classes.favoriteButton : undefined}
+                variant={state.favorite ? 'light' : 'subtle'}
+                color={state.favorite ? 'red' : 'gray'}
+                onClick={() => handleToggleFavorite(!state.favorite)}
+              >
+                <IconHeart size={16} />
+              </LegacyActionIcon>
 
-            <LegacyActionIcon
-              size="md"
-              variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
-              color={state.feedback === 'disliked' ? 'red' : 'gray'}
-              onClick={() => handleToggleFeedback('disliked')}
-            >
-              <IconThumbDown size={16} />
-            </LegacyActionIcon>
-          </div>
+              <Menu
+                zIndex={400}
+                trigger="hover"
+                openDelay={100}
+                closeDelay={100}
+                transitionProps={{
+                  transition: 'fade',
+                  duration: 150,
+                }}
+                withinPortal
+                position="top"
+              >
+                <Menu.Target>
+                  <LegacyActionIcon size="md">
+                    <IconWand size={16} />
+                  </LegacyActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown className={classes.improveMenu}>
+                  <GeneratedImageWorkflowMenuItems
+                    step={step}
+                    image={image}
+                    workflowId={request.id}
+                    workflowsOnly
+                  />
+                </Menu.Dropdown>
+              </Menu>
+
+              <LegacyActionIcon
+                size="md"
+                variant={state.feedback === 'liked' ? 'light' : 'subtle'}
+                color={state.feedback === 'liked' ? 'green' : 'gray'}
+                onClick={() => handleToggleFeedback('liked')}
+              >
+                <IconThumbUp size={16} />
+              </LegacyActionIcon>
+
+              <LegacyActionIcon
+                size="md"
+                variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
+                color={state.feedback === 'disliked' ? 'red' : 'gray'}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </LegacyActionIcon>
+            </div>
+          )}
           {!isLightbox && (
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
@@ -594,7 +560,7 @@ function GeneratedImageWorkflowMenuItems({
     (!!step.params.workflow && !(step.params.workflow in notSelectableMap)) ||
     !!(step.params as any).engine;
 
-  async function handleRemix(seed?: number) {
+  async function handleRemix(seed?: number | null) {
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources as any,
@@ -858,43 +824,3 @@ function handleCloseImageLightbox() {
 function handleAuxClick(url: string) {
   window.open(url, '_blank');
 }
-
-const imageBlockedReasonMap: Record<string, string | (() => JSX.Element)> = {
-  ChildReference: 'An inappropriate child reference was detected.',
-  Bestiality: 'Bestiality detected.',
-  'Child Sexual - Anime': 'Inappropriate minor content detected.',
-  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
-  NsfwLevel: 'Mature content restriction.',
-  NSFWLevelSourceImageRestricted: () => (
-    <div className="flex flex-col gap-1">
-      <Text align="center" size="sm">
-        Mature content restriction.
-      </Text>
-      <Text align="center" size="sm">
-        If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs
-        only.
-      </Text>
-      <Text
-        align="center"
-        size="sm"
-        component={NextLink}
-        href="https://civitai.com/changelog?id=11"
-      >
-        More info.
-      </Text>
-    </div>
-  ),
-};
-
-function getImageBlockedReason(reason?: string | null) {
-  if (!reason || reason === 'none') return;
-  return imageBlockedReasonMap[reason] ?? reason;
-}
-
-// {
-//   "ChildReference": "An inappropriate child reference was detected.",
-//   "Bestiality": "Detected bestiality in the image.",
-//   "Child Sexual - Anime": "An inappropriate child reference was detected.",
-//   "Child Sexual - Realistic": "An inappropriate child reference was detected.",
-//   "NsfwLevel": "Mature content restriction"
-// }

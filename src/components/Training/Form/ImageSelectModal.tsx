@@ -49,7 +49,7 @@ import {
   ImageSelectFiltersTrainingDropdown,
 } from '~/components/Training/Form/ImageSelectFilters';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { trainingStatusFields } from '~/components/User/UserTrainingModels';
+import { trainingStatusFields } from '~/shared/constants/training.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -177,7 +177,7 @@ export default function ImageSelectModal({
     () =>
       steps.flatMap((step) =>
         step.images
-          .filter((x) => x.status === 'succeeded' && x.available)
+          .filter((x) => x.status === 'succeeded' && x.available && !x.blockedReason)
           .map((asset) => {
             if (!asset.available || asset.status !== 'succeeded') return null;
             return {

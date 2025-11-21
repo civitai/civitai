@@ -82,7 +82,7 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
   // Sum vault sizes from all active memberships
   const totalVaultSizeKb = user.subscriptions.reduce((total, subscription) => {
     const metadata = subscription.product.metadata as SubscriptionProductMetadata;
-    return total + (metadata?.vaultSizeKb ?? 0);
+    return total + Number(metadata?.vaultSizeKb ?? 0);
   }, 0);
 
   if (!totalVaultSizeKb) {

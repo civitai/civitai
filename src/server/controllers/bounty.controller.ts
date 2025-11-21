@@ -7,7 +7,6 @@ import {
   deleteBountyById,
   getAllBounties,
   getBountyById,
-  getBountyFiles,
   getBountyImages,
   getImagesForBounties,
   refundBounty,
@@ -41,6 +40,7 @@ import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -172,7 +172,12 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
 
     return {
       ...bounty,
-      details: bounty.details as BountyDetailsSchema,
+      details: bounty.details
+        ? filterSensitiveProfanityData(
+            bounty.details as BountyDetailsSchema,
+            ctx?.user?.isModerator
+          )
+        : ({} as BountyDetailsSchema),
       images: images.map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,

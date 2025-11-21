@@ -30,7 +30,11 @@ export function MembershipTypeSelector({ onSelect }: MembershipTypeSelectorProps
           <>
             Membership benefits include <b>Yellow Buzz</b>.<br />
             Can be used to generate <b>NSFW</b> content as well as anything else on the site. Can be
-            bought via Gift Cards.
+            bought via Gift Cards. <br />{' '}
+            <Text c="blue" component="span">
+              Blue Buzz
+            </Text>{' '}
+            can be used to generate mature content.
           </>
         ),
       }}

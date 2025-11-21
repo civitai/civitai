@@ -13,6 +13,7 @@ import { DndContext, PointerSensor, rectIntersection, useSensor, useSensors } fr
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import classes from './ShowcaseItemsInput.module.scss';
+import { withController } from '~/libs/form/hoc/withController';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
@@ -194,3 +195,5 @@ export const ShowcaseItemsInput = ({
     </Input.Wrapper>
   );
 };
+
+export const InputShowcaseItemsInput = withController(ShowcaseItemsInput);

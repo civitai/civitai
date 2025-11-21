@@ -423,9 +423,6 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             }}
             minDate={minDate}
             maxDate={endDate ? dayjs(endDate).subtract(1, 'day').toDate() : maxDate}
-            clearButtonProps={{
-              children: 'Clear start date',
-            }}
           />
           <DatePickerInput
             label="To"
@@ -436,9 +433,6 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
               onSetDate('end', date);
             }}
             minDate={startDate ? dayjs(startDate).add(1, 'day').toDate() : minDate}
-            clearButtonProps={{
-              children: 'Clear end date',
-            }}
             maxDate={maxDate}
           />
         </Accordion.Panel>

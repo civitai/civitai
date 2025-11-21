@@ -1,25 +1,20 @@
 import type {
-  ComfyOutput,
   ComfyStep,
-  HaiperVideoGenOutput,
-  ImageBlob,
-  ImageGenOutput,
   ImageGenStep,
-  TextToImageOutput,
   TextToImageStep,
-  VideoBlob,
-  VideoGenOutput,
   VideoGenStep,
   Workflow,
   WorkflowStatus,
   VideoEnhancementStep,
   WorkflowStep,
-  WorkflowStepJob,
+  ImageBlob,
+  VideoBlob,
+  NsfwLevel,
 } from '@civitai/client';
-import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
 import { env } from '~/env/server';
+import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -41,7 +36,7 @@ import {
   queryWorkflows,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   allInjectableResourceIds,
@@ -66,8 +61,14 @@ import { includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
-import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  getBaseModelByMediaType,
+  getGenerationBaseModelResourceOptions,
+} from '~/shared/constants/base-model.constants';
+import type {
+  ResourceInput,
+  SourceImageProps,
+} from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 
@@ -78,16 +79,8 @@ type WorkflowStepAggregate =
   | VideoGenStep
   | VideoEnhancementStep;
 
-export function createOrchestratorClient(token: string) {
-  return createCivitaiClient({
-    baseUrl: env.ORCHESTRATOR_ENDPOINT,
-    env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
-    auth: token,
-  });
-}
-
-/** Used to perform orchestrator operations with the system user account */
-export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
+// Re-export for backward compatibility
+export { createOrchestratorClient, internalOrchestratorClient };
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
@@ -155,7 +148,7 @@ export async function getGenerationResourceData(
     )
   ) {
     // Confirm the user has a subscription:
-    const subscription = await getUserSubscription({ userId: user.id });
+    const subscription = await getHighestTierSubscription(user.id);
     if (!subscription)
       throw throwBadRequestError('Using Private resources require an active subscription.');
   }
@@ -529,6 +522,7 @@ function formatImageGenStep({
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -546,17 +540,23 @@ function formatVideoGenStep({
   const params = videoMetadata.params ?? {};
 
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const stepResources = (params && 'resources' in params ? params.resources ?? [] : [])?.map(
-    ({ air, strength }) => {
-      const { version } = parseAIR(air);
-      return { id: version, strength };
-    }
-  );
+  const stepResources = (
+    (params && 'resources' in params
+      ? params.resources
+      : (metadata.resources as unknown as ResourceInput[])) ?? // this casting is not ideal, but we are now assigning a resource value here when we call createVideoGenStep
+    []
+  ).map(({ air, strength }) => {
+    const { version } = parseAIR(air);
+    return { id: version, strength };
+  });
 
   // it's silly, but video resources are nested in the params, where image resources are not
-  if (params && 'resources' in params) params.resources = null;
+  // if (params && 'resources' in params) params.resources = null;
 
-  const combinedResources = combineResourcesWithInputResource(resources, stepResources);
+  const videoBaseModels = getBaseModelByMediaType('video');
+  const combinedResources = combineResourcesWithInputResource(resources, stepResources).filter(
+    (x) => videoBaseModels.includes(x.baseModel as any)
+  );
 
   let baseModel =
     metadata.params?.baseModel ??
@@ -596,6 +596,7 @@ function formatVideoGenStep({
     metadata,
     resources: combinedResources,
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -650,6 +651,7 @@ function formatTextToImageStep({
     metadata: metadata,
     resources: resources.filter((x) => !injectableIds.includes(x.id)),
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -685,6 +687,7 @@ export function formatComfyStep({
     metadata: metadata as GeneratedImageStepMetadata,
     resources: combineResourcesWithInputResource(resources, stepResources),
     completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
     ...formatWorkflowStepOutput({ workflowId, step: step as WorkflowStepAggregate }),
   };
 }
@@ -742,9 +745,22 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
   }
 }
 
-export type NormalizedWorkflowStepOutput = ReturnType<
-  typeof formatWorkflowStepOutput
->['images'][number];
+export interface NormalizedWorkflowStepOutput {
+  url: string;
+  workflowId: string;
+  stepName: string;
+  seed?: number | null;
+  status: WorkflowStatus;
+  aspect: number;
+  type: 'image' | 'video';
+  id: string;
+  available: boolean;
+  urlExpiresAt?: string | null;
+  jobId?: string | null;
+  nsfwLevel?: NsfwLevel;
+  blockedReason?: string | null;
+}
+
 function formatWorkflowStepOutput({
   workflowId,
   step,
@@ -755,7 +771,7 @@ function formatWorkflowStepOutput({
   const items = normalizeOutput(step) ?? [];
   const seed = 'seed' in step.input ? step.input.seed : undefined;
 
-  const images = items.map((item, index) => {
+  const images: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
     const job = step.jobs?.find((x) => x.id === item.jobId);
     // eslint-disable-next-line prefer-const
     let { width, height, ...restItem } = item;
@@ -818,11 +834,20 @@ function formatWorkflowStepOutput({
       stepName: step.name,
       seed: seed ? seed + index : undefined,
       status: item.available ? 'succeeded' : job?.status ?? ('unassignend' as WorkflowStatus),
-      queuePosition: job?.queuePosition,
       aspect,
     };
   });
-  const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+  const errors: string[] = [];
+  if (step.output) {
+    if ('errors' in step.output && step.output.errors) errors.push(...step.output.errors);
+    if (
+      'externalTOSViolation' in step.output &&
+      'message' in step.output &&
+      typeof step.output.message === 'string'
+    )
+      errors.push(step.output.message);
+  }
+  // const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
 
   return {
     images,

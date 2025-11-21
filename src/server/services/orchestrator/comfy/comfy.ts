@@ -2,9 +2,7 @@ import type { ComfyStepTemplate } from '@civitai/client';
 import { NsfwLevel, TimeSpan } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
-import { SignalMessages } from '~/server/common/enums';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   applyResources,
@@ -24,7 +22,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -141,7 +139,7 @@ export async function createComfy(
       nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG : undefined,
       allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
+      currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },
   })) as TextToImageResponse;
 

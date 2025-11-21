@@ -52,11 +52,13 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -67,6 +69,9 @@ export const createCustomer = async ({ id, email }: { id: number; email: string 
     const customer = await getOrCreateCustomer({ email, userId: id });
 
     await dbWrite.user.update({ where: { id }, data: { paddleCustomerId: customer.id } });
+
+    userUpdateCounter?.inc({ location: 'paddle.service:createCustomer' });
+
     await refreshSession(id);
 
     return customer.id;
@@ -467,8 +472,7 @@ export const upsertSubscription = async (
         cancelAtPeriodEnd: true,
       },
     });
-    await getMultipliersForUser(user.id, true);
-    await refreshSession(user.id);
+    await invalidateSubscriptionCaches(user.id);
     await dbWrite.vault.update({
       where: { userId: user.id },
       data: {
@@ -630,8 +634,7 @@ export const upsertSubscription = async (
     }
   }
 
-  await refreshSession(user.id);
-  await getMultipliersForUser(user.id, true);
+  await invalidateSubscriptionCaches(user.id);
 };
 
 export const manageSubscriptionTransactionComplete = async (
@@ -780,8 +783,7 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await refreshSession(userId);
-    await getMultipliersForUser(userId, true);
+    await invalidateSubscriptionCaches(userId);
 
     return true;
   } catch (e) {
@@ -946,8 +948,7 @@ export const updateSubscriptionPlan = async ({
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-    await refreshSession(userId);
-    await getMultipliersForUser(userId, true);
+    await invalidateSubscriptionCaches(userId);
 
     return true;
   } catch (e) {

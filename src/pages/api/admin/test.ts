@@ -1,12 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { clickhouse } from '~/server/clickhouse/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { getModeratedTags } from '~/server/services/system-cache';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { invalidateSession } from '~/server/auth/session-invalidation';
+import { decreaseDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type MatureContent = {
@@ -14,76 +16,30 @@ type MatureContent = {
   subscriptions: Record<string, number>;
 };
 
+const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
+const IMAGE_SCANNING_RETRY_LIMIT = 6;
+
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
+    const now = new Date();
+    const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
+    const errorImages = (
+      (await dbWrite.$queryRaw<any[]>`
+       SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as "retryCount"
+       FROM "Image"
+       WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR ("nsfwLevel" IS NOT NULL AND "createdAt" > '10/15/2025'))
+     `) ?? []
+    ).filter((img) => {
+      console.log(Number(img.retryCount ?? 0));
+      return (
+        img.scanRequestedAt &&
+        new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
+        Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
+      );
+    });
 
-    // const result = await clickhouse?.$query<{ userId: number }>(`
-    //   SELECT "userId"
-    //   FROM "pageViews"
-    //   WHERE time BETWEEN '2025-08-01' AND '2025-08-31'
-    //   GROUP BY "userId"
-    // `);
-
-    // if (!result) throw new Error('no results');
-    // const browsingLevels: Record<number, number> = {};
-    // const matureContent: { show: MatureContent; hide: MatureContent } = {
-    //   show: { count: 0, subscriptions: {} },
-    //   hide: { count: 0, subscriptions: {} },
-    // };
-
-    // let totalProcessed = 0;
-    // const users = await Limiter({ batchSize: 5000, limit: 10 }).process(result, async (result) => {
-    //   const userIds = result.map((x) => x.userId);
-    //   const users = await dbRead.user.findMany({
-    //     where: { id: { in: userIds } },
-    //     select: {
-    //       id: true,
-    //       browsingLevel: true,
-    //       showNsfw: true,
-    //       subscriptionId: true,
-    //     },
-    //   });
-    //   totalProcessed += users.length;
-    //   console.log({ totalProcessed });
-    //   return users;
-    // });
-
-    // const subscriptions = await Limiter({ batchSize: 5000, limit: 10 }).process(
-    //   users,
-    //   async (users) => {
-    //     const subscriptionIds = users.map((x) => x.subscriptionId).filter(isDefined);
-    //     return await dbRead.customerSubscription.findMany({
-    //       where: { id: { in: subscriptionIds }, status: 'active' },
-    //       select: { id: true, userId: true, productId: true },
-    //     });
-    //   }
-    // );
-
-    // const productIds = [
-    //   ...new Set([...subscriptions.map((subscription) => subscription.productId)]),
-    // ];
-    // const products = await dbRead.product.findMany({ where: { id: { in: productIds } } });
-
-    // for (const { browsingLevel, showNsfw, subscriptionId } of users) {
-    //   browsingLevels[browsingLevel] = (browsingLevels[browsingLevel] ?? 0) + 1;
-    //   matureContent[showNsfw ? 'show' : 'hide'].count += 1;
-    //   const subscription = subscriptions.find((x) => x.id === subscriptionId);
-    //   if (subscription) {
-    //     const product = products.find((x) => x.id === subscription.productId);
-    //     if (product) {
-    //       const tier = (product.metadata as any).tier;
-    //       if (tier && tier !== 'free') {
-    //         // subscriptions[product.name] = (subscriptions[product.name] ?? 0) + 1;
-    //         matureContent[showNsfw ? 'show' : 'hide'].subscriptions[tier] =
-    //           (matureContent[showNsfw ? 'show' : 'hide'].subscriptions[tier] ?? 0) + 1;
-    //       }
-    //     }
-    //   }
-    // }
-    const data = await getModeratedTags();
-    await invalidateSession(5);
-    res.status(200).send({ data });
+    res.status(200).send({ errorImages });
   } catch (e) {
     console.log(e);
     res.status(400).end();

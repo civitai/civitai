@@ -31,6 +31,14 @@ export interface VendorPromo {
   endDate: Date;
 }
 
+export interface VendorDiscount {
+  percentage: number;
+  startDate: Date;
+  endDate: Date;
+  title?: string;
+  description?: string;
+}
+
 export interface Vendor {
   id: string;
   name: string;
@@ -38,6 +46,7 @@ export interface Vendor {
   enabled: boolean;
   products: VendorProducts;
   promo?: VendorPromo;
+  discount?: VendorDiscount;
 }
 
 export type VendorRegistry = Record<string, Vendor>;

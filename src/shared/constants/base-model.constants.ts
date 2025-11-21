@@ -46,7 +46,7 @@ const baseModelConfig = [
     hidden: true,
   },
   { name: 'Pony', type: 'image', group: 'Pony', ecosystem: 'sdxl' },
-  { name: 'Pony V7', type: 'image', group: 'PonyV7', ecosystem: 'auraflow', hidden: true },
+  { name: 'Pony V7', type: 'image', group: 'PonyV7', ecosystem: 'auraflow' },
   { name: 'Qwen', type: 'image', group: 'Qwen', ecosystem: 'qwen' },
   {
     name: 'Stable Cascade',
@@ -68,6 +68,7 @@ const baseModelConfig = [
   { name: 'SD 3.5 Large', type: 'image', group: 'SD3', hidden: true },
   { name: 'SD 3.5 Large Turbo', type: 'image', group: 'SD3', hidden: true },
   { name: 'SD 3.5 Medium', type: 'image', group: 'SD3_5M', ecosystem: 'sd3', hidden: true },
+  { name: 'Sora 2', type: 'video', group: 'Sora2', hidden: true },
   { name: 'SDXL 0.9', type: 'image', group: 'SDXL', hidden: true },
   { name: 'SDXL 1.0', type: 'image', group: 'SDXL' },
   { name: 'SDXL 1.0 LCM', type: 'image', group: 'SDXL', hidden: true },
@@ -283,7 +284,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'PonyV7',
     support: [
       {
-        modelTypes: [ModelType.Checkpoint],
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Pony V7'],
       },
     ],
@@ -406,6 +407,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'Seedream',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedream'] }],
+  },
+  {
+    group: 'Sora2',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Sora 2'] }],
   },
   {
     group: 'WanVideo',
@@ -622,4 +627,5 @@ export const DEPRECATED_BASE_MODELS = [
   'SD 3.5 Large Turbo',
   'SDXL Turbo',
   'SVD',
+  'SVD XT',
 ] as const satisfies BaseModel[];

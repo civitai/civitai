@@ -57,6 +57,7 @@ export const tagsNeedingReview = [
   'female child',
   'male child',
   'oppai loli',
+  'child on child',
 ];
 export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
   Rekognition: [
@@ -70,3 +71,6 @@ export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
     'white supremacy',
   ],
 };
+
+export const styleTags = ['anime', 'cartoon', 'comics', 'manga'];
+export const subjectTags = ['man', 'woman', 'men', 'women'];

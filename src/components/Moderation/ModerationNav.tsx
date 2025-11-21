@@ -15,11 +15,12 @@ export function ModerationNav() {
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
         { label: 'Models', href: '/moderator/models' },
-        { 
-          label: 'Training Models', 
-          href: '/moderator/training-models', 
-          hidden: !features.trainingModelsModeration 
+        {
+          label: 'Training Models',
+          href: '/moderator/training-models',
+          hidden: !features.trainingModelsModeration,
         },
+        { label: 'Articles', href: '/moderator/articles' },
         { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
         { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
@@ -28,6 +29,7 @@ export function ModerationNav() {
         { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
+        { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         {
           label: 'Paddle Adjustments',
@@ -38,6 +40,10 @@ export function ModerationNav() {
           label: 'Announcements',
           href: '/moderator/announcements',
           hidden: !features.announcements,
+        },
+        {
+          label: 'Code Gifts',
+          href: '/moderator/code-gifts',
         },
         {
           label: 'Blocklists',

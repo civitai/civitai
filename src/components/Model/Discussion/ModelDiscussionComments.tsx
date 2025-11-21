@@ -1,4 +1,4 @@
-import { Stack, Group, Text, Loader, Center, Divider } from '@mantine/core';
+import { Stack, Loader, Center, Button } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import type { CommentV2BadgeProps } from '~/components/CommentsV2/CommentsProvider';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
@@ -15,7 +15,7 @@ export function ModelDiscussionComments({
   if (userId) badges.push({ userId, label: 'op', color: 'violet' });
   return (
     <RootThreadProvider entityType="comment" entityId={commentId} limit={5} badges={badges}>
-      {({ data, created, isLoading, remaining, showMore, toggleShowMore }) =>
+      {({ data, created, isLoading, isFetching, showMore, toggleShowMore }) =>
         isLoading ? (
           <Center>
             <Loader type="bars" />
@@ -26,24 +26,12 @@ export function ModelDiscussionComments({
             {data?.map((comment) => (
               <Comment key={comment.id} comment={comment} />
             ))}
-            {!!remaining && !showMore && (
-              <Divider
-                label={
-                  <Group gap="xs" align="center">
-                    <Text
-                      c="blue.4"
-                      size="xs"
-                      style={{ cursor: 'pointer' }}
-                      onClick={toggleShowMore}
-                      inherit
-                    >
-                      Show {remaining} More
-                    </Text>
-                  </Group>
-                }
-                labelPosition="center"
-                variant="dashed"
-              />
+            {showMore && (
+              <Center>
+                <Button onClick={toggleShowMore} loading={isFetching} variant="subtle" size="md">
+                  Load More Comments
+                </Button>
+              </Center>
             )}
             {created.map((comment) => (
               <Comment key={comment.id} comment={comment} />

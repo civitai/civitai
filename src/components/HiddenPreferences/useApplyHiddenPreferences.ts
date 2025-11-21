@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { HiddenPreferencesState } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
@@ -40,7 +40,7 @@ export function useApplyHiddenPreferences<
   allowLowerLevels?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const [previous, setPrevious] = useState<any[]>([]);
+  const previousItemsRef = useRef<any[]>([]);
   const systemBrowsingLevel = useBrowsingLevelDebounced();
   const browsingLevel = browsingLevelOverride ?? systemBrowsingLevel;
   const browsingSettingsAddons = useBrowsingSettingsAddons();
@@ -91,7 +91,13 @@ export function useApplyHiddenPreferences<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, hiddenPreferences, stringified, showHidden, disabled, browsingLevel]);
 
-  useEffect(() => setPrevious(items), [items]);
+  // Store current items as previous when not refetching
+  // This avoids state updates and potential infinite loops
+  useEffect(() => {
+    if (!isRefetching) {
+      previousItemsRef.current = items;
+    }
+  }, [items, isRefetching]);
 
   // We will not be counting `noImages` because the user can't do anything about these.
   const hiddenCount =
@@ -99,7 +105,7 @@ export function useApplyHiddenPreferences<
 
   return {
     loadingPreferences: hiddenPreferences.hiddenLoading,
-    items: (isRefetching ? previous : items) as TData,
+    items: (isRefetching ? previousItemsRef.current : items) as TData,
     hiddenCount,
   };
 }

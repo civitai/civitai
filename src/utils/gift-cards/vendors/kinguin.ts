@@ -11,6 +11,15 @@ export const kinguinVendor: Vendor = {
     startDate: new Date('2025-08-25T22:00:00Z'),
     endDate: new Date('2025-09-01T21:59:00Z'),
   },
+  // Halloween 2025 discount: 13% off from Oct 29 at 7am UTC for 72 hours
+  discount: {
+    percentage: 13,
+    startDate: new Date('2025-10-29T07:00:00Z'),
+    endDate: new Date('2025-10-31T11:00:00Z'),
+    title: 'The Spooky Season Flash Sale is on!',
+    description:
+      'All Buzz Gift Cards and Pre-Paid Memberships are 13% off — October 29th–31st only!',
+  },
   products: {
     buzzCards: [
       {

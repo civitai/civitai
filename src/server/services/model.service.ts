@@ -25,7 +25,7 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
-import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelTagCache, userModelCountCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -83,7 +83,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -130,6 +130,8 @@ import type {
 } from './../schema/model.schema';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Flags } from '~/shared/utils/flags';
+import { isDev } from '~/env/other';
+import { userUpdateCounter } from '~/server/prom/client';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1231,7 +1233,7 @@ export const updateModelById = async ({
     data,
   });
 
-  await userContentOverviewCache.bust(model.userId);
+  await userModelCountCache.bust(model.userId);
 
   return model;
 };
@@ -1304,7 +1306,7 @@ export const deleteModelById = async ({
   });
 
   if (deletedModel) {
-    await userContentOverviewCache.bust(deletedModel.userId);
+    await userModelCountCache.bust(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBidsForModel({ modelId: id });
@@ -1325,7 +1327,7 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
     },
   });
 
-  await userContentOverviewCache.bust(model.userId);
+  await userModelCountCache.bust(model.userId);
 
   return model;
 };
@@ -1469,14 +1471,21 @@ export const upsertModel = async (
       if (data[key] !== undefined) delete data[key];
     }
 
-    // Check model name and description for profanity
+    // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+    const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity is detected, mark model as NSFW and add to locked properties
-    if (isProfane && !data.nsfw) {
-      meta = { ...(meta ?? {}), profanityMatches: matchedWords };
+    // If profanity exceeds thresholds, mark model as NSFW
+    if (evaluation.shouldMarkNSFW && !data.nsfw) {
+      meta = {
+        ...(meta ?? {}),
+        profanityMatches: evaluation.matchedWords,
+        profanityEvaluation: {
+          reason: evaluation.reason,
+          metrics: evaluation.metrics,
+        },
+      };
       data.nsfw = true;
       data.lockedProperties =
         data.lockedProperties && !data.lockedProperties.includes('nsfw')
@@ -1646,7 +1655,7 @@ export const upsertModel = async (
 
     if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
-    await userContentOverviewCache.bust(userId);
+    await userModelCountCache.bust(userId);
 
     // Ingest model if it's published and any of the following fields have changed:
     if (
@@ -1851,7 +1860,7 @@ export const publishModelById = async ({
     { timeout: 10000 }
   );
 
-  await userContentOverviewCache.bust(model.userId);
+  await userModelCountCache.bust(model.userId);
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
     const versionIds = model.modelVersions.map((x) => x.id);
@@ -1965,7 +1974,7 @@ export const unpublishModelById = async ({
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
 
-      await userContentOverviewCache.bust(updatedModel.userId);
+      await userModelCountCache.bust(updatedModel.userId);
 
       return updatedModel;
     },
@@ -2154,7 +2163,7 @@ export const getRecentlyBid = async ({ take, userId }: LimitOnly & { userId: num
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   const model = await dbWrite.model.update({ where: { id }, data: { locked } });
-  await userContentOverviewCache.bust(model.userId);
+  await userModelCountCache.bust(model.userId);
 };
 
 export async function toggleLockComments({ id, locked }: { id: number; locked: boolean }) {
@@ -2240,7 +2249,7 @@ export async function updateModelLastVersionAt({
       data: { lastVersionAt: modelVersion.publishedAt },
     });
 
-    await userContentOverviewCache.bust(model.userId);
+    await userModelCountCache.bust(model.userId);
   } catch (error) {
     logToAxiom({ type: 'lastVersionAt-failure', modelId: id, message: (error as Error).message });
     throw error;
@@ -2721,6 +2730,9 @@ export async function copyGallerySettingsToAllModelsByUser({
         },
       },
     });
+
+    userUpdateCounter?.inc({ location: 'model.service:updateGallerySettings' });
+
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
@@ -2732,7 +2744,7 @@ export async function copyGallerySettingsToAllModelsByUser({
         "userId" = ${userId}
     `;
 
-    await userContentOverviewCache.bust(userId);
+    await userModelCountCache.bust(userId);
   });
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
@@ -2926,7 +2938,7 @@ export async function ingestModelById({ id }: GetByIdInput) {
 }
 
 export async function ingestModel(data: IngestModelInput) {
-  if (!env.CONTENT_SCAN_ENDPOINT) {
+  if (!env.CONTENT_SCAN_ENDPOINT || isDev) {
     console.log('Skipping model ingestion');
     await dbWrite.model.update({
       where: { id: data.id },
@@ -3095,7 +3107,7 @@ export const privateModelFromTraining = async ({
     },
   });
 
-  const subscription = await getUserSubscription({ userId: input.user.id });
+  const subscription = await getHighestTierSubscription(input.user.id);
 
   const maxPrivateModels = subscription?.tier
     ? constants.memberships.membershipDetailsAddons[
@@ -3202,7 +3214,7 @@ export const privateModelFromTraining = async ({
     }
 
     await preventReplicationLag('model', id);
-    await userContentOverviewCache.bust(user.id);
+    await userModelCountCache.bust(user.id);
     await dataForModelsCache.bust(id);
     await bustMvCache(
       result.modelVersions.map((x) => x.id),

@@ -3,7 +3,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { forwardRef } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { IconClock, IconMessage, IconMessageCircleOff } from '@tabler/icons-react';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 

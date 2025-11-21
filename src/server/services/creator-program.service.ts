@@ -51,7 +51,7 @@ import {
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,
@@ -69,6 +69,7 @@ import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
 import { toKebabCase } from '~/utils/string-helpers';
+import { userUpdateCounter } from '~/server/prom/client';
 
 type UserCapCacheItem = {
   id: number;
@@ -98,15 +99,22 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
-      // Get tiers for the specific buzz type
+      // Get the highest tier for each user across all active subscriptions (regardless of buzzType)
       const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
-        SELECT
+        SELECT DISTINCT ON (cs."userId")
           cs."userId",
           (p.metadata->>'tier') as tier
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
         WHERE cs."userId" IN (${ids.join(',')})
-          AND cs."buzzType" = '${buzzType}';
+        ORDER BY cs."userId",
+          CASE (p.metadata->>'tier')
+            WHEN 'gold' THEN 4
+            WHEN 'silver' THEN 3
+            WHEN 'bronze' THEN 2
+            WHEN 'founder' THEN 1
+            ELSE 0
+          END DESC;
       `);
 
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
@@ -156,8 +164,8 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
 };
 
 // Cache per buzz type
-export const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
-function getUserCapCache(buzzType: BuzzSpendType) {
+const userCapCaches = new Map<BuzzSpendType, ReturnType<typeof createUserCapCache>>();
+export function getUserCapCache(buzzType: BuzzSpendType) {
   if (!userCapCaches.has(buzzType)) {
     userCapCaches.set(buzzType, createUserCapCache(buzzType));
   }
@@ -268,6 +276,9 @@ export async function joinCreatorsProgram(userId: number) {
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};
   `;
+
+  userUpdateCounter?.inc({ location: 'creator-program.service:completeOnboarding' });
+
   await refreshSession(userId);
 }
 
@@ -377,10 +388,13 @@ export async function getCompensationPool({ month, buzzType }: CompensationPoolI
 }
 
 export async function bustCompensationPoolCache() {
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
-  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS);
+  const buzzTypes: BuzzSpendType[] = ['yellow', 'green'];
+  for (const buzzType of buzzTypes) {
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE}:${buzzType}`);
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE}:${buzzType}`);
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST}:${buzzType}`);
+    await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.PREV_MONTH_STATS}:${buzzType}`);
+  }
 }
 
 async function getFlippedPhaseStatus() {
@@ -885,7 +899,7 @@ export async function getPoolParticipantsV2(
   let bannedParticipants: { userId: number }[] = [];
 
   if (participants.length > 0) {
-    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>` 
+    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT "id" as "userId"
       FROM "User"
       WHERE id IN (${Prisma.join(participants.map((p) => p.userId))})

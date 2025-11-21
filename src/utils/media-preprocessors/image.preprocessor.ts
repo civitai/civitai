@@ -5,12 +5,12 @@ import { createImageElement } from '~/utils/image-utils';
 import { getMetadata } from '~/utils/metadata';
 import { auditMetaData } from '~/utils/metadata/audit';
 
-export const preprocessImage = async (file: File) => {
+export const preprocessImage = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
   const objectUrl = URL.createObjectURL(file);
   const img = await createImageElement(file);
   const meta = await getMetadata(file);
 
-  if (file.type === 'image/webp' && (await isAnimatedWebP(file))) {
+  if (!options?.allowAnimatedWebP && file.type === 'image/webp' && (await isAnimatedWebP(file))) {
     throw new Error(
       'Animated WebP files are not supported. Please upload animated images as videos.'
     );

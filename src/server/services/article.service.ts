@@ -6,10 +6,12 @@ import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
+import { logToAxiom } from '~/server/logging/client';
 import type {
   ArticleMetadata,
   GetInfiniteArticlesSchema,
+  GetModeratorArticlesSchema,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
@@ -24,6 +26,7 @@ import { imageSelect, profileImageSelect } from '~/server/selectors/image.select
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -72,20 +75,6 @@ type ArticleRaw = {
   availability: Availability;
   userId: number | null;
   status: ArticleStatus;
-  stats:
-    | {
-        favoriteCount: number;
-        collectedCount: number;
-        commentCount: number;
-        likeCount: number;
-        dislikeCount: number;
-        heartCount: number;
-        laughCount: number;
-        cryCount: number;
-        viewCount: number;
-        tippedAmountCount: number;
-      }
-    | undefined;
   tags: {
     tag: {
       id: number;
@@ -111,6 +100,25 @@ type ArticleRaw = {
     };
   }[];
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+};
+
+const getArticleStatsObject = async (data: { id: number }[]) => {
+  try {
+    return await articleStatCache.fetch(data.map((d) => d.id));
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getArticleStats',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'article-stats'
+    ).catch();
+    return {};
+  }
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
@@ -152,9 +160,7 @@ export const getArticles = async ({
     const isMod = sessionUser?.isModerator ?? false;
     const isOwnerRequest =
       !!sessionUser?.username &&
-      !!username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
-
     // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
     // At that point, we should be relying more on unlisted status which is set by the owner.
     const hidePrivateArticles =
@@ -241,6 +247,9 @@ export const getArticles = async ({
     }
 
     if (!isOwnerRequest) {
+      if (!isMod) {
+        AND.push(Prisma.sql`a."status" = ${ArticleStatus.Published}::"ArticleStatus"`);
+      }
       if (!!excludedUserIds?.length) {
         AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
       }
@@ -353,12 +362,10 @@ export const getArticles = async ({
       )
     `);
     }
-
     const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
-      LEFT JOIN "ArticleStat" stats ON stats."articleId" = a.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
       ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
       WHERE ${Prisma.join(AND, ' AND ')}
@@ -380,19 +387,6 @@ export const getArticles = async ({
         a."availability",
         a."userId",
         a.status,
-        ${Prisma.raw(`
-        jsonb_build_object(
-          'favoriteCount', stats."favoriteCount${period}",
-          'collectedCount', stats."collectedCount${period}",
-          'commentCount', stats."commentCount${period}",
-          'likeCount', stats."likeCount${period}",
-          'dislikeCount', stats."dislikeCount${period}",
-          'heartCount', stats."heartCount${period}",
-          'cryCount', stats."cryCount${period}",
-          'viewCount', stats."viewCount${period}",
-          'tippedAmountCount', stats."tippedAmountCount${period}"
-        ) as "stats",
-        `)}
         (
           SELECT COALESCE(
             jsonb_agg(
@@ -466,6 +460,9 @@ export const getArticles = async ({
       ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
       : {};
 
+    // Fetch article stats separately
+    const articleStats = await getArticleStatsObject(articles);
+
     const items = articles
       .filter((a) => {
         // This take prio over mod status just so mods can see the same as users.
@@ -474,10 +471,11 @@ export const getArticles = async ({
 
         return true;
       })
-      .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
+      .map(({ tags, user, userCosmetics, cursorId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const coverImage = coverImages.find((x) => x.id === article.coverId);
+        const match = articleStats[article.id];
 
         return {
           ...article,
@@ -485,7 +483,20 @@ export const getArticles = async ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
           })),
-          stats,
+          stats: match
+            ? {
+                favoriteCount: match.favoriteCount ?? 0,
+                collectedCount: match.collectedCount ?? 0,
+                commentCount: match.commentCount ?? 0,
+                likeCount: match.likeCount ?? 0,
+                dislikeCount: match.dislikeCount ?? 0,
+                heartCount: match.heartCount ?? 0,
+                laughCount: match.laughCount ?? 0,
+                cryCount: match.cryCount ?? 0,
+                viewCount: match.viewCount ?? 0,
+                tippedAmountCount: match.tippedAmountCount ?? 0,
+              }
+            : undefined,
           user: {
             ...u,
             profilePicture,
@@ -676,6 +687,9 @@ export const getArticleById = async ({
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
       contentImages: imageConnections.map((conn) => conn.image),
+      metadata: article.metadata
+        ? filterSensitiveProfanityData(article.metadata as ArticleMetadata, isModerator)
+        : null,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -705,17 +719,23 @@ export const upsertArticle = async ({
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
-      // Check article title and content for profanity
+      // Check article title and content for profanity using threshold-based evaluation
       const profanityFilter = createProfanityFilter();
       const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
-      const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+      const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-      // If profanity is detected, mark article as NSFW and add to locked properties
-      if (isProfane && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
-        data.metadata = { profanityMatches: matchedWords };
+      // If profanity exceeds thresholds, mark article as NSFW with recommended level
+      if (evaluation.shouldMarkNSFW && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+        data.metadata = {
+          ...data.metadata,
+          profanityMatches: evaluation.matchedWords,
+          profanityEvaluation: {
+            reason: evaluation.reason,
+            metrics: evaluation.metrics,
+          },
+        } as ArticleMetadata;
         data.nsfw = true;
-        data.userNsfwLevel =
-          data.userNsfwLevel <= NsfwLevel.PG13 ? NsfwLevel.R : data.userNsfwLevel;
+        data.userNsfwLevel = evaluation.suggestedLevel;
         data.lockedProperties =
           data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
             ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
@@ -785,7 +805,7 @@ export const upsertArticle = async ({
           });
         }
 
-        await userContentOverviewCache.bust(article.userId);
+        await userArticleCountCache.bust(article.userId);
 
         return article;
       });
@@ -839,6 +859,17 @@ export const upsertArticle = async ({
 
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+    // Prevent owners from re-publishing articles unpublished for ToS violations
+    if (
+      article.status === ArticleStatus.UnpublishedViolation &&
+      data.status === ArticleStatus.Published &&
+      !isModerator
+    ) {
+      throw throwBadRequestError(
+        'This article was unpublished for violating Terms of Service and cannot be republished. Please contact support if you believe this was in error.'
+      );
+    }
 
     // SECURITY: Validate image scan status before allowing publish
     // Prevent publishing articles with blocked or failed images
@@ -946,7 +977,7 @@ export const upsertArticle = async ({
         });
       }
 
-      await userContentOverviewCache.bust(updated.userId);
+      await userArticleCountCache.bust(updated.userId);
 
       return updated;
     });
@@ -1090,34 +1121,172 @@ export const getDraftArticlesByUserId = async ({
 
 export async function unpublishArticleById({
   id,
+  reason,
+  customMessage,
+  metadata,
   userId,
   isModerator,
 }: {
   id: number;
+  reason?: string;
+  customMessage?: string;
+  metadata?: ArticleMetadata;
   userId: number;
   isModerator?: boolean;
 }) {
+  // Fetch article
   const article = await dbRead.article.findUnique({
     where: { id },
     select: { userId: true, publishedAt: true, status: true },
   });
+
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
+  // Permission check (defensive, already checked in middleware)
   const isOwner = article.userId === userId || isModerator;
   if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
 
-  if (!article.publishedAt || article.status !== ArticleStatus.Published)
+  // State validation
+  if (!article.publishedAt || article.status !== ArticleStatus.Published) {
     throw throwBadRequestError('Article is not published');
+  }
 
-  const updated = await dbWrite.article.update({
-    where: { id },
-    data: { status: ArticleStatus.Unpublished },
-  });
+  // Atomic update with transaction
+  const updated = await dbWrite.$transaction(
+    async (tx) => {
+      const unpublishedAt = new Date().toISOString();
 
+      // Build updated metadata
+      const updatedMetadata = {
+        ...metadata,
+        ...(reason
+          ? {
+              unpublishedReason: reason,
+              customMessage,
+            }
+          : {}),
+        unpublishedAt,
+        unpublishedBy: userId,
+      };
+
+      // Update article status and metadata
+      return await tx.article.update({
+        where: { id },
+        data: {
+          status: reason ? ArticleStatus.UnpublishedViolation : ArticleStatus.Unpublished,
+          metadata: updatedMetadata,
+        },
+      });
+    },
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  // Update search index (remove from public search)
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await userContentOverviewCache.bust(article.userId);
+
+  // Bust user content cache
+  await userArticleCountCache.bust(article.userId);
 
   return updated;
+}
+
+export async function restoreArticleById({ id, userId }: { id: number; userId: number }) {
+  const article = await dbRead.article.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      status: true,
+      metadata: true,
+    },
+  });
+
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  // Can only restore unpublished articles
+  if (
+    ![ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation].some(
+      (s) => s === article.status
+    )
+  ) {
+    throw throwBadRequestError('Article is not unpublished');
+  }
+
+  const updated = await dbWrite.$transaction(
+    async (tx) => {
+      const metadata = (article.metadata as ArticleMetadata) || {};
+
+      // Clear unpublish metadata
+      const updatedMetadata = {
+        ...metadata,
+        unpublishedReason: undefined,
+        customMessage: undefined,
+        unpublishedAt: undefined,
+        unpublishedBy: undefined,
+      };
+
+      return await tx.article.update({
+        where: { id },
+        data: {
+          status: ArticleStatus.Published,
+          publishedAt: new Date(),
+          metadata: updatedMetadata,
+        },
+      });
+    },
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  // Re-add to search index
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  await userArticleCountCache.bust(article.userId);
+
+  return updated;
+}
+
+export async function getModeratorArticles({
+  limit,
+  cursor,
+  username,
+  status,
+}: GetModeratorArticlesSchema & { limit: number }) {
+  const AND: Prisma.ArticleWhereInput[] = [
+    {
+      status: {
+        in: status ? [status] : [ArticleStatus.Unpublished, ArticleStatus.UnpublishedViolation],
+      },
+    },
+  ];
+
+  if (username) {
+    AND.push({
+      user: {
+        username: { contains: username, mode: 'insensitive' },
+      },
+    });
+  }
+
+  const items = await dbRead.article.findMany({
+    take: limit + 1,
+    cursor: cursor ? { id: cursor } : undefined,
+    where: { AND },
+    select: articleDetailSelect,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let nextCursor: number | undefined;
+  if (items.length > limit) {
+    const nextItem = items.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    nextCursor,
+    items: items.map((article) => ({
+      ...article,
+      metadata: article.metadata as ArticleMetadata | null,
+    })),
+  };
 }
 
 // --- Article Image Scanning Functions ---

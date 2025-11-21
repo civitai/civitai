@@ -8,6 +8,7 @@ import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema'
 import { veo3GenerationConfig } from '~/server/orchestrator/veo3/veo3.schema';
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
+import { soraGenerationConfig } from '~/server/orchestrator/sora/sora.schema';
 
 export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
 type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
@@ -22,6 +23,7 @@ export const videoGenerationConfig2 = {
   mochi: mochiGenerationConfig,
   hunyuan: hunyuanGenerationConfig,
   wan: wanGenerationConfig,
+  sora: soraGenerationConfig,
 };
 
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {

@@ -21,13 +21,20 @@ import {
   IconCopy,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { openCivitaiLinkSuccessModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const CivitaiLinkSuccessModal = dynamic(
+  () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal'),
+  { ssr: false }
+);
+const openCivitaiLinkSuccessModal = createDialogTrigger(CivitaiLinkSuccessModal);
 
 export default function CivitaiLinkWizardModal() {
   const dialog = useDialogContext();

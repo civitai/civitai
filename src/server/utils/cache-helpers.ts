@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
+import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sleep } from '~/server/utils/concurrency-helpers';
@@ -23,8 +24,12 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
       .filter(isDefined)
       .join(':') as RedisKeyTemplateCache;
     const cachedData = await redis.packed.get<T>(cacheKey);
-    if (cachedData && options?.ttl !== 0) return cachedData ?? ([] as unknown as T);
+    if (cachedData && options?.ttl !== 0) {
+      cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
+      return cachedData ?? ([] as unknown as T);
+    }
 
+    cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
     const result = await db.$queryRaw<T>(query);
     await redis.packed.set(cacheKey, result, { EX: options?.ttl });
 
@@ -90,6 +95,7 @@ export function createCachedArray<T extends object>({
     const toRevalidate: Record<number, T> = {};
     const ttlExpiry = new Date(Date.now() - ttl * 1000);
     const locks = new Set<RedisKeyTemplateCache>();
+    let cacheHits = 0;
     for (const id of [...new Set(ids)]) {
       const cached = cache[id];
       if (cached) {
@@ -104,11 +110,23 @@ export function createCachedArray<T extends object>({
           continue;
         }
         results.add(cached);
+        cacheHits++;
       } else cacheMisses.add(id);
+    }
+
+    // Track cache hits
+    if (cacheHits > 0) {
+      cacheHitCounter.inc({ cache_name: key, cache_type: 'cachedArray' }, cacheHits);
     }
 
     const toRevalidateIds = Object.keys(toRevalidate).map(Number);
     if (toRevalidateIds.length > 0) {
+      // Track revalidations
+      cacheRevalidateCounter.inc(
+        { cache_name: key, cache_type: 'cachedArray' },
+        toRevalidateIds.length
+      );
+
       const gotLocks = await Promise.all(
         toRevalidateIds.map((id) =>
           redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', 10)
@@ -131,6 +149,7 @@ export function createCachedArray<T extends object>({
     // If we have cache misses, we need to fetch from the DB
     if (cacheMisses.size > 0) {
       log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
+
       const dbResults: Record<string, T> = {};
       const lookupBatches = chunk([...cacheMisses], 10000);
       for (const batch of lookupBatches) {
@@ -141,14 +160,26 @@ export function createCachedArray<T extends object>({
       const toCache: Record<string, MixedObject> = {};
       const toCacheNotFound: Record<string, MixedObject> = {};
       const cachedAt = new Date();
+      let actualMisses = 0;
       for (const id of cacheMisses) {
         const result = dbResults[id];
         if (!result) {
-          if (cacheNotFound) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+          if (cacheNotFound) {
+            toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+            // Count as miss when we cache notFound markers
+            actualMisses++;
+          }
+          // When cacheNotFound=false, don't count as miss since we don't cache it
           continue;
         }
         results.add(result as T);
+        actualMisses++;
         if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
+      }
+
+      // Track cache misses - only count items we actually fetched or cached as notFound
+      if (actualMisses > 0) {
+        cacheMissCounter.inc({ cache_name: key, cache_type: 'cachedArray' }, actualMisses);
       }
 
       // then cache the results
@@ -287,8 +318,12 @@ export function cachedCounter<T extends string | number>(
     async get(id: T) {
       const key = `${rootKey}:${id}` as RedisKeyTemplateCache;
       const cachedCount = Number((await redis.get(key)) ?? 0);
-      if (cachedCount) return cachedCount;
+      if (cachedCount) {
+        cacheHitCounter.inc({ cache_name: rootKey, cache_type: 'cachedCounter' });
+        return cachedCount;
+      }
 
+      cacheMissCounter.inc({ cache_name: rootKey, cache_type: 'cachedCounter' });
       const count = (await fetchFn?.(id)) ?? 0;
       await redis.set(key, count, { EX: ttl });
       return count;

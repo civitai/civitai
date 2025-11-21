@@ -225,37 +225,57 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
         {
           userId: number;
           unitAmount: number;
-          transactionId?: string | null;
+          buzzTransactionId?: string[] | null;
         }[]
       >`SELECT
             bf."userId",
             bf."unitAmount",
-            bf."transactionId"
+            bf."buzzTransactionId"
         FROM "BountyBenefactor" bf
         WHERE bf."bountyId" = ${id}
           AND bf.currency = ${currency}::"Currency"
           AND bf."awardedToId" IS NULL;
       `;
 
-      // Now refund each of them:
-      for (const { userId, unitAmount, transactionId } of benefactors) {
+      // Now refund each of them (parallelized for performance):
+      for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
         if (unitAmount > 0) {
           switch (currency) {
             case Currency.BUZZ:
               {
-                if (transactionId) {
-                  if (isBountyTransactionPrefix(transactionId)) {
-                    await refundMultiAccountTransaction({
-                      externalTransactionIdPrefix: transactionId,
-                      description: 'Reason: Bounty refund, no entries found on bounty',
-                    });
-                  } else {
-                    await refundTransaction(
-                      transactionId,
-                      'Reason: Bounty refund, no entries found on bounty'
-                    );
-                  }
+                if (buzzTransactionId && buzzTransactionId.length > 0) {
+                  // Process all transaction IDs in parallel for better performance
+                  const refundResults = await Promise.allSettled(
+                    buzzTransactionId.map((txId) =>
+                      isBountyTransactionPrefix(txId)
+                        ? refundMultiAccountTransaction({
+                            externalTransactionIdPrefix: txId,
+                            description: 'Reason: Bounty refund, no entries found on bounty',
+                          })
+                        : refundTransaction(
+                            txId,
+                            'Reason: Bounty refund, no entries found on bounty'
+                          )
+                    )
+                  );
+
+                  // Log any failures for monitoring
+
+                  refundResults.forEach((refund, idx) => {
+                    if (refund.status === 'rejected') {
+                      logJob({
+                        message: 'Refund transaction failed',
+                        data: {
+                          bountyId: id,
+                          userId,
+                          txId: buzzTransactionId[idx],
+                          error: refund.reason,
+                        },
+                      });
+                    }
+                  });
                 } else {
+                  // Fallback: No transaction IDs recorded (legacy data or edge case)
                   await createBuzzTransaction({
                     fromAccountId: 0,
                     toAccountId: userId,
@@ -308,12 +328,12 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       {
         userId: number;
         unitAmount: number;
-        transactionId?: string | null;
+        buzzTransactionId?: string[] | null;
       }[]
     >`SELECT
           bf."userId",
           bf."unitAmount",
-          bf."transactionId"
+          bf."buzzTransactionId"
       FROM "BountyBenefactor" bf
       WHERE bf."bountyId" = ${id}
         AND bf.currency = ${currency}::"Currency"
@@ -322,16 +342,37 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
 
     const awardedAmounts: Partial<Record<BuzzSpendType, number>> = {};
     await Promise.all(
-      benefactors.map(async ({ unitAmount, transactionId }) => {
-        if (transactionId && isBountyTransactionPrefix(transactionId)) {
-          // If transactionId is a prefix, we need to refund all transactions with this prefix
-          const data = await getMultiAccountTransactionsByPrefix(transactionId);
-          data.forEach((d) => {
-            const accountType = d.accountType as BuzzSpendType;
-            // Makes it so we can pay exact amounts.
-            awardedAmounts[accountType] = (awardedAmounts[accountType] || 0) + d.amount;
+      benefactors.map(async ({ unitAmount, buzzTransactionId }) => {
+        if (buzzTransactionId && buzzTransactionId.length > 0) {
+          // Process all transaction IDs in parallel for better performance
+          const txResults = await Promise.allSettled(
+            buzzTransactionId.map(async (txId) => {
+              if (isBountyTransactionPrefix(txId)) {
+                // If buzzTransactionId is a prefix, we need to get all transactions with this prefix
+                return await getMultiAccountTransactionsByPrefix(txId);
+              }
+              return null;
+            })
+          );
+
+          // Aggregate amounts from successful results
+          txResults.forEach((result, idx) => {
+            if (result.status === 'fulfilled' && result.value) {
+              result.value.forEach((d) => {
+                const accountType = d.accountType as BuzzSpendType;
+                // Makes it so we can pay exact amounts.
+                awardedAmounts[accountType] = (awardedAmounts[accountType] || 0) + d.amount;
+              });
+            } else if (result.status === 'fulfilled' && result.value === null) {
+              // Non-prefix transaction ID - use unitAmount
+              awardedAmounts['yellow'] = (awardedAmounts['yellow'] || 0) + unitAmount;
+            } else {
+              // Log failure
+              log(`Bounty ${id}: Failed to get transaction data for ${buzzTransactionId[idx]}`);
+            }
           });
         } else {
+          // No transaction IDs - use unitAmount
           awardedAmounts['yellow'] = (awardedAmounts['yellow'] || 0) + unitAmount;
         }
       })

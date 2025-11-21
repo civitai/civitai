@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { zc } from '~/utils/schema-helpers';
 
 const schema = z.object({

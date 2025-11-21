@@ -1,22 +1,16 @@
 import type { ComponentProps, ComponentType } from 'react';
-import React, { cloneElement, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import Router, { useRouter } from 'next/router';
-import { dialogs } from './routed-dialog-registry';
+import type { DialogKey } from './routed-dialog/registry';
+import { dialogs } from './routed-dialog/registry';
 import {
   setUsingNextRouter,
   getBrowserRouter,
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
-import type { NextRouter } from 'next/dist/shared/lib/router/router';
-import { resolveHref } from 'next/dist/client/resolve-href';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
-import type { AnchorProps } from '@mantine/core';
-import { Anchor } from '@mantine/core';
-
-type DialogKey = keyof typeof dialogs;
 
 export function RoutedDialogProvider() {
   const router = useRouter();
@@ -81,17 +75,18 @@ export function RoutedDialogProvider() {
     const toOpen = keyNamePairs.filter((x) => !openDialogs.includes(x.name));
 
     for (const { key, name } of toOpen) {
-      if (!dialogs[name]) continue;
-      if (dialogs[name].requireAuth && !currentUser) continue;
+      const dialog = dialogs[name];
+      if (!dialog) continue;
+      if ((dialog as any).requireAuth && !currentUser) continue;
       const state = history.state.state;
-      const Dialog = createBrowserRouterSync(dialogs[name].component);
+      const Dialog = createBrowserRouterSync(dialog.component);
       dialogStore.trigger({
         id: key,
         component: Dialog,
         props: { ...browserRouter.query, ...state },
         options: { onClose: () => handleCloseRoutedDialog(name) },
         type: 'routed-dialog',
-        target: dialogs[name].target,
+        target: (dialog as any).target,
       });
     }
 
@@ -101,18 +96,6 @@ export function RoutedDialogProvider() {
   }, [browserRouter.query, currentUser]);
 
   return null;
-}
-
-export function triggerRoutedDialog<T extends DialogKey>({
-  name,
-  state,
-}: {
-  name: T;
-  state: ComponentProps<(typeof dialogs)[T]['component']>;
-}) {
-  const browserRouter = getBrowserRouter();
-  const { url, asPath, state: sessionState } = resolveDialog(name, browserRouter.query, state);
-  browserRouter.push(url, asPath, sessionState);
 }
 
 function handleCloseRoutedDialog<T extends DialogKey>(name: T) {
@@ -139,102 +122,9 @@ function handleCloseRoutedDialog<T extends DialogKey>(name: T) {
 //   }
 // }
 
-export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean = false>({
-  name,
-  state,
-  children,
-  className,
-  passHref,
-  style,
-  onClick,
-  variant = 'text',
-}: {
-  name: T;
-  state: ComponentProps<(typeof dialogs)[T]['component']>;
-  passHref?: TPassHref;
-  className?: string;
-  children: TPassHref extends true ? React.ReactElement : React.ReactNode;
-  style?: React.CSSProperties;
-  onClick?: () => void;
-  variant?: AnchorProps['variant'];
-}) {
-  const router = useRouter();
-  const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
-  const { asPath } = resolveDialog(name, query, state, router);
-
-  const handleClick = (e: any) => {
-    if (!e.ctrlKey) {
-      e.preventDefault();
-      // e.stopPropagation();
-      triggerRoutedDialog({ name, state });
-      onClick?.();
-    }
-  };
-
-  if (passHref) {
-    return cloneElement(children as React.ReactElement, {
-      href: asPath,
-      onClick: handleClick,
-      // className,
-      // style,
-    });
-  }
-
-  return (
-    <Anchor
-      href={asPath}
-      onClick={handleClick}
-      className={className}
-      style={style}
-      variant={variant}
-    >
-      {children}
-    </Anchor>
-  );
-}
-
 function createBrowserRouterSync(Dialog: ComponentType<any>) {
   return function BrowserRouterSync(args: ComponentProps<ComponentType<any>>) {
     const { query, state } = useBrowserRouter();
     return <Dialog {...args} {...query} {...state} />;
   };
-}
-
-const getAsPath = (query: Record<string, any>, router: NextRouter) => {
-  const matches = router.pathname.match(/\[([\.\w]+)\]/g);
-  const params = { ...query };
-  for (const key in params) {
-    if (matches?.some((match) => match.includes(key))) delete params[key];
-  }
-  let asPath = router.asPath.split('?')[0];
-  if (Object.keys(params).length > 0) asPath = `${asPath}?${QS.stringify(params)}`;
-  return asPath;
-};
-
-function resolveDialog<T extends DialogKey>(
-  name: T,
-  query: Record<string, any> = {},
-  state: ComponentProps<(typeof dialogs)[T]['component']>,
-  router: NextRouter = Router
-) {
-  const dialog = dialogs[name];
-  if (!dialog) throw new Error('invalid dialog name');
-
-  const {
-    query: resolvedQuery,
-    asPath = getAsPath(resolvedQuery, router),
-    state: _state,
-  } = dialog.resolve(
-    {
-      ...query,
-      dialog: ([] as DialogKey[]).concat(query.dialog ?? []).concat(name),
-    },
-    state
-  ); // eslint-disable-line
-
-  const [_url, _urlAs] = resolveHref(router, { query: resolvedQuery as any }, true);
-  const [, _asPath] = asPath ? resolveHref(router, asPath, true) : [_url, _urlAs];
-  // console.log({ _url, _urlAs, _asPath });
-
-  return { url: _url, asPath: _asPath, state: _state };
 }

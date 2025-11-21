@@ -26,19 +26,21 @@ export const bountyEntryMetrics = createMetricProcessor({
     log('BountyEntryMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
   },
-  async clearDay(ctx) {
-    await executeRefresh(ctx)`
-      UPDATE "BountyEntryMetric"
-        SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0, "unitAmountCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
-  },
-  rank: {
-    table: 'BountyEntryRank',
-    primaryKey: 'bountyEntryId',
-    refreshInterval: 5 * 60 * 1000,
-  },
+  // Not using day metrics anymore
+  // async clearDay(ctx) {
+  //   await executeRefresh(ctx)`
+  //     UPDATE "BountyEntryMetric"
+  //       SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0, "unitAmountCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
+  //     WHERE timeframe = 'Day'
+  //       AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+  //   `;
+  // },
+  // Doesn't appear to be used anymore
+  // rank: {
+  //   table: 'BountyEntryRank',
+  //   primaryKey: 'bountyEntryId',
+  //   refreshInterval: 5 * 60 * 1000,
+  // },
 });
 
 async function getReactionTasks(ctx: MetricProcessorRunContext) {

@@ -1,8 +1,5 @@
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
-import {
-  ProfileSection,
-  ProfileSectionPreview,
-} from '~/components/Profile/ProfileSection';
+import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import { IconArrowRight, IconPencilMinus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { ArticleSort } from '~/server/common/enums';

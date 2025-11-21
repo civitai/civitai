@@ -153,7 +153,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
       <Meta
         title={`Claim ${cosmetic.name} | Civitai`}
         description={`Claim the ${cosmetic.name}. Awarded for ${cosmetic.description} while you can`}
-        imageUrl={getEdgeUrl(cosmeticImage, { width: 256 })}
+        imageUrl={getEdgeUrl(cosmeticImage, { width: 144 })}
         deIndex
       />
       <Container size="xs" mb="lg">
@@ -167,12 +167,12 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
               </Alert>
             </Center>
           )}
-          <Center className={animationClasses.jelloFall} h={256} my="lg">
+          <Center className={animationClasses.jelloFall} h={144} my="lg">
             {cosmetic.type === 'Badge' && (
               <EdgeMedia
                 src={(cosmetic.data as MixedObject).url}
                 alt={cosmetic.name}
-                style={{ height: 256, width: 256 }}
+                style={{ height: 144, width: 144 }}
               />
             )}
             {cosmetic.type === 'ContentDecoration' && (
@@ -180,8 +180,8 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
                 withBorder
                 shadow="sm"
                 className="flex items-end justify-center"
-                h={256}
-                w={(256 * 2) / 3}
+                h={144}
+                w={(144 * 2) / 3}
               >
                 <Text size="xs" c="dimmed">
                   Example Cosmetic here

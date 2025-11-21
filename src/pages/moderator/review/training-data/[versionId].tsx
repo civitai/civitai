@@ -21,6 +21,7 @@ import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { showSuccessNotification } from '~/utils/notifications';
 
 function ReviewTrainingData() {
   const router = useRouter();
@@ -65,7 +66,8 @@ function ReviewTrainingData() {
   }, []);
 
   function handleSuccess() {
-    utils.moderator.modelVersions.query.invalidate({ trainingStatus: 'Paused' }, { exact: false });
+    utils.moderator.modelVersions.query.invalidate();
+    showSuccessNotification({ message: 'report sent successfully' });
     router.back();
   }
 

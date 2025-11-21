@@ -34,7 +34,6 @@ import {
   Form,
   InputCheckbox,
   InputChipGroup,
-  InputCollectionSelect,
   InputMultiSelect,
   InputRadioGroup,
   InputRTE,
@@ -65,6 +64,7 @@ import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helper
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
+import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
 
 const schema = modelUpsertSchema
   .extend({
@@ -769,6 +769,7 @@ export const PrivateModelAutomaticSetup = ({
           private model at any time. By continuing, the model setup wizard will complete, and you
           will be able to use your resource in the Generator
         </Text>
+        <Text fw="bold">Only PG (or SFW) content can be generated with private models.</Text>
         <Group ml="auto">
           <Button
             onClick={handleClose}

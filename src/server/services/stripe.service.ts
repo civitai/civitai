@@ -13,7 +13,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
@@ -30,6 +30,8 @@ import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
@@ -43,6 +45,9 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
     const customer = await stripe.customers.create({ email });
 
     await dbWrite.user.update({ where: { id }, data: { customerId: customer.id } });
+
+    userUpdateCounter?.inc({ location: 'stripe.service:createCustomer' });
+
     await refreshSession(id);
 
     return customer.id;
@@ -426,8 +431,7 @@ export const upsertSubscription = async (
     // immediate cancel:
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
-    await getMultipliersForUser(user.id, true);
-    await refreshSession(user.id);
+    await invalidateSubscriptionCaches(user.id);
     return;
   }
 
@@ -508,8 +512,7 @@ export const upsertSubscription = async (
     }
   }
 
-  await refreshSession(user.id);
-  await getMultipliersForUser(user.id, true);
+  await invalidateSubscriptionCaches(user.id);
 };
 
 export const toDateTime = (secs: number) => {
@@ -619,6 +622,9 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       where: { id: user.id },
       data: { customerId: invoice.customer as string },
     });
+
+    const { userUpdateCounter } = await import('~/server/prom/client');
+    userUpdateCounter?.inc({ location: 'stripe.service:handleInvoicePaid' });
   }
 
   const purchases = invoice.lines.data.map((data) => ({

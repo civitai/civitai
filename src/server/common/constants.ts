@@ -1,3 +1,4 @@
+import { openai } from './../services/ai/openai';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -171,10 +172,6 @@ export const constants = {
     voteDuration: 1000 * 60 * 60 * 24,
     upvoteThreshold: 3,
   },
-  imageTags: {
-    styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
-    subjects: ['man', 'woman', 'men', 'women'] as string[],
-  },
   maxTrainingRetries: 2,
   mediaUpload: {
     maxOrchestratorImageFileSize: 60 * 1024 ** 2, // 16MB
@@ -243,6 +240,14 @@ export const constants = {
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
+  },
+  profanity: {
+    thresholds: {
+      shortContentWordLimit: 100,
+      shortContentMatchThreshold: 5,
+      longContentDensityThreshold: 0.02, // 2%
+      diversityThreshold: 10,
+    },
   },
   comments: {
     getMaxDepth({ entityType }: { entityType: string }) {
@@ -314,19 +319,6 @@ export const constants = {
         maxPrivateModels: 100,
         supportLevel: 'VIP',
       },
-    },
-  },
-  freeMembershipDetails: {
-    name: 'Free',
-    price: 0,
-    badge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
-    metadata: {
-      monthlyBuzz: 0,
-      generationLimit: 1,
-      quantityLimit: 4,
-      queueLimit: 4,
-      badgeType: 'none',
-      maxPrivateModels: 0,
     },
   },
   cosmeticShop: {
@@ -578,6 +570,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
+  'Sora 2': baseLicenses['openai'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -1268,7 +1261,7 @@ export const FEATURED_MODEL_COLLECTION_ID = 104;
 
 export const newOrderConfig = {
   baseExp: 100,
-  blessedBuzzConversionRatio: 0.001,
+  blessedBuzzConversionRatio: 1 / 1000,
   smiteSize: 10,
   welcomeImageUrl: 'f2a97014-c0e2-48ba-bb7d-99435922850b',
   cosmetics: {
@@ -1279,6 +1272,7 @@ export const newOrderConfig = {
     templarVotes: 2,
     templarPicks: 24,
     minKnightVotes: 4,
+    maxKnightVotes: 10,
   },
 };
 
@@ -1355,3 +1349,7 @@ export const EARLY_ACCESS_CONFIG: {
     [({ features }: { features?: FeatureAccess }) => features?.thirtyDayEarlyAccess ?? false, 30],
   ],
 };
+
+export const KEY_VALUE_KEYS = {
+  REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
+} as const;

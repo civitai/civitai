@@ -4,5 +4,8 @@ export declare const root: string;
 export declare const searchButton: string;
 export declare const targetSelectorInput: string;
 export declare const targetSelectorRightSection: string;
+export declare const targetSelectorOption: string;
+export declare const targetSelectorOptions: string;
+export declare const targetSelectorDropdown: string;
 export declare const targetSelectorRoot: string;
 export declare const wrapper: string;

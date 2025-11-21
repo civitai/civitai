@@ -31,7 +31,6 @@ export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()
   score: true,
   upVotes: true,
   downVotes: true,
-  tagNsfw: true,
   tagNsfwLevel: true,
   automated: true,
   needsReview: true,

@@ -42,7 +42,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
+import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -73,8 +73,8 @@ export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
   options?: { enabled?: boolean; includeTags?: boolean }
 ) {
-  const { allowMatureContent } = useAppContext();
-  const showNsfw = useBrowsingSettings((state) => state.showNsfw);
+  const { domain } = useAppContext();
+  const nsfwEnabled = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
 
   const filters = useFiltersContext((state) => state.generation);
@@ -118,33 +118,22 @@ export function useGetTextToImageRequests(
           })
           .map((workflow) => {
             const steps = workflow.steps.map((step) => {
-              const isPrivateGeneration = ((step.metadata as any)?.isPrivateGeneration ??
-                false) as boolean;
-              const images = imageFilter({ step, tags }).map((image) => {
-                if (image.blockedReason === 'none') image.blockedReason = null;
-
-                if (image.blockedReason) return image;
-
-                if (isPrivateGeneration && isPrivateMature(image.nsfwLevel)) {
-                  image.blockedReason = 'privateGen';
-                } else if (isMature(image.nsfwLevel)) {
-                  if (!allowMatureContent) {
-                    image.blockedReason = 'siteRestricted';
-                  } else if (!showNsfw) {
-                    image.blockedReason = 'enableNsfw';
-                  } else if (workflow.allowMatureContent === false) {
-                    image.blockedReason = 'canUpgrade';
-                  }
-                }
-
-                return image;
-              });
+              const images = imageFilter({ step, tags }).map(
+                (image) =>
+                  new BlobData({
+                    data: image,
+                    step: step,
+                    allowMatureContent: workflow.allowMatureContent,
+                    domain,
+                    nsfwEnabled,
+                  })
+              );
               return { ...step, images };
             });
             return { ...workflow, steps };
           })
       ) ?? [],
-    [data]
+    [data, nsfwEnabled, domain, tags]
   );
 
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);

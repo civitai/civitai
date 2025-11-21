@@ -279,7 +279,7 @@ export function KinguinCheckout({
               You are being redirected to complete your purchase directly on Kinguin. A new window
               should have opened automatically.
             </Text>
-            <Text mb="sm">If the window didn't open, please click the link below:</Text>
+            <Text mb="sm">{`If the window didn't open, please click the link below:`}</Text>
             <Anchor
               href={buildKinguinUrl(productId)}
               target="_blank"
@@ -297,7 +297,7 @@ export function KinguinCheckout({
               Safari users are redirected to complete checkout directly on Kinguin for the best
               experience. A new window should have opened automatically.
             </Text>
-            <Text mb="sm">If the window didn't open, please click the link below:</Text>
+            <Text mb="sm">{`If the window didn't open, please click the link below:`}</Text>
             <Anchor
               href={buildKinguinUrl(productId)}
               target="_blank"

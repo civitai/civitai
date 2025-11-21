@@ -1,4 +1,3 @@
-import type { MantineColor } from '@mantine/core';
 import {
   Accordion,
   Anchor,
@@ -48,7 +47,8 @@ import {
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
-  TrainingDetailsParams,
+  // TrainingDetailsParams,
+  TrainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
@@ -62,6 +62,7 @@ import styles from './UserModelsTable.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { showErrorNotification } from '~/utils/notifications';
+import { trainingStatusFields } from '~/shared/constants/training.constants';
 
 type TrainingFileData = {
   type: string;
@@ -74,52 +75,7 @@ type ModalData = {
   id?: number;
   file?: TrainingFileData;
   baseModel?: string;
-  params?: TrainingDetailsParams;
-};
-
-export const trainingStatusFields: {
-  [key in TrainingStatus]: { color: MantineColor; description: string };
-} = {
-  [TrainingStatus.Pending]: {
-    color: 'yellow',
-    description:
-      'The model has not yet been submitted for training. Important info, like a dataset, may still need to be uploaded.',
-  },
-  [TrainingStatus.Submitted]: {
-    color: 'blue',
-    description:
-      'A request to train has been submitted, and will soon be actively processing. You will be emailed when it is complete.',
-  },
-  [TrainingStatus.Paused]: {
-    color: 'orange',
-    description:
-      'Your training will resume or terminate within 1 business day. No action is required on your part.',
-  },
-  [TrainingStatus.Denied]: {
-    color: 'red',
-    description:
-      'We have found an issue with the training dataset that may violate the TOS. This request has been rejected - please contact us with any questions.',
-  },
-  [TrainingStatus.Processing]: {
-    color: 'teal',
-    description:
-      'The training job is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
-  },
-  [TrainingStatus.InReview]: {
-    color: 'green',
-    description:
-      'Training is complete, and your resulting model files are ready to be reviewed and published.',
-  },
-  [TrainingStatus.Approved]: {
-    color: 'green',
-    description:
-      'Training is complete, and you have selected an Epoch. You may click here to continue the publishing setup.',
-  },
-  [TrainingStatus.Failed]: {
-    color: 'red',
-    description:
-      'Something went wrong with the training request. Recreate the training job if you see this error (or contact us for help).',
-  },
+  params?: TrainingDetailsParamsUnion;
 };
 
 const modelsLimit = 10;
@@ -301,7 +257,10 @@ export default function UserTrainingModels() {
                 const trainingParams = thisTrainingDetails?.params;
                 const hasTrainingParams = !!trainingParams;
 
-                const numEpochs = trainingParams?.maxTrainEpochs ?? 0;
+                const numEpochs =
+                  trainingParams?.engine === 'ai-toolkit'
+                    ? trainingParams?.epochs ?? 0
+                    : trainingParams?.maxTrainEpochs ?? 0;
                 const epochsDone =
                   (thisFileMetadata?.trainingResults?.version === 2
                     ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0

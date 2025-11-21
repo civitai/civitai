@@ -219,7 +219,6 @@ export const modelRouter = router({
     .query(findResourcesToAssociateHandler),
   getAssociatedResourcesCardData: publicProcedure
     .input(getAssociatedResourcesSchema)
-    .use(applyUserPreferences)
     .query(getAssociatedResourcesCardDataHandler),
   getAssociatedResourcesSimple: publicProcedure
     .input(getAssociatedResourcesSchema)

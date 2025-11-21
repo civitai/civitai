@@ -1,21 +1,13 @@
 import { Box, Group, Paper, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
-import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import {
+  type SubscriptionProductMetadata,
+  type SubscriptionMetadata,
+} from '~/server/schema/subscriptions.schema';
 import styles from './PrepaidTimelineProgress.module.scss';
 import type { Dayjs } from 'dayjs';
-
-interface PrepaidMetadata {
-  prepaids?: {
-    gold?: number;
-    silver?: number;
-    bronze?: number;
-  };
-  proratedDays?: {
-    gold?: number;
-    silver?: number;
-    bronze?: number;
-  };
-}
+import { numberWithCommas } from '~/utils/number-helpers';
+import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
 
 interface TimelineSegment {
   tier: string;
@@ -40,7 +32,7 @@ const TIER_COLORS = {
 const TIERS = ['gold', 'silver', 'bronze'] as const;
 
 export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgressProps) {
-  const metadata = subscription.metadata as PrepaidMetadata | null;
+  const metadata = subscription.metadata as SubscriptionMetadata | null;
   const prepaids = metadata?.prepaids;
   const proratedDays = metadata?.proratedDays || {};
 
@@ -62,10 +54,33 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
 
   if (segments.length === 0) return null;
 
+  return (
+    <PrepaidTimelineProgressSegments
+      segments={segments}
+      currentPeriodStart={currentPeriodStart}
+      now={now}
+    />
+  );
+}
+
+function PrepaidTimelineProgressSegments({
+  segments,
+  currentPeriodStart,
+  now,
+}: {
+  segments: TimelineSegment[];
+  currentPeriodStart: Dayjs;
+  now: Dayjs;
+}) {
   const totalDays = segments.reduce((sum, segment) => sum + segment.days, 0);
   const daysPassed = Math.max(0, now.diff(currentPeriodStart, 'day'));
   const totalEndDate = segments[segments.length - 1].endDate;
   const daysRemaining = Math.max(0, totalEndDate.diff(now, 'day'));
+
+  // Calculate next buzz delivery using reusable hook
+  const { nextBuzzDelivery, buzzAmount, shouldShow } = useNextBuzzDelivery({
+    totalEndDate,
+  });
 
   return (
     <Paper withBorder className={styles.card}>
@@ -76,6 +91,20 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
             {daysRemaining} days remaining
           </Text>
         </Group>
+
+        {shouldShow && nextBuzzDelivery && buzzAmount && (
+          <Group gap="xs" wrap="nowrap">
+            <Text size="sm" c="dimmed">
+              Next Buzz Delivery:
+            </Text>
+            <Text size="sm" fw={600}>
+              {nextBuzzDelivery.format('MMM D, YYYY')}
+            </Text>
+            <Text size="xs" c="dimmed">
+              ({numberWithCommas(buzzAmount)} Buzz)
+            </Text>
+          </Group>
+        )}
 
         <TimelineProgressBar segments={segments} totalDays={totalDays} daysPassed={daysPassed} />
 

@@ -62,14 +62,18 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
-import {
-  openAddToCollectionModal,
-  openMigrateModelToCollectionModal,
-  openBlockModelTagsModal,
-  openReportModal,
-  openUnpublishModal,
-} from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
+import dynamic from 'next/dynamic';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+
+const MigrateModelToCollection = dynamic(
+  () => import('~/components/Model/Actions/MigrateModelToCollection'),
+  { ssr: false }
+);
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -1040,7 +1044,10 @@ export default function ModelDetailsV2({
                             <Menu.Label>Advanced</Menu.Label>
                             <Menu.Item
                               onClick={() =>
-                                openMigrateModelToCollectionModal({ modelId: model.id })
+                                dialogStore.trigger({
+                                  component: MigrateModelToCollection,
+                                  props: { modelId: model.id },
+                                })
                               }
                             >
                               Migrate to Collection
@@ -1235,23 +1242,25 @@ export default function ModelDetailsV2({
             {(isOwner || model.hasSuggestedResources) && (
               <>
                 {model.hasSuggestedResources && <AdUnitTopSection />}
-                <AssociatedModels
-                  fromId={model.id}
-                  type="Suggested"
-                  versionId={selectedVersion?.id}
-                  label={
-                    <Group gap={8} wrap="nowrap">
-                      Suggested Resources{' '}
-                      <InfoPopover>
-                        <Text size="sm" fw={400}>
-                          These are resources suggested by the creator of this model. They may be
-                          related to this model or created by the same user.
-                        </Text>
-                      </InfoPopover>
-                    </Group>
-                  }
-                  ownerId={model.user.id}
-                />
+                {selectedVersion && (
+                  <AssociatedModels
+                    fromId={model.id}
+                    type="Suggested"
+                    versionId={selectedVersion.id}
+                    ownerId={model.user.id}
+                    label={
+                      <Group gap={8} wrap="nowrap">
+                        Suggested Resources{' '}
+                        <InfoPopover>
+                          <Text size="sm" fw={400}>
+                            These are resources suggested by the creator of this model. They may be
+                            related to this model or created by the same user.
+                          </Text>
+                        </InfoPopover>
+                      </Group>
+                    }
+                  />
+                )}
               </>
             )}
             <AdUnitTopSection />

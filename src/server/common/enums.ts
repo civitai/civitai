@@ -328,6 +328,7 @@ export enum OrchEngineTypes {
   Kohya = 'kohya',
   Rapid = 'flux-dev-fast',
   Musubi = 'musubi',
+  AiToolkit = 'ai-toolkit',
 }
 
 export enum BlocklistType {
@@ -361,6 +362,7 @@ export enum NewOrderImageRatingStatus {
   Correct = 'Correct',
   Pending = 'Pending',
   Failed = 'Failed',
+  Inconclusive = 'Inconclusive',
   AcolyteCorrect = 'AcolyteCorrect',
   AcolyteFailed = 'AcolyteFailed',
 }

@@ -1,14 +1,4 @@
-import {
-  Stack,
-  Group,
-  Text,
-  Loader,
-  Center,
-  Divider,
-  Title,
-  Button,
-  LoadingOverlay,
-} from '@mantine/core';
+import { Stack, Group, Text, Loader, Center, Divider, Title, Button } from '@mantine/core';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -39,7 +29,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
           created,
           isLoading,
           isFetching,
-          remaining,
+          isFetchingNextPage,
           showMore,
           hiddenCount,
           toggleShowMore,
@@ -84,7 +74,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
               </Group>
               <ReturnToRootThread />
             </Stack>
-            {isLoading ? (
+            {isLoading || isFetching ? (
               <Center mt="xl">
                 <Loader type="bars" />
               </Center>
@@ -105,28 +95,21 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                 >
                   <CreateComment />
                   <Stack className="relative" gap="xl">
-                    <LoadingOverlay visible={isFetching} />
                     {data?.map((comment) => (
                       <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                     ))}
                   </Stack>
-                  {!!remaining && !showMore && (
-                    <Divider
-                      label={
-                        <Group gap="xs" align="center">
-                          <Text
-                            c="blue.4"
-                            style={{ cursor: 'pointer' }}
-                            onClick={toggleShowMore}
-                            inherit
-                          >
-                            Show {remaining} More
-                          </Text>
-                        </Group>
-                      }
-                      labelPosition="center"
-                      variant="dashed"
-                    />
+                  {showMore && (
+                    <Center>
+                      <Button
+                        onClick={toggleShowMore}
+                        loading={isFetchingNextPage}
+                        variant="subtle"
+                        size="md"
+                      >
+                        Load More Comments
+                      </Button>
+                    </Center>
                   )}
                   {created.map((comment) => (
                     <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />

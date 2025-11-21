@@ -1,9 +1,9 @@
-import { Input, SegmentedControl, Select } from '@mantine/core';
+import { Input, Radio, SegmentedControl, Select } from '@mantine/core';
 import { useFormContext } from 'react-hook-form';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { InputSelect, InputSwitch, InputTextArea } from '~/libs/form';
+import { InputRadioGroup, InputSelect, InputSwitch, InputTextArea } from '~/libs/form';
 import {
   getVeo3Checkpoint,
   veo3ModelOptions,
@@ -11,6 +11,7 @@ import {
   removeVeo3CheckpointFromResources,
   veo3AspectRatios,
   veo3Durations,
+  veo3Versions,
 } from '~/server/orchestrator/veo3/veo3.schema';
 import type { ResourceInput } from '~/server/orchestrator/infrastructure/base.schema';
 import {
@@ -46,6 +47,13 @@ export function Veo3FormInput() {
   return (
     <>
       <InputVideoProcess name="process" />
+      <InputRadioGroup name="version" label="Version">
+        <div className="flex flex-wrap gap-3">
+          {veo3Versions.map((value) => (
+            <Radio key={value} value={value} label={value} />
+          ))}
+        </div>
+      </InputRadioGroup>
       {process === 'img2vid' && (
         <div className="-mx-2">
           <InputSourceImageUploadMultiple

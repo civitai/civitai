@@ -2,8 +2,16 @@ import type { ActionIconProps } from '@mantine/core';
 import { ActionIcon, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
+import {
+  IconBan,
+  IconDotsVertical,
+  IconFlag,
+  IconPencil,
+  IconRecycle,
+  IconTrash,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import dynamic from 'next/dynamic';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,8 +28,15 @@ import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import type { ArticleGetById } from '~/types/router';
-import { openAddToCollectionModal, openReportModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const ArticleUnpublishModal = dynamic(() => import('~/components/Modals/ArticleUnpublishModal'), {
+  ssr: false,
+});
+const openArticleUnpublishModal = createDialogTrigger(ArticleUnpublishModal);
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -32,6 +47,10 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
   const showUnpublish = atDetailsPage && article.status === ArticleStatus.Published;
+  const showRestore =
+    isModerator &&
+    ((atDetailsPage && article.status === ArticleStatus.Unpublished) ||
+      article.status === ArticleStatus.UnpublishedViolation);
   const features = useFeatureFlags();
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
@@ -88,6 +107,34 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         onError(error) {
           showErrorNotification({
             title: 'Failed to unpublish article',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
+  };
+
+  const restoreArticleMutation = trpc.article.restore.useMutation();
+  const handleRestoreArticle = () => {
+    restoreArticleMutation.mutate(
+      { id: article.id },
+      {
+        async onSuccess(result) {
+          showSuccessNotification({
+            title: 'Article restored',
+            message: 'Successfully restored article',
+          });
+
+          queryUtils.article.getById.setData({ id: article.id }, (old) => ({
+            ...(old as ArticleGetById),
+            ...result,
+          }));
+
+          await queryUtils.article.getInfinite.invalidate();
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to restore article',
             error: new Error(error.message),
           });
         },
@@ -153,24 +200,62 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               Delete
             </Menu.Item>
             {showUnpublish && (
+              <>
+                {!isModerator && (
+                  <Menu.Item
+                    color="yellow"
+                    leftSection={
+                      unpublishArticleMutation.isLoading ? (
+                        <Loader size={14} />
+                      ) : (
+                        <IconBan size={14} stroke={1.5} />
+                      )
+                    }
+                    onClick={(e: React.MouseEvent) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleUnpublishArticle();
+                    }}
+                    disabled={unpublishArticleMutation.isLoading}
+                    closeMenuOnClick={false}
+                  >
+                    Unpublish
+                  </Menu.Item>
+                )}
+                {isModerator && (
+                  <Menu.Item
+                    color="yellow"
+                    leftSection={<IconBan size={14} stroke={1.5} />}
+                    onClick={(e: React.MouseEvent) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openArticleUnpublishModal({ props: { articleId: article.id } });
+                    }}
+                  >
+                    Unpublish as Violation
+                  </Menu.Item>
+                )}
+              </>
+            )}
+            {showRestore && (
               <Menu.Item
-                color="yellow"
+                color="green"
                 leftSection={
-                  unpublishArticleMutation.isLoading ? (
+                  restoreArticleMutation.isLoading ? (
                     <Loader size={14} />
                   ) : (
-                    <IconBan size={14} stroke={1.5} />
+                    <IconRecycle size={14} stroke={1.5} />
                   )
                 }
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  handleUnpublishArticle();
+                  handleRestoreArticle();
                 }}
-                disabled={unpublishArticleMutation.isLoading}
+                disabled={restoreArticleMutation.isLoading}
                 closeMenuOnClick={false}
               >
-                Unpublish
+                Restore
               </Menu.Item>
             )}
             <Menu.Item

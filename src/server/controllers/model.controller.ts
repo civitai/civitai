@@ -59,7 +59,6 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { addUserDownload } from '~/server/services/download.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -90,7 +89,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
@@ -107,6 +106,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -228,7 +228,9 @@ export const getModelHandler = async ({
           unavailableGenResources.indexOf(version.id) === -1
       ),
       hasSuggestedResources: suggestedResources > 0,
-      meta: model.meta as ModelMeta | null,
+      meta: model.meta
+        ? filterSensitiveProfanityData(model.meta as ModelMeta, ctx?.user?.isModerator)
+        : null,
       tagsOnModels:
         tagsOnModels[model.id]?.tags
           .filter(({ unlisted }) => !unlisted)
@@ -318,7 +320,9 @@ export const getModelHandler = async ({
           >,
           baseModel: version.baseModel as BaseModel,
           baseModelType: version.baseModelType as BaseModelType,
-          meta: version.meta as ModelVersionMeta,
+          meta: version.meta
+            ? filterSensitiveProfanityData(version.meta as ModelVersionMeta, ctx?.user?.isModerator)
+            : null,
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
           recommendedResources: version.recommendedResources
@@ -399,6 +403,7 @@ export const getModelsPagedSimpleHandler = async ({
     },
   });
 
+  const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
     ...results,
     items: results.items.map(({ modelVersions = [], ...model }) => {
@@ -406,9 +411,16 @@ export const getModelsPagedSimpleHandler = async ({
 
       return {
         ...model,
-        meta: model.meta as ModelMeta | null,
+        meta: model.meta
+          ? filterSensitiveProfanityData(model.meta as ModelMeta, isModerator)
+          : null,
         modelVersion: version
-          ? { ...version, meta: version.meta as ModelVersionMeta | null }
+          ? {
+              ...version,
+              meta: version.meta
+                ? filterSensitiveProfanityData(version.meta as ModelVersionMeta, isModerator)
+                : null,
+            }
           : undefined,
       };
     }),
@@ -851,7 +863,6 @@ export const getDownloadCommandHandler = async ({
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
-    await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
 
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.
@@ -1751,7 +1762,7 @@ export const privateModelFromTrainingHandler = async ({
     const { id: userId } = ctx.user;
     const { nsfw, poi, minor, sfwOnly } = input;
 
-    const membership = await getUserSubscription({ userId });
+    const membership = await getHighestTierSubscription(userId);
     if (!membership && !ctx.user.isModerator)
       throw throwAuthorizationError('You must have a subscription to create private models.');
 
