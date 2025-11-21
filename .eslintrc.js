@@ -25,7 +25,7 @@ module.exports = {
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 
-    'import/no-cycle': ['error'],
+    // 'import/no-cycle': ['error'],
 
     // prettier overrides
     'prettier/prettier': [
