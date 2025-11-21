@@ -397,11 +397,9 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
-                   SUM(if(
-                       metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
-                   )) as "reactionCount",
-                   SUM(if(metricType = 'Comment', metricValue, 0)) as "commentCount",
-                   SUM(if(metricType = 'Collection', metricValue, 0)) as "collectedCount"
+                   sumIf(metricValue, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
+                   sumIf(metricValue, metricType = 'Comment') as "commentCount",
+                   sumIf(metricValue, metricType = 'Collection') as "collectedCount"
             FROM entityMetricEvents
             WHERE entityType = 'Image'
               AND entityId IN (${batch.join(',')})
