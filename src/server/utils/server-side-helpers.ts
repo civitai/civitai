@@ -7,7 +7,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/shared/constants/domain.constants';
 
 export const getServerProxySSGHelpers = async (

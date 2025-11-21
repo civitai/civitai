@@ -42,7 +42,7 @@ import {
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { userBountyCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { logToAxiom } from '~/server/logging/client';
@@ -280,7 +280,7 @@ export const createBounty = async ({
   );
 
   if (bounty.userId) {
-    await userContentOverviewCache.bust(bounty.userId);
+    await userBountyCountCache.bust(bounty.userId);
   }
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
@@ -391,7 +391,7 @@ export const updateBountyById = async ({
   );
 
   if (bounty?.userId) {
-    await userContentOverviewCache.bust(bounty?.userId);
+    await userBountyCountCache.bust(bounty?.userId);
   }
 
   return bounty;
@@ -409,14 +409,21 @@ export const upsertBounty = async ({
     // don't allow updating of locked properties
     for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
-    // Check bounty name and description for profanity
+    // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+    const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity is detected, mark bounty as NSFW and add to locked properties
-    if (isProfane && !data.nsfw) {
-      data.details = { ...data.details, profanityMatches: matchedWords };
+    // If profanity exceeds thresholds, mark bounty as NSFW
+    if (evaluation.shouldMarkNSFW && !data.nsfw) {
+      data.details = {
+        ...data.details,
+        profanityMatches: evaluation.matchedWords,
+        profanityEvaluation: {
+          reason: evaluation.reason,
+          metrics: evaluation.metrics,
+        },
+      };
       data.nsfw = true;
       data.lockedProperties =
         data.lockedProperties && !data.lockedProperties.includes('nsfw')
@@ -817,7 +824,7 @@ export const refundBounty = async ({
   });
 
   if (updated.userId) {
-    await userContentOverviewCache.bust(updated.userId);
+    await userBountyCountCache.bust(updated.userId);
   }
 
   return updated;

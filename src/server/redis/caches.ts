@@ -2,21 +2,16 @@ import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
-import { CacheTTL, constants } from '~/server/common/constants';
+import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { pgDbRead } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import { populateEntityMetrics } from '~/server/redis/entity-metric-populate';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
-import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
@@ -26,8 +21,9 @@ import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { styleTags, subjectTags } from '~/libs/tags';
 
-const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
+const alwaysIncludeTags = [...styleTags, ...subjectTags];
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
   tags: number[];
@@ -153,38 +149,6 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
     return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
   },
   ttl: CacheTTL.day,
-});
-
-type CachedImagesForModelVersions = {
-  modelVersionId: number;
-  images: ImagesForModelVersions[];
-};
-export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
-  key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
-  idKey: 'modelVersionId',
-  ttl: CacheTTL.sm,
-  // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
-  lookupFn: async (ids) => {
-    const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
-
-    const records: Record<number, CachedImagesForModelVersions> = {};
-    for (const image of images) {
-      if (!records[image.modelVersionId])
-        records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
-      records[image.modelVersionId].images.push(image);
-    }
-
-    return records;
-  },
-  appendFn: async (records) => {
-    const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
-    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
-    for (const entry of records) {
-      for (const image of entry.images) {
-        image.tags = tagIdsVar?.[image.id]?.tags ?? [];
-      }
-    }
-  },
 });
 
 type EntityCosmeticLookupRaw = {
@@ -499,6 +463,153 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
   },
 });
 
+// Factory function to create user content counter caches
+const createUserContentCountCache = <T extends Record<string, any>>(
+  counterName: string,
+  queryFn: (userIds: number[]) => Promise<T[]>
+) => {
+  return createCachedObject<T>({
+    key: `${REDIS_KEYS.CACHES.OVERVIEW_USERS}:${counterName}`,
+    idKey: 'id',
+    ttl: CacheTTL.day,
+    lookupFn: async (ids) => {
+      const goodIds = ids.filter(isDefined);
+      if (!goodIds.length) return {};
+
+      const results = await queryFn(goodIds);
+      return Object.fromEntries(results.map((x) => [x.id, x]));
+    },
+  });
+};
+
+// Individual cache objects for each user content counter
+type UserModelCount = { id: number; modelCount: number };
+export const userModelCountCache = createUserContentCountCache<UserModelCount>(
+  'modelCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "modelCount"
+    FROM "Model"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+
+type UserPostCount = { id: number; postCount: number };
+export const userPostCountCache = createUserContentCountCache<UserPostCount>(
+  'postCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "postCount"
+    FROM "Post"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "publishedAt" IS NOT NULL
+      AND "publishedAt" <= NOW()
+      AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+
+type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
+export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
+  'imageVideoCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
+      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
+    FROM "Image"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "ingestion" = 'Scanned'
+      AND "needsReview" IS NULL
+      AND "postId" NOT IN (
+        SELECT id
+        FROM "Post"
+        WHERE "userId" IN (${Prisma.join(userIds)})
+          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
+      )
+    GROUP BY "userId"
+  `
+);
+
+type UserArticleCount = { id: number; articleCount: number };
+export const userArticleCountCache = createUserContentCountCache<UserArticleCount>(
+  'articleCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "articleCount"
+    FROM "Article"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "publishedAt" IS NOT NULL
+      AND "publishedAt" <= NOW()
+      AND availability != 'Private'
+      AND status = 'Published'::"ArticleStatus"
+    GROUP BY "userId"
+  `
+);
+
+type UserBountyCount = { id: number; bountyCount: number };
+export const userBountyCountCache = createUserContentCountCache<UserBountyCount>(
+  'bountyCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "bountyCount"
+    FROM "Bounty"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "startsAt" <= NOW()
+      AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+
+type UserBountyEntryCount = { id: number; bountyEntryCount: number };
+export const userBountyEntryCountCache = createUserContentCountCache<UserBountyEntryCount>(
+  'bountyEntryCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "bountyEntryCount"
+    FROM "BountyEntry"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+    GROUP BY "userId"
+  `
+);
+
+type UserCollectionCount = { id: number; collectionCount: number };
+export const userCollectionCountCache = createUserContentCountCache<UserCollectionCount>(
+  'collectionCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "collectionCount"
+    FROM "Collection"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "read" = 'Public'
+      AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+
+type UserHasReceivedReviews = { id: number; hasReceivedReviews: boolean };
+export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasReceivedReviews>(
+  'hasReceivedReviews',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT DISTINCT
+      m."userId" as id,
+      true as "hasReceivedReviews"
+    FROM "Model" m
+    INNER JOIN "ResourceReview" r ON r."modelId" = m.id
+    WHERE m."userId" IN (${Prisma.join(userIds)})
+      AND r."userId" != m."userId"
+  `
+);
+
 type UserContentOverview = {
   id: number;
   modelCount: number;
@@ -512,49 +623,72 @@ type UserContentOverview = {
   collectionCount: number;
 };
 
-export const userContentOverviewCache = createCachedObject<UserContentOverview>({
-  key: REDIS_KEYS.CACHES.OVERVIEW_USERS,
-  idKey: 'id',
-  lookupFn: async (ids) => {
-    const goodIds = ids.filter(isDefined);
-    if (!goodIds.length) return {};
+// Helper function to fetch all user content overview data using individual caches
+export const getUserContentOverview = async (
+  userIds: number | number[]
+): Promise<Record<number, UserContentOverview>> => {
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  if (!ids.length) return {};
 
-    const userOverviewData = await dbRead.$queryRaw<UserContentOverview[]>`
-    SELECT
-        u.id,
-        (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published' AND m.availability != 'Private') as "modelCount",
-        (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL AND p.availability != 'Private') as "postCount",
-        COALESCE(im."imageCount"::INT, 0) as "imageCount",
-        COALESCE(im."videoCount"::INT, 0) as "videoCount",
-        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" IS NOT NULL AND a."publishedAt" <= NOW() AND a.availability != 'Private' AND a.status = 'Published'::"ArticleStatus") as "articleCount",
-        (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() AND b.availability != 'Private') as "bountyCount",
-        (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
-        (SELECT EXISTS (SELECT 1 FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id)) as "hasReceivedReviews",
-        (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = 'Public' AND c.availability != 'Private') as "collectionCount"
-    FROM "User" u
-    CROSS JOIN LATERAL (
-        SELECT
-            SUM(IIF(i."type" =  'image', 1, 0)) as "imageCount",
-            SUM(IIF(i."type" =  'video', 1, 0)) as "videoCount"
-        FROM "Image" i
-        WHERE i."userId" = u.id
-        AND i."postId" NOT IN
-        (
-            SELECT p."id"
-            FROM "Post" p
-            WHERE p."userId" = u.id
-            AND (p."publishedAt" IS NULL OR p."availability" = 'Private')
-        )
-        AND i."ingestion" = 'Scanned'
-        AND i."needsReview" IS NULL
-    ) im
-    WHERE u.id IN (${Prisma.join(goodIds)})
-  `;
+  // Fetch all caches in parallel
+  const [
+    modelCounts,
+    postCounts,
+    imageVideoCounts,
+    articleCounts,
+    bountyCounts,
+    bountyEntryCounts,
+    collectionCounts,
+    reviewFlags,
+  ] = await Promise.all([
+    userModelCountCache.fetch(ids),
+    userPostCountCache.fetch(ids),
+    userImageVideoCountCache.fetch(ids),
+    userArticleCountCache.fetch(ids),
+    userBountyCountCache.fetch(ids),
+    userBountyEntryCountCache.fetch(ids),
+    userCollectionCountCache.fetch(ids),
+    userHasReceivedReviewsCache.fetch(ids),
+  ]);
 
-    return Object.fromEntries(userOverviewData.map((x) => [x.id, x]));
+  // Merge results
+  return Object.fromEntries(
+    ids.map((id) => [
+      id,
+      {
+        id,
+        modelCount: modelCounts[id]?.modelCount ?? 0,
+        postCount: postCounts[id]?.postCount ?? 0,
+        imageCount: imageVideoCounts[id]?.imageCount ?? 0,
+        videoCount: imageVideoCounts[id]?.videoCount ?? 0,
+        articleCount: articleCounts[id]?.articleCount ?? 0,
+        bountyCount: bountyCounts[id]?.bountyCount ?? 0,
+        bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,
+        collectionCount: collectionCounts[id]?.collectionCount ?? 0,
+        hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
+      },
+    ])
+  );
+};
+
+// Keep old cache object for backward compatibility
+export const userContentOverviewCache = {
+  fetch: getUserContentOverview,
+  bust: async (userIds: number | number[]) => {
+    // Bust all individual caches
+    const ids = Array.isArray(userIds) ? userIds : [userIds];
+    await Promise.all([
+      userModelCountCache.bust(ids),
+      userPostCountCache.bust(ids),
+      userImageVideoCountCache.bust(ids),
+      userArticleCountCache.bust(ids),
+      userBountyCountCache.bust(ids),
+      userBountyEntryCountCache.bust(ids),
+      userCollectionCountCache.bust(ids),
+      userHasReceivedReviewsCache.bust(ids),
+    ]);
   },
-  ttl: CacheTTL.day,
-});
+};
 
 type ImageWithMeta = {
   id: number;
@@ -637,76 +771,6 @@ export const thumbnailCache = createCachedObject<{
   dontCacheFn: (data) => !data.nsfwLevel,
   ttl: CacheTTL.day,
 });
-
-type ImageMetricLookup = {
-  imageId: number;
-  reactionLike: number | null;
-  reactionHeart: number | null;
-  reactionLaugh: number | null;
-  reactionCry: number | null;
-  comment: number | null;
-  collection: number | null;
-  buzz: number | null;
-};
-// Direct Redis entity metrics fetch with ClickHouse population
-// Implements the same interface as CachedObject for compatibility
-export const imageMetricsCache: Pick<
-  CachedObject<ImageMetricLookup>,
-  'fetch' | 'bust' | 'refresh' | 'flush'
-> = {
-  fetch: async (ids: number | number[]): Promise<Record<string, ImageMetricLookup>> => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return {};
-
-    // Use imported modules
-
-    // Populate missing metrics from ClickHouse (uses per-ID locks internally)
-    await populateEntityMetrics('Image', ids);
-
-    // Fetch from Redis
-    const metricsMap = await entityMetricRedis.getBulkMetrics('Image', ids);
-
-    const results: Record<string, ImageMetricLookup> = {};
-    for (const id of ids) {
-      const metrics = metricsMap.get(id);
-      results[id] = {
-        imageId: id,
-        reactionLike: metrics?.ReactionLike || null,
-        reactionHeart: metrics?.ReactionHeart || null,
-        reactionLaugh: metrics?.ReactionLaugh || null,
-        reactionCry: metrics?.ReactionCry || null,
-        comment: metrics?.Comment || null,
-        collection: metrics?.Collection || null,
-        buzz: metrics?.Buzz || null,
-      };
-    }
-    return results;
-  },
-
-  bust: async (ids: number | number[]) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Use imported module
-
-    // Delete from Redis to force re-fetch from ClickHouse
-    await Promise.all(ids.map((id) => entityMetricRedis.delete('Image', id)));
-  },
-
-  refresh: async (ids: number | number[], skipCache?: boolean) => {
-    if (!Array.isArray(ids)) ids = [ids];
-    if (ids.length === 0) return;
-
-    // Use imported module
-
-    // Force refresh from ClickHouse with forceRefresh=true to overwrite existing values
-    await populateEntityMetrics('Image', ids, true);
-  },
-
-  flush: async () => {
-    // Clear all image metrics from Redis - Not Supported
-  },
-};
 
 type ArticleStatLookup = {
   articleId: number;
@@ -841,7 +905,6 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
         ...imageTagCompositeSelect,
       },
       orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
-      take: 100,
     });
 
     const result = imageTags.reduce((acc, tag) => {

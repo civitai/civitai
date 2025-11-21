@@ -1,0 +1,21 @@
+.giftNotice {
+  background: linear-gradient(
+    135deg,
+    var(--mantine-color-yellow-0) 0%,
+    var(--mantine-color-orange-0) 100%
+  );
+  border-color: var(--mantine-color-yellow-3);
+
+  [data-mantine-color-scheme='dark'] & {
+    background: linear-gradient(
+      135deg,
+      var(--mantine-color-dark-6) 0%,
+      var(--mantine-color-dark-7) 100%
+    );
+    border-color: var(--mantine-color-yellow-9);
+  }
+}
+
+.giftIcon {
+  color: var(--mantine-color-yellow-6);
+}

@@ -11,6 +11,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import dynamic from 'next/dynamic';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -27,12 +28,15 @@ import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import type { ArticleGetById } from '~/types/router';
-import {
-  openAddToCollectionModal,
-  openArticleUnpublishModal,
-  openReportModal,
-} from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const ArticleUnpublishModal = dynamic(() => import('~/components/Modals/ArticleUnpublishModal'), {
+  ssr: false,
+});
+const openArticleUnpublishModal = createDialogTrigger(ArticleUnpublishModal);
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();

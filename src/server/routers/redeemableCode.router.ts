@@ -2,12 +2,17 @@ import {
   consumeRedeemableCodeSchema,
   createRedeemableCodeSchema,
   deleteRedeemableCodeSchema,
+  upsertGiftNoticeSchema,
+  deleteGiftNoticeSchema,
 } from '~/server/schema/redeemableCode.schema';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import {
   consumeRedeemableCode,
   createRedeemableCodes,
   deleteRedeemableCode,
+  getAllGiftNotices,
+  upsertGiftNotice,
+  deleteGiftNotice,
 } from '~/server/services/redeemableCode.service';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -36,4 +41,13 @@ export const redeemableCodeRouter = router({
 
       return consumedCode;
     }),
+  getAllGiftNotices: moderatorProcedure.query(async () => {
+    return await getAllGiftNotices();
+  }),
+  upsertGiftNotice: moderatorProcedure.input(upsertGiftNoticeSchema).mutation(async ({ input }) => {
+    await upsertGiftNotice(input);
+  }),
+  deleteGiftNotice: moderatorProcedure.input(deleteGiftNoticeSchema).mutation(async ({ input }) => {
+    await deleteGiftNotice(input);
+  }),
 });

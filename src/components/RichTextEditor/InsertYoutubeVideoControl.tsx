@@ -1,55 +1,26 @@
-import { Button, Stack } from '@mantine/core';
-import { closeAllModals, openModal } from '@mantine/modals';
 import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconBrandYoutube } from '@tabler/icons-react';
-import * as z from 'zod';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { UrlControlModal } from '~/components/RichTextEditor/UrlControlModal';
 
-import { Form, InputText, useForm } from '~/libs/form';
-
-const schema = z.object({
-  url: z
-    .string()
-    .url('Please provide a valid URL')
-    .regex(/^(https?\:\/\/)?((www\.)?youtube\.com|youtu\.be)\/.+$/, 'Please provide a YouTube URL'),
-});
 const controlTitle = 'Insert YouTube video';
 
 export function InsertYoutubeVideoControl(props: Props) {
   const { editor } = useRichTextEditorContext();
-  const form = useForm({
-    schema,
-    defaultValues: { url: '' },
-    shouldUnregister: false,
-  });
-
-  const handleSubmit = (values: z.infer<typeof schema>) => {
-    const { url } = values;
-
-    editor?.commands.setYoutubeVideo({ src: url });
-    closeAllModals();
-    form.reset();
-  };
 
   const handleClick = () => {
-    openModal({
-      title: controlTitle,
-      children: (
-        <Form form={form} onSubmit={handleSubmit}>
-          <Stack gap="xs">
-            <InputText
-              label="YouTube URL"
-              name="url"
-              placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-              withAsterisk
-            />
-            <Button type="submit" fullWidth>
-              Submit
-            </Button>
-          </Stack>
-        </Form>
-      ),
-      onClose: () => form.reset(),
+    dialogStore.trigger({
+      component: UrlControlModal,
+      props: {
+        title: controlTitle,
+        label: 'YouTube URL',
+        placeholder: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        regex: /^(https?\:\/\/)?((www\.)?youtube\.com|youtu\.be)\/.+$/,
+        onSuccess: ({ url }) => {
+          editor?.commands.setYoutubeVideo({ src: url });
+        },
+      },
     });
   };
 

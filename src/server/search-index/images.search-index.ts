@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import type { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
+import { clickhouse } from '~/server/clickhouse/client';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -405,21 +406,21 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       // Metrics:
       if (step === 1) {
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
-        const metrics = await db.$queryRaw<Metrics[]>`
-          SELECT
-            im."imageId" as id,
-            im."collectedCount" as "collectedCount",
-            im."reactionCount" as "reactionCount",
-            im."commentCount" as "commentCount",
-            im."likeCount" as "likeCount",
-            im."cryCount" as "cryCount",
-            im."laughCount" as "laughCount",
-            im."tippedAmountCount" as "tippedAmountCount",
-            im."heartCount" as "heartCount"
-          FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(batch)})
-            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      `;
+        const metrics = await clickhouse?.$query<Metrics>(`
+            SELECT entityId as "id",
+                   sumIf(metricValue, metricType = 'Collection') as "collectedCount",
+                   sumIf(metricValue, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
+                   sumIf(metricValue, metricType = 'Comment') as "commentCount",
+                   sumIf(metricValue, metricType = 'ReactionLike') as "likeCount",
+                   sumIf(metricValue, metricType = 'ReactionCry') as "cryCount",
+                   sumIf(metricValue, metricType = 'Buzz') as "tippedAmountCount",
+                   sumIf(metricValue, metricType = 'ReactionHeart') as "heartCount",
+                   sumIf(metricValue, metricType = 'ReactionLaugh') as "laughCount"
+            FROM entityMetricEvents
+            WHERE entityType = 'Image'
+              AND entityId IN (${batch.join(',')})
+            GROUP BY id
+          `);
 
         result.metrics ??= [];
         result.metrics.push(...(metrics ?? []));

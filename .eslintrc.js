@@ -10,11 +10,22 @@ module.exports = {
     'next/core-web-vitals',
     'plugin:@typescript-eslint/recommended', // lightweight rules (no type info)
     'plugin:tailwindcss/recommended',
+    // "plugin:import/typescript",
     'prettier',
   ],
+  // settings: {
+  //   "import/resolver": {
+  //     // You will also need to install and configure the TypeScript resolver
+  //     // See also https://github.com/import-js/eslint-import-resolver-typescript#configuration
+  //     "typescript": true,
+  //     "node": true,
+  //   },
+  // },
   rules: {
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
+
+    // 'import/no-cycle': ['error'],
 
     // prettier overrides
     'prettier/prettier': [
@@ -36,12 +47,12 @@ module.exports = {
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/consistent-type-imports': ['error'],
     '@typescript-eslint/restrict-template-expressions': [
-      'error',
+      'warn',
       { allowBoolean: true },
     ],
 
     'tailwindcss/no-custom-classname': [
-      'warn',
+      'off',
       {
         whitelist: ['mantine-focus-auto'],
       },

@@ -52,11 +52,9 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import {
-  openAddToCollectionModal,
-  openBlockModelTagsModal,
-  openReportModal,
-} from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';

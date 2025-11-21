@@ -1,0 +1,4802 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Migration steps
+// 1. Add the darkpit env var
+// 2. `npm run db:migrate -- --name dont-drift-me-bro --no-check`
+// 3. review and revise your migration then manually apply it to the DB.
+// 4. `npm run db:applied` to mark the last migration as applied.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["metrics"]
+}
+
+generator enums {
+  provider = "node ./scripts/prisma-enum-generator.mjs"
+  output   = "../src/shared/utils/prisma/enums.ts"
+}
+
+generator typescriptInterfaces {
+  provider = "prisma-generator-typescript-interfaces"
+  output   = "../src/shared/utils/prisma/models.ts"
+}
+
+datasource db {
+  provider          = "postgresql"
+  // NOTE: When using postgresql, mysql or sqlserver, uncomment the @db.Text annotations in model Account below
+  // Further reading:
+  // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
+  // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+// Necessary for Next auth
+model Account {
+  id                Int     @id @default(autoincrement())
+  userId            Int
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  metadata          Json    @default("{}")
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([provider, userId])
+}
+
+// We aren't using DB sessions, but next-auth likes this... I guess.
+model Session {
+  id           Int      @id @default(autoincrement())
+  sessionToken String   @unique
+  userId       Int
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
+model SessionInvalidation {
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invalidatedAt DateTime @default(now())
+
+  @@id([userId, invalidatedAt])
+}
+
+model UserReferral {
+  id                  Int               @id @default(autoincrement())
+  userReferralCodeId  Int?
+  userReferralCode    UserReferralCode? @relation(fields: [userReferralCodeId], references: [id], onDelete: SetNull)
+  source              String?
+  landingPage         String?
+  loginRedirectReason String?
+  createdAt           DateTime          @default(now())
+  userId              Int               @unique
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note                String?
+}
+
+model UserReferralCode {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      String    @unique
+  note      String?
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  referees UserReferral[]
+
+  @@index([userId], type: Hash)
+}
+
+model UserPaymentConfiguration {
+  userId                  Int                   @unique
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Tipalti
+  tipaltiAccountId        String?               @unique
+  tipaltiAccountStatus    String                @default("PendingOnboarding")
+  tipaltiPaymentsEnabled  Boolean               @default(false)
+  tipaltiWithdrawalMethod CashWithdrawalMethod?
+  // Stripe, mainly here for safekeeping or in case we ever support this again.
+  stripeAccountId         String?               @unique
+  stripeAccountStatus     String                @default("PendingOnboarding")
+  stripePaymentsEnabled   Boolean               @default(false)
+  //
+  meta                    Json                  @default("{}")
+}
+
+enum BuzzWithdrawalRequestStatus {
+  Requested
+  Canceled // Refunds buzz - allows user to cancel existing one.
+  Rejected
+  Approved // Different than transferred in that a 3rd party can say it's a valid request, and the owners can reject after the fact.
+  Reverted
+  Transferred
+  ExternallyResolved
+}
+
+model BuzzWithdrawalRequestHistory {
+  id          String                      @id @default(cuid())
+  requestId   String
+  request     BuzzWithdrawalRequest       @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  updatedById Int
+  updatedBy   User                        @relation(fields: [updatedById], references: [id], onDelete: Cascade)
+  status      BuzzWithdrawalRequestStatus @default(Requested)
+  note        String?
+  createdAt   DateTime                    @default(now())
+  metadata    Json                        @default("{}")
+}
+
+enum UserPaymentConfigurationProvider {
+  Stripe
+  Tipalti
+}
+
+model BuzzWithdrawalRequest {
+  id                  String                           @id @default(cuid())
+  userId              Int?
+  user                User?                            @relation(fields: [userId], references: [id])
+  requestedToProvider UserPaymentConfigurationProvider @default(Stripe)
+  requestedToId       String
+
+  buzzWithdrawalTransactionId String // from Buzz Service
+  requestedBuzzAmount         Int // 1000
+  platformFeeRate             Int // 3000 = 30% so we can do 30.25
+  transferredAmount           Int?
+  transferId                  String? // Stripe ID
+  currency                    Currency? // We should always transfer on USD really (?)
+  metadata                    Json                           @default("{}")
+  createdAt                   DateTime                       @default(now())
+  updatedAt                   DateTime                       @updatedAt
+  status                      BuzzWithdrawalRequestStatus    @default(Requested) // updated with trigger
+  history                     BuzzWithdrawalRequestHistory[]
+}
+
+enum CashWithdrawalStatus {
+  // Tipalti
+  Paid
+  Rejected
+  Scheduled
+  Submitted
+  Deferred
+  DeferredInternal
+  Canceled
+  Cleared
+  FraudReview
+  PendingPayerFunds
+  InternalValue
+  // Civitai Custom State
+  FailedFee
+}
+
+enum CashWithdrawalMethod {
+  NoPM
+  WireTransfer
+  Payoneer
+  PayPal
+  ACH
+  Check
+  eCheck
+  HoldMyPayments
+  Custom
+  Intercash
+  Card
+  TipaltiInternalValue
+}
+
+model CashWithdrawal {
+  id            String               @id @default(cuid())
+  transactionId String?              @unique
+  userId        Int
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int
+  method        CashWithdrawalMethod
+  fee           Int
+  status        CashWithdrawalStatus
+  note          String?
+  metadata      Json                 @default("{}")
+  createdAt     DateTime?            @default(now())
+  updatedAt     DateTime?            @updatedAt
+
+  @@index([userId])
+}
+
+
+model CryptoWallet {
+  userId       Int     @id
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet       String  @unique
+  smartAccount String? @unique
+}
+
+enum CryptoTransactionStatus {
+  WaitingForRamp // Ramp url created
+  RampTimedOut // Been 5 minutes since url was created and still not tx associated with key
+  RampFailed // Failed to ramp
+  RampInProgress // Ramp is in progress
+  RampSuccess // Ramp completed successfully
+  WaitingForSweep // Sweep tx created
+  SweepFailed // Sweep tx failed
+  Complete // Sweep tx completed, Buzz paid
+}
+
+
+model CryptoTransaction {
+  key         String                  @id @default(cuid())
+  userId      Int
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      CryptoTransactionStatus @default(WaitingForRamp)
+  amount      Int // (compute in pennies for USDC)
+  currency    Currency                @default(USDC)
+  sweepTxHash String?
+  note        String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+}
+
+enum RewardsEligibility {
+  Eligible
+  Ineligible
+  Protected
+}
+
+model User {
+  id                      Int                   @id @default(autoincrement())
+  name                    String?
+  username                String?               @unique @db.Citext
+  email                   String?               @unique @db.Citext
+  emailVerified           DateTime?
+  image                   String?
+  showNsfw                Boolean               @default(false)
+  blurNsfw                Boolean               @default(true)
+  browsingLevel           Int                   @default(1)
+  onboarding              Int                   @default(0)
+  isModerator             Boolean?              @default(false)
+  createdAt               DateTime              @default(now())
+  deletedAt               DateTime?
+  subscriptions           CustomerSubscription[]
+  mutedAt                 DateTime? /// Updated via trigger
+  muted                   Boolean               @default(false)
+  muteConfirmedAt         DateTime?
+  bannedAt                DateTime?
+  autoplayGifs            Boolean?              @default(true)
+  filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  meta                    Json?                 @default("{}")
+  leaderboardShowcase     String?
+  referral                UserReferral?
+  excludeFromLeaderboards Boolean               @default(false)
+  rewardsEligibility      RewardsEligibility    @default(Eligible)
+  eligibilityChangedAt    DateTime?
+  // Payment provider related
+  customerId              String?               @unique // Stripe
+  paddleCustomerId        String?               @unique
+
+  profile              UserProfile?
+  profilePictureId     Int?                      @unique
+  profilePicture       Image?                    @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
+  settings             Json?                     @default("{}")
+  publicSettings       Json?                     @default("{}")
+  paymentConfiguration UserPaymentConfiguration?
+
+  accounts             Account[]
+  sessions             Session[]
+  images               Image[]
+  models               Model[]                    @relation("creator")
+  deletedModels        Model[]                    @relation("deletedBy")
+  saves                SavedModel[]
+  imports              Import[]
+  keys                 ApiKey[]
+  links                UserLink[]
+  comments             Comment[]
+  commentReactions     CommentReaction[]
+  notificationSettings UserNotificationSettings[]
+  webhooks             Webhook[]
+  interests            ModelInterest[]
+  engagingUsers        UserEngagement[]           @relation("engagingUsers")
+  engagedUsers         UserEngagement[]           @relation("engagedUsers")
+  engagedModels        ModelEngagement[]
+  engagedModelVersions ModelVersionEngagement[]
+  metrics              UserMetric[]
+  reports              Report[]
+  questions            Question[]
+  answers              Answer[]
+  commentsv2           CommentV2[]
+  questionReactions    QuestionReaction[]
+  answerReactions      AnswerReaction[]
+  commentV2Reactions   CommentV2Reaction[]
+  answerVotes          AnswerVote[]
+  tagsEngaged          TagEngagement[]
+
+  imageReactions             ImageReaction[]
+  sessionInvalidation        SessionInvalidation[]
+  stats                      UserStat?
+  rank                       UserRank?
+  downloads                  DownloadHistory[]
+  purchases                  Purchase[]
+  cosmetics                  UserCosmetic[]
+  postReactions              PostReaction[]
+  posts                      Post[]
+  resourceReviews            ResourceReview[]
+  tagImageVotes              TagsOnImageVote[]
+  tagModelVotes              TagsOnModelsVote[]
+  tagPostVotes               TagsOnPostVote[]
+  resourceReviewReactions    ResourceReviewReaction[]
+  articleReactions           ArticleReaction[]
+  articles                   Article[]
+  articleEngagements         ArticleEngagement[]
+  leaderboardResults         LeaderboardResult[]
+  receivedReports            UserReport[]
+  engagedImages              ImageEngagement[]
+  collections                Collection[]
+  collectionItems            CollectionItem[]
+  reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
+  contributingCollections    CollectionContributor[]
+  homeBlocks                 HomeBlock[]
+  bounties                   Bounty[]
+  bountyEntries              BountyEntry[]
+  sponsoredBounties          BountyBenefactor[]
+  engagedBounties            BountyEngagement[]
+  bountyEntryReactions       BountyEntryReaction[]
+  referralCodes              UserReferralCode[]
+  clubs                      Club[]
+  memberships                ClubMembership[]
+  addedClubPosts             ClubPost[]
+  accessGrantedBy            EntityAccess[]
+  clubAdmin                  ClubAdmin[]
+  clubPostReactions          ClubPostReaction[]
+  withdrawalRequests         BuzzWithdrawalRequest[]
+  actionedWithdrawalRequests BuzzWithdrawalRequestHistory[]
+  chatMembers                ChatMember[]
+  chatMessages               ChatMessage[]
+  chatOwners                 Chat[]
+  builds                     BuildGuide[]
+  createdRewards             PurchasableReward[]
+  purchasedRewards           UserPurchasedRewards[]
+  VaultItem                  VaultItem[]
+  Vault                      Vault[]
+  redeemedCodes              RedeemableCode[]
+  addedCosmeticShopSections  CosmeticShopSection[]
+  addedCosmeticShopItems     CosmeticShopItem[]
+  purchasedCosmetics         UserCosmeticShopPurchases[]
+  donationGoals              DonationGoal[]
+  donations                  Donation[]
+  collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
+  collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
+  adTokens                   AdToken[]
+  ratingRequests             ImageRatingRequest[]
+  collectionItemScores       CollectionItemScore[]
+  appeals                    Appeal[]                       @relation("submittedAppeals")
+  resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
+  cashWithdrawals            CashWithdrawal[]
+  bids                       Bid[]
+  recurringBids              BidRecurring[]
+  moderationRules            ModerationRule[]
+  playerInfo                 NewOrderPlayer?
+  CryptoWallet               CryptoWallet[]
+  CryptoTransaction          CryptoTransaction[]
+
+  @@index([deletedAt])
+}
+
+model CustomerSubscription {
+  id                 String    @id
+  userId             Int
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buzzType           String    @default("yellow")
+  metadata           Json
+  status             String
+  priceId            String
+  price              Price     @relation(fields: [priceId], references: [id])
+  productId          String
+  product            Product   @relation(fields: [productId], references: [id])
+  cancelAtPeriodEnd  Boolean
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  createdAt          DateTime
+  endedAt            DateTime?
+  updatedAt          DateTime?
+
+  @@unique([userId, buzzType])
+}
+
+enum PaymentProvider {
+  Stripe
+  Paddle
+  Civitai
+}
+
+model Product {
+  id             String          @id
+  active         Boolean
+  name           String
+  description    String?
+  metadata       Json
+  defaultPriceId String?
+  provider       PaymentProvider @default(Stripe)
+
+  prices                Price[]
+  customerSubscriptions CustomerSubscription[]
+  purchases             Purchase[]
+}
+
+model Price {
+  id                    String                 @id
+  productId             String
+  product               Product                @relation(fields: [productId], references: [id])
+  active                Boolean
+  currency              String
+  description           String?
+  type                  String
+  unitAmount            Int?
+  interval              String?
+  intervalCount         Int?
+  metadata              Json
+  customerSubscriptions CustomerSubscription[]
+  purchases             Purchase[]
+  provider              PaymentProvider        @default(Stripe)
+  redeemableCodes       RedeemableCode[]
+}
+
+model Purchase {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  customer  User     @relation(fields: [userId], references: [id])
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+  priceId   String?
+  price     Price?   @relation(fields: [priceId], references: [id])
+  status    String?
+  createdAt DateTime @default(now())
+}
+
+enum UserEngagementType {
+  Follow
+  Hide
+  Block
+}
+
+model UserEngagement {
+  userId       Int
+  user         User               @relation("engagingUsers", fields: [userId], references: [id], onDelete: Cascade)
+  targetUserId Int
+  targetUser   User               @relation("engagedUsers", fields: [targetUserId], references: [id], onDelete: Cascade)
+  type         UserEngagementType
+  createdAt    DateTime           @default(now())
+
+  @@id([userId, targetUserId])
+  @@index([type, userId])
+}
+
+
+model UserMetric {
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  timeframe         MetricTimeframe
+  followingCount    Int             @default(0)
+  followerCount     Int             @default(0)
+  reactionCount     Int             @default(0)
+  hiddenCount       Int             @default(0)
+  uploadCount       Int             @default(0)
+  reviewCount       Int             @default(0)
+  answerCount       Int             @default(0)
+  answerAcceptCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
+
+  @@id([userId, timeframe])
+}
+
+enum LinkType {
+  Sponsorship
+  Social
+  Other
+}
+
+model UserLink {
+  id     Int      @id @default(autoincrement())
+  userId Int
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  url    String
+  type   LinkType
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum ModelType {
+  Checkpoint
+  TextualInversion
+  Hypernetwork
+  AestheticGradient
+  LORA
+  LoCon
+  DoRA
+  Controlnet
+  Upscaler
+  MotionModule
+  VAE
+  Poses
+  Wildcards
+  Workflows
+  Detection
+  Other
+}
+
+enum ImportStatus {
+  Pending
+  Processing
+  Failed
+  Completed
+}
+
+model Import {
+  id         Int          @id @default(autoincrement())
+  userId     Int?
+  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt  DateTime     @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  source     String
+  status     ImportStatus @default(Pending)
+  data       Json?
+  parentId   Int?
+  parent     Import?      @relation("ImportChildren", fields: [parentId], references: [id], onDelete: SetNull)
+
+  modelVersion ModelVersion[]
+  model        Model?
+  children     Import[]       @relation("ImportChildren")
+  importId     Int?
+}
+
+enum ModelStatus {
+  /// saved but incomplete
+  Draft
+  /// actively training
+  Training
+  /// complete
+  Published
+  /// scheduled for publish
+  Scheduled
+  /// taken from published -> hidden intentionally?
+  Unpublished
+  /// taken from published -> hidden unintentionally?
+  UnpublishedViolation
+  /// unused?
+  GatherInterest
+  /// deleted by user/system
+  Deleted
+}
+
+enum TrainingStatus {
+  /// not submitted yet (in draft mode)
+  Pending
+  /// submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Submitted
+  /// awaiting approval or confirmation
+  Paused
+  /// rejected for violation
+  Denied
+  /// actively generating
+  Processing
+  /// done, waiting for publish
+  InReview
+  /// something went wrong either externally or internally
+  Failed
+  /// published
+  Approved
+}
+
+enum CommercialUse {
+  None
+  Image
+  RentCivit
+  Rent
+  Sell
+}
+
+enum CheckpointType {
+  Trained
+  Merge
+}
+
+enum ModelUploadType {
+  Created
+  Trained
+}
+
+enum ModelUsageControl {
+  Download
+  Generation
+  InternalGeneration
+}
+
+enum ModelModifier {
+  Archived
+  TakenDown
+}
+
+
+enum ContentType {
+  Image
+  Character
+  Text
+  Audio
+}
+
+model Model {
+  id                  Int             @id @default(autoincrement())
+  name                String          @db.Citext
+  description         String?
+  type                ModelType
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  lastVersionAt       DateTime?
+  nsfw                Boolean         @default(false)
+  tosViolation        Boolean         @default(false)
+  poi                 Boolean         @default(false)
+  minor               Boolean         @default(false)
+  userId              Int
+  user                User            @relation("creator", fields: [userId], references: [id])
+  status              ModelStatus     @default(Draft)
+  publishedAt         DateTime?
+  fromImport          Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId        Int?            @unique
+  meta                Json            @default("{}")
+  deletedAt           DateTime?
+  deletedBy           Int?
+  deletedByUser       User?           @relation("deletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
+  checkpointType      CheckpointType?
+  uploadType          ModelUploadType @default(Created)
+  locked              Boolean         @default(false)
+  underAttack         Boolean         @default(false)
+  earlyAccessDeadline DateTime?
+  mode                ModelModifier?
+  unlisted            Boolean         @default(false)
+  gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
+  availability        Availability    @default(Public)
+  nsfwLevel           Int             @default(0)
+  lockedProperties    String[]        @default([])
+  scannedAt           DateTime?
+  sfwOnly             Boolean         @default(false)
+
+  // Licensing
+  allowNoCredit         Boolean         @default(true)
+  allowCommercialUse    CommercialUse[] @default([Sell])
+  allowDerivatives      Boolean         @default(true)
+  allowDifferentLicense Boolean         @default(true)
+
+  modelVersions      ModelVersion[]
+  tagsOnModels       TagsOnModels[]
+  tagsOnModelsVotes  TagsOnModelsVote[]
+  tags               ModelTag[]
+  metrics            ModelMetric[]
+  saves              SavedModel[]
+  reports            ModelReport[]
+  engagements        ModelEngagement[]
+  comments           Comment[]
+  interests          ModelInterest[]
+  licenses           License[]
+  reportStats        ModelReportStat?
+  hashes             ModelHash[]
+  threads            Thread[]
+  resourceReviews    ResourceReview[]
+  metricsDaily       ModelMetricDaily[]
+  associatedFrom     ModelAssociations[]  @relation("ToModelAssociation")
+  associations       ModelAssociations[]  @relation("FromModelAssociation")
+  collectionItems    CollectionItem[]
+  generationCoverage GenerationCoverage[]
+  flags              ModelFlag[]
+  coveredCheckpoints CoveredCheckpoint[]
+
+  @@index([name])
+  @@index([status, nsfw])
+}
+
+enum ModelFlagStatus {
+  Pending
+  Resolved
+}
+
+model ModelFlag {
+  modelId      Int             @id
+  model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  poi          Boolean         @default(false)
+  minor        Boolean         @default(false)
+  sfwOnly      Boolean         @default(false)
+  nsfw         Boolean         @default(false)
+  triggerWords Boolean         @default(false)
+  poiName      Boolean         @default(false)
+  status       ModelFlagStatus @default(Pending)
+  details      Json?
+  createdAt    DateTime        @default(now())
+
+  @@index([status])
+}
+
+
+model License {
+  id     Int     @id @default(autoincrement())
+  name   String
+  url    String
+  models Model[]
+}
+
+
+model ModelInterest {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelId   Int
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, modelId])
+}
+
+enum ModelEngagementType {
+  Favorite
+  Hide
+  Mute
+  Notify
+}
+
+model ModelEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelId   Int
+  model     Model               @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  type      ModelEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, modelId])
+  @@index([modelId], type: Hash)
+}
+
+enum ModelVersionSponsorshipSettingsType {
+  FixedPrice
+  Bidding
+}
+
+
+model ModelVersionSponsorshipSettings {
+  id                         Int                                 @id @default(autoincrement())
+  modelVersionMonetizationId Int                                 @unique
+  modelVersionMonetization   ModelVersionMonetization            @relation(fields: [modelVersionMonetizationId], references: [id], onDelete: Cascade)
+  type                       ModelVersionSponsorshipSettingsType @default(FixedPrice)
+  currency                   Currency                            @default(BUZZ)
+  unitAmount                 Int
+}
+
+enum ModelVersionMonetizationType {
+  PaidAccess
+  PaidEarlyAccess
+  PaidGeneration
+  CivitaiClubOnly
+  MySubscribersOnly
+  Sponsored
+}
+
+
+model ModelVersionMonetization {
+  id                  Int                              @id @default(autoincrement())
+  modelVersionId      Int                              @unique
+  modelVersion        ModelVersion                     @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type                ModelVersionMonetizationType     @default(PaidAccess)
+  currency            Currency                         @default(BUZZ)
+  unitAmount          Int?
+  sponsorshipSettings ModelVersionSponsorshipSettings?
+}
+
+model ModelVersion {
+  id                   Int               @id @default(autoincrement())
+  index                Int?
+  name                 String
+  description          String?
+  modelId              Int
+  model                Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords         String[]
+  steps                Int?
+  epochs               Int?
+  clipSkip             Int?
+  vaeId                Int?
+  vae                  ModelVersion?     @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  publishedAt          DateTime?
+  status               ModelStatus       @default(Draft)
+  trainingStatus       TrainingStatus?
+  trainingDetails      Json?
+  fromImport           Import?           @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId         Int?
+  inaccurate           Boolean           @default(false)
+  baseModel            String
+  baseModelType        String            @default("Standard")
+  meta                 Json              @default("{}")
+  requireAuth          Boolean           @default(false)
+  settings             Json?
+  availability         Availability      @default(Public)
+  nsfwLevel            Int               @default(0)
+  earlyAccessEndsAt    DateTime?
+  earlyAccessConfig    Json?
+  uploadType           ModelUploadType   @default(Created)
+  usageControl         ModelUsageControl @default(Download)
+  earlyAccessTimeFrame Int               @default(0)
+
+  monetization            ModelVersionMonetization?
+  metrics                 ModelVersionMetric[]
+  files                   ModelFile[]
+  runStrategies           RunStrategy[]
+  engagements             ModelVersionEngagement[]
+  downloads               DownloadHistory[]
+  imageResources          ImageResource[]
+  posts                   Post[]
+  resourceReviews         ResourceReview[]
+  hashes                  ModelHash[]
+  metricsDaily            ModelMetricDaily[]
+  modelVersionExploration ModelVersionExploration[]
+  vaeFor                  ModelVersion[]            @relation("vae")
+  generationCoverage      GenerationCoverage?
+  recommendedResources    RecommendedResource[]     @relation("recommendedResources")
+  recommendedTo           RecommendedResource[]     @relation("recommendedTo")
+  DonationGoal            DonationGoal[]
+  featuredInfo            FeaturedModelVersion[]
+  ImageResourceNew        ImageResourceNew[]
+  coveredCheckpoints      CoveredCheckpoint[]
+
+  @@index([modelId], type: Hash)
+}
+
+enum ModelVersionEngagementType {
+  Notify
+}
+
+model ModelVersionEngagement {
+  userId         Int
+  user           User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion               @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           ModelVersionEngagementType
+  createdAt      DateTime                   @default(now())
+
+  @@id([userId, modelVersionId])
+}
+
+enum ModelHashType {
+  AutoV1
+  AutoV2
+  AutoV3
+  SHA256
+  CRC32
+  BLAKE3
+}
+
+model RecommendedResource {
+  id         Int           @id @default(autoincrement())
+  resourceId Int
+  resource   ModelVersion  @relation("recommendedTo", fields: [resourceId], references: [id], onDelete: Cascade)
+  sourceId   Int?
+  source     ModelVersion? @relation("recommendedResources", fields: [sourceId], references: [id], onDelete: Cascade)
+  settings   Json?
+
+  @@index([sourceId], type: Hash)
+}
+
+model ModelFileHash {
+  file      ModelFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  fileId    Int
+  type      ModelHashType
+  hash      String        @db.Citext
+  createdAt DateTime      @default(now())
+
+  @@id([fileId, type])
+  @@index([hash], type: Hash)
+}
+
+enum ScanResultCode {
+  Pending
+  Success
+  Danger
+  Error
+}
+
+enum ModelFileVisibility {
+  Sensitive // Choosing not to share
+  Private // Hidden
+  Public // Available to all
+}
+
+model ModelFile {
+  id                Int                 @id @default(autoincrement())
+  name              String
+  overrideName      String?
+  url               String
+  sizeKB            Float
+  createdAt         DateTime            @default(now())
+  type              String              @default("Model")
+  modelVersionId    Int
+  modelVersion      ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  pickleScanResult  ScanResultCode      @default(Pending)
+  exists            Boolean?
+  pickleScanMessage String?
+  virusScanResult   ScanResultCode      @default(Pending)
+  virusScanMessage  String?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  rawScanResult     Json?
+  hashes            ModelFileHash[]
+  metadata          Json?
+  headerData        Json?
+  visibility        ModelFileVisibility @default(Public)
+  dataPurged        Boolean             @default(false)
+
+  @@index([modelVersionId], type: Hash)
+}
+
+model File {
+  id         Int      @id @default(autoincrement())
+  name       String
+  url        String
+  sizeKB     Float
+  createdAt  DateTime @default(now())
+  entityId   Int
+  entityType String
+  metadata   Json?
+
+  @@index([entityType, entityId])
+}
+
+enum MetricTimeframe {
+  Day
+  Week
+  Month
+  Year
+  AllTime
+}
+
+model ModelMetric {
+  model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId           Int
+  timeframe         MetricTimeframe
+  rating            Float           @default(0)
+  ratingCount       Int             @default(0)
+  downloadCount     Int             @default(0)
+  favoriteCount     Int             @default(0)
+  commentCount      Int             @default(0)
+  collectedCount    Int             @default(0)
+  imageCount        Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
+  generationCount   Int             @default(0)
+  thumbsUpCount     Int             @default(0)
+  thumbsDownCount   Int             @default(0)
+  earnedAmount      Int             @default(0)
+  updatedAt         DateTime        @default(now())
+
+  @@id([modelId, timeframe])
+}
+
+model ModelVersionMetric {
+  modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  modelVersionId    Int
+  timeframe         MetricTimeframe
+  rating            Float           @default(0)
+  ratingCount       Int             @default(0)
+  downloadCount     Int             @default(0)
+  favoriteCount     Int             @default(0)
+  commentCount      Int             @default(0)
+  collectedCount    Int             @default(0)
+  imageCount        Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
+  generationCount   Int             @default(0)
+  thumbsUpCount     Int             @default(0)
+  thumbsDownCount   Int             @default(0)
+  earnedAmount      Int             @default(0)
+  updatedAt         DateTime        @default(now())
+
+  @@id([modelVersionId, timeframe])
+}
+
+
+model ModelMetricDaily {
+  modelId        Int
+  model          Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  type           String
+  date           DateTime     @db.Date
+  count          Int
+
+  @@id([modelId, modelVersionId, type, date])
+  @@index(modelVersionId)
+}
+
+enum AssociationType {
+  Suggested
+}
+
+model ModelAssociations {
+  id             Int             @id @default(autoincrement())
+  fromModelId    Int
+  fromModel      Model           @relation("FromModelAssociation", fields: [fromModelId], references: [id], onDelete: Cascade)
+  toModelId      Int?
+  toModel        Model?          @relation("ToModelAssociation", fields: [toModelId], references: [id], onDelete: Cascade)
+  toArticleId    Int?
+  toArticle      Article?        @relation(fields: [toArticleId], references: [id], onDelete: Cascade)
+  associatedById Int?
+  createdAt      DateTime        @default(now())
+  type           AssociationType
+  index          Int?
+
+  @@index([toModelId], type: Hash)
+  @@index([fromModelId], type: Hash)
+  @@index([toArticleId], type: Hash)
+}
+
+
+model DownloadHistory {
+  userId         Int
+  modelVersionId Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  downloadAt     DateTime
+  hidden         Boolean      @default(false)
+
+  @@id([userId, modelVersionId])
+  @@index([userId, downloadAt])
+}
+
+
+model ModActivity {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  activity   String
+  entityType String?
+  entityId   Int?
+  createdAt  DateTime @default(now())
+
+  @@unique([activity, entityType, entityId])
+  @@index([createdAt])
+}
+
+enum ReportReason {
+  TOSViolation
+  NSFW
+  Ownership
+  AdminAttention
+  Claim
+  CSAM
+  Automated
+}
+
+enum ReportStatus {
+  Pending
+  Processing
+  Actioned
+  Unactioned
+}
+
+model Report {
+  id                      Int          @id @default(autoincrement())
+  userId                  Int
+  user                    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason                  ReportReason
+  createdAt               DateTime     @default(now())
+  details                 Json?
+  internalNotes           String?
+  previouslyReviewedCount Int          @default(0)
+  alsoReportedBy          Int[]        @default([]) // UserIds
+  status                  ReportStatus
+  statusSetAt             DateTime?
+  statusSetBy             Int?
+
+  model          ModelReport?
+  comment        CommentReport?
+  commentV2      CommentV2Report?
+  image          ImageReport?
+  resourceReview ResourceReviewReport?
+  article        ArticleReport?
+  post           PostReport?
+  reportedUser   UserReport?
+  collection     CollectionReport?
+  bounty         BountyReport?
+  bountyEntry    BountyEntryReport?
+  chat           ChatReport?
+  automated      ReportAutomated?
+}
+
+
+model ResourceReviewReport {
+  resourceReviewId Int
+  resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id], onDelete: Cascade)
+  reportId         Int            @unique
+  report           Report         @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, resourceReviewId])
+  @@index([resourceReviewId], type: Hash)
+}
+
+
+model ModelReport {
+  modelId  Int
+  model    Model  @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, modelId])
+  @@index([modelId], type: Hash)
+}
+
+
+model CommentReport {
+  commentId Int
+  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reportId  Int     @unique
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, commentId])
+  @@index([commentId], type: Hash)
+}
+
+
+model CommentV2Report {
+  commentV2Id Int
+  commentV2   CommentV2 @relation(fields: [commentV2Id], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, commentV2Id])
+  @@index([commentV2Id], type: Hash)
+}
+
+
+model ImageReport {
+  imageId  Int
+  image    Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, imageId])
+  @@index([imageId], type: Hash)
+}
+
+
+model ArticleReport {
+  articleId Int
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  reportId  Int     @unique
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, articleId])
+  @@index([articleId], type: Hash)
+}
+
+
+model PostReport {
+  postId   Int
+  post     Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, postId])
+  @@index([postId], type: Hash)
+}
+
+
+model UserReport {
+  userId   Int
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, userId])
+  @@index([userId], type: Hash)
+}
+
+
+model CollectionReport {
+  collectionId Int
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  reportId     Int        @unique
+  report       Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, collectionId])
+  @@index([collectionId], type: Hash)
+}
+
+
+model BountyReport {
+  bountyId Int
+  bounty   Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, bountyId])
+  @@index([bountyId], type: Hash)
+}
+
+
+model BountyEntryReport {
+  bountyEntryId Int
+  bountyEntry   BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  reportId      Int         @unique
+  report        Report      @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, bountyEntryId])
+  @@index([bountyEntryId], type: Hash)
+}
+
+
+model ChatReport {
+  chatId   Int
+  chat     Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  reportId Int    @unique
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, chatId])
+  @@index([chatId], type: Hash)
+}
+
+model ResourceReview {
+  id             Int                      @id @default(autoincrement())
+  modelId        Int
+  model          Model                    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  rating         Int
+  recommended    Boolean                  @default(true)
+  details        String?
+  userId         Int
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  thread         Thread?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  exclude        Boolean                  @default(false)
+  nsfw           Boolean                  @default(false)
+  tosViolation   Boolean                  @default(false)
+  metadata       Json?
+  reactions      ResourceReviewReaction[]
+  helper         ResourceReviewHelper?
+  reports        ResourceReviewReport[]
+
+  @@unique([modelVersionId, userId])
+  @@index([modelVersionId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+model ResourceReviewReaction {
+  id        Int             @id @default(autoincrement())
+  review    ResourceReview  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId  Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([reviewId, userId, reaction])
+}
+
+enum ReviewReactions {
+  Like
+  Dislike
+  Laugh
+  Cry
+  Heart
+}
+
+model Post {
+  id             Int           @id @default(autoincrement())
+  nsfw           Boolean       @default(false)
+  title          String?
+  detail         String?
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  publishedAt    DateTime?
+  metadata       Json?
+  tosViolation   Boolean       @default(false)
+  collectionId   Int?
+  collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  unlisted       Boolean       @default(false)
+  availability   Availability  @default(Public)
+  nsfwLevel      Int           @default(0)
+
+  images          Image[]
+  tags            TagsOnPost[]
+  reactions       PostReaction[]
+  thread          Thread?
+  helper          PostHelper?
+  stats           PostStat?
+  metrics         PostMetric[]
+  resourceHelper  PostResourceHelper[]
+  imageTags       PostImageTag[]
+  tagsComposite   PostTag[]
+  tagVotes        TagsOnPostVote[]
+  reports         PostReport[]
+  collectionItems CollectionItem[]
+
+  @@index([modelVersionId])
+  @@index([publishedAt])
+}
+
+
+model PostMetric {
+  postId         Int
+  post           Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  timeframe      MetricTimeframe
+  likeCount      Int             @default(0)
+  dislikeCount   Int             @default(0)
+  laughCount     Int             @default(0)
+  cryCount       Int             @default(0)
+  heartCount     Int             @default(0)
+  commentCount   Int             @default(0)
+  collectedCount Int             @default(0)
+  updatedAt      DateTime        @default(now())
+  ageGroup       MetricTimeframe @default(Day)
+
+  @@id([postId, timeframe])
+  @@index([postId, ageGroup])
+}
+
+enum ImageGenerationProcess {
+  txt2img
+  txt2imgHiRes
+  img2img
+  inpainting
+}
+
+enum NsfwLevel {
+  None
+  Soft
+  Mature
+  X
+  Blocked
+}
+
+enum ImageIngestionStatus {
+  Pending
+  Scanned
+  Error
+  Blocked
+  NotFound
+  PendingManualAssignment
+  Rescan
+}
+
+enum MediaType {
+  image
+  video
+  audio
+}
+
+model Image {
+  id                Int                     @id @default(autoincrement())
+  pHash             BigInt?
+  name              String?
+  url               String
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  meta              Json? // image generation params
+  hash              String?
+  height            Int?
+  width             Int?
+  type              MediaType               @default(image)
+  metadata          Json                    @default("{}") // file metadata
+  nsfw              NsfwLevel               @default(None)
+  nsfwLevel         Int                     @default(0)
+  nsfwLevelLocked   Boolean                 @default(false)
+  tosViolation      Boolean                 @default(false)
+  analysis          Json?
+  generationProcess ImageGenerationProcess?
+  featuredAt        DateTime?
+  postId            Int?
+  post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
+  needsReview       String?
+  hideMeta          Boolean                 @default(false)
+  index             Int?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  mimeType          String?
+  sizeKB            Int?
+  ingestion         ImageIngestionStatus    @default(Pending)
+  blockedFor        String?
+  scanJobs          Json?
+  assignedUser      User?                   @relation("profilePicture")
+  sortAt            DateTime                @default(now())
+  minor             Boolean                 @default(false)
+  poi               Boolean                 @default(false)
+  acceptableMinor   Boolean                 @default(false)
+
+  reports             ImageReport[]
+  reactions           ImageReaction[]
+  thread              Thread?
+  tags                TagsOnImageDetails[]
+  tagVotes            TagsOnImageVote[]
+  tagComposites       ImageTag[]
+  metrics             ImageMetric[]
+  stats               ImageStat?
+  modHelper           ImageModHelper?
+  resources           ImageResource[]
+  resourceHelper      ImageResourceHelper[]
+  engagements         ImageEngagement[]
+  collectionItems     CollectionItem[]
+  collections         Collection[]
+  connections         ImageConnection[]
+  UserProfile         UserProfile[]
+  clubCover           Club[]                @relation("coverImage")
+  clubHeader          Club[]                @relation("headerImage")
+  clubAvatar          Club[]                @relation("avatarImage")
+  clubTierCover       ClubTier[]
+  clubPostCoverImage  ClubPost[]
+  article             Article?
+  purchasableRewards  PurchasableReward[]
+  tools               ImageTool[]
+  techniques          ImageTechnique[]
+  CosmeticShopSection CosmeticShopSection[]
+  flags               ImageFlag[]
+  ratingRequests      ImageRatingRequest[]
+  tagsNew             TagsOnImageNew[]
+  imageResourceNew    ImageResourceNew[]
+  imageTagsForReview  ImageTagForReview[]
+
+  @@index([featuredAt])
+  @@index([postId], type: Hash)
+  @@index([userId, postId])
+  @@index([sortAt])
+}
+
+
+model ImageTagForReview {
+  imageId Int
+  image   Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId   Int
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
+
+model ImageFlag {
+  imageId       Int     @id
+  image         Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  promptNsfw    Boolean @default(false)
+  resourcesNsfw Boolean @default(false)
+}
+
+enum BlockImageReason {
+  Ownership
+  CSAM
+  TOS
+}
+
+
+model BlockedImage {
+  hash      BigInt           @id
+  reason    BlockImageReason @default(Ownership)
+  createdAt DateTime         @default(now())
+}
+
+model ImageConnection {
+  imageId    Int
+  image      Image  @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  entityId   Int
+  entityType String
+
+  @@id([imageId, entityType, entityId])
+  @@index([entityType, entityId])
+}
+
+enum ImageEngagementType {
+  Favorite
+  Hide
+}
+
+model ImageEngagement {
+  userId    Int
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId   Int
+  image     Image               @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  type      ImageEngagementType
+  createdAt DateTime            @default(now())
+
+  @@id([userId, imageId])
+  @@index([imageId])
+}
+
+
+model ImageResource {
+  id             Int           @id @default(autoincrement())
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  name           String?
+  hash           String?
+  imageId        Int
+  image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  strength       Int?
+  detected       Boolean       @default(false)
+
+  @@unique([modelVersionId, name, imageId])
+  @@index([imageId], type: Hash)
+  @@index([imageId, modelVersionId])
+}
+
+model ImageResourceNew {
+  imageId        Int
+  image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  strength       Int?
+  detected       Boolean      @default(false)
+
+  @@id([imageId, modelVersionId])
+  @@index([modelVersionId])
+}
+
+
+model ResourceOverride {
+  hash           String
+  modelVersionId Int
+  type           ModelHashType
+  createdAt      DateTime      @default(now())
+
+  @@id([hash])
+}
+
+
+model ImageMetric {
+  image             Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId           Int
+  timeframe         MetricTimeframe
+  likeCount         Int             @default(0)
+  dislikeCount      Int             @default(0)
+  laughCount        Int             @default(0)
+  cryCount          Int             @default(0)
+  heartCount        Int             @default(0)
+  commentCount      Int             @default(0)
+  collectedCount    Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
+  viewCount         Int             @default(0)
+  reactionCount     Int
+  updatedAt         DateTime        @default(now())
+
+  @@id([imageId, timeframe])
+}
+
+model ImageRatingRequest {
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId   Int
+  image     Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+  nsfwLevel Int
+  status    ReportStatus @default(Pending)
+  weight    Int          @default(1)
+
+  @@id([imageId, userId])
+}
+
+
+model CollectionMetric {
+  collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collectionId     Int
+  timeframe        MetricTimeframe
+  followerCount    Int             @default(0)
+  itemCount        Int             @default(0)
+  contributorCount Int             @default(0)
+  updatedAt        DateTime        @default(now())
+
+  @@id([collectionId, timeframe])
+}
+
+
+enum ImageOnModelType {
+  Example
+  Training
+}
+
+enum TagTarget {
+  Model
+  Question
+  Image
+  Post
+  Tag
+  Article
+  Bounty
+  Collection
+}
+
+enum TagType {
+  UserGenerated
+  Label
+  Moderation
+  System
+}
+
+model Tag {
+  id         Int         @id @default(autoincrement())
+  name       String      @db.Citext
+  color      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  target     TagTarget[]
+  type       TagType     @default(UserGenerated)
+  nsfw       NsfwLevel   @default(None)
+  nsfwLevel  Int         @default(1)
+  unlisted   Boolean     @default(false)
+  unfeatured Boolean     @default(false)
+  isCategory Boolean     @default(false)
+  adminOnly  Boolean     @default(false)
+
+  toTags               TagsOnTags[]         @relation("TagsOnTags_fromTag")
+  fromTags             TagsOnTags[]         @relation("TagsOnTags_toTag")
+  tagsOnModels         TagsOnModels[]
+  tagsOnModelsVotes    TagsOnModelsVote[]
+  tagsOnQuestion       TagsOnQuestions[]
+  tagsOnImageVotes     TagsOnImageVote[]
+  tagsOnPosts          TagsOnPost[]
+  tagsOnArticles       TagsOnArticle[]
+  tagsOnCollection     TagsOnCollection[]
+  tagsOnImageComposite ImageTag[]
+  tagsOnModelComposite ModelTag[]
+  usersEngaged         TagEngagement[]
+  metrics              TagMetric[]
+  stats                TagStat?
+  rank                 TagRank?
+  tagsOnPostComposite  PostTag[]
+  tagsOnPostVotes      TagsOnPostVote[]
+  tagsOnBounties       TagsOnBounty[]
+  CollectionItem       CollectionItem[]
+  tagsOnImage          TagsOnImageDetails[]
+
+  @@unique([name])
+}
+
+enum TagsOnTagsType {
+  Parent
+  Replace
+  Append
+}
+
+model TagsOnTags {
+  fromTagId Int
+  fromTag   Tag            @relation("TagsOnTags_fromTag", fields: [fromTagId], references: [id], onDelete: Cascade)
+  toTagId   Int
+  toTag     Tag            @relation("TagsOnTags_toTag", fields: [toTagId], references: [id], onDelete: Cascade)
+  type      TagsOnTagsType @default(Parent)
+  createdAt DateTime       @default(now())
+
+  @@id([fromTagId, toTagId])
+  @@index([toTagId], type: Hash)
+}
+
+model TagsOnModels {
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId   Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     Int
+  createdAt DateTime @default(now())
+
+  @@id([modelId, tagId])
+  @@index([modelId], type: Hash)
+}
+
+model TagsOnModelsVote {
+  modelId   Int
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
+  createdAt DateTime @default(now())
+
+  @@id([tagId, modelId, userId])
+  @@index([modelId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+
+model TagsOnQuestions {
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId Int
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId      Int
+
+  @@id([tagId, questionId])
+  @@index([questionId], type: Hash)
+}
+
+enum TagSource {
+  User
+  Rekognition
+  WD14
+  Computed
+  ImageHash
+  Hive
+  MinorDetection
+  HiveDemographics
+  Clavata
+  SpineRating
+}
+
+
+model TagsOnImageNew {
+  imageId    Int
+  image      Image @relation(fields: [imageId], references: [id])
+  tagId      Int
+  attributes Int   @db.SmallInt()
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
+
+model ShadowTagsOnImage {
+  imageId    Int
+  tagId      Int
+  confidence Int
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
+model TagsOnImageVote {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
+  createdAt DateTime @default(now())
+  applied   Boolean  @default(false)
+
+  @@id([tagId, imageId, userId])
+  @@index([imageId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+model TagsOnPost {
+  postId      Int
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  confidence  Int?
+  disabled    Boolean  @default(false)
+  needsReview Boolean  @default(false)
+
+  @@id([tagId, postId])
+  @@index([postId], type: Hash)
+}
+
+
+model TagsOnArticle {
+  articleId Int
+  article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, articleId])
+  @@index([articleId], type: Hash)
+}
+
+
+model TagsOnBounty {
+  bountyId  Int
+  bounty    Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([tagId, bountyId])
+  @@index([bountyId], type: Hash)
+}
+
+
+model TagsOnPostVote {
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vote      Int // 1 or -1
+  createdAt DateTime @default(now())
+
+  @@id([tagId, postId, userId])
+  @@index([postId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+
+model TagMetric {
+  tag           Tag             @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId         Int
+  timeframe     MetricTimeframe
+  modelCount    Int             @default(0)
+  imageCount    Int             @default(0)
+  postCount     Int             @default(0)
+  articleCount  Int             @default(0)
+  hiddenCount   Int             @default(0)
+  followerCount Int             @default(0)
+  updatedAt     DateTime        @default(now())
+
+  @@id([tagId, timeframe])
+}
+
+
+model SavedModel {
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId   Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([modelId, userId])
+}
+
+model RunStrategy {
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  partnerId      Int
+  partner        Partner      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  url            String
+  createdAt      DateTime     @default(now())
+
+  @@id([modelVersionId, partnerId])
+}
+
+enum PartnerPricingModel {
+  Duration
+  PerImage
+}
+
+model Partner {
+  id                 Int                 @id @default(autoincrement())
+  name               String
+  homepage           String?
+  tos                String?
+  privacy            String?
+  startupTime        Int? // Seconds
+  onDemand           Boolean
+  onDemandStrategy   String? // URL Template
+  onDemandTypes      ModelType[]         @default([])
+  onDemandBaseModels String[]            @default([])
+  stepsPerSecond     Int
+  pricingModel       PartnerPricingModel
+  price              String
+  about              String?
+  createdAt          DateTime            @default(now())
+  nsfw               Boolean             @default(false)
+  poi                Boolean             @default(false)
+  personal           Boolean             @default(false)
+  token              String?             @unique
+  tier               Int                 @default(0)
+  logo               String?
+  disabled           Boolean             @default(false)
+  runStrategies      RunStrategy[]
+}
+
+model KeyValue {
+  key   String @id
+  value Json
+}
+
+enum ApiKeyType {
+  System
+  User
+}
+
+model ApiKey {
+  id        Int        @id @default(autoincrement())
+  key       String     @unique
+  name      String
+  scope     KeyScope[]
+  userId    Int
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  type      ApiKeyType @default(User)
+  expiresAt DateTime?
+}
+
+model AdToken {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+}
+
+enum KeyScope {
+  Read
+  Write
+  Generate
+}
+
+model Comment {
+  id           Int      @id @default(autoincrement())
+  content      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  nsfw         Boolean  @default(false)
+  tosViolation Boolean  @default(false)
+  parent       Comment? @relation("ParentComments", fields: [parentId], references: [id], onDelete: Cascade)
+  parentId     Int?
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       Int
+  model        Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelId      Int
+  locked       Boolean? @default(false)
+  hidden       Boolean? @default(false)
+
+  comments  Comment[]         @relation("ParentComments")
+  reactions CommentReaction[]
+  reports   CommentReport[]
+
+  @@index([modelId], type: Hash)
+  @@index([parentId], type: Hash)
+}
+
+model CommentReaction {
+  id        Int             @id @default(autoincrement())
+  commentId Int
+  comment   Comment         @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([commentId, userId, reaction])
+}
+
+model UserNotificationSettings {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String
+  disabledAt DateTime @default(now())
+
+  @@unique([userId, type])
+}
+
+model Webhook {
+  id        Int      @id @default(autoincrement())
+  url       String
+  notifyOn  String[] // Manually specified and managed since Prisma enums are not supported in arrays
+  active    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([url, userId])
+}
+
+model Question {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  title            String   @db.Citext
+  content          String
+  selectedAnswerId Int?     @unique
+  selectedAnswer   Answer?  @relation("SelectedAnswer", fields: [selectedAnswerId], references: [id])
+
+  tags      TagsOnQuestions[]
+  reactions QuestionReaction[]
+  answers   Answer[]           @relation("Question")
+  metrics   QuestionMetric[]
+  rank      QuestionRank?
+  thread    Thread?
+}
+
+
+model QuestionMetric {
+  questionId   Int
+  question     Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  timeframe    MetricTimeframe
+  heartCount   Int             @default(0)
+  commentCount Int             @default(0)
+  answerCount  Int             @default(0)
+
+  @@id([questionId, timeframe])
+}
+
+model Answer {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  question   Question @relation("Question", fields: [questionId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  reactions AnswerReaction[]
+  metrics   AnswerMetric[]
+  answerFor Question?        @relation("SelectedAnswer")
+  votes     AnswerVote[]
+  rank      AnswerRank?
+  thread    Thread?
+}
+
+model AnswerVote {
+  answer    Answer   @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  answerId  Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  vote      Boolean?
+  createdAt DateTime @default(now())
+
+  @@id([answerId, userId])
+}
+
+
+model AnswerMetric {
+  answerId     Int
+  answer       Answer          @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  timeframe    MetricTimeframe
+  checkCount   Int
+  crossCount   Int
+  heartCount   Int
+  commentCount Int
+
+  @@id([answerId, timeframe])
+}
+
+model CommentV2 {
+  id           Int       @id @default(autoincrement())
+  content      String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  nsfw         Boolean   @default(false)
+  tosViolation Boolean   @default(false)
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId     Int
+  thread       Thread    @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
+  childThread  Thread?   @relation("childThread")
+  metadata     Json?
+  hidden       Boolean?  @default(false)
+  pinnedAt     DateTime?
+  reactionCount Int      @default(0)
+
+  reactions CommentV2Reaction[]
+  reports   CommentV2Report[]
+
+  @@index([threadId], type: Hash)
+  @@index([reactionCount(sort: Desc), id(sort: Desc)])
+}
+
+model Thread {
+  id             Int     @id @default(autoincrement())
+  locked         Boolean @default(false)
+  parentThreadId Int?
+  parentThread   Thread? @relation("childThread", fields: [parentThreadId], references: [id], onDelete: Cascade)
+  rootThreadId   Int?
+  rootThread     Thread? @relation("root", fields: [rootThreadId], references: [id], onDelete: Cascade)
+
+  questionId    Int?            @unique
+  question      Question?       @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  answerId      Int?            @unique
+  answer        Answer?         @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  imageId       Int?            @unique
+  image         Image?          @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  postId        Int?            @unique
+  post          Post?           @relation(fields: [postId], references: [id], onDelete: SetNull)
+  reviewId      Int?            @unique
+  review        ResourceReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  commentId     Int?            @unique
+  comment       CommentV2?      @relation("childThread", fields: [commentId], references: [id], onDelete: SetNull)
+  modelId       Int?            @unique
+  model         Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  articleId     Int?            @unique
+  article       Article?        @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  bountyId      Int?            @unique
+  bounty        Bounty?         @relation(fields: [bountyId], references: [id], onDelete: SetNull)
+  bountyEntryId Int?            @unique
+  bountyEntry   BountyEntry?    @relation(fields: [bountyEntryId], references: [id], onDelete: SetNull)
+  clubPostId    Int?            @unique
+  clubPost      ClubPost?       @relation(fields: [clubPostId], references: [id], onDelete: SetNull)
+
+  metadata Json @default("{}") // unused
+  commentCount Int      @default(0)
+
+  comments       CommentV2[] @relation("thread")
+  directChildren Thread[]    @relation("childThread")
+  children       Thread[]    @relation("root")
+
+  @@index([reviewId], type: Hash)
+  @@index([postId], type: Hash)
+  @@index([questionId], type: Hash)
+  @@index([imageId], type: Hash)
+  @@index([articleId], type: Hash)
+  @@index([rootThreadId], type: Hash)
+}
+
+model QuestionReaction {
+  id         Int             @id @default(autoincrement())
+  question   Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId Int
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+  reaction   ReviewReactions
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([questionId, userId, reaction])
+}
+
+model AnswerReaction {
+  id        Int             @id @default(autoincrement())
+  answer    Answer          @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  answerId  Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([answerId, userId, reaction])
+}
+
+model CommentV2Reaction {
+  id        Int             @id @default(autoincrement())
+  comment   CommentV2       @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  commentId Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([commentId, userId, reaction])
+}
+
+model ImageReaction {
+  id        Int             @id @default(autoincrement())
+  imageId   Int
+  image     Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([imageId, userId, reaction])
+}
+
+model PostReaction {
+  id        Int             @id @default(autoincrement())
+  postId    Int
+  post      Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([postId, userId, reaction])
+}
+
+model ArticleReaction {
+  id        Int             @id @default(autoincrement())
+  articleId Int
+  article   Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction  ReviewReactions
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([articleId, userId, reaction])
+}
+
+enum TagEngagementType {
+  Hide
+  Follow
+  // Depracated (don't use Allow)
+  Allow
+}
+
+model TagEngagement {
+  userId    Int
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag               @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  type      TagEngagementType
+  createdAt DateTime          @default(now())
+
+  @@id([userId, tagId])
+}
+
+enum DomainColor {
+  red
+  green
+  blue
+  all
+}
+
+model Announcement {
+  id        Int           @id @default(autoincrement())
+  title     String
+  content   String
+  emoji     String?
+  color     String        @default("blue")
+  domain    DomainColor[] @default([all])
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  startsAt  DateTime?
+  endsAt    DateTime?
+  metadata  Json?
+  disabled  Boolean       @default(false)
+}
+
+enum CosmeticType {
+  Badge
+  NamePlate
+  ContentDecoration
+  ProfileDecoration
+  ProfileBackground
+}
+
+enum CosmeticSource {
+  Trophy
+  Purchase
+  Event
+  Membership
+  Claim
+}
+
+model Cosmetic {
+  id                  Int                         @id @default(autoincrement())
+  name                String
+  description         String?
+  videoUrl            String?
+  type                CosmeticType
+  source              CosmeticSource
+  permanentUnlock     Boolean
+  data                Json
+  createdAt           DateTime?                   @default(now())
+  updatedAt           DateTime?                   @updatedAt
+  availableStart      DateTime?
+  availableEnd        DateTime?
+  availableQuery      String?
+  productId           String?
+  leaderboardId       String?
+  leaderboardPosition Int?
+  UserCosmetic        UserCosmetic[]
+  purchases           UserCosmeticShopPurchases[]
+  cosmeticShopItems   CosmeticShopItem[]
+}
+
+enum CosmeticEntity {
+  Model
+  Image
+  Article
+  Post
+}
+
+model UserCosmetic {
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cosmeticId     Int
+  cosmetic       Cosmetic        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  obtainedAt     DateTime        @default(now()) // createdAt
+  equippedAt     DateTime?
+  data           Json?
+  claimKey       String          @default("claimed")
+  equippedToId   Int?
+  equippedToType CosmeticEntity?
+  forId          Int? // Locks the cosmetic to a specific entity
+  forType        CosmeticEntity?
+
+  @@id([userId, cosmeticId, claimKey])
+}
+
+model CosmeticShopSection {
+  id          Int                       @id @default(autoincrement())
+  addedById   Int?
+  addedBy     User?                     @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  title       String
+  description String?
+  placement   Int                       @default(0)
+  meta        Json                      @default("{}")
+  imageId     Int?
+  image       Image?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  published   Boolean                   @default(true)
+  items       CosmeticShopSectionItem[]
+}
+
+model CosmeticShopItem {
+  id                Int       @id @default(autoincrement())
+  cosmeticId        Int
+  cosmetic          Cosmetic  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  unitAmount        Int
+  addedById         Int?
+  addedBy           User?     @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+  availableFrom     DateTime?
+  availableTo       DateTime?
+  availableQuantity Int?
+  meta              Json      @default("{}")
+  title             String
+  description       String?
+  archivedAt        DateTime?
+
+  purchases UserCosmeticShopPurchases[]
+  sections  CosmeticShopSectionItem[]
+}
+
+model CosmeticShopSectionItem {
+  shopItemId    Int
+  shopItem      CosmeticShopItem    @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  shopSectionId Int
+  shopSection   CosmeticShopSection @relation(fields: [shopSectionId], references: [id], onDelete: Cascade)
+  index         Int                 @default(0)
+  createdAt     DateTime            @default(now())
+
+  @@id([shopItemId, shopSectionId])
+}
+
+
+model UserCosmeticShopPurchases {
+  userId            Int
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cosmeticId        Int
+  cosmetic          Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  shopItemId        Int
+  shopItem          CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  unitAmount        Int
+  purchasedAt       DateTime         @default(now())
+  buzzTransactionId String           @id @default(cuid())
+  refunded          Boolean
+}
+
+enum BuzzAccountType {
+  user
+  generation
+  club
+  green
+  fakered
+}
+
+model BuzzClaim {
+  key                String          @id
+  title              String
+  description        String
+  transactionIdQuery String
+  amount             Int
+  availableStart     DateTime?
+  availableEnd       DateTime?
+  claimed            Int             @default(0)
+  limit              Int?
+  accountType        BuzzAccountType @default(user)
+  useMultiplier      Boolean         @default(false)
+}
+
+enum ArticleStatus {
+  Draft
+  Published
+  Unpublished
+  UnpublishedViolation
+}
+
+model Article {
+  id               Int           @id @default(autoincrement())
+  createdAt        DateTime?     @default(now())
+  updatedAt        DateTime?     @updatedAt
+  nsfw             Boolean       @default(false)
+  tosViolation     Boolean       @default(false)
+  metadata         Json?
+  title            String
+  content          String
+  cover            String?
+  coverId          Int?          @unique
+  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  publishedAt      DateTime?
+  userId           Int
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability     Availability  @default(Public)
+  unlisted         Boolean       @default(false)
+  nsfwLevel        Int           @default(0)
+  userNsfwLevel    Int           @default(0)
+  lockedProperties String[]      @default([])
+  status           ArticleStatus @default(Draft)
+
+  thread          Thread?
+  reactions       ArticleReaction[]
+  tags            TagsOnArticle[]
+  reports         ArticleReport[]
+  metrics         ArticleMetric[]
+  rank            ArticleRank?
+  stats           ArticleStat?
+  engagements     ArticleEngagement[]
+  associations    ModelAssociations[]
+  collectionItems CollectionItem[]
+}
+
+model PressMention {
+  id          Int      @id @default(autoincrement())
+  title       String
+  url         String
+  source      String
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+enum ArticleEngagementType {
+  Favorite
+  Hide
+}
+
+model ArticleEngagement {
+  userId    Int
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  articleId Int
+  article   Article               @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  type      ArticleEngagementType
+  createdAt DateTime              @default(now())
+
+  @@id([userId, articleId])
+  @@index([articleId], type: Hash)
+}
+
+
+model ArticleMetric {
+  article           Article         @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId         Int
+  timeframe         MetricTimeframe
+  likeCount         Int             @default(0)
+  dislikeCount      Int             @default(0)
+  laughCount        Int             @default(0)
+  cryCount          Int             @default(0)
+  heartCount        Int             @default(0)
+  commentCount      Int             @default(0)
+  viewCount         Int             @default(0)
+  favoriteCount     Int             @default(0)
+  hideCount         Int             @default(0)
+  collectedCount    Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
+
+  @@id([articleId, timeframe])
+}
+
+model Leaderboard {
+  id                 String  @id
+  index              Int
+  title              String
+  description        String
+  scoringDescription String
+  query              String
+  active             Boolean
+  public             Boolean
+
+  results LeaderboardResult[]
+}
+
+model LeaderboardResult {
+  leaderboardId String
+  leaderboard   Leaderboard @relation(fields: [leaderboardId], references: [id], onDelete: Cascade)
+  date          DateTime    @db.Date
+  position      Int
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score         Int         @default(0)
+  metrics       Json        @default("{}")
+  createdAt     DateTime    @default(now())
+
+  @@id([leaderboardId, date, position])
+  @@unique([leaderboardId, date, userId])
+  @@index([userId], type: Hash)
+}
+
+model ModelVersionExploration {
+  index          Int
+  name           String
+  prompt         String
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+
+  @@id([modelVersionId, name])
+}
+
+
+enum GenerationSchedulers {
+  EulerA
+  Euler
+  LMS
+  Heun
+  DPM2
+  DPM2A
+  DPM2SA
+  DPM2M
+  DPMSDE
+  DPMFast
+  DPMAdaptive
+  LMSKarras
+  DPM2Karras
+  DPM2AKarras
+  DPM2SAKarras
+  DPM2MKarras
+  DPMSDEKarras
+  DDIM
+}
+
+
+model GenerationServiceProvider {
+  name       String
+  schedulers GenerationSchedulers[]
+
+  @@id([name])
+}
+
+enum CollectionWriteConfiguration {
+  Private
+  Public
+  Review
+}
+
+enum CollectionReadConfiguration {
+  Private
+  Public
+  Unlisted
+}
+
+enum CollectionType {
+  Model
+  Article
+  Post
+  Image
+}
+
+enum CollectionMode {
+  Contest
+  Bookmark
+}
+
+model Collection {
+  id           Int                          @id @default(autoincrement())
+  createdAt    DateTime?                    @default(now())
+  updatedAt    DateTime?                    @updatedAt
+  name         String
+  description  String?
+  nsfw         Boolean?                     @default(false)
+  userId       Int
+  user         User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageId      Int?
+  image        Image?                       @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  write        CollectionWriteConfiguration @default(Private)
+  read         CollectionReadConfiguration  @default(Private)
+  type         CollectionType?
+  mode         CollectionMode?
+  metadata     Json                         @default("{}")
+  availability Availability                 @default(Public)
+  nsfwLevel    Int                          @default(0)
+
+  items        CollectionItem[]
+  contributors CollectionContributor[]
+  tags         TagsOnCollection[]
+  post         Post[]
+  reports      CollectionReport[]
+  rank         CollectionRank?
+  stats        CollectionStat?
+  metrics      CollectionMetric[]
+
+  @@index([userId])
+  @@index([type], type: Hash)
+  @@index([mode], type: Hash)
+}
+
+enum CollectionItemStatus {
+  ACCEPTED
+  REVIEW
+  REJECTED
+}
+
+model CollectionItem {
+  id           Int                   @id @default(autoincrement())
+  createdAt    DateTime?             @default(now())
+  updatedAt    DateTime?             @updatedAt
+  collectionId Int
+  collection   Collection            @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  articleId    Int?
+  article      Article?              @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  postId       Int?
+  post         Post?                 @relation(fields: [postId], references: [id], onDelete: Cascade)
+  imageId      Int?
+  image        Image?                @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  modelId      Int?
+  model        Model?                @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  addedById    Int?
+  addedBy      User?                 @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  reviewedById Int?
+  reviewedBy   User?                 @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  note         String?
+  status       CollectionItemStatus  @default(ACCEPTED)
+  randomId     Int?
+  tagId        Int?
+  tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
+  scores       CollectionItemScore[]
+
+  @@unique([collectionId, articleId, postId, imageId, modelId])
+  @@index([addedById], type: Hash)
+  @@index([imageId], type: Hash)
+  @@index([modelId], type: Hash)
+  @@index([collectionId], type: Hash)
+}
+
+model CollectionItemScore {
+  userId           Int
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collectionItemId Int
+  collectionItem   CollectionItem @relation(fields: [collectionItemId], references: [id], onDelete: Cascade)
+  score            Int
+  createdAt        DateTime       @default(now())
+
+  @@id([userId, collectionItemId])
+}
+
+enum CollectionContributorPermission {
+  VIEW
+  ADD
+  ADD_REVIEW
+  MANAGE
+}
+
+model CollectionContributor {
+  createdAt    DateTime?                         @default(now())
+  updatedAt    DateTime?                         @updatedAt
+  userId       Int
+  user         User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collectionId Int
+  collection   Collection                        @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  permissions  CollectionContributorPermission[]
+
+  @@id([userId, collectionId])
+  @@index([userId], type: Hash)
+}
+
+model TagsOnCollection {
+  collectionId   Int
+  tagId          Int
+  createdAt      DateTime?  @default(now())
+  collection     Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tag            Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  filterableOnly Boolean    @default(false)
+
+  @@id([tagId, collectionId])
+  @@index([collectionId], type: Hash)
+}
+
+enum HomeBlockType {
+  Collection
+  Announcement
+  Leaderboard
+  Social
+  Event
+  CosmeticShop
+  FeaturedModelVersion
+}
+
+model HomeBlock {
+  id        Int           @id @default(autoincrement())
+  createdAt DateTime?     @default(now())
+  updatedAt DateTime?     @updatedAt
+  userId    Int
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metadata  Json          @default("{}")
+  index     Int?
+  type      HomeBlockType
+  permanent Boolean       @default(false)
+  sourceId  Int?
+  source    HomeBlock?    @relation("Clones", fields: [sourceId], references: [id], onDelete: SetNull)
+  clones    HomeBlock[]   @relation("Clones")
+}
+
+model BuzzTip {
+  entityType String
+  entityId   Int
+  toUserId   Int
+  fromUserId Int
+  amount     Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@id([entityType, entityId, fromUserId])
+  @@index([toUserId])
+}
+
+enum Currency {
+  USD
+  BUZZ
+  USDC
+}
+
+enum BountyType {
+  ModelCreation
+  LoraCreation
+  EmbedCreation
+  DataSetCreation
+  DataSetCaption
+  ImageCreation
+  VideoCreation
+  Other
+}
+
+enum BountyMode {
+  Individual
+  Split
+}
+
+enum BountyEntryMode {
+  Open
+  BenefactorsOnly
+}
+
+model Bounty {
+  id                      Int             @id @default(autoincrement())
+  userId                  Int?
+  user                    User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name                    String // Locked after created
+  description             String
+  startsAt                DateTime        @db.Date
+  expiresAt               DateTime        @db.Date // Locked after created
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  details                 Json?
+  mode                    BountyMode      @default(Individual)
+  entryMode               BountyEntryMode @default(Open)
+  type                    BountyType
+  minBenefactorUnitAmount Int
+  maxBenefactorUnitAmount Int? // Default to initial benefactor's entry
+  entryLimit              Int             @default(1)
+  nsfw                    Boolean         @default(false)
+  poi                     Boolean         @default(false)
+  complete                Boolean         @default(false)
+  refunded                Boolean         @default(false)
+  availability            Availability    @default(Public)
+  nsfwLevel               Int             @default(0)
+  lockedProperties        String[]        @default([])
+
+  tags        TagsOnBounty[]
+  entries     BountyEntry[]
+  benefactors BountyBenefactor[]
+  engagements BountyEngagement[]
+  thread      Thread?
+  metrics     BountyMetric[]
+  rank        BountyRank?
+  stats       BountyStat?
+  reports     BountyReport[]
+
+  @@index([userId], type: Hash)
+  @@index([type])
+  @@index([mode])
+}
+
+model BountyEntry {
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bountyId    Int
+  bounty      Bounty   @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  locked      Boolean  @default(false)
+  description String?
+  nsfwLevel   Int      @default(0)
+
+  benefactors BountyBenefactor[]
+  thread      Thread?
+  reactions   BountyEntryReaction[]
+  metrics     BountyEntryMetric[]
+  rank        BountyEntryRank?
+  stats       BountyEntryStat?
+  reports     BountyEntryReport[]
+
+  @@index([bountyId], type: Hash)
+}
+
+model BountyEntryReaction {
+  bountyEntry   BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  bountyEntryId Int
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        Int
+  reaction      ReviewReactions
+  createdAt     DateTime        @default(now())
+
+  @@id([bountyEntryId, userId, reaction])
+  @@index([bountyEntryId], type: Hash)
+}
+
+model BountyBenefactor {
+  userId            Int
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId          Int
+  bounty            Bounty       @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  unitAmount        Int
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  awardedAt         DateTime?
+  awardedToId       Int?
+  awartedTo         BountyEntry? @relation(fields: [awardedToId], references: [id], onDelete: SetNull)
+  currency          Currency     @default(BUZZ)
+  buzzTransactionId String[]     @default([])
+
+  @@id([bountyId, userId])
+  @@index([bountyId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+enum BountyEngagementType {
+  Favorite
+  Track
+}
+
+model BountyEngagement {
+  userId    Int
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bountyId  Int
+  bounty    Bounty               @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  type      BountyEngagementType
+  createdAt DateTime             @default(now())
+
+  @@id([type, bountyId, userId])
+  @@index([bountyId])
+  @@index([userId], type: Hash)
+}
+
+
+model TipConnection {
+  transactionId String // guid
+  entityId      Int
+  entityType    String
+
+  @@id([entityType, entityId, transactionId])
+}
+
+
+model BountyMetric {
+  bounty          Bounty          @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  bountyId        Int
+  timeframe       MetricTimeframe
+  favoriteCount   Int             @default(0)
+  trackCount      Int             @default(0)
+  entryCount      Int             @default(0)
+  benefactorCount Int             @default(0)
+  unitAmountCount Int             @default(0)
+  commentCount    Int             @default(0)
+  updatedAt       DateTime        @default(now())
+
+  @@id([bountyId, timeframe])
+}
+
+
+model BountyEntryMetric {
+  bountyEntry       BountyEntry     @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  bountyEntryId     Int
+  timeframe         MetricTimeframe
+  likeCount         Int             @default(0)
+  dislikeCount      Int             @default(0)
+  laughCount        Int             @default(0)
+  cryCount          Int             @default(0)
+  heartCount        Int             @default(0)
+  unitAmountCount   Int             @default(0)
+  tippedCount       Int             @default(0)
+  tippedAmountCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
+
+  @@id([bountyEntryId, timeframe])
+}
+
+enum CsamReportType {
+  Image
+  TrainingData
+  GeneratedImage
+}
+
+model CsamReport {
+  id               Int            @id @default(autoincrement())
+  userId           Int?
+  createdAt        DateTime       @default(now())
+  reportedById     Int
+  reportSentAt     DateTime?
+  archivedAt       DateTime?
+  contentRemovedAt DateTime?
+  reportId         Int?
+  details          Json           @default("{}")
+  images           Json           @default("[]")
+  type             CsamReportType @default(Image)
+  // modelVersionIds  Int[]     @default([])
+}
+
+
+model Link {
+  id         Int      @id @default(autoincrement())
+  url        String
+  type       LinkType
+  entityId   Int
+  entityType String
+}
+
+enum Availability {
+  Public
+  Unsearchable // Public but Ignored from search results.
+  Private
+  EarlyAccess
+}
+
+model EntityAccess {
+  accessToId   Int
+  accessToType String
+  accessorId   Int
+  accessorType String
+  addedById    Int
+  addedBy      User     @relation(fields: [addedById], references: [id])
+  addedAt      DateTime @default(now())
+  permissions  Int      @default(0)
+  meta         Json?    @default("{}")
+
+  @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+enum EntityCollaboratorStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model EntityCollaborator {
+  entityType        EntityType
+  entityId          Int
+  userId            Int
+  user              User                     @relation("entityCollaboratorParticipant", fields: [userId], references: [id])
+  status            EntityCollaboratorStatus @default(Pending)
+  createdAt         DateTime                 @default(now())
+  createdBy         Int
+  creator           User                     @relation("entityCollaboratorCreator", fields: [createdBy], references: [id])
+  lastMessageSentAt DateTime?
+
+  @@id([entityType, entityId, userId])
+  @@index([userId, entityType, entityId]) // Include status in the migration.
+}
+
+
+model EcosystemCheckpoints {
+  id   Int    @id
+  name String
+}
+
+
+model GenerationBaseModel {
+  baseModel String @id
+}
+
+model Club {
+  id            Int     @id @default(autoincrement())
+  userId        Int
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coverImageId  Int?
+  coverImage    Image?  @relation(name: "coverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
+  headerImageId Int?
+  headerImage   Image?  @relation(name: "headerImage", fields: [headerImageId], references: [id], onDelete: SetNull)
+  avatarId      Int?
+  avatar        Image?  @relation(name: "avatarImage", fields: [avatarId], references: [id], onDelete: SetNull)
+  name          String
+  description   String
+  nsfw          Boolean @default(false)
+  billing       Boolean @default(true)
+  unlisted      Boolean @default(false)
+
+  tiers        ClubTier[]
+  memberships  ClubMembership[]
+  posts        ClubPost[]
+  adminInvites ClubAdminInvite[]
+  admins       ClubAdmin[]
+  metrics      ClubMetric[]
+  rank         ClubRank?
+  stats        ClubStat?
+
+  @@index([userId])
+}
+
+model ClubTier {
+  id                   Int              @id @default(autoincrement())
+  clubId               Int
+  club                 Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  unitAmount           Int
+  currency             Currency         @default(BUZZ)
+  name                 String
+  description          String
+  coverImageId         Int?
+  coverImage           Image?           @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  // Whether or not this will be displayed in the common options for
+  // memberships.
+  unlisted             Boolean          @default(false)
+  // Can only be joined to via a club Admin adding the user.
+  joinable             Boolean
+  memberships          ClubMembership[] @relation("activeClubTier")
+  downgradeMemberships ClubMembership[] @relation("downgradeClubTier")
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime?        @updatedAt
+  memberLimit          Int?
+  oneTimeFee           Boolean          @default(false)
+}
+
+enum ClubAdminPermission {
+  ManageMemberships
+  ManageTiers
+  ManagePosts
+  ManageClub
+  ManageResources
+  ViewRevenue
+  WithdrawRevenue
+}
+
+model ClubAdminInvite {
+  id          String                @id @default(cuid())
+  expiresAt   DateTime?
+  clubId      Int
+  club        Club                  @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  createdAt   DateTime              @default(now())
+  permissions ClubAdminPermission[]
+}
+
+model ClubAdmin {
+  userId      Int
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clubId      Int
+  club        Club                  @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  createdAt   DateTime              @default(now()) // When they accepted the invite
+  permissions ClubAdminPermission[]
+
+  @@id([clubId, userId])
+}
+
+model ClubMembership {
+  id                  Int       @id @default(autoincrement())
+  userId              Int
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clubId              Int
+  club                Club      @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  clubTierId          Int
+  clubTier            ClubTier  @relation(name: "activeClubTier", fields: [clubTierId], references: [id], onDelete: Cascade)
+  startedAt           DateTime
+  expiresAt           DateTime?
+  cancelledAt         DateTime?
+  nextBillingAt       DateTime
+  unitAmount          Int
+  currency            Currency  @default(BUZZ)
+  downgradeClubTierId Int?
+  downgradeClubTier   ClubTier? @relation(name: "downgradeClubTier", fields: [downgradeClubTierId], references: [id], onDelete: Cascade)
+  billingPausedAt     DateTime?
+
+  @@unique([userId, clubId])
+  @@index([userId])
+  @@index([clubId])
+}
+
+model ClubMembershipCharge {
+  id                  Int      @id @default(autoincrement())
+  userId              Int
+  clubId              Int
+  clubTierId          Int
+  chargedAt           DateTime
+  status              String?
+  invoiceId           String?
+  unitAmount          Int
+  unitAmountPurchased Int
+  currency            Currency @default(BUZZ)
+}
+
+model ClubPost {
+  id           Int      @id @default(autoincrement())
+  clubId       Int
+  club         Club     @relation(fields: [clubId], references: [id])
+  createdById  Int
+  createdBy    User     @relation(fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  membersOnly  Boolean
+  title        String?
+  description  String?
+  coverImageId Int?
+  coverImage   Image?   @relation(fields: [coverImageId], references: [id])
+  entityId     Int?
+  entityType   String?
+
+  thread    Thread?
+  reactions ClubPostReaction[]
+  metrics   ClubPostMetric[]
+}
+
+model ClubPostReaction {
+  id         Int             @id @default(autoincrement())
+  clubPostId Int
+  clubPost   ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reaction   ReviewReactions
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@unique([clubPostId, userId, reaction])
+}
+
+
+model ClubPostMetric {
+  clubPost     ClubPost        @relation(fields: [clubPostId], references: [id], onDelete: Cascade)
+  clubPostId   Int
+  timeframe    MetricTimeframe
+  likeCount    Int             @default(0)
+  dislikeCount Int             @default(0)
+  laughCount   Int             @default(0)
+  cryCount     Int             @default(0)
+  heartCount   Int             @default(0)
+
+  @@id([clubPostId, timeframe])
+}
+
+
+model ClubMetric {
+  club          Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  clubId        Int
+  timeframe     MetricTimeframe
+  memberCount   Int             @default(0)
+  clubPostCount Int             @default(0)
+  resourceCount Int             @default(0)
+
+  @@id([clubId, timeframe])
+}
+
+model Chat {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  hash      String   @unique // hash of asc-sorted userIds
+  ownerId   Int
+
+  owner User @relation(fields: [ownerId], references: [id])
+
+  chatMembers ChatMember[]
+  messages    ChatMessage[]
+  reports     ChatReport[]
+}
+
+enum ChatMemberStatus {
+  Invited
+  Joined
+  Ignored
+  Left
+  Kicked
+}
+
+model ChatMember {
+  id                  Int              @id @default(autoincrement())
+  createdAt           DateTime         @default(now()) // doubles as invited_at
+  userId              Int
+  chatId              Int
+  isOwner             Boolean          @default(false)
+  isMuted             Boolean          @default(false)
+  status              ChatMemberStatus
+  lastViewedMessageId Int?
+  joinedAt            DateTime?
+  ignoredAt           DateTime?
+  leftAt              DateTime? // do we need a rejoin option?
+  kickedAt            DateTime?
+  unkickedAt          DateTime? // TODO maybe remove
+
+  user              User         @relation(fields: [userId], references: [id])
+  chat              Chat         @relation(fields: [chatId], references: [id])
+  lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
+
+  @@index([userId, status, isMuted])
+}
+
+enum ChatMessageType {
+  Markdown
+  Image
+  Video
+  Audio
+  Embed
+}
+
+model ChatMessage {
+  id                 Int             @id @default(autoincrement())
+  createdAt          DateTime        @default(now())
+  userId             Int // if -1, isSystemMessage
+  chatId             Int
+  content            String
+  contentType        ChatMessageType @default(Markdown)
+  referenceMessageId Int?
+  editedAt           DateTime?
+  // TODO deletedAt DateTime
+
+  user             User         @relation(fields: [userId], references: [id])
+  chat             Chat         @relation(fields: [chatId], references: [id])
+  referenceMessage ChatMessage? @relation(name: "referenceMessage", fields: [referenceMessageId], references: [id])
+
+  referenceMessages  ChatMessage[] @relation("referenceMessage")
+  lastViewedMessages ChatMember[]
+}
+
+model BuildGuide {
+  id           Int      @id @default(autoincrement())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  name         String
+  message      String
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  components   Json
+  capabilities Json
+}
+
+enum PurchasableRewardUsage {
+  SingleUse
+  MultiUse
+}
+
+model PurchasableReward {
+  id             Int                    @id @default(autoincrement())
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  title          String
+  unitPrice      Int
+  about          String
+  redeemDetails  String
+  termsOfUse     String
+  usage          PurchasableRewardUsage
+  codes          String[]
+  archived       Boolean                @default(false)
+  availableFrom  DateTime?
+  availableTo    DateTime?
+  availableCount Int?
+  addedById      Int?
+  addedBy        User?                  @relation(fields: [addedById], references: [id])
+  coverImageId   Int?
+  coverImage     Image?                 @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  purchases      UserPurchasedRewards[]
+}
+
+model UserPurchasedRewards {
+  buzzTransactionId   String             @id
+  userId              Int?
+  user                User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  purchasableRewardId Int?
+  purchasableReward   PurchasableReward? @relation(fields: [purchasableRewardId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  // We should store the product name & details in the meta at the time or purchase in case the reward is later on deleted - will be a good safeguard
+  meta                Json               @default("{}")
+  code                String
+}
+
+enum EntityType {
+  Image
+  Post
+  Article
+  Bounty
+  BountyEntry
+  ModelVersion
+  Model
+  Collection
+  Comment
+  CommentV2
+  User
+  UserProfile
+  ResourceReview
+  ChatMessage
+}
+
+enum JobQueueType {
+  CleanUp
+  UpdateMetrics
+  UpdateNsfwLevel
+  UpdateSearchIndex
+  CleanIfEmpty
+  ModerationRequest
+}
+
+model JobQueue {
+  type       JobQueueType
+  entityType EntityType
+  entityId   Int
+  createdAt  DateTime     @default(now())
+
+  @@id([entityType, entityId, type])
+}
+
+enum VaultItemStatus {
+  Pending
+  Stored
+  Failed
+}
+
+model VaultItem {
+  id             Int             @id @default(autoincrement())
+  vaultId        Int
+  vault          Vault           @relation(fields: [vaultId], references: [userId], onDelete: Cascade)
+  status         VaultItemStatus @default(Pending)
+  // We'll store some file details here as a JSON array of objects
+  files          Json            @default("[]")
+  // These are not FKs because they will tie to the downloadable file even after the model/version is deleted
+  modelVersionId Int
+  modelId        Int
+  modelName      String
+  versionName    String
+  creatorId      Int?
+  creator        User?           @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  creatorName    String
+  type           ModelType
+  baseModel      String
+  category       String
+  createdAt      DateTime        @default(now())
+  addedAt        DateTime        @default(now())
+  refreshedAt    DateTime?
+  modelSizeKb    Int
+  detailsSizeKb  Int
+  imagesSizeKb   Int
+  notes          String?
+  meta           Json            @default("{}")
+
+  @@index([vaultId], type: Hash)
+  @@index([modelVersionId], type: Hash)
+}
+
+model Vault {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storageKb Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  meta      Json     @default("{}")
+
+  items VaultItem[]
+
+  @@id([userId])
+}
+
+enum RedeemableCodeType {
+  Buzz
+  Membership
+}
+
+model RedeemableCode {
+  code          String             @id @default(cuid())
+  unitValue     Int
+  userId        Int?
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt     DateTime           @default(now())
+  type          RedeemableCodeType
+  expiresAt     DateTime?
+  redeemedAt    DateTime?
+  transactionId String?
+  priceId       String?
+  price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
+}
+
+enum ToolType {
+  Image
+  Video
+  MotionCapture
+  Upscalers
+  Audio
+  Compute
+  GameEngines
+  Editor
+  LLM
+}
+
+model Tool {
+  id          Int         @id @default(autoincrement())
+  name        String
+  icon        String?
+  createdAt   DateTime    @default(now())
+  enabled     Boolean     @default(true)
+  unlisted    Boolean     @default(false)
+  type        ToolType
+  domain      String?
+  imageTools  ImageTool[]
+  priority    Int?
+  description String?
+  supported   Boolean     @default(false)
+  company     String?
+  metadata    Json        @default("{}")
+  alias       String?
+}
+
+model ImageTool {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  toolId    Int
+  tool      Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@id([imageId, toolId])
+  @@index([toolId])
+}
+
+enum TechniqueType {
+  Image
+  Video
+}
+
+model Technique {
+  id              Int              @id @default(autoincrement())
+  name            String
+  createdAt       DateTime         @default(now())
+  enabled         Boolean          @default(true)
+  type            TechniqueType
+  imageTechniques ImageTechnique[]
+}
+
+model ImageTechnique {
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  techniqueId Int
+  technique   Technique @relation(fields: [techniqueId], references: [id], onDelete: Cascade)
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@id([imageId, techniqueId])
+  @@index([techniqueId])
+}
+
+model DonationGoal {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  goalAmount     Int
+  paidAmount     Int           @default(0)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  isEarlyAccess  Boolean       @default(false)
+  active         Boolean       @default(true)
+
+  donations Donation[]
+}
+
+model Donation {
+  id                Int          @id @default(autoincrement())
+  userId            Int
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  donationGoalId    Int
+  donationGoal      DonationGoal @relation(fields: [donationGoalId], references: [id], onDelete: Cascade)
+  amount            Int
+  buzzTransactionId String
+  notes             String?
+  createdAt         DateTime     @default(now())
+}
+
+model Blocklist {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  type      String
+  data      String[]
+}
+
+enum AppealStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model Appeal {
+  id                Int          @id @default(autoincrement())
+  userId            Int
+  user              User         @relation("submittedAppeals", fields: [userId], references: [id], onDelete: Cascade)
+  entityType        EntityType
+  entityId          Int
+  status            AppealStatus @default(Pending)
+  appealMessage     String
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  resolvedAt        DateTime?
+  resolvedBy        Int?
+  resolvedByUser    User?        @relation("resolvedAppeals", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  resolvedMessage   String?
+  internalNotes     String?
+  buzzTransactionId String?
+
+  @@unique([entityType, entityId, userId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum AuctionType {
+  Model
+  Image
+  Collection
+  Article
+}
+
+model AuctionBase {
+  id           Int         @id @default(autoincrement())
+  type         AuctionType
+  ecosystem    String? // like Pony, SDXL, etc
+  name         String
+  slug         String
+  quantity     Int // propagates to individual item
+  minPrice     Int // propagates to individual item
+  // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
+  active       Boolean     @default(true)
+  runForDays   Int         @default(1)
+  validForDays Int         @default(1)
+  description  String?
+
+  auctions      Auction[]
+  recurringBids BidRecurring[]
+
+  @@unique([type, ecosystem])
+  @@unique([name])
+  @@unique([slug])
+}
+
+model Auction {
+  id            Int         @id @default(autoincrement())
+  auctionBaseId Int
+  auctionBase   AuctionBase @relation(fields: [auctionBaseId], references: [id], onDelete: Cascade)
+  startAt       DateTime
+  endAt         DateTime
+  quantity      Int
+  minPrice      Int
+  validFrom     DateTime
+  validTo       DateTime
+  finalized     Boolean     @default(false)
+  // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
+  // sold Int
+
+  bids Bid[]
+
+  @@unique([auctionBaseId, startAt])
+}
+
+model Bid {
+  id             Int      @id @default(autoincrement())
+  auctionId      Int
+  auction        Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId       Int
+  amount         Int
+  createdAt      DateTime @default(now())
+  deleted        Boolean  @default(false)
+  transactionIds String[] @default([])
+  isRefunded     Boolean  @default(false)
+  fromRecurring  Boolean  @default(false)
+
+  @@unique([auctionId, userId, entityId])
+}
+
+model BidRecurring {
+  id            Int         @id @default(autoincrement())
+  auctionBaseId Int
+  auctionBase   AuctionBase @relation(fields: [auctionBaseId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId      Int
+  amount        Int
+  createdAt     DateTime    @default(now())
+  startAt       DateTime
+  endAt         DateTime?
+  isPaused      Boolean     @default(false)
+
+  @@unique([auctionBaseId, userId, entityId])
+}
+
+model FeaturedModelVersion {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  validFrom      DateTime
+  validTo        DateTime
+  position       Int
+}
+
+model CoveredCheckpoint {
+  model_id     Int
+  version_id   Int
+  model        Model        @relation(fields: [model_id], references: [id], onDelete: Cascade)
+  modelVersion ModelVersion @relation(fields: [version_id], references: [id], onDelete: Cascade)
+
+  @@id([model_id, version_id])
+}
+
+enum ModerationRuleAction {
+  Approve
+  Block
+  Hold
+}
+
+model ModerationRule {
+  id         Int                  @id @default(autoincrement())
+  entityType EntityType
+  definition Json
+  action     ModerationRuleAction
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  enabled    Boolean              @default(true)
+  order      Int?
+  reason     String?
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+enum ChangelogType {
+  Feature
+  Bugfix
+  Policy
+  Update
+  Incident
+}
+
+model Changelog {
+  id          Int           @id @default(autoincrement())
+  title       String
+  content     String
+  link        String? // commit or article URL
+  cta         String? // if feature, link to it
+  effectiveAt DateTime
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  type        ChangelogType
+  tags        String[]      @default([])
+  disabled    Boolean       @default(false)
+  titleColor  String?
+  sticky      Boolean       @default(false)
+  domain      DomainColor[] @default([all])
+}
+
+model NewOrderPlayer {
+  userId        Int              @id @unique
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rankType      NewOrderRankType
+  rank          NewOrderRank     @relation(fields: [rankType], references: [type], onDelete: Cascade)
+  startAt       DateTime         @default(now())
+  exp           Int              @default(0)
+  fervor        Int              @default(0)
+  smiteReceived NewOrderSmite[]  @relation("smiteReceived")
+  smiteGiven    NewOrderSmite[]  @relation("smiteGiven")
+}
+
+enum NewOrderRankType {
+  Acolyte
+  Knight
+  Templar
+}
+
+model NewOrderRank {
+  type      NewOrderRankType @id
+  name      String
+  minExp    Int
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  iconUrl   String?
+  players   NewOrderPlayer[]
+}
+
+model NewOrderSmite {
+  id             Int            @id @default(autoincrement())
+  targetPlayerId Int
+  targetPlayer   NewOrderPlayer @relation("smiteReceived", fields: [targetPlayerId], references: [userId], onDelete: Cascade)
+  givenById      Int
+  givenBy        NewOrderPlayer @relation("smiteGiven", fields: [givenById], references: [userId], onDelete: Cascade)
+  size           Int
+  remaining      Int
+  reason         String?
+  createdAt      DateTime       @default(now())
+  cleansedAt     DateTime?
+  cleansedReason String?
+}
+
+model ReportAutomated {
+  id        Int      @id @default(autoincrement())
+  reportId  Int      @unique
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+}
+
+
+model RestrictedBaseModels {
+  baseModel String @id
+}
+
+/// @view
+
+model QuestionRank {
+  questionId              Int      @id
+  question                Question @relation(fields: [questionId], references: [id], onDelete: NoAction)
+  answerCountDay          Int
+  answerCountWeek         Int
+  answerCountMonth        Int
+  answerCountYear         Int
+  answerCountAllTime      Int
+  heartCountDay           Int
+  heartCountWeek          Int
+  heartCountMonth         Int
+  heartCountYear          Int
+  heartCountAllTime       Int
+  commentCountDay         Int
+  commentCountWeek        Int
+  commentCountMonth       Int
+  commentCountYear        Int
+  commentCountAllTime     Int
+  answerCountDayRank      Int
+  answerCountWeekRank     Int
+  answerCountMonthRank    Int
+  answerCountYearRank     Int
+  answerCountAllTimeRank  Int
+  heartCountDayRank       Int
+  heartCountWeekRank      Int
+  heartCountMonthRank     Int
+  heartCountYearRank      Int
+  heartCountAllTimeRank   Int
+  commentCountDayRank     Int
+  commentCountWeekRank    Int
+  commentCountMonthRank   Int
+  commentCountYearRank    Int
+  commentCountAllTimeRank Int
+}
+
+/// @view
+
+model AnswerRank {
+  answerId                Int    @id
+  answer                  Answer @relation(fields: [answerId], references: [id], onDelete: NoAction)
+  checkCountDay           Int
+  checkCountWeek          Int
+  checkCountMonth         Int
+  checkCountYear          Int
+  checkCountAllTime       Int
+  crossCountDay           Int
+  crossCountWeek          Int
+  crossCountMonth         Int
+  crossCountYear          Int
+  crossCountAllTime       Int
+  heartCountDay           Int
+  heartCountWeek          Int
+  heartCountMonth         Int
+  heartCountYear          Int
+  heartCountAllTime       Int
+  commentCountDay         Int
+  commentCountWeek        Int
+  commentCountMonth       Int
+  commentCountYear        Int
+  commentCountAllTime     Int
+  checkCountDayRank       Int
+  checkCountWeekRank      Int
+  checkCountMonthRank     Int
+  checkCountYearRank      Int
+  checkCountAllTimeRank   Int
+  crossCountDayRank       Int
+  crossCountWeekRank      Int
+  crossCountMonthRank     Int
+  crossCountYearRank      Int
+  crossCountAllTimeRank   Int
+  heartCountDayRank       Int
+  heartCountWeekRank      Int
+  heartCountMonthRank     Int
+  heartCountYearRank      Int
+  heartCountAllTimeRank   Int
+  commentCountDayRank     Int
+  commentCountWeekRank    Int
+  commentCountMonthRank   Int
+  commentCountYearRank    Int
+  commentCountAllTimeRank Int
+}
+
+/// @view
+
+model ModelReportStat {
+  model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
+  modelId                  Int   @id
+  tosViolationPending      Int
+  tosViolationUnactioned   Int
+  tosViolationActioned     Int
+  nsfwPending              Int
+  nsfwUnactioned           Int
+  nsfwActioned             Int
+  ownershipPending         Int
+  ownershipProcessing      Int
+  ownershipActioned        Int
+  ownershipUnactioned      Int
+  adminAttentionPending    Int
+  adminAttentionActioned   Int
+  adminAttentionUnactioned Int
+  claimPending             Int
+  claimActioned            Int
+  claimUnactioned          Int
+}
+
+/// @view
+
+model ArticleStat {
+  articleId                Int     @id
+  article                  Article @relation(fields: [articleId], references: [id], onDelete: NoAction)
+  cryCountDay              Int     @default(0)
+  cryCountWeek             Int     @default(0)
+  cryCountMonth            Int     @default(0)
+  cryCountYear             Int     @default(0)
+  cryCountAllTime          Int     @default(0)
+  dislikeCountDay          Int     @default(0)
+  dislikeCountWeek         Int     @default(0)
+  dislikeCountMonth        Int     @default(0)
+  dislikeCountYear         Int     @default(0)
+  dislikeCountAllTime      Int     @default(0)
+  heartCountDay            Int     @default(0)
+  heartCountWeek           Int     @default(0)
+  heartCountMonth          Int     @default(0)
+  heartCountYear           Int     @default(0)
+  heartCountAllTime        Int     @default(0)
+  laughCountDay            Int     @default(0)
+  laughCountWeek           Int     @default(0)
+  laughCountMonth          Int     @default(0)
+  laughCountYear           Int     @default(0)
+  laughCountAllTime        Int     @default(0)
+  likeCountDay             Int     @default(0)
+  likeCountWeek            Int     @default(0)
+  likeCountMonth           Int     @default(0)
+  likeCountYear            Int     @default(0)
+  likeCountAllTime         Int     @default(0)
+  commentCountDay          Int     @default(0)
+  commentCountWeek         Int     @default(0)
+  commentCountMonth        Int     @default(0)
+  commentCountYear         Int     @default(0)
+  commentCountAllTime      Int     @default(0)
+  reactionCountDay         Int     @default(0)
+  reactionCountWeek        Int     @default(0)
+  reactionCountMonth       Int     @default(0)
+  reactionCountYear        Int     @default(0)
+  reactionCountAllTime     Int     @default(0)
+  viewCountDay             Int     @default(0)
+  viewCountWeek            Int     @default(0)
+  viewCountMonth           Int     @default(0)
+  viewCountYear            Int     @default(0)
+  viewCountAllTime         Int     @default(0)
+  favoriteCountDay         Int     @default(0)
+  favoriteCountWeek        Int     @default(0)
+  favoriteCountMonth       Int     @default(0)
+  favoriteCountYear        Int     @default(0)
+  favoriteCountAllTime     Int     @default(0)
+  collectedCountDay        Int     @default(0)
+  collectedCountWeek       Int     @default(0)
+  collectedCountMonth      Int     @default(0)
+  collectedCountYear       Int     @default(0)
+  collectedCountAllTime    Int     @default(0)
+  hideCountDay             Int     @default(0)
+  hideCountWeek            Int     @default(0)
+  hideCountMonth           Int     @default(0)
+  hideCountYear            Int     @default(0)
+  hideCountAllTime         Int     @default(0)
+  tippedCountDay           Int     @default(0)
+  tippedCountWeek          Int     @default(0)
+  tippedCountMonth         Int     @default(0)
+  tippedCountYear          Int     @default(0)
+  tippedCountAllTime       Int     @default(0)
+  tippedAmountCountDay     Int     @default(0)
+  tippedAmountCountWeek    Int     @default(0)
+  tippedAmountCountMonth   Int     @default(0)
+  tippedAmountCountYear    Int     @default(0)
+  tippedAmountCountAllTime Int     @default(0)
+}
+
+/// @view
+
+model ArticleRank {
+  articleId                    Int     @id
+  article                      Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  cryCountDayRank              Int     @default(0)
+  cryCountWeekRank             Int     @default(0)
+  cryCountMonthRank            Int     @default(0)
+  cryCountYearRank             Int     @default(0)
+  cryCountAllTimeRank          Int     @default(0)
+  dislikeCountDayRank          Int     @default(0)
+  dislikeCountWeekRank         Int     @default(0)
+  dislikeCountMonthRank        Int     @default(0)
+  dislikeCountYearRank         Int     @default(0)
+  dislikeCountAllTimeRank      Int     @default(0)
+  heartCountDayRank            Int     @default(0)
+  heartCountWeekRank           Int     @default(0)
+  heartCountMonthRank          Int     @default(0)
+  heartCountYearRank           Int     @default(0)
+  heartCountAllTimeRank        Int     @default(0)
+  laughCountDayRank            Int     @default(0)
+  laughCountWeekRank           Int     @default(0)
+  laughCountMonthRank          Int     @default(0)
+  laughCountYearRank           Int     @default(0)
+  laughCountAllTimeRank        Int     @default(0)
+  likeCountDayRank             Int     @default(0)
+  likeCountWeekRank            Int     @default(0)
+  likeCountMonthRank           Int     @default(0)
+  likeCountYearRank            Int     @default(0)
+  likeCountAllTimeRank         Int     @default(0)
+  commentCountDayRank          Int     @default(0)
+  commentCountWeekRank         Int     @default(0)
+  commentCountMonthRank        Int     @default(0)
+  commentCountYearRank         Int     @default(0)
+  commentCountAllTimeRank      Int     @default(0)
+  reactionCountDayRank         Int     @default(0)
+  reactionCountWeekRank        Int     @default(0)
+  reactionCountMonthRank       Int     @default(0)
+  reactionCountYearRank        Int     @default(0)
+  reactionCountAllTimeRank     Int     @default(0)
+  viewCountDayRank             Int     @default(0)
+  viewCountWeekRank            Int     @default(0)
+  viewCountMonthRank           Int     @default(0)
+  viewCountYearRank            Int     @default(0)
+  viewCountAllTimeRank         Int     @default(0)
+  favoriteCountDayRank         Int     @default(0)
+  favoriteCountWeekRank        Int     @default(0)
+  favoriteCountMonthRank       Int     @default(0)
+  favoriteCountYearRank        Int     @default(0)
+  favoriteCountAllTimeRank     Int     @default(0)
+  hideCountDayRank             Int     @default(0)
+  hideCountWeekRank            Int     @default(0)
+  hideCountMonthRank           Int     @default(0)
+  hideCountYearRank            Int     @default(0)
+  hideCountAllTimeRank         Int     @default(0)
+  collectedCountDayRank        Int     @default(0)
+  collectedCountWeekRank       Int     @default(0)
+  collectedCountMonthRank      Int     @default(0)
+  collectedCountYearRank       Int     @default(0)
+  collectedCountAllTimeRank    Int     @default(0)
+  tippedCountDayRank           Int     @default(0)
+  tippedCountWeekRank          Int     @default(0)
+  tippedCountMonthRank         Int     @default(0)
+  tippedCountYearRank          Int     @default(0)
+  tippedCountAllTimeRank       Int     @default(0)
+  tippedAmountCountDayRank     Int     @default(0)
+  tippedAmountCountWeekRank    Int     @default(0)
+  tippedAmountCountMonthRank   Int     @default(0)
+  tippedAmountCountYearRank    Int     @default(0)
+  tippedAmountCountAllTimeRank Int     @default(0)
+}
+
+/// @view
+model UserStat {
+  user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                   Int   @id
+  uploadCountDay           Int
+  uploadCountWeek          Int
+  uploadCountMonth         Int
+  uploadCountYear          Int
+  uploadCountAllTime       Int
+  reviewCountDay           Int
+  reviewCountWeek          Int
+  reviewCountMonth         Int
+  reviewCountYear          Int
+  reviewCountAllTime       Int
+  downloadCountDay         Int
+  downloadCountWeek        Int
+  downloadCountMonth       Int
+  downloadCountYear        Int
+  downloadCountAllTime     Int
+  generationCountDay       Int
+  generationCountWeek      Int
+  generationCountMonth     Int
+  generationCountYear      Int
+  generationCountAllTime   Int
+  ratingCountDay           Int
+  ratingCountWeek          Int
+  ratingCountMonth         Int
+  ratingCountYear          Int
+  ratingCountAllTime       Int
+  followingCountDay        Int
+  followingCountWeek       Int
+  followingCountMonth      Int
+  followingCountYear       Int
+  followingCountAllTime    Int
+  followerCountDay         Int
+  followerCountWeek        Int
+  followerCountMonth       Int
+  followerCountYear        Int
+  followerCountAllTime     Int
+  hiddenCountDay           Int
+  hiddenCountWeek          Int
+  hiddenCountMonth         Int
+  hiddenCountYear          Int
+  hiddenCountAllTime       Int
+  ratingDay                Float
+  ratingWeek               Float
+  ratingMonth              Float
+  ratingYear               Float
+  ratingAllTime            Float
+  favoriteCountDay         Int
+  favoriteCountWeek        Int
+  favoriteCountMonth       Int
+  favoriteCountYear        Int
+  favoriteCountAllTime     Int
+  answerCountDay           Int
+  answerCountWeek          Int
+  answerCountMonth         Int
+  answerCountYear          Int
+  answerCountAllTime       Int
+  answerAcceptCountDay     Int
+  answerAcceptCountWeek    Int
+  answerAcceptCountMonth   Int
+  answerAcceptCountYear    Int
+  answerAcceptCountAllTime Int
+  thumbsUpCountDay         Int
+  thumbsUpCountWeek        Int
+  thumbsUpCountMonth       Int
+  thumbsUpCountYear        Int
+  thumbsUpCountAllTime     Int
+  thumbsDownCountDay       Int
+  thumbsDownCountWeek      Int
+  thumbsDownCountMonth     Int
+  thumbsDownCountYear      Int
+  thumbsDownCountAllTime   Int
+  reactionCountDay         Int
+  reactionCountWeek        Int
+  reactionCountMonth       Int
+  reactionCountYear        Int
+  reactionCountAllTime     Int
+}
+
+/// @view
+
+model UserRank {
+  user                         User    @relation(fields: [userId], references: [id], onDelete: NoAction)
+  userId                       Int     @id
+  downloadCountDayRank         Int     @default(0)
+  downloadCountWeekRank        Int     @default(0)
+  downloadCountMonthRank       Int     @default(0)
+  downloadCountYearRank        Int     @default(0)
+  downloadCountAllTimeRank     Int     @default(0)
+  ratingCountDayRank           Int     @default(0)
+  ratingCountWeekRank          Int     @default(0)
+  ratingCountMonthRank         Int     @default(0)
+  ratingCountYearRank          Int     @default(0)
+  ratingCountAllTimeRank       Int     @default(0)
+  followerCountDayRank         Int     @default(0)
+  followerCountWeekRank        Int     @default(0)
+  followerCountMonthRank       Int     @default(0)
+  followerCountYearRank        Int     @default(0)
+  followerCountAllTimeRank     Int     @default(0)
+  ratingDayRank                Int     @default(0)
+  ratingWeekRank               Int     @default(0)
+  ratingMonthRank              Int     @default(0)
+  ratingYearRank               Int     @default(0)
+  ratingAllTimeRank            Int     @default(0)
+  favoriteCountDayRank         Int     @default(0)
+  favoriteCountWeekRank        Int     @default(0)
+  favoriteCountMonthRank       Int     @default(0)
+  favoriteCountYearRank        Int     @default(0)
+  favoriteCountAllTimeRank     Int     @default(0)
+  answerCountDayRank           Int     @default(0)
+  answerCountWeekRank          Int     @default(0)
+  answerCountMonthRank         Int     @default(0)
+  answerCountYearRank          Int     @default(0)
+  answerCountAllTimeRank       Int     @default(0)
+  answerAcceptCountDayRank     Int     @default(0)
+  answerAcceptCountWeekRank    Int     @default(0)
+  answerAcceptCountMonthRank   Int     @default(0)
+  answerAcceptCountYearRank    Int     @default(0)
+  answerAcceptCountAllTimeRank Int     @default(0)
+  thumbsUpCountDayRank         Int     @default(0)
+  thumbsUpCountWeekRank        Int     @default(0)
+  thumbsUpCountMonthRank       Int     @default(0)
+  thumbsUpCountYearRank        Int     @default(0)
+  thumbsUpCountAllTimeRank     Int     @default(0)
+  thumbsDownCountDayRank       Int     @default(0)
+  thumbsDownCountWeekRank      Int     @default(0)
+  thumbsDownCountMonthRank     Int     @default(0)
+  thumbsDownCountYearRank      Int     @default(0)
+  thumbsDownCountAllTimeRank   Int     @default(0)
+  leaderboardRank              Int?
+  leaderboardId                String?
+  leaderboardTitle             String?
+  leaderboardCosmetic          String?
+}
+
+/// @view
+
+model TagStat {
+  tag                  Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagId                Int @id
+  followerCountDay     Int
+  followerCountWeek    Int
+  followerCountMonth   Int
+  followerCountYear    Int
+  followerCountAllTime Int
+  hiddenCountDay       Int
+  hiddenCountWeek      Int
+  hiddenCountMonth     Int
+  hiddenCountYear      Int
+  hiddenCountAllTime   Int
+  modelCountDay        Int
+  modelCountWeek       Int
+  modelCountMonth      Int
+  modelCountYear       Int
+  modelCountAllTime    Int
+  imageCountDay        Int
+  imageCountWeek       Int
+  imageCountMonth      Int
+  imageCountYear       Int
+  imageCountAllTime    Int
+  postCountDay         Int
+  postCountWeek        Int
+  postCountMonth       Int
+  postCountYear        Int
+  postCountAllTime     Int
+}
+
+/// @view
+
+model TagRank {
+  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagId                    Int @id
+  followerCountDayRank     Int @default(0)
+  followerCountWeekRank    Int @default(0)
+  followerCountMonthRank   Int @default(0)
+  followerCountYearRank    Int @default(0)
+  followerCountAllTimeRank Int @default(0)
+  hiddenCountDayRank       Int @default(0)
+  hiddenCountWeekRank      Int @default(0)
+  hiddenCountMonthRank     Int @default(0)
+  hiddenCountYearRank      Int @default(0)
+  hiddenCountAllTimeRank   Int @default(0)
+  modelCountDayRank        Int @default(0)
+  modelCountWeekRank       Int @default(0)
+  modelCountMonthRank      Int @default(0)
+  modelCountYearRank       Int @default(0)
+  modelCountAllTimeRank    Int @default(0)
+  imageCountDayRank        Int @default(0)
+  imageCountWeekRank       Int @default(0)
+  imageCountMonthRank      Int @default(0)
+  imageCountYearRank       Int @default(0)
+  imageCountAllTimeRank    Int @default(0)
+  postCountDayRank         Int @default(0)
+  postCountWeekRank        Int @default(0)
+  postCountMonthRank       Int @default(0)
+  postCountYearRank        Int @default(0)
+  postCountAllTimeRank     Int @default(0)
+  articleCountDayRank      Int @default(0)
+  articleCountWeekRank     Int @default(0)
+  articleCountMonthRank    Int @default(0)
+  articleCountYearRank     Int @default(0)
+  articleCountAllTimeRank  Int @default(0)
+}
+
+/// @view
+
+model ImageStat {
+  imageId                  Int   @id
+  image                    Image @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  cryCountDay              Int   @default(0)
+  cryCountWeek             Int   @default(0)
+  cryCountMonth            Int   @default(0)
+  cryCountYear             Int   @default(0)
+  cryCountAllTime          Int   @default(0)
+  dislikeCountDay          Int   @default(0)
+  dislikeCountWeek         Int   @default(0)
+  dislikeCountMonth        Int   @default(0)
+  dislikeCountYear         Int   @default(0)
+  dislikeCountAllTime      Int   @default(0)
+  heartCountDay            Int   @default(0)
+  heartCountWeek           Int   @default(0)
+  heartCountMonth          Int   @default(0)
+  heartCountYear           Int   @default(0)
+  heartCountAllTime        Int   @default(0)
+  laughCountDay            Int   @default(0)
+  laughCountWeek           Int   @default(0)
+  laughCountMonth          Int   @default(0)
+  laughCountYear           Int   @default(0)
+  laughCountAllTime        Int   @default(0)
+  likeCountDay             Int   @default(0)
+  likeCountWeek            Int   @default(0)
+  likeCountMonth           Int   @default(0)
+  likeCountYear            Int   @default(0)
+  likeCountAllTime         Int   @default(0)
+  commentCountDay          Int   @default(0)
+  commentCountWeek         Int   @default(0)
+  commentCountMonth        Int   @default(0)
+  commentCountYear         Int   @default(0)
+  commentCountAllTime      Int   @default(0)
+  reactionCountDay         Int   @default(0)
+  reactionCountWeek        Int   @default(0)
+  reactionCountMonth       Int   @default(0)
+  reactionCountYear        Int   @default(0)
+  reactionCountAllTime     Int   @default(0)
+  collectedCountDay        Int   @default(0)
+  collectedCountWeek       Int   @default(0)
+  collectedCountMonth      Int   @default(0)
+  collectedCountYear       Int   @default(0)
+  collectedCountAllTime    Int   @default(0)
+  tippedCountDay           Int   @default(0)
+  tippedCountWeek          Int   @default(0)
+  tippedCountMonth         Int   @default(0)
+  tippedCountYear          Int   @default(0)
+  tippedCountAllTime       Int   @default(0)
+  tippedAmountCountDay     Int   @default(0)
+  tippedAmountCountWeek    Int   @default(0)
+  tippedAmountCountMonth   Int   @default(0)
+  tippedAmountCountYear    Int   @default(0)
+  tippedAmountCountAllTime Int   @default(0)
+  viewCountDay             Int   @default(0)
+  viewCountWeek            Int   @default(0)
+  viewCountMonth           Int   @default(0)
+  viewCountYear            Int   @default(0)
+  viewCountAllTime         Int   @default(0)
+}
+
+/// @view
+
+model ImageModHelper {
+  imageId         Int      @id
+  image           Image    @relation(fields: [imageId], references: [id], onDelete: NoAction)
+  assessedNSFW    Boolean? @default(false)
+  nsfwReportCount Int      @default(0)
+}
+
+/// @view
+
+model ModelHash {
+  modelId        Int           @id
+  model          Model         @relation(fields: [modelId], references: [id])
+  modelVersionId Int
+  modelVersion   ModelVersion  @relation(fields: [modelVersionId], references: [id])
+  hashType       ModelHashType
+  fileType       String
+  hash           String
+}
+
+/// @view
+
+model PostHelper {
+  postId  Int     @id
+  post    Post    @relation(fields: [postId], references: [id], onDelete: NoAction)
+  scanned Boolean
+}
+
+/// @view
+
+model PostStat {
+  postId               Int  @id
+  post                 Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  cryCountDay          Int  @default(0)
+  cryCountWeek         Int  @default(0)
+  cryCountMonth        Int  @default(0)
+  cryCountYear         Int  @default(0)
+  cryCountAllTime      Int  @default(0)
+  dislikeCountDay      Int  @default(0)
+  dislikeCountWeek     Int  @default(0)
+  dislikeCountMonth    Int  @default(0)
+  dislikeCountYear     Int  @default(0)
+  dislikeCountAllTime  Int  @default(0)
+  heartCountDay        Int  @default(0)
+  heartCountWeek       Int  @default(0)
+  heartCountMonth      Int  @default(0)
+  heartCountYear       Int  @default(0)
+  heartCountAllTime    Int  @default(0)
+  laughCountDay        Int  @default(0)
+  laughCountWeek       Int  @default(0)
+  laughCountMonth      Int  @default(0)
+  laughCountYear       Int  @default(0)
+  laughCountAllTime    Int  @default(0)
+  likeCountDay         Int  @default(0)
+  likeCountWeek        Int  @default(0)
+  likeCountMonth       Int  @default(0)
+  likeCountYear        Int  @default(0)
+  likeCountAllTime     Int  @default(0)
+  commentCountDay      Int  @default(0)
+  commentCountWeek     Int  @default(0)
+  commentCountMonth    Int  @default(0)
+  commentCountYear     Int  @default(0)
+  commentCountAllTime  Int  @default(0)
+  reactionCountDay     Int  @default(0)
+  reactionCountWeek    Int  @default(0)
+  reactionCountMonth   Int  @default(0)
+  reactionCountYear    Int  @default(0)
+  reactionCountAllTime Int  @default(0)
+}
+
+/// @view
+
+model CollectionStat {
+  collection              Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
+  collectionId            Int        @id
+  followerCountDay        Int
+  followerCountWeek       Int
+  followerCountMonth      Int
+  followerCountYear       Int
+  followerCountAllTime    Int
+  itemCountDay            Int
+  itemCountWeek           Int
+  itemCountMonth          Int
+  itemCountYear           Int
+  itemCountAllTime        Int
+  contributorCountDay     Int
+  contributorCountWeek    Int
+  contributorCountMonth   Int
+  contributorCountYear    Int
+  contributorCountAllTime Int
+}
+
+/// @view
+
+model CollectionRank {
+  collectionId                Int        @id
+  collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
+  followerCountDayRank        Int        @default(0)
+  followerCountWeekRank       Int        @default(0)
+  followerCountMonthRank      Int        @default(0)
+  followerCountYearRank       Int        @default(0)
+  followerCountAllTimeRank    Int        @default(0)
+  itemCountDayRank            Int        @default(0)
+  itemCountWeekRank           Int        @default(0)
+  itemCountMonthRank          Int        @default(0)
+  itemCountYearRank           Int        @default(0)
+  itemCountAllTimeRank        Int        @default(0)
+  contributorCountDayRank     Int        @default(0)
+  contributorCountWeekRank    Int        @default(0)
+  contributorCountMonthRank   Int        @default(0)
+  contributorCountYearRank    Int        @default(0)
+  contributorCountAllTimeRank Int        @default(0)
+}
+
+/// @view
+
+model ImageTag {
+  imageId      Int
+  image        Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId        Int
+  tag          Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName      String
+  tagType      TagType
+  tagNsfw      NsfwLevel
+  tagNsfwLevel Int
+  automated    Boolean
+  confidence   Int?
+  score        Int
+  upVotes      Int
+  downVotes    Int
+  needsReview  Boolean
+  concrete     Boolean
+  lastUpvote   DateTime?
+  source       TagSource
+
+  @@id([imageId, tagId])
+}
+
+/// @view
+model ModelTag {
+  modelId     Int
+  model       Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  tagId       Int
+  tag         Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName     String
+  tagType     TagType
+  score       Int
+  upVotes     Int
+  downVotes   Int
+  needsReview Boolean
+
+  @@id([modelId, tagId])
+}
+
+/// @view
+model ImageResourceHelper {
+  imageId               Int
+  image                 Image      @relation(fields: [imageId], references: [id])
+  reviewId              Int?
+  reviewRating          Int?
+  reviewDetails         String?
+  reviewCreatedAt       DateTime?
+  name                  String?
+  modelVersionId        Int
+  modelVersionName      String?
+  modelVersionCreatedAt DateTime?
+  modelId               Int?
+  modelName             String?
+  modelDownloadCount    Int?
+  modelCommentCount     Int?
+  modelThumbsUpCount    Int?
+  modelThumbsDownCount  Int?
+  modelType             ModelType?
+  modelVersionBaseModel String?
+  detected              Boolean?
+
+  @@id([imageId, modelVersionId])
+}
+
+/// @view
+model PostResourceHelper {
+  postId                Int
+  post                  Post       @relation(fields: [postId], references: [id])
+  reviewId              Int?
+  reviewRating          Int?
+  reviewRecommended     Boolean?
+  reviewDetails         String?
+  reviewCreatedAt       DateTime?
+  name                  String?
+  imageId               Int
+  modelVersionId        Int
+  modelVersionName      String?
+  modelVersionCreatedAt DateTime?
+  modelId               Int?
+  modelName             String?
+  modelDownloadCount    Int?
+  modelCommentCount     Int?
+  modelThumbsUpCount    Int?
+  modelThumbsDownCount  Int?
+  modelType             ModelType?
+
+  @@id([imageId, modelVersionId])
+  @@unique([postId, name, modelVersionId])
+}
+
+/// @view
+
+model PostImageTag {
+  postId Int
+  post   Post @relation(fields: [postId], references: [id], onDelete: NoAction)
+  tagId  Int
+
+  @@id([postId, tagId])
+}
+
+/// @view
+
+model PostTag {
+  postId    Int
+  post      Post    @relation(fields: [postId], references: [id])
+  tagId     Int
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tagName   String
+  tagType   TagType
+  score     Int
+  upVotes   Int
+  downVotes Int
+
+  @@id([postId, tagId])
+}
+
+/// @view
+
+model ResourceReviewHelper {
+  resourceReviewId Int            @id
+  resourceReview   ResourceReview @relation(fields: [resourceReviewId], references: [id])
+  imageCount       Int
+}
+
+/// @view
+model GenerationCoverage {
+  modelId        Int
+  model          Model        @relation(fields: [modelId], references: [id])
+  modelVersionId Int          @unique
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  covered        Boolean
+
+  @@id([modelId, modelVersionId])
+}
+
+model UserProfile {
+  userId                  Int
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coverImageId            Int?
+  coverImage              Image?    @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  bio                     String?
+  message                 String?
+  messageAddedAt          DateTime?
+  location                String?
+  nsfw                    Boolean   @default(false)
+  privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
+  profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
+  showcaseItems           Json      @default("[]")
+
+  @@id([userId])
+}
+
+/// @view
+
+model BountyStat {
+  bountyId               Int    @id
+  Bounty                 Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  favoriteCountDay       Int
+  favoriteCountWeek      Int
+  favoriteCountMonth     Int
+  favoriteCountYear      Int
+  favoriteCountAllTime   Int
+  trackCountDay          Int
+  trackCountWeek         Int
+  trackCountMonth        Int
+  trackCountYear         Int
+  trackCountAllTime      Int
+  entryCountDay          Int
+  entryCountWeek         Int
+  entryCountMonth        Int
+  entryCountYear         Int
+  entryCountAllTime      Int
+  benefactorCountDay     Int
+  benefactorCountWeek    Int
+  benefactorCountMonth   Int
+  benefactorCountYear    Int
+  benefactorCountAllTime Int
+  unitAmountCountDay     Int
+  unitAmountCountWeek    Int
+  unitAmountCountMonth   Int
+  unitAmountCountYear    Int
+  unitAmountCountAllTime Int
+  commentCountDay        Int
+  commentCountWeek       Int
+  commentCountMonth      Int
+  commentCountYear       Int
+  commentCountAllTime    Int
+}
+
+/// @view
+
+model BountyRank {
+  bountyId                   Int    @id
+  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
+  favoriteCountDayRank       Int    @default(0)
+  favoriteCountWeekRank      Int    @default(0)
+  favoriteCountMonthRank     Int    @default(0)
+  favoriteCountYearRank      Int    @default(0)
+  favoriteCountAllTimeRank   Int    @default(0)
+  trackCountDayRank          Int    @default(0)
+  trackCountWeekRank         Int    @default(0)
+  trackCountMonthRank        Int    @default(0)
+  trackCountYearRank         Int    @default(0)
+  trackCountAllTimeRank      Int    @default(0)
+  entryCountDayRank          Int    @default(0)
+  entryCountWeekRank         Int    @default(0)
+  entryCountMonthRank        Int    @default(0)
+  entryCountYearRank         Int    @default(0)
+  entryCountAllTimeRank      Int    @default(0)
+  benefactorCountDayRank     Int    @default(0)
+  benefactorCountWeekRank    Int    @default(0)
+  benefactorCountMonthRank   Int    @default(0)
+  benefactorCountYearRank    Int    @default(0)
+  benefactorCountAllTimeRank Int    @default(0)
+  unitAmountCountDayRank     Int    @default(0)
+  unitAmountCountWeekRank    Int    @default(0)
+  unitAmountCountMonthRank   Int    @default(0)
+  unitAmountCountYearRank    Int    @default(0)
+  unitAmountCountAllTimeRank Int    @default(0)
+  commentCountDayRank        Int    @default(0)
+  commentCountWeekRank       Int    @default(0)
+  commentCountMonthRank      Int    @default(0)
+  commentCountYearRank       Int    @default(0)
+  commentCountAllTimeRank    Int    @default(0)
+}
+
+/// @view
+
+model BountyEntryStat {
+  bountyEntryId            Int         @id
+  BountyEntry              BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  cryCountDay              Int
+  cryCountWeek             Int
+  cryCountMonth            Int
+  cryCountYear             Int
+  cryCountAllTime          Int
+  dislikeCountDay          Int
+  dislikeCountWeek         Int
+  dislikeCountMonth        Int
+  dislikeCountYear         Int
+  dislikeCountAllTime      Int
+  heartCountDay            Int
+  heartCountWeek           Int
+  heartCountMonth          Int
+  heartCountYear           Int
+  heartCountAllTime        Int
+  laughCountDay            Int
+  laughCountWeek           Int
+  laughCountMonth          Int
+  laughCountYear           Int
+  laughCountAllTime        Int
+  likeCountDay             Int
+  likeCountWeek            Int
+  likeCountMonth           Int
+  likeCountYear            Int
+  likeCountAllTime         Int
+  reactionCountDay         Int
+  reactionCountWeek        Int
+  reactionCountMonth       Int
+  reactionCountYear        Int
+  reactionCountAllTime     Int
+  unitAmountCountDay       Int
+  unitAmountCountWeek      Int
+  unitAmountCountMonth     Int
+  unitAmountCountYear      Int
+  unitAmountCountAllTime   Int
+  tippedCountDay           Int         @default(0)
+  tippedCountWeek          Int         @default(0)
+  tippedCountMonth         Int         @default(0)
+  tippedCountYear          Int         @default(0)
+  tippedCountAllTime       Int         @default(0)
+  tippedAmountCountDay     Int         @default(0)
+  tippedAmountCountWeek    Int         @default(0)
+  tippedAmountCountMonth   Int         @default(0)
+  tippedAmountCountYear    Int         @default(0)
+  tippedAmountCountAllTime Int         @default(0)
+}
+
+/// @view
+
+model BountyEntryRank {
+  bountyEntryId                Int         @id
+  BountyEntry                  BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
+  cryCountDayRank              Int         @default(0)
+  cryCountWeekRank             Int         @default(0)
+  cryCountMonthRank            Int         @default(0)
+  cryCountYearRank             Int         @default(0)
+  cryCountAllTimeRank          Int         @default(0)
+  dislikeCountDayRank          Int         @default(0)
+  dislikeCountWeekRank         Int         @default(0)
+  dislikeCountMonthRank        Int         @default(0)
+  dislikeCountYearRank         Int         @default(0)
+  dislikeCountAllTimeRank      Int         @default(0)
+  heartCountDayRank            Int         @default(0)
+  heartCountWeekRank           Int         @default(0)
+  heartCountMonthRank          Int         @default(0)
+  heartCountYearRank           Int         @default(0)
+  heartCountAllTimeRank        Int         @default(0)
+  laughCountDayRank            Int         @default(0)
+  laughCountWeekRank           Int         @default(0)
+  laughCountMonthRank          Int         @default(0)
+  laughCountYearRank           Int         @default(0)
+  laughCountAllTimeRank        Int         @default(0)
+  likeCountDayRank             Int         @default(0)
+  likeCountWeekRank            Int         @default(0)
+  likeCountMonthRank           Int         @default(0)
+  likeCountYearRank            Int         @default(0)
+  likeCountAllTimeRank         Int         @default(0)
+  reactionCountDayRank         Int         @default(0)
+  reactionCountWeekRank        Int         @default(0)
+  reactionCountMonthRank       Int         @default(0)
+  reactionCountYearRank        Int         @default(0)
+  reactionCountAllTimeRank     Int         @default(0)
+  unitAmountCountDayRank       Int         @default(0)
+  unitAmountCountWeekRank      Int         @default(0)
+  unitAmountCountMonthRank     Int         @default(0)
+  unitAmountCountYearRank      Int         @default(0)
+  unitAmountCountAllTimeRank   Int         @default(0)
+  tippedCountDayRank           Int         @default(0)
+  tippedCountWeekRank          Int         @default(0)
+  tippedCountMonthRank         Int         @default(0)
+  tippedCountYearRank          Int         @default(0)
+  tippedCountAllTimeRank       Int         @default(0)
+  tippedAmountCountDayRank     Int         @default(0)
+  tippedAmountCountWeekRank    Int         @default(0)
+  tippedAmountCountMonthRank   Int         @default(0)
+  tippedAmountCountYearRank    Int         @default(0)
+  tippedAmountCountAllTimeRank Int         @default(0)
+}
+
+/// @view
+
+model ClubStat {
+  clubId               Int  @id
+  Club                 Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  memberCountDay       Int
+  memberCountWeek      Int
+  memberCountMonth     Int
+  memberCountYear      Int
+  memberCountAllTime   Int
+  resourceCountDay     Int
+  resourceCountWeek    Int
+  resourceCountMonth   Int
+  resourceCountYear    Int
+  resourceCountAllTime Int
+  clubPostCountDay     Int
+  clubPostCountWeek    Int
+  clubPostCountMonth   Int
+  clubPostCountYear    Int
+  clubPostCountAllTime Int
+}
+
+/// @view
+
+model ClubRank {
+  clubId                   Int  @id
+  Club                     Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
+  memberCountDayRank       Int  @default(0)
+  memberCountWeekRank      Int  @default(0)
+  memberCountMonthRank     Int  @default(0)
+  memberCountYearRank      Int  @default(0)
+  memberCountAllTimeRank   Int  @default(0)
+  resourceCountDayRank     Int  @default(0)
+  resourceCountWeekRank    Int  @default(0)
+  resourceCountMonthRank   Int  @default(0)
+  resourceCountYearRank    Int  @default(0)
+  resourceCountAllTimeRank Int  @default(0)
+  clubPostCountDayRank     Int  @default(0)
+  clubPostCountWeekRank    Int  @default(0)
+  clubPostCountMonthRank   Int  @default(0)
+  clubPostCountYearRank    Int  @default(0)
+  clubPostCountAllTimeRank Int  @default(0)
+}
+
+
+enum EntityMetric_EntityType_Type {
+  Image
+}
+
+enum EntityMetric_MetricType_Type {
+  ReactionLike
+  ReactionHeart
+  ReactionLaugh
+  ReactionCry
+  Comment
+  Collection
+  Buzz
+}
+
+
+model EntityMetric {
+  entityType  EntityMetric_EntityType_Type
+  entityId    Int
+  metricType  EntityMetric_MetricType_Type
+  metricValue Int                          @default(0)
+
+  @@id([entityType, entityId, metricType])
+}
+
+/// @view
+
+model EntityMetricImage {
+  imageId       Int  @id
+  reactionLike  Int?
+  reactionHeart Int?
+  reactionLaugh Int?
+  reactionCry   Int?
+  reactionTotal Int? // computed
+  comment       Int?
+  collection    Int?
+  buzz          Int?
+}
+
+/// @view
+model TagsOnImageDetails {
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id])
+  tagId       Int
+  tag         Tag       @relation(fields: [tagId], references: [id])
+  source      TagSource
+  automated   Boolean
+  disabled    Boolean
+  needsReview Boolean
+  reserved_1  Boolean
+  reserved_2  Boolean
+  confidence  Int
+
+  @@id([imageId, tagId])
+}

@@ -16,7 +16,8 @@ import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.ser
 import type { UserMeta } from '~/server/schema/user.schema';
 import { banReasonDetails } from '~/server/common/constants';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { getUserContentOverview as getUserContentOverviewFromCache } from '~/server/redis/caches';
+import { userUpdateCounter } from '~/server/prom/client';
 
 export const getUserContentOverview = async ({
   username,
@@ -42,7 +43,7 @@ export const getUserContentOverview = async ({
     userId = user.id;
   }
 
-  const data = await userContentOverviewCache.fetch([userId]);
+  const data = await getUserContentOverviewFromCache([userId]);
   return data[userId];
 };
 
@@ -172,6 +173,8 @@ export const updateUserProfile = async ({
           '${JSON.stringify(creatorCardStatsPreferences)}'::jsonb
         )
         WHERE "id" = ${userId}`);
+
+    userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
   await dbWrite.$transaction(

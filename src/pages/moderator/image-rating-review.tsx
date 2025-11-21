@@ -3,7 +3,7 @@ import { Button, Center, Checkbox, Group, Loader, Progress, Select, Title } from
 import { usePrevious } from '@mantine/hooks';
 import clsx from 'clsx';
 import React, { useMemo, useState } from 'react';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

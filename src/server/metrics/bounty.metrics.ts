@@ -39,14 +39,15 @@ export const bountyMetrics = createMetricProcessor({
       }))
     );
   },
-  async clearDay(ctx) {
-    await executeRefresh(ctx)`
-      UPDATE "BountyMetric"
-        SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0, "commentCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
-  },
+  // Not using day metrics anymore
+  // async clearDay(ctx) {
+  //   await executeRefresh(ctx)`
+  //     UPDATE "BountyMetric"
+  //       SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0, "commentCount" = 0
+  //     WHERE timeframe = 'Day'
+  //       AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+  //   `;
+  // },
   rank: {
     table: 'BountyRank',
     primaryKey: 'bountyId',

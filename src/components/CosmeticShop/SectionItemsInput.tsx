@@ -1,45 +1,20 @@
 import type { InputWrapperProps, ComboboxItem } from '@mantine/core';
-import {
-  Box,
-  Button,
-  Center,
-  Group,
-  Input,
-  Loader,
-  Paper,
-  Select,
-  Stack,
-  Text,
-  Grid,
-  Divider,
-} from '@mantine/core';
+import { Box, Button, Center, Input, Paper, Select, Stack, Text, Grid } from '@mantine/core';
 import React, { forwardRef, useMemo, useState } from 'react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { trpc } from '~/utils/trpc';
-import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';
 import type { DragEndEvent } from '@dnd-kit/core';
-import {
-  DndContext,
-  PointerSensor,
-  rectIntersection,
-  UniqueIdentifier,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import { DndContext, PointerSensor, rectIntersection, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useQueryCosmeticShopItemsPaged } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import { isDefined } from '~/utils/type-guards';
+import { withController } from '~/libs/form/hoc/withController';
 
 type ShopItemSchema = { title: string; description?: string; id: number };
 
@@ -231,3 +206,5 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
     </Input.Wrapper>
   );
 };
+
+export const InputSectionItems = withController(SectionItemsInput);

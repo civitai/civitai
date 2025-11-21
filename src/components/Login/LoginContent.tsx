@@ -5,7 +5,7 @@ import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
-import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
@@ -91,7 +91,7 @@ export function LoginContent(args: {
             <Text c="dimmed" size="sm">
               You have been referred by
             </Text>
-            <CreatorCardV2 user={referrer} withActions={false} />
+            <CreatorCardSimple user={referrer} />
             <Text size="sm">
               By signing up with the referral code <Code>{code}</Code> both you and the user who
               referred you will be awarded{' '}

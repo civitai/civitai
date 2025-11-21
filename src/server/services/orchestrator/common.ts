@@ -11,10 +11,10 @@ import type {
   VideoBlob,
   NsfwLevel,
 } from '@civitai/client';
-import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
 import { env } from '~/env/server';
+import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -61,8 +61,14 @@ import { includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
-import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  getBaseModelByMediaType,
+  getGenerationBaseModelResourceOptions,
+} from '~/shared/constants/base-model.constants';
+import type {
+  ResourceInput,
+  SourceImageProps,
+} from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 
@@ -73,16 +79,8 @@ type WorkflowStepAggregate =
   | VideoGenStep
   | VideoEnhancementStep;
 
-export function createOrchestratorClient(token: string) {
-  return createCivitaiClient({
-    baseUrl: env.ORCHESTRATOR_ENDPOINT,
-    env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
-    auth: token,
-  });
-}
-
-/** Used to perform orchestrator operations with the system user account */
-export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
+// Re-export for backward compatibility
+export { createOrchestratorClient, internalOrchestratorClient };
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
@@ -542,17 +540,23 @@ function formatVideoGenStep({
   const params = videoMetadata.params ?? {};
 
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const stepResources = (params && 'resources' in params ? params.resources ?? [] : [])?.map(
-    ({ air, strength }) => {
-      const { version } = parseAIR(air);
-      return { id: version, strength };
-    }
-  );
+  const stepResources = (
+    (params && 'resources' in params
+      ? params.resources
+      : (metadata.resources as unknown as ResourceInput[])) ?? // this casting is not ideal, but we are now assigning a resource value here when we call createVideoGenStep
+    []
+  ).map(({ air, strength }) => {
+    const { version } = parseAIR(air);
+    return { id: version, strength };
+  });
 
   // it's silly, but video resources are nested in the params, where image resources are not
-  if (params && 'resources' in params) params.resources = null;
+  // if (params && 'resources' in params) params.resources = null;
 
-  const combinedResources = combineResourcesWithInputResource(resources, stepResources);
+  const videoBaseModels = getBaseModelByMediaType('video');
+  const combinedResources = combineResourcesWithInputResource(resources, stepResources).filter(
+    (x) => videoBaseModels.includes(x.baseModel as any)
+  );
 
   let baseModel =
     metadata.params?.baseModel ??
@@ -833,7 +837,17 @@ function formatWorkflowStepOutput({
       aspect,
     };
   });
-  const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+  const errors: string[] = [];
+  if (step.output) {
+    if ('errors' in step.output && step.output.errors) errors.push(...step.output.errors);
+    if (
+      'externalTOSViolation' in step.output &&
+      'message' in step.output &&
+      typeof step.output.message === 'string'
+    )
+      errors.push(step.output.message);
+  }
+  // const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
 
   return {
     images,

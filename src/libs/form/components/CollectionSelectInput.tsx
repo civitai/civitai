@@ -1,9 +1,10 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { ActionIcon, Button, Input, LoadingOverlay, Paper, Text } from '@mantine/core';
+import { Button, Input, LoadingOverlay, Paper, Text } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
-import { openCollectionSelectModal } from '~/components/Dialog/dialog-registry';
+import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { withController } from '~/libs/form/hoc/withController';
 import { trpc } from '~/utils/trpc';
 
 export function CollectionSelectInput({ value, username, onChange, ...inputWrapperProps }: Props) {
@@ -62,3 +63,5 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
   onChange?: (value?: number | null) => void;
 };
+
+export const InputCollectionSelect = withController(CollectionSelectInput);

@@ -6,7 +6,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { userContentOverviewCache, articleStatCache } from '~/server/redis/caches';
+import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { logToAxiom } from '~/server/logging/client';
 import type {
   ArticleMetadata,
@@ -26,6 +26,7 @@ import { imageSelect, profileImageSelect } from '~/server/selectors/image.select
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -318,8 +319,6 @@ export const getArticles = async ({
       orderBy = `rank."reactionCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostCollected)
       orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
-    // else if (sort === ArticleSort.MostTipped)
-    //   orderBy = `rank."tippedAmountCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.RecentlyUpdated)
       orderBy = `a."updatedAt" DESC NULLS LAST, ${orderBy}`;
 
@@ -669,7 +668,9 @@ export const getArticleById = async ({
       })),
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
-      metadata: article.metadata as ArticleMetadata | null,
+      metadata: article.metadata
+        ? filterSensitiveProfanityData(article.metadata as ArticleMetadata, isModerator)
+        : null,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -697,17 +698,23 @@ export const upsertArticle = async ({
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
-      // Check article title and content for profanity
+      // Check article title and content for profanity using threshold-based evaluation
       const profanityFilter = createProfanityFilter();
       const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
-      const { isProfane, matchedWords } = profanityFilter.analyze(textToCheck);
+      const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-      // If profanity is detected, mark article as NSFW and add to locked properties
-      if (isProfane && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
-        data.metadata = { profanityMatches: matchedWords };
+      // If profanity exceeds thresholds, mark article as NSFW with recommended level
+      if (evaluation.shouldMarkNSFW && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+        data.metadata = {
+          ...data.metadata,
+          profanityMatches: evaluation.matchedWords,
+          profanityEvaluation: {
+            reason: evaluation.reason,
+            metrics: evaluation.metrics,
+          },
+        } as ArticleMetadata;
         data.nsfw = true;
-        data.userNsfwLevel =
-          data.userNsfwLevel <= NsfwLevel.PG13 ? NsfwLevel.R : data.userNsfwLevel;
+        data.userNsfwLevel = evaluation.suggestedLevel;
         data.lockedProperties =
           data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
             ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
@@ -765,7 +772,7 @@ export const upsertArticle = async ({
           });
         }
 
-        await userContentOverviewCache.bust(article.userId);
+        await userArticleCountCache.bust(article.userId);
 
         return article;
       });
@@ -866,7 +873,7 @@ export const upsertArticle = async ({
         });
       }
 
-      await userContentOverviewCache.bust(updated.userId);
+      await userArticleCountCache.bust(updated.userId);
 
       return updated;
     });
@@ -1041,7 +1048,7 @@ export async function unpublishArticleById({
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   // Bust user content cache
-  await userContentOverviewCache.bust(article.userId);
+  await userArticleCountCache.bust(article.userId);
 
   return updated;
 }
@@ -1095,7 +1102,7 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   // Re-add to search index
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
-  await userContentOverviewCache.bust(article.userId);
+  await userArticleCountCache.bust(article.userId);
 
   return updated;
 }

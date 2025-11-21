@@ -30,9 +30,9 @@ export function useBase64Audio(base64Audio: string, autoplay = false) {
   }, [base64Audio]);
 
   return {
-    play: () => {},
-    pause: () => {},
-    stop: () => {},
+    play: () => undefined,
+    pause: () => undefined,
+    stop: () => undefined,
     ...controls,
     playing,
   };

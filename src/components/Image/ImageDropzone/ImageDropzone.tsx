@@ -10,6 +10,7 @@ import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import clsx from 'clsx';
 import { isOrchestratorUrl } from '~/server/common/constants';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -86,7 +87,7 @@ export function ImageDropzone({
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}
-        useFsAccessApi={false}
+        useFsAccessApi={!isAndroidDevice()}
       >
         <div className="pointer-events-none flex min-h-28 flex-col items-center justify-center gap-2">
           <Dropzone.Accept>

@@ -9,6 +9,15 @@ export function flagifyBrowsingLevel(levels: number[]) {
   return Flags.arrayToInstance(levels);
 }
 
+export const orchestratorNsfwLevelMap: Record<string, NsfwLevel> = {
+  pg: NsfwLevel.PG,
+  pg13: NsfwLevel.PG13,
+  'pg-13': NsfwLevel.PG13,
+  r: NsfwLevel.R,
+  x: NsfwLevel.X,
+  xxx: NsfwLevel.XXX,
+};
+
 export type BrowsingLevels = typeof browsingLevels;
 export type BrowsingLevel = BrowsingLevels[number];
 export const browsingLevels = [

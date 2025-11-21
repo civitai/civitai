@@ -17,7 +17,7 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';

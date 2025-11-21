@@ -43,7 +43,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import type { SupportedClubPostEntities } from '~/server/schema/club.schema';
 import { ImageCarousel } from '../../Bounty/ImageCarousel';
 import { useIsMobile } from '../../../hooks/useIsMobile';
-import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
+import { triggerRoutedDialog } from '../../Dialog/RoutedDialogLink';
 import { ContentClamp } from '../../ContentClamp/ContentClamp';
 import { Reactions } from '../../Reaction/Reactions';
 import classes from './ClubFeed.module.scss';

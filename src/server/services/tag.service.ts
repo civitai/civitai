@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
-import type { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
+import {
+  styleTags,
+  subjectTags,
+  type TagVotableEntityType,
+  type VotableTagModel,
+} from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -30,7 +35,7 @@ import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
-const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
+const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   // No longer include count since we just have too many now...
@@ -130,7 +135,7 @@ export const getTags = async ({
   const systemTags = await getSystemTags();
   const categoryTags = (
     entityType
-      ? systemTags.filter((t) => t.name === `${entityType} category`.toLowerCase())
+      ? systemTags.filter((t) => entityType.some((et) => t.name === `${et} category`.toLowerCase()))
       : systemTags.filter((t) => t.name.endsWith('category'))
   ).map((x) => x.id);
   if (categories && categoryTags.length) {
@@ -160,13 +165,11 @@ export const getTags = async ({
   const tagsOrderBy: string[] = [];
   if (query) tagsOrderBy.push(`LENGTH(t."name")`);
   if (isDev) tagsOrderBy.push(`t."name"`); // can't be bothered to update TagRank in gen_seed
-  else if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`);
-  else if (sort === TagSort.MostModels) tagsOrderBy.push(`r."modelCountAllTimeRank"`);
-  else if (sort === TagSort.MostPosts) tagsOrderBy.push(`r."postCountAllTimeRank"`);
-  else if (sort === TagSort.MostArticles) tagsOrderBy.push(`r."articleCountAllTimeRank"`);
-  else if (sort === TagSort.MostHidden) {
-    tagsOrderBy.push(`r."hiddenCountAllTimeRank"`);
-  }
+  // else if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`); // We don't update image tag counts anymore
+  else if (sort === TagSort.MostModels) tagsOrderBy.push(`m."modelCount" DESC NULLS LAST`);
+  else if (sort === TagSort.MostPosts) tagsOrderBy.push(`m."postCount" DESC NULLS LAST`);
+  else if (sort === TagSort.MostArticles) tagsOrderBy.push(`m."articleCount" DESC NULLS LAST`);
+  else if (sort === TagSort.MostHidden) tagsOrderBy.push(`m."hiddenCount" DESC NULLS LAST`);
   const orderBy = tagsOrderBy.length ? tagsOrderBy.join(', ') : `t."name" ASC`;
 
   const isCategory =
@@ -197,7 +200,11 @@ export const getTags = async ({
            ${isCategory}
            ${isNsfwLevel}
     FROM "Tag" t
-      ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+      ${Prisma.raw(
+        orderBy.includes('m.')
+          ? `LEFT JOIN "TagMetric" m ON m."tagId" = t."id" AND m.timeframe = 'AllTime'`
+          : ''
+      )}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
@@ -695,6 +702,8 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
         needsReview: false,
       }))
     );
+
+    await imageTagsCache.bust(entityIds);
   }
 };
 

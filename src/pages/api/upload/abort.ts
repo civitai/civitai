@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { abortMultipartUpload, getS3Client } from '~/utils/s3-utils';
 import { UploadType } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';

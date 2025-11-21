@@ -41,6 +41,12 @@ export const bountyDetailsSchema = z.object({
   modelSize: z.enum(constants.modelFileSizes),
   modelFormat: z.enum(constants.modelFileFormats),
   profanityMatches: z.string().array().optional(),
+  profanityEvaluation: z
+    .object({
+      reason: z.string().optional(),
+      metrics: z.record(z.string(), z.number()).optional(),
+    })
+    .optional(),
 });
 
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;

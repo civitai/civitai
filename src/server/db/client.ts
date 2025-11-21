@@ -14,7 +14,7 @@ declare global {
 
 const logFor = (target: 'write' | 'read') =>
   async function logQuery(e: { query: string; params: string; duration: number }) {
-    // if (e.duration < 2000) return;
+    if (e.duration < 2000) return;
     let query = e.query;
     const params = JSON.parse(e.params);
     // Replace $X variables with params in query so it's possible to copy/paste and optimize
@@ -72,26 +72,28 @@ const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
 export let dbRead: PrismaClient;
 export let dbWrite: PrismaClient;
 
-if (isProd) {
-  dbWrite = createPrismaClient({ readonly: false });
-  dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
-} else {
-  if (!global.globalDbWrite) {
-    global.globalDbWrite = createPrismaClient({ readonly: false });
+if (!env.IS_BUILD) {
+  if (isProd) {
+    dbWrite = createPrismaClient({ readonly: false });
+    dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
+  } else {
+    if (!global.globalDbWrite) {
+      global.globalDbWrite = createPrismaClient({ readonly: false });
 
-    if (env.LOGGING.includes('prisma-slow-write'))
-      // @ts-ignore - this is necessary to get the query event
-      global.globalDbWrite.$on('query', logFor('write'));
-  }
-  if (!global.globalDbRead) {
-    global.globalDbRead = singleClient
-      ? global.globalDbWrite
-      : createPrismaClient({ readonly: true });
+      if (env.LOGGING.includes('prisma-slow-write'))
+        // @ts-ignore - this is necessary to get the query event
+        global.globalDbWrite.$on('query', logFor('write'));
+    }
+    if (!global.globalDbRead) {
+      global.globalDbRead = singleClient
+        ? global.globalDbWrite
+        : createPrismaClient({ readonly: true });
 
-    if (env.LOGGING.includes('prisma-slow-read'))
-      // @ts-ignore - this is necessary to get the query event
-      global.globalDbRead.$on('query', logFor('read'));
+      if (env.LOGGING.includes('prisma-slow-read'))
+        // @ts-ignore - this is necessary to get the query event
+        global.globalDbRead.$on('query', logFor('read'));
+    }
+    dbWrite = global.globalDbWrite;
+    dbRead = singleClient ? dbWrite : global.globalDbRead;
   }
-  dbWrite = global.globalDbWrite;
-  dbRead = singleClient ? dbWrite : global.globalDbRead;
 }

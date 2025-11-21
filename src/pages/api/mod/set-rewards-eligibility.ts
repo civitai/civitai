@@ -8,6 +8,7 @@ import { userMultipliersCache } from '~/server/redis/caches';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const schema = z.object({
   userId: z.coerce.number(),
@@ -30,6 +31,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     where: { id: userId },
     data: { rewardsEligibility: eligibility, eligibilityChangedAt: new Date() },
   });
+
+  userUpdateCounter?.inc({ location: 'api:mod/set-rewards-eligibility' });
 
   await userMultipliersCache.bust(userId);
   await createNotification({

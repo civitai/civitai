@@ -30,7 +30,7 @@ export async function getModeratedTags(): Promise<SystemModerationTag[]> {
 
   log('getting moderation tags');
   const tags = await dbRead.tag.findMany({
-    where: { nsfwLevel: { not: NsfwLevel.PG } },
+    where: { nsfwLevel: { gt: NsfwLevel.PG } },
     select: { id: true, name: true, nsfwLevel: true },
   });
 

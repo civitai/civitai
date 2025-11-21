@@ -27,7 +27,6 @@ import {
   IconTrendingUp,
   IconTicket,
   IconExternalLink,
-  IconUsers,
   IconBrandApple,
   IconBrandGoogle,
   IconBrandPaypal,
@@ -43,7 +42,7 @@ import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { buzzBulkBonusMultipliers, constants } from '~/server/common/constants';
+import { buzzBulkBonusMultipliers } from '~/server/common/constants';
 import type { Price } from '~/shared/utils/prisma/models';
 import {
   formatCurrencyForDisplay,
@@ -51,13 +50,11 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 
-import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
+import { useQueryBuzzPackages } from '~/components/Buzz/useQueryBuzzPackages';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
 import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
-import { BuzzZkp2pButton } from '~/components/Buzz/BuzzZkp2pButton';
-import { getAvailablePaymentMethods } from '~/components/Buzz/zkp2p-config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
@@ -372,11 +369,6 @@ export const BuzzPurchaseImproved = ({
     ? customAmount * 10
     : selectedPrice?.buzzAmount ?? (selectedPrice?.unitAmount ?? 0) * 10;
   const liveFeatures = useLiveFeatureFlags();
-
-  const availableZkp2pMethods = useMemo(() => {
-    if (!features.zkp2pPayments) return [];
-    return getAvailablePaymentMethods(region?.countryCode || undefined);
-  }, [features.zkp2pPayments, region?.countryCode]);
 
   // Calculate total buzz including bonuses
   const buzzCalculation = useBuzzPurchaseCalculation(buzzAmount);
@@ -1001,56 +993,6 @@ export const BuzzPurchaseImproved = ({
                           )}
                         </Group>
                       </div>
-
-                      {/* Peer-to-Peer Payment Methods Section */}
-                      {availableZkp2pMethods.length > 0 && (
-                        <Card padding="md" radius="md" mt="sm" withBorder>
-                          <Stack gap="sm">
-                            <Group gap="sm">
-                              <ThemeIcon size="md" variant="light" color="gray" radius="sm">
-                                <IconUsers size={16} />
-                              </ThemeIcon>
-                              <div style={{ flex: 1 }}>
-                                <Text size="sm" fw={500}>
-                                  Peer-to-Peer Payment Methods
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  Secure, private, and instant peer-to-peer checkout. Powered by{' '}
-                                  <a
-                                    href="https://zkp2p.xyz"
-                                    target="_blank"
-                                    className={classes.giftCardLink}
-                                  >
-                                    ZKP2P
-                                  </a>{' '}
-                                  -{' '}
-                                  <Anchor
-                                    href="https://education.civitai.com/civitais-guide-to-buzz-purchases-via-zkp2p/"
-                                    size="xs"
-                                    className={classes.giftCardLink}
-                                  >
-                                    Learn More
-                                  </Anchor>
-                                </Text>
-                              </div>
-                            </Group>
-
-                            <Group gap="sm" wrap="wrap">
-                              {availableZkp2pMethods.map(({ method, ...config }) => (
-                                <BuzzZkp2pButton
-                                  key={method}
-                                  method={method}
-                                  config={config}
-                                  amount={unitAmount / 100}
-                                  buzzAmount={buzzCalculation.baseBuzz ?? buzzAmount}
-                                  disabled={!ctaEnabled}
-                                  onRedirect={onCancel}
-                                />
-                              ))}
-                            </Group>
-                          </Stack>
-                        </Card>
-                      )}
 
                       {/* Alternative Payment Section */}
                       {liveFeatures.buzzGiftCards && selectedBuzzType === 'yellow' && (

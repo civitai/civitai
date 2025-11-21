@@ -11,6 +11,7 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { NewOrderHighRankType } from '~/server/games/new-order/utils';
 import {
   acolyteFailedJudgments,
   allJudgmentsCounter,
@@ -19,6 +20,7 @@ import {
   correctJudgmentsCounter,
   expCounter,
   fervorCounter,
+  getActiveSlot,
   getImageRatingsCounter,
   poolCounters,
   sanityCheckFailuresCounter,
@@ -59,8 +61,6 @@ import {
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
-
-type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
 
@@ -531,7 +531,7 @@ async function processImageRating({
               playerId,
               modId: -1, // System
               reason: 'Exceeded wrong answer limit',
-              size: 10,
+              size: newOrderConfig.smiteSize,
             });
             await acolyteFailedJudgments.reset({ id: playerId });
           }
@@ -784,7 +784,7 @@ export async function updatePendingImageRatings({
 
 const PROCESS_MIN = 100; // number of items that will trigger early processing
 const PROCESS_INTERVAL = 30; // seconds
-async function processFinalRatings() {
+export async function processFinalRatings() {
   if (!clickhouse || !sysRedis) throw throwInternalServerError('Not supported');
 
   // Increment process requests
@@ -857,7 +857,7 @@ async function processFinalRatings() {
           orig.originalLevel
       FROM knights_new_order_image_rating orig
       JOIN batch new ON new.imageId = orig.imageId
-      WHERE orig.imageId IN (SELECT imageId FROM batch);
+      WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte';
     `;
 
     // Update last processed time and reset pending count
@@ -1075,7 +1075,7 @@ export async function handleSanityCheckFailure(playerId: number, imageId: number
         modId: -1, // System
         reason:
           'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
-        size: 10,
+        size: newOrderConfig.smiteSize * 10,
       });
     }
 
@@ -1292,7 +1292,7 @@ async function addRatedImage(userId: number, imageId: number) {
 }
 
 // Helper function to clear rated images cache for a player
-async function clearRatedImages(userId: number) {
+export async function clearRatedImages(userId: number) {
   if (!redis) return;
 
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
@@ -1318,7 +1318,10 @@ export async function addImageToQueue({
   });
   if (images.length === 0) return false;
 
-  const pools = poolCounters[rankType];
+  // Get active filling slot for this rank
+  const activeSlot = await getActiveSlot(rankType, 'filling');
+  const pools = poolCounters[rankType][activeSlot];
+
   await Promise.all(
     images.map((image) => {
       const pool = pools[priority - 1];
@@ -1359,7 +1362,10 @@ export async function getImagesQueue({
   // Moderators can specify queueType to test different queues (Acolyte or Knight only)
   // Regular players always use their current rank
   const effectiveRankType = isModerator && queueType ? queueType : player.rankType;
-  const rankPools = poolCounters[effectiveRankType];
+
+  // Get active rating slot for this rank
+  const activeSlot = await getActiveSlot(effectiveRankType, 'rating');
+  const rankPools = poolCounters[effectiveRankType][activeSlot];
 
   const ratedImages = await getRatedImages({
     userId: playerId,
@@ -1533,17 +1539,18 @@ export async function isImageInQueue({
   rankType: NewOrderHighRankType | NewOrderHighRankType[];
 }) {
   if (!Array.isArray(rankType)) rankType = [rankType];
-  const pools = rankType
-    .map((rank) =>
-      poolCounters[rank].map((pool) => ({
-        pool,
-        rank,
-      }))
-    )
-    .flat();
+
+  // Check both slots (a and b) for each rank
+  const pools = rankType.flatMap((rank) => {
+    const slots = poolCounters[rank];
+    return [
+      ...slots.a.map((pool) => ({ pool, rank, slot: 'a' as const })),
+      ...slots.b.map((pool) => ({ pool, rank, slot: 'b' as const })),
+    ];
+  });
 
   const exists = await Promise.all(
-    pools.map(async ({ pool, rank }) => {
+    pools.map(async ({ pool, rank, slot }) => {
       const exists = await pool.exists(imageId);
       if (exists) {
         const value = await pool.getCount(imageId);
@@ -1551,6 +1558,7 @@ export async function isImageInQueue({
           pool,
           value,
           rank,
+          slot,
         };
       }
       return null;
@@ -1572,13 +1580,14 @@ export async function getPlayerHistory({
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
   const AND = [
-    `"userId" = ${playerId}`,
-    `"createdAt" >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
+    `userId = ${playerId}`,
+    `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // Ignoring error since we format the clickhouse params in custom $query
   // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-  if (cursor) AND.push(`"createdAt" < '${cursor}'`);
-  if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
+  if (cursor) AND.push(`createdAt < '${cursor}'`);
+
+  const HAVING = [];
+  if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);
 
   const judgments = await clickhouse.$query<{
     imageId: number;
@@ -1587,22 +1596,37 @@ export async function getPlayerHistory({
     grantedExp: number;
     multiplier: number;
     originalLevel: NsfwLevel | null;
-    createdAt: Date;
+    lastCreatedAt: Date;
   }>`
-    SELECT imageId, rating, status, grantedExp, multiplier, originalLevel, "createdAt"
+    SELECT
+      imageId,
+      argMax(rating, createdAt)         AS rating,
+      argMax(status, createdAt)         AS status,
+      argMax(grantedExp, createdAt)     AS grantedExp,
+      argMax(multiplier, createdAt)     AS multiplier,
+      argMax(originalLevel, createdAt)  AS originalLevel,
+      max(createdAt)                    AS lastCreatedAt
     FROM knights_new_order_image_rating
     WHERE ${AND.join(' AND ')}
-    ORDER BY createdAt DESC
+    GROUP BY imageId
+    ${HAVING.length > 0 ? `HAVING ${HAVING.join(' AND ')}` : ''}
+    ORDER BY lastCreatedAt DESC
     LIMIT ${limit + 1}
   `;
   if (judgments.length === 0) return { items: [], nextCursor: null };
 
   let nextCursor: Date | null = null;
-  if (judgments.length > limit) nextCursor = judgments.pop()?.createdAt ?? null;
+  if (judgments.length > limit) nextCursor = judgments.pop()?.lastCreatedAt ?? null;
 
   const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds }, nsfwLevel: { notIn: [0, NsfwLevel.Blocked] } },
+    where: {
+      id: { in: imageIds },
+      nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
+      post: {
+        publishedAt: { not: null, lt: new Date() },
+      },
+    },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
@@ -1907,9 +1931,8 @@ export async function submitTestVote({
         });
         await updatePendingImageRatings({ imageId, rating: consensus });
         await valueInQueue!.pool.reset({ id: imageId });
-        await getImageRatingsCounter(imageId).reset({ all: true }); // Clear vote distribution
         await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
-      } else if (newVoteCount >= newOrderConfig.limits.maxKnightVotes) {
+      } else if (newVoteCount >= newOrderConfig.limits.knightVotes) {
         // Max votes reached without consensus - remove from queue
         await valueInQueue!.pool.reset({ id: imageId });
         await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
@@ -2030,8 +2053,8 @@ export async function submitTestVote({
 export async function getQueueStateForTesting(imageId?: number) {
   try {
     const state: {
-      knight: { imageId: number; voteCount: number; priority: number }[];
-      templar: { imageId: number; voteCount: number; priority: number }[];
+      knight: { imageId: number; voteCount: number; priority: number; slot: 'a' | 'b' }[];
+      templar: { imageId: number; voteCount: number; priority: number; slot: 'a' | 'b' }[];
       totalImages: number;
     } = {
       knight: [],
@@ -2040,39 +2063,44 @@ export async function getQueueStateForTesting(imageId?: number) {
     };
 
     if (imageId) {
-      // Check specific image across all queues
+      // Check specific image across all queues and both slots
       for (const rankType of [NewOrderRankType.Knight]) {
-        for (let priority = 1; priority <= 3; priority++) {
-          const pool = poolCounters[rankType][priority - 1];
-          const count = await pool.getCount(imageId);
-          if (count !== null) {
-            const queueData = { imageId, voteCount: count, priority };
+        for (const slot of ['a', 'b'] as const) {
+          for (let priority = 1; priority <= 3; priority++) {
+            const pool = poolCounters[rankType][slot][priority - 1];
+            const count = await pool.getCount(imageId);
+            if (count !== null) {
+              const queueData = { imageId, voteCount: count, priority, slot };
 
-            if (rankType === NewOrderRankType.Knight) {
-              state.knight.push(queueData);
-            } else {
-              state.templar.push(queueData);
+              if (rankType === NewOrderRankType.Knight) {
+                state.knight.push(queueData);
+              } else {
+                state.templar.push(queueData);
+              }
             }
           }
         }
       }
     } else {
-      // Get all images from all queues
+      // Get all images from all queues and both slots
       for (const rankType of [NewOrderRankType.Knight]) {
-        for (let priority = 1; priority <= 3; priority++) {
-          const pool = poolCounters[rankType][priority - 1];
-          const allValues = await pool.getAll({ withCount: true });
+        for (const slot of ['a', 'b'] as const) {
+          for (let priority = 1; priority <= 3; priority++) {
+            const pool = poolCounters[rankType][slot][priority - 1];
+            const allValues = await pool.getAll({ withCount: true });
 
-          const images = allValues.map(({ value, score }) => ({
-            imageId: Number(value),
-            voteCount: score,
-            priority,
-          }));
+            const images = allValues.map(({ value, score }: { value: string; score: number }) => ({
+              imageId: Number(value),
+              voteCount: score,
+              priority,
+              slot,
+            }));
 
-          if (rankType === NewOrderRankType.Knight) {
-            state.knight.push(...images);
-          } else {
-            state.templar.push(...images);
+            if (rankType === NewOrderRankType.Knight) {
+              state.knight.push(...images);
+            } else {
+              state.templar.push(...images);
+            }
           }
         }
       }
@@ -2204,10 +2232,12 @@ export async function getVoteDetailsForTesting(imageId: number) {
  */
 export async function resetImageVotesForTesting(imageId: number) {
   try {
-    // Remove from all queues
+    // Remove from all queues and both slots
     for (const rankType of [NewOrderRankType.Knight]) {
-      for (let priority = 1; priority <= 3; priority++) {
-        await poolCounters[rankType][priority - 1].reset({ id: imageId });
+      for (const slot of ['a', 'b'] as const) {
+        for (let priority = 1; priority <= 3; priority++) {
+          await poolCounters[rankType][slot][priority - 1].reset({ id: imageId });
+        }
       }
     }
 

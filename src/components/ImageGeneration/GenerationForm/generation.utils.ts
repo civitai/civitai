@@ -9,7 +9,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
-import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type {
   ResourceSelectOptions,

@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { createJob, getJobDate } from './job';
 import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
 

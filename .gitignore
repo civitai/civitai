@@ -12,6 +12,9 @@
 /prisma/db.sqlite
 /prisma/db.sqlite-journal
 
+# Generated slim schema - edit schema.full.prisma instead
+prisma/schema.prisma
+
 # next.js
 /.next/
 /out/
@@ -88,3 +91,6 @@ src/pages/api/dev-local/*
 
 docs/working/
 .claude/*.local.*
+local/
+.eslintcache
+nul

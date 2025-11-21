@@ -7,24 +7,25 @@ import {
   Text,
   ThemeIcon,
   Title,
-  useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff, IconSparkles } from '@tabler/icons-react';
 import React from 'react';
+import dynamic from 'next/dynamic';
 import { useQueryRecommendedResources } from '~/components/AssociatedModels/recommender.utils';
 
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { trpc } from '~/utils/trpc';
-import { openAssociateModelsModal } from '~/components/Dialog/dialog-registry';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'), {
+  ssr: false,
+});
+const openAssociateModelsModal = createDialogTrigger(AssociateModelsModal);
 
 export function AssociatedModels({
   fromId,
@@ -37,33 +38,22 @@ export function AssociatedModels({
   type: AssociationType;
   label: React.ReactNode;
   ownerId: number;
-  versionId?: number;
+  versionId: number;
 }) {
-  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
-  const colorScheme = useComputedColorScheme();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
-  const browsingLevel = useBrowsingLevelDebounced();
-  const { data = [], isLoading } = trpc.model.getAssociatedResourcesCardData.useQuery({
+  const { recommendedResources, isLoading } = useQueryRecommendedResources({
     fromId,
     type,
-    browsingLevel,
+    modelVersionId: versionId,
   });
-  const { data: recommendedResources, isInitialLoading: loadingRecommended } =
-    useQueryRecommendedResources(
-      { modelVersionId: versionId as number },
-      { enabled: !!versionId && features.recommenders }
-    );
-
-  const combinedData = [...data, ...recommendedResources];
 
   const handleManageClick = () => {
     openAssociateModelsModal({ props: { fromId, type, versionId } });
   };
 
-  if (!isOwnerOrModerator && !combinedData.length) return null;
+  if (!isOwnerOrModerator && !recommendedResources.length) return null;
 
   return (
     <MasonryProvider maxColumnCount={4}>
@@ -77,14 +67,14 @@ export function AssociatedModels({
               </Button>
             )}
           </Group>
-          {isLoading || loadingRecommended ? (
+          {isLoading ? (
             <div style={{ position: 'relative', height: 310 }}>
               <LoadingOverlay visible />
             </div>
-          ) : combinedData.length ? (
+          ) : recommendedResources.length ? (
             <MasonryCarousel
               itemWrapperProps={{ style: { paddingTop: 4, paddingBottom: 4 } }}
-              data={combinedData}
+              data={recommendedResources}
               render={({ data, ...props }) =>
                 data.resourceType === 'model' ? (
                   <ModelCard

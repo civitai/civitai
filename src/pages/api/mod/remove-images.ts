@@ -2,11 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  getResourceIdsForImages,
-  getTagNamesForImages,
-  handleBlockImages,
-} from '~/server/services/image.service';
+import { handleBlockImages } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -25,19 +21,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     const tracker = new Tracker(req, res);
     const images = await handleBlockImages({ ids: imageIds, userId, moderatorId });
-    await Limiter({ batchSize: 1000 }).process(images, async (images) => {
-      const ids = images.map((x) => x.id);
-      // Get additional data for this chunk
-      const imageTags = await getTagNamesForImages(ids);
-      const imageResources = await getResourceIdsForImages(ids);
+    await Limiter({ batchSize: 10000 }).process(images, async (images) => {
       await tracker.images(
         images.map((image) => ({
           type: 'DeleteTOS',
           imageId: image.id,
           ownerId: image.userId,
           nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-          tags: imageTags[image.id] ?? [],
-          resources: imageResources[image.id] ?? [],
+          tags: [],
+          resources: [],
           tosReason: reason,
         }))
       );

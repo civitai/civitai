@@ -2,6 +2,7 @@ import { Button, Popover, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/co
 import { useClipboard } from '@mantine/hooks';
 import { IconBrandX } from '@tabler/icons-react';
 import React from 'react';
+import dynamic from 'next/dynamic';
 import { SocialIconChat } from '~/components/ShareButton/Icons/SocialIconChat';
 import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconCollect';
 import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
@@ -12,7 +13,13 @@ import type { CollectItemInput } from '~/server/schema/collection.schema';
 import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { openAddToCollectionModal, openChatShareModal } from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'), {
+  ssr: false,
+});
+const openChatShareModal = createDialogTrigger(ChatShareModal);
 
 export function ShareButton({
   children,

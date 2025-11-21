@@ -8,6 +8,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
+import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -89,24 +90,16 @@ export const moderateImageHandler = async ({
       moderatorId: ctx.user.id,
     });
     if (input.reviewAction === 'block') {
-      const ids = images.map((x) => x.id);
-      const imageTags = await getTagNamesForImages(ids);
-      const imageResources = await getResourceIdsForImages(ids);
       await Limiter().process(images, (images) =>
         ctx.track.images(
           images.map(({ id, userId, nsfwLevel, needsReview }) => {
-            const tosReason = needsReview ?? 'other';
-            const tags = imageTags[id] ?? [];
-            tags.push(tosReason);
-            const resources = imageResources[id] ?? [];
-
             return {
               type: 'DeleteTOS',
               imageId: id,
               nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-              tags,
-              resources,
-              tosReason: tosReason,
+              tags: [],
+              resources: [],
+              tosReason: needsReview ?? 'other',
               ownerId: userId,
             };
           })
@@ -259,6 +252,11 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features } = ctx;
   const useFeedSearch = features.imageIndexFeed && input.useIndex;
+
+  // Track when useIndex is false or undefined
+  if (!useFeedSearch) {
+    imagesFeedWithoutIndexCounter.inc();
+  }
 
   try {
     if (useFeedSearch) {
@@ -473,14 +471,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (b.pinned) return 1;
         return bComments - aComments;
       });
-    // else if (input.sort === ImageSort.MostTipped)
-    //   results.sort((a, b) => {
-    //     const aTips = a.images[0].stats?.tippedAmountCountAllTime ?? 0;
-    //     const bTips = b.images[0].stats?.tippedAmountCountAllTime ?? 0;
-    //     if (aTips < bTips) return 1;
-    //     if (aTips > bTips) return -1;
-    //     return 0;
-    //   });
     else if (input.sort === ImageSort.MostCollected)
       results.sort((a, b) => {
         const aCollections = a.images[0].stats?.collectedCountAllTime ?? 0;

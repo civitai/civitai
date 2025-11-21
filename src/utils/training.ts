@@ -1,5 +1,5 @@
 import type JSZip from 'jszip';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { getBaseModelEcosystem, type BaseModel } from '~/shared/constants/base-model.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
@@ -9,7 +9,14 @@ import type {
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export const trainingBaseModelTypesImage = ['sd15', 'sdxl', 'sd35', 'flux', 'chroma'] as const;
+export const trainingBaseModelTypesImage = [
+  'sd15',
+  'sdxl',
+  'sd35',
+  'flux',
+  'chroma',
+  'qwen',
+] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
@@ -17,7 +24,7 @@ export const trainingBaseModelType = [
 ] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
-export const engineTypes = ['kohya', 'rapid', 'musubi'] as const;
+export const engineTypes = ['kohya', 'rapid', 'musubi', 'ai-toolkit'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
@@ -36,6 +43,10 @@ export const trainingModelInfo: {
     baseModel: BaseModel;
     isNew: boolean;
     disabled?: boolean;
+    aiToolkit?: {
+      ecosystem: string;
+      modelVariant?: string;
+    };
   };
 } = {
   sd_1_5: {
@@ -46,6 +57,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:127227@139180',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   anime: {
     label: 'Anime',
@@ -55,6 +67,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:84586@89927',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   semi: {
     label: 'Semi-realistic',
@@ -64,6 +77,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:4384@128713',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   realistic: {
     label: 'Realistic',
@@ -73,6 +87,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sd1:checkpoint:civitai:81458@132760',
     baseModel: 'SD 1.5',
     isNew: false,
+    aiToolkit: { ecosystem: 'sd1' },
   },
   //
   sdxl: {
@@ -83,6 +98,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
     baseModel: 'SDXL 1.0',
     isNew: false,
+    aiToolkit: { ecosystem: 'sdxl' },
   },
   pony: {
     label: 'Pony',
@@ -92,6 +108,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sdxl:checkpoint:civitai:257749@290640',
     baseModel: 'Pony',
     isNew: false,
+    aiToolkit: { ecosystem: 'sdxl' },
   },
   illustrious: {
     label: 'Illustrious',
@@ -101,6 +118,7 @@ export const trainingModelInfo: {
     air: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
     baseModel: 'Illustrious',
     isNew: false,
+    aiToolkit: { ecosystem: 'sdxl' },
   },
   //
   // sd3_medium: {
@@ -130,6 +148,7 @@ export const trainingModelInfo: {
     air: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     baseModel: 'Flux.1 D',
     isNew: false,
+    aiToolkit: { ecosystem: 'flux1', modelVariant: 'dev' },
   },
   //
   hy_720_fp8: {
@@ -141,6 +160,7 @@ export const trainingModelInfo: {
     air: 'urn:air:hyv1:vae:huggingface:tencent/HunyuanVideo@main/hunyuan-video-t2v-720p/vae/pytorch_model.pt',
     baseModel: 'Hunyuan Video',
     isNew: false,
+    aiToolkit: { ecosystem: 'wan' }, // Hunyuan uses wan ecosystem
   },
   wan_2_1_t2v_14b: {
     label: '2.1 T2V [14B]',
@@ -150,6 +170,7 @@ export const trainingModelInfo: {
     air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth', // actually t2v, uses HF
     baseModel: 'Wan Video 14B t2v',
     isNew: false,
+    aiToolkit: { ecosystem: 'wan', modelVariant: '2.1' },
   },
   wan_2_1_i2v_14b_720p: {
     label: '2.1 I2V [14B, 720p]',
@@ -160,6 +181,7 @@ export const trainingModelInfo: {
     baseModel: 'Wan Video 14B i2v 720p',
     isNew: true,
     disabled: true, // TODO remove
+    aiToolkit: { ecosystem: 'wan', modelVariant: '2.1' },
   },
   //
   chroma: {
@@ -170,6 +192,18 @@ export const trainingModelInfo: {
     air: 'urn:air:chroma:checkpoint:civitai:1330309@2164239',
     baseModel: 'Chroma',
     isNew: false,
+    aiToolkit: { ecosystem: 'chroma' },
+  },
+  //
+  qwen_image: {
+    label: 'Qwen-Image',
+    pretty: 'Qwen-Image',
+    type: 'qwen',
+    description: 'High-quality image generation with advanced understanding.',
+    air: 'urn:air:qwen:checkpoint:civitai:1864281@2110043',
+    baseModel: 'Qwen',
+    isNew: true,
+    aiToolkit: { ecosystem: 'qwen' },
   },
 };
 
@@ -217,8 +251,87 @@ export const getTrainingFields = {
       ? OrchEngineTypes.Rapid
       : engine === 'musubi'
       ? OrchEngineTypes.Musubi
+      : engine === 'ai-toolkit'
+      ? OrchEngineTypes.AiToolkit
       : OrchEngineTypes.Kohya;
   },
+};
+
+/**
+ * Get AI Toolkit ecosystem for a training model
+ * Reads from the centralized trainingModelInfo structure
+ */
+export function getAiToolkitEcosystem(baseModel: string): string | null {
+  const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
+
+  if (modelInfo?.aiToolkit) {
+    return modelInfo.aiToolkit.ecosystem;
+  }
+
+  // For custom models, we can't determine the ecosystem
+  console.warn(`No AI Toolkit ecosystem configured for: ${baseModel}`);
+  return null;
+}
+
+/**
+ * Get AI Toolkit model variant for a training model
+ * Reads from the centralized trainingModelInfo structure
+ */
+export function getAiToolkitModelVariant(
+  baseModel: TrainingDetailsBaseModelList
+): string | undefined {
+  // Custom models (AIR URNs or civitai:xxx@yyy format) don't have variants
+  if (typeof baseModel === 'string' && baseModel.includes('civitai:')) {
+    return undefined;
+  }
+
+  const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
+  return modelInfo?.aiToolkit?.modelVariant;
+}
+
+// Check if base model supports AI Toolkit
+export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
+  // AI Toolkit supports all base model types
+  const supportedTypes: TrainingBaseModelType[] = [
+    'sd15',
+    'sdxl',
+    'flux',
+    'sd35',
+    'hunyuan',
+    'wan',
+    'chroma',
+    'qwen',
+  ];
+  return supportedTypes.includes(baseType);
+};
+
+// Check if AI Toolkit is mandatory (cannot use other engines)
+export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen'];
+  return mandatoryTypes.includes(baseType);
+};
+
+// Get default engine for base type
+export const getDefaultEngine = (baseType: TrainingBaseModelType): EngineTypes => {
+  if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
+  if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
+  return 'kohya';
+};
+
+// Check if AI Toolkit is valid for the model
+export const isValidAiToolkit = (
+  baseModel: TrainingBaseModelType,
+  engine: EngineTypes
+): boolean => {
+  return isAiToolkitSupported(baseModel) && engine === 'ai-toolkit';
+};
+
+// Check if AI Toolkit is invalid for the model
+export const isInvalidAiToolkit = (
+  baseModel: TrainingBaseModelType,
+  engine: EngineTypes
+): boolean => {
+  return !isAiToolkitSupported(baseModel) && engine === 'ai-toolkit';
 };
 
 // TODO get this back from the dryRun

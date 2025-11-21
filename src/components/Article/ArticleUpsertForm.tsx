@@ -32,7 +32,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
-import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

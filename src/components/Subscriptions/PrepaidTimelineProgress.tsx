@@ -1,7 +1,6 @@
 import { Box, Group, Paper, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
 import {
-  subscriptionMetadata,
   type SubscriptionProductMetadata,
   type SubscriptionMetadata,
 } from '~/server/schema/subscriptions.schema';
@@ -55,6 +54,24 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
 
   if (segments.length === 0) return null;
 
+  return (
+    <PrepaidTimelineProgressSegments
+      segments={segments}
+      currentPeriodStart={currentPeriodStart}
+      now={now}
+    />
+  );
+}
+
+function PrepaidTimelineProgressSegments({
+  segments,
+  currentPeriodStart,
+  now,
+}: {
+  segments: TimelineSegment[];
+  currentPeriodStart: Dayjs;
+  now: Dayjs;
+}) {
   const totalDays = segments.reduce((sum, segment) => sum + segment.days, 0);
   const daysPassed = Math.max(0, now.diff(currentPeriodStart, 'day'));
   const totalEndDate = segments[segments.length - 1].endDate;

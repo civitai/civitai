@@ -6,7 +6,6 @@ import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { purgeWeeklyEarnedStats } from '~/server/metrics/model.metrics';
 import type {
   DetailsFailedRecurringBid,
   DetailsWonAuction,
@@ -29,7 +28,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { resourceDataCache } from '~/server/services/model-version.service';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -708,13 +707,4 @@ const createNewAuctions = async (now: Dayjs) => {
     skipDuplicates: true,
   });
   log(newAuctions.length, 'new auctions');
-
-  // If new checkpoint auction, clear prior week earned stats
-  const checkpointAuctionBase = auctionBases.find((ab) => ab.slug === 'featured-checkpoints');
-  const checkpointAuction = newAuctions.some((a) => a.auctionBaseId === checkpointAuctionBase?.id);
-  if (checkpointAuction) {
-    log('Checkpoint auction created, purging weekly stats');
-    await purgeWeeklyEarnedStats(dbWrite);
-    log('Purged weekly stats');
-  }
 };

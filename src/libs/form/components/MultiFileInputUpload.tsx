@@ -15,6 +15,7 @@ import { bytesToKB, formatBytes, formatSeconds } from '~/utils/number-helpers';
 import classes from './MultiFileInputUpload.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { isAndroidDevice } from '~/utils/device-helpers';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: BaseFileSchema[];
@@ -132,7 +133,7 @@ export const MultiFileInputUpload = forwardRef<HTMLDivElement, Props>(
             }}
             className={clsx(dropzoneProps?.className, !showDropzoneStatus && classes.dropzone)}
             classNames={{ root: props.error || hasErrors ? 'border-red-6 mb-[5px]' : undefined }}
-            useFsAccessApi={false}
+            useFsAccessApi={!isAndroidDevice()}
           >
             <Group
               justify="center"
