@@ -8,6 +8,23 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('pgDb', 'blue');
 
+/**
+ * Formats a value for SQL display/logging.
+ * Used by combineSqlWithParams for consistent value formatting.
+ */
+function formatSqlValueForDisplay(value: unknown): string {
+  if (value === null || value === undefined) {
+    return 'NULL';
+  } else if (typeof value === 'string') {
+    return `'${value.replace(/'/g, "''")}'`;
+  } else if (value instanceof Date) {
+    return `'${value.toISOString()}'`;
+  } else if (typeof value === 'object') {
+    return `'${JSON.stringify(value)}'`;
+  }
+  return String(value);
+}
+
 type CancellableResult<R extends QueryResultRow = any> = {
   query: Promise<QueryResult<R>>;
   result: () => Promise<R[]>;
@@ -98,7 +115,7 @@ export function getClient(
     }
 
     // Logging
-    log(instance, params !== undefined ? { text: queryText, values: queryParams } : sql);
+    log(instance, combineSqlWithParams(sql));
 
     let done = false;
     const query =
@@ -330,27 +347,30 @@ export async function batchProcessor({
   }, concurrency);
 }
 
-export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
-  let query = sql;
-  const parameters = params as string[];
-  for (let i = 0; i < parameters.length; i++) {
+/**
+ * Combines a SQL string with its parameters for display/logging.
+ * Replaces $1, $2 (and :1, :2) placeholders with formatted values.
+ * NOTE: This is for logging/debugging only, not for executing queries.
+ */
+export function combineSqlWithParams(sql: string | Prisma.Sql, params?: readonly unknown[]) {
+  const queryText = typeof sql === 'string' ? sql : sql.text;
+  const queryParams = params ?? (typeof sql === 'string' ? [] : sql.values);
+
+  let query = queryText;
+  for (let i = 0; i < queryParams.length; i++) {
     // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
     const re = new RegExp('([$:])' + (i + 1) + '(?!\\d)', 'g');
-    // If string, will quote - if bool or numeric, will not - does the job here
-    if (typeof parameters[i] === 'string')
-      parameters[i] = "'" + parameters[i].replace("'", "\\'") + "'";
-    //params[i] = JSON.stringify(params[i])
-    query = query.replace(re, parameters[i]);
+    const formatted = formatSqlValueForDisplay(queryParams[i]);
+    query = query.replace(re, formatted);
   }
   return query;
 }
 
 export function getExplainSql(value: typeof Prisma.Sql) {
-  const obj = Prisma.sql`
+  return combineSqlWithParams(Prisma.sql`
     EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)
     ${value}
-  `;
-  return combineSqlWithParams(obj.text, obj.values);
+  `);
 }
 
 /**

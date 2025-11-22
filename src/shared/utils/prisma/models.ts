@@ -1987,7 +1987,6 @@ export interface CollectionItem {
   reviewedAt: Date | null;
   note: string | null;
   status: CollectionItemStatus;
-  randomId: number | null;
   tagId: number | null;
   tag?: Tag | null;
   scores?: CollectionItemScore[];

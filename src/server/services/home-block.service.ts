@@ -156,7 +156,7 @@ export const getHomeBlockById = async ({
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
 type GetAnnouncements = AsyncReturnType<typeof getCurrentAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
-  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
+  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>['items'];
 };
 type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>[number];
 
@@ -207,8 +207,8 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      const items = input.withCoreData
-        ? []
+      const result = input.withCoreData
+        ? { items: [], nextCursor: undefined }
         : await getCollectionItemsByCollectionId({
             user,
             input: {
@@ -225,7 +225,7 @@ export const getHomeBlockData = async ({
         metadata,
         collection: {
           ...collection,
-          items,
+          items: result.items,
         },
       };
     }

@@ -207,7 +207,7 @@ export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSc
 export const getAllCollectionItemsSchema = baseQuerySchema.extend({
   limit: z.number().min(0).max(100).optional(),
   page: z.number().optional(),
-  cursor: z.number().optional(),
+  cursor: z.string().optional(), // Format: "seed:sortKey:id" for random sort, or just "id" for other sorts
   collectionId: z.number(),
   statuses: z.array(z.enum(CollectionItemStatus)).optional(),
   forReview: z.boolean().optional(),
