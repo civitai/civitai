@@ -2,10 +2,12 @@ import type { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
+  ImageFlags,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { flagUpdate } from '~/shared/utils/flags';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -193,7 +195,7 @@ export const createReport = async ({
             if (!!tagNames?.length) {
               const image = await dbWrite.image.findFirst({
                 where: { id },
-                select: { nsfwLevel: true, nsfwLevelLocked: true },
+                select: { nsfwLevel: true },
               });
               if (image) {
                 const moderated = await getModeratedTags();
@@ -213,7 +215,7 @@ export const createReport = async ({
                       },
                       update: { nsfwLevel: maxRating },
                     }),
-                    dbWrite.image.update({ where: { id }, data: { nsfwLevelLocked: false } }),
+                    flagUpdate(dbWrite, 'Image', id).unset(ImageFlags.nsfwLevelLocked).execute(),
                   ]);
                 }
               }

@@ -3,11 +3,13 @@ import type { SearchResponse } from 'meilisearch';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { IMAGES_SEARCH_INDEX, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { ImageFlags } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { metricsSearchClient, searchClient, updateDocs } from '~/server/meilisearch/client';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { flagUpdate } from '~/shared/utils/flags';
 import { checkable, includesPoi } from '~/utils/metadata/audit';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
@@ -99,14 +101,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           batchSize: 10000,
         });
 
-        await dbWrite.image.updateMany({
-          where: {
-            id: { in: batch },
-          },
-          data: {
-            poi: true,
-          },
-        });
+        await flagUpdate(dbWrite, 'Image', batch).set(ImageFlags.poi).execute();
       });
     }
 

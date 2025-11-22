@@ -214,6 +214,23 @@ export enum NsfwLevel {
   Blocked = 32,
 }
 
+export enum ImageFlags {
+  nsfwLevelLocked = 1 << 0, // 1
+  tosViolation = 1 << 1, // 2
+  hideMeta = 1 << 2, // 4
+  minor = 1 << 3, // 8
+  poi = 1 << 4, // 16
+  acceptableMinor = 1 << 5, // 32
+  promptNsfw = 1 << 6, // 64
+  resourcesNsfw = 1 << 7, // 128
+
+  // Reserved for future use
+
+  // Trigger driven flags
+  hasPrompt = 1 << 13, // 8,192
+  madeOnSite = 1 << 14, // 16,384
+}
+
 export enum OnboardingSteps {
   TOS = 1,
   Profile = 2,

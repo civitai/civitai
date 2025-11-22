@@ -99,12 +99,13 @@ export function ImageMeta({
   }, [meta]);
 
   // TODO.optimize - can we get this data higher up?
-  const { data = [] } = trpc.image.getResources.useQuery(
+  const { data: generationData } = trpc.image.getGenerationData.useQuery(
     { id: imageId as number },
     { enabled: flags.imageGeneration && !!imageId, trpc: { context: { skipBatch: true } } }
   );
   const resourceId =
-    mainResourceId ?? data.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
+    mainResourceId ??
+    generationData?.resources.find((x) => x.modelType === ModelType.Checkpoint)?.modelVersionId;
 
   const { data: resourceCoverage } = trpc.generation.checkResourcesCoverage.useQuery(
     { id: resourceId as number },

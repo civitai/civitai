@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
+import { ImageFlags } from '~/server/common/enums';
 import type { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -20,6 +21,7 @@ import { stringifyAIR } from '~/shared/utils/air';
 import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { ImageResourceSlim } from '~/shared/types/image.types';
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
@@ -702,7 +704,7 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     const images = await dbRead.$queryRaw<ImageWithMeta[]>`
       SELECT
         i.id,
-        (CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta"
+        (CASE WHEN (i.flags & ${ImageFlags.hideMeta}) != 0 THEN NULL ELSE i.meta END) as "meta"
       FROM "Image" i
       WHERE i.id IN (${Prisma.join(ids as number[])})
     `;
@@ -956,23 +958,10 @@ export type ModelVersionResourceCacheItem = {
   isFeatured: boolean;
   isNew: boolean;
 };
-export type ImageResourceCacheItem = {
-  imageId: number;
-  modelVersionId: number;
-  strength: number | null;
-  detected: boolean;
-  modelId: number;
-  modelName: string;
-  modelType: string;
-  versionName: string;
-  baseModel: BaseModel;
-  poi: boolean;
-  minor: boolean;
-};
 
 type ImageResourcesCacheItem = {
   imageId: number;
-  resources: ImageResourceCacheItem[];
+  resources: ImageResourceSlim[];
 };
 
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
@@ -983,7 +972,7 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
 
-    const resources = await dbRead.$queryRaw<ImageResourceCacheItem[]>`
+    const resources = await dbRead.$queryRaw<ImageResourceSlim[]>`
       SELECT
         ir."imageId",
         ir."modelVersionId",
@@ -992,10 +981,8 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
         m.id as "modelId",
         m.name as "modelName",
         m.type as "modelType",
-        mv.name as "versionName",
-        mv."baseModel",
-        m.poi,
-        m.minor
+        mv.name as "modelVersionName",
+        mv."baseModel" as "modelVersionBaseModel"
       FROM "ImageResourceNew" ir
       JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
       JOIN "Model" m ON mv."modelId" = m.id
@@ -1016,11 +1003,11 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
 
 /** Helper to get the baseModel for an image (from checkpoint resources) */
 export function getBaseModelFromResources(
-  resources: ImageResourceCacheItem[] | undefined
-): BaseModel | null {
+  resources: ImageResourceSlim[] | undefined
+): string | null {
   if (!resources) return null;
   const checkpoint = resources.find((r) => r.modelType === 'Checkpoint');
-  return checkpoint?.baseModel ?? null;
+  return checkpoint?.modelVersionBaseModel ?? null;
 }
 
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({

@@ -283,9 +283,9 @@ async function updateFlags() {
     rangeFetcher: async (ctx) => {
       const [{ start, end }] = await dbRead.$queryRaw<{ start: number; end: number }[]>`
         SELECT
-          MIN("imageId") as start,
-          MAX("imageId") as end
-        FROM "ImageFlag"
+          MIN(id) as start,
+          MAX(id) as end
+        FROM "Image"
       `;
 
       return { start, end };
@@ -300,9 +300,10 @@ async function updateFlags() {
       console.log(consoleFetchKey);
       console.time(consoleFetchKey);
       const records = await dbRead.$queryRaw<ImageWithImageFlag[]>`
-        SELECT fl.*
-        FROM "ImageFlag" fl
-        JOIN "Image" i ON i."id" = fl."imageId"
+        SELECT
+          i.id as "imageId",
+          (i.flags & 64) != 0 as "promptNsfw"
+        FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
         WHERE ${Prisma.join(IMAGE_WHERE(start, end), ' AND ')}
       `;

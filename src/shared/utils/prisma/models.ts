@@ -375,7 +375,6 @@ export interface User {
   sessionInvalidation?: SessionInvalidation[];
   stats?: UserStat | null;
   rank?: UserRank | null;
-  downloads?: DownloadHistory[];
   purchases?: Purchase[];
   cosmetics?: UserCosmetic[];
   postReactions?: PostReaction[];
@@ -719,7 +718,6 @@ export interface ModelVersion {
   files?: ModelFile[];
   runStrategies?: RunStrategy[];
   engagements?: ModelVersionEngagement[];
-  downloads?: DownloadHistory[];
   imageResources?: ImageResource[];
   posts?: Post[];
   resourceReviews?: ResourceReview[];
@@ -860,15 +858,6 @@ export interface ModelAssociations {
   createdAt: Date;
   type: AssociationType;
   index: number | null;
-}
-
-export interface DownloadHistory {
-  userId: number;
-  modelVersionId: number;
-  user?: User;
-  modelVersion?: ModelVersion;
-  downloadAt: Date;
-  hidden: boolean;
 }
 
 export interface ModActivity {
@@ -1092,15 +1081,12 @@ export interface Image {
   metadata: JsonValue;
   nsfw: NsfwLevel;
   nsfwLevel: number;
-  nsfwLevelLocked: boolean;
-  tosViolation: boolean;
   analysis: JsonValue | null;
   generationProcess: ImageGenerationProcess | null;
   featuredAt: Date | null;
   postId: number | null;
   post?: Post | null;
   needsReview: string | null;
-  hideMeta: boolean;
   index: number | null;
   scannedAt: Date | null;
   scanRequestedAt: Date | null;
@@ -1111,9 +1097,7 @@ export interface Image {
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
   sortAt: Date;
-  minor: boolean;
-  poi: boolean;
-  acceptableMinor: boolean;
+  flags: number;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;
@@ -1140,7 +1124,6 @@ export interface Image {
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
   CosmeticShopSection?: CosmeticShopSection[];
-  flags?: ImageFlag[];
   ratingRequests?: ImageRatingRequest[];
   tagsNew?: TagsOnImageNew[];
   imageResourceNew?: ImageResourceNew[];
@@ -1151,13 +1134,6 @@ export interface ImageTagForReview {
   imageId: number;
   image?: Image;
   tagId: number;
-}
-
-export interface ImageFlag {
-  imageId: number;
-  image?: Image;
-  promptNsfw: boolean;
-  resourcesNsfw: boolean;
 }
 
 export interface BlockedImage {

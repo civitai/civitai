@@ -13,8 +13,8 @@ import {
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { getExplainSql } from '~/server/db/db-helpers';
+import { ImageFlagsBitmask } from '~/server/utils/image-flags';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
@@ -490,7 +490,7 @@ async function getImage(id: number) {
       meta: true,
       metadata: true,
       postId: true,
-      nsfwLevelLocked: true,
+      flags: true,
       scanJobs: true,
       ingestion: true,
       // nsfwLevel: true,
@@ -1009,15 +1009,18 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   else if (flags.tagReview) reviewKey = 'tag';
   else if (flags.newUserReview) reviewKey = 'newUser';
 
+  const imageFlags = ImageFlagsBitmask.from(image.flags);
+  if (flags.poi) imageFlags.poi = true;
+  if (flags.minor) imageFlags.minor = true;
+
   const data: Prisma.ImageUpdateInput = {
     ingestion: getHasRequiredScans(image.scanJobs?.scans)
       ? ImageIngestionStatus.Scanned
       : undefined,
     updatedAt: new Date(),
+    flags: imageFlags.value,
   };
-  if (!image.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
-  if (flags.poi) data.poi = true;
-  if (flags.minor) data.minor = true;
+  if (!imageFlags.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
 
   const validAiGeneration = isValidAIGeneration({
     ...image,

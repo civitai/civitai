@@ -7,11 +7,11 @@ import {
   getRestrictedNsfwLevelsForBaseModel,
   maxUpscaleSize,
 } from '~/server/common/constants';
-import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
+import type { ImageResourceSlim } from '~/shared/types/image.types';
 
 export function hasImageLicenseViolation(image: {
   nsfwLevel: number;
-  resourceHelper: ImageResourceHelper[];
+  resourceHelper: ImageResourceSlim[];
 }) {
   const { nsfwLevel, resourceHelper } = image;
 

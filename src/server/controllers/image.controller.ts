@@ -68,7 +68,6 @@ import {
   getImage,
   getImageContestCollectionDetails,
   getImageModerationReviewQueue,
-  getImageResources,
   getResourceIdsForImages,
   getTagNamesForImages,
   moderateImages,
@@ -241,7 +240,6 @@ export const setTosViolationHandler = async ({
   }
 };
 
-// #region [new handlers]
 export const getInfiniteImagesHandler = async ({
   input,
   ctx,
@@ -512,22 +510,6 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
   }
 };
 
-export type ImageResourceModel = AsyncReturnType<typeof getImageResourcesHandler>[0];
-export const getImageResourcesHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: Context;
-}) => {
-  try {
-    return await getImageResources({ ...input });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
 export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
   try {
     return await getEntityCoverImage({ ...input, include: ['tags'] });
@@ -536,8 +518,6 @@ export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntiti
     else throw throwDbError(error);
   }
 };
-
-// #endregion
 
 export const getModeratorReviewQueueHandler = async ({
   input,

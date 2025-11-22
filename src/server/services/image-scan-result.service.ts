@@ -9,10 +9,12 @@ import type { TagType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
+  ImageFlags,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { flagUpdate } from '~/shared/utils/flags';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -170,7 +172,6 @@ export async function processImageScanResult(req: NextApiRequest) {
         meta: true,
         metadata: true,
         postId: true,
-        nsfwLevelLocked: true,
         nsfwLevel: true,
         scanJobs: true,
         ingestion: true,
@@ -238,14 +239,22 @@ export async function processImageScanResult(req: NextApiRequest) {
     } else {
       toUpdate.ingestion = ImageIngestionStatus.Scanned;
       toUpdate.needsReview = audit.reviewKey ?? null;
-      toUpdate.minor = audit.minor;
-      toUpdate.poi = audit.poi;
       toUpdate.blockedFor = null;
-
       toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
     }
 
+    // Update the main image record
     await dbWrite.image.update({ where: { id: image.id }, data: toUpdate });
+
+    // Atomic flag update for minor/poi (only when scanned, not blocked)
+    if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
+      let flagsToSet = 0;
+      if (audit.minor) flagsToSet |= ImageFlags.minor;
+      if (audit.poi) flagsToSet |= ImageFlags.poi;
+      if (flagsToSet !== 0) {
+        await flagUpdate(dbWrite, 'Image', image.id).set(flagsToSet).execute();
+      }
+    }
 
     // handle blocked image updates
     if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {

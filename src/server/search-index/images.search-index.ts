@@ -4,7 +4,7 @@ import type { FilterableAttributes, SearchableAttributes, SortableAttributes } f
 import { clickhouse } from '~/server/clickhouse/client';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { ImageFlags, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -153,10 +153,10 @@ type BaseImage = {
 const imageWhere = [
   Prisma.sql`i."postId" IS NOT NULL`,
   Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
-  Prisma.sql`i."tosViolation" = false`,
+  Prisma.sql`(i.flags & ${ImageFlags.tosViolation}) = 0`,
   Prisma.sql`i."needsReview" IS NULL`,
-  Prisma.sql`i."minor" = false`,
-  Prisma.sql`i."poi" = false`,
+  Prisma.sql`(i.flags & ${ImageFlags.minor}) = 0`,
+  Prisma.sql`(i.flags & ${ImageFlags.poi}) = 0`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
@@ -339,7 +339,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."url",
         i."nsfwLevel",
         i."aiNsfwLevel",
-        i."nsfwLevelLocked",
+        (i.flags & ${ImageFlags.nsfwLevelLocked}) != 0 AS "nsfwLevelLocked",
         i."meta"->'prompt' as "prompt",
         i."hash",
         i."height",
@@ -348,16 +348,15 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."nsfwLevel",
         i."postId",
         i."needsReview",
-        i."hideMeta",
+        (i.flags & ${ImageFlags.hideMeta}) != 0 AS "hideMeta",
         i."index",
         i."scannedAt",
         i."mimeType",
         p."modelVersionId",
-        fl."promptNsfw",
+        (i.flags & ${ImageFlags.promptNsfw}) != 0 as "promptNsfw",
         GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
-        LEFT JOIN "ImageFlag" fl ON i.id = fl."imageId"
         WHERE ${Prisma.join(where, ' AND ')}
       `;
 
