@@ -3,6 +3,9 @@ import { dbWrite } from '~/server/db/client';
 
 export const applyNsfwBaseline = createJob('apply-nsfw-baseline', '* * * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('apply-nsfw-baseline');
+  // This job has been disabled since we have an independent rating system now.
+  // However, we keep the code here in case we want to re-enable it in the future.
+  return;
 
   // Update NSFW baseline
   // --------------------------------------------
