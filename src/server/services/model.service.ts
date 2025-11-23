@@ -25,7 +25,12 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
-import { dataForModelsCache, modelTagCache, userModelCountCache } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  modelTagCache,
+  userBasicCache,
+  userModelCountCache,
+} from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -204,12 +209,7 @@ type ModelRaw = {
     status: ModelStatus;
     covered: boolean;
   }[];
-  user: {
-    id: number;
-    username: string | null;
-    deletedAt: Date | null;
-    image: string;
-  };
+  userId: number;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
   availability?: Availability;
 };
@@ -675,16 +675,10 @@ export const getModelsRaw = async ({
         'collectedCount', mm."collectedCount",
         'tippedAmountCount', mm."tippedAmountCount"
       )                                               as "rank",
-      jsonb_build_object(
-        'id', u."id",
-        'username', u."username",
-        'deletedAt', u."deletedAt",
-        'image', u."image"
-      )                                               as "user",
+      m."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     FROM "Model" m
          JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
-         JOIN "User" u ON m."userId" = u.id
       ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
     WHERE
       ${Prisma.join(AND, ' AND ')}
@@ -702,17 +696,18 @@ export const getModelsRaw = async ({
     modelQuery
   );
 
-  const userIds = models.map((m) => m.user.id);
-  const profilePictures = await getProfilePicturesForUsers(userIds);
-  const userCosmetics = await getCosmeticsForUsers(userIds);
-
-  // Get versions, hash, and tags from cache
+  const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
-  const modelData = await dataForModelsCache.fetch(modelIds);
 
-  const cosmetics = includeCosmetics
-    ? await getCosmeticsForEntity({ ids: models.map((m) => m.id), entity: 'Model' })
-    : {};
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await Promise.all([
+    userBasicCache.fetch(userIds),
+    getProfilePicturesForUsers(userIds),
+    getCosmeticsForUsers(userIds),
+    dataForModelsCache.fetch(modelIds),
+    includeCosmetics
+      ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+      : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+  ]);
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -789,9 +784,12 @@ export const getModelsRaw = async ({
           hashes: data.hashes,
           tagsOnModels: data.tags,
           user: {
-            ...model.user,
-            profilePicture: profilePictures?.[model.user.id] ?? null,
-            cosmetics: userCosmetics[model.user.id] ?? [],
+            id: model.userId,
+            username: userBasicData[model.userId]?.username ?? null,
+            deletedAt: userBasicData[model.userId]?.deletedAt ?? null,
+            image: userBasicData[model.userId]?.image ?? null,
+            profilePicture: profilePictures?.[model.userId] ?? null,
+            cosmetics: userCosmetics[model.userId] ?? [],
           },
           cosmetic: cosmetics[model.id] ?? null,
         };
