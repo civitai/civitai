@@ -51,6 +51,7 @@ import {
 import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -5701,26 +5702,38 @@ export async function getImageGenerationData({ id }: { id: number }) {
   };
 }
 
+// LRU cache for contest collection items lookup - caches by imageId
+// This avoids repeated database queries for the same image's contest participation
+const contestCollectionItemsCache = createLruCache({
+  name: 'contest-collection-items',
+  max: 10_000,
+  ttl: 5 * 60 * 1000, // 5 minutes
+  keyFn: (imageId: number) => `image:${imageId}`,
+  fetchFn: async (imageId: number) => {
+    return dbRead.collectionItem.findMany({
+      where: {
+        collection: {
+          mode: CollectionMode.Contest,
+        },
+        imageId,
+      },
+      select: {
+        id: true,
+        imageId: true,
+        status: true,
+        collection: { select: collectionSelect },
+        scores: { select: { userId: true, score: true } },
+        tag: true,
+      },
+    });
+  },
+});
+
 export const getImageContestCollectionDetails = async ({
   id,
   userId,
 }: { userId?: number } & GetByIdInput) => {
-  const items = await dbRead.collectionItem.findMany({
-    where: {
-      collection: {
-        mode: CollectionMode.Contest,
-      },
-      imageId: id,
-    },
-    select: {
-      id: true,
-      imageId: true,
-      status: true,
-      collection: { select: collectionSelect },
-      scores: { select: { userId: true, score: true } },
-      tag: true,
-    },
-  });
+  const items = await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
   const collectionIds = items.map((i) => i.collection.id as number);
