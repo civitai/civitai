@@ -189,8 +189,6 @@ export async function prepareModelVersionResponse(
     }),
     stats: {
       downloadCount: metrics[0]?.downloadCount ?? 0,
-      ratingCount: metrics[0]?.ratingCount ?? 0,
-      rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
       thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },

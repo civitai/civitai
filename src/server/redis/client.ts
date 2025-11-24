@@ -461,6 +461,9 @@ export const REDIS_SYS_KEYS = {
   DAILY_CHALLENGE: {
     CONFIG: 'daily-challenge:config',
   },
+  COLLECTION: {
+    RANDOM_SEED: 'collection:random-seed',
+  },
   EVENT: 'event', // special case
   SESSION: {
     ALL: 'session:all',
@@ -613,6 +616,7 @@ export const REDIS_KEYS = {
     MODEL_TAGS: 'packed:caches:model-tags',
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
+    IMAGE_RESOURCES: 'packed:caches:image-resources',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',
       IMAGES: 'packed:caches:mod-rules:images',

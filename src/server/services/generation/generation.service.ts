@@ -172,9 +172,7 @@ export const getGenerationResources = async (
             : ''
         )}
         ${Prisma.raw(
-          orderBy.startsWith('mm')
-            ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'`
-            : ''
+          orderBy.startsWith('mm') ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id` : ''
         )}
         WHERE ${Prisma.join(sqlAnd, ' AND ')}
         ORDER BY ${Prisma.raw(orderBy)}
