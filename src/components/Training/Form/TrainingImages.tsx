@@ -160,6 +160,8 @@ const minWidth = 256;
 const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
+// Absolute minimum - images below this will be rejected (training service requirement)
+const absoluteMinDimension = 64;
 
 const LabelSelectModal = ({
   modelId,
@@ -297,6 +299,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   );
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
+  const showImgTooSmall = useRef<string[]>([]);
+  const showImgCorrupt = useRef<string[]>([]);
 
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
@@ -329,15 +333,57 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const thisStep = 2;
   const maxImgPerPage = 9;
 
-  const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
+  const getResizedImgUrl = async (
+    data: FileWithPath | Blob,
+    type: string,
+    fileName?: string
+  ): Promise<string> => {
     const blob = new Blob([data], { type: type });
     const imgUrl = URL.createObjectURL(blob);
 
-    // TODO resize video?
-    if (![IMAGE_MIME_TYPE].includes(type as never)) return imgUrl;
+    // Skip validation for non-image types (e.g., videos)
+    if (!IMAGE_MIME_TYPE.includes(type as never)) return imgUrl;
 
-    const img = await createImageElement(imgUrl);
+    let img: HTMLImageElement;
+    try {
+      img = await createImageElement(imgUrl);
+    } catch {
+      URL.revokeObjectURL(imgUrl);
+      const name = fileName ?? 'image';
+      showImgCorrupt.current.push(name);
+      throw new Error(`Image "${name}" failed to load and may be corrupt.`);
+    }
+
     let { width, height } = img;
+
+    // Hard reject images where EITHER dimension is below the absolute minimum
+    // The training service requires images to be at least 64px in both dimensions
+    if (width < absoluteMinDimension || height < absoluteMinDimension) {
+      URL.revokeObjectURL(imgUrl);
+      const name = fileName ?? 'image';
+      showImgTooSmall.current.push(name);
+      throw new Error(
+        `Image "${name}" is too small (${width}x${height}). Minimum dimension is ${absoluteMinDimension}px.`
+      );
+    }
+
+    // Validate image integrity by attempting to draw and read from canvas
+    // This catches partially corrupt images that load but have invalid data
+    try {
+      const testCanvas = document.createElement('canvas');
+      testCanvas.width = Math.min(width, 1);
+      testCanvas.height = Math.min(height, 1);
+      const testCtx = testCanvas.getContext('2d');
+      if (!testCtx) throw new Error('Canvas context unavailable');
+      testCtx.drawImage(img, 0, 0, 1, 1);
+      // Try to read pixel data - this will fail for corrupt images
+      testCtx.getImageData(0, 0, 1, 1);
+    } catch {
+      URL.revokeObjectURL(imgUrl);
+      const name = fileName ?? 'image';
+      showImgCorrupt.current.push(name);
+      throw new Error(`Image "${name}" appears to be corrupt and cannot be processed.`);
+    }
 
     // both w and h must be less than the max
     const goodMax = width <= maxWidth && height <= maxHeight;
@@ -409,6 +455,35 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
       showImgResizeUp.current = 0;
     }
+
+    if (showImgTooSmall.current.length) {
+      const count = showImgTooSmall.current.length;
+      const fileNames =
+        count <= 3
+          ? showImgTooSmall.current.join(', ')
+          : `${showImgTooSmall.current.slice(0, 3).join(', ')} and ${count - 3} more`;
+      showErrorNotification({
+        title: `${count} file${count === 1 ? '' : 's'} rejected - too small`,
+        error: new Error(
+          `Images must be at least ${absoluteMinDimension}x${absoluteMinDimension}px. Skipped: ${fileNames}`
+        ),
+        autoClose: false,
+      });
+      showImgTooSmall.current = [];
+    }
+    if (showImgCorrupt.current.length) {
+      const count = showImgCorrupt.current.length;
+      const fileNames =
+        count <= 3
+          ? showImgCorrupt.current.join(', ')
+          : `${showImgCorrupt.current.slice(0, 3).join(', ')} and ${count - 3} more`;
+      showErrorNotification({
+        title: `${count} file${count === 1 ? '' : 's'} rejected - corrupt`,
+        error: new Error(`These images appear to be corrupt and were skipped: ${fileNames}`),
+        autoClose: false,
+      });
+      showImgCorrupt.current = [];
+    }
   };
 
   const parseExisting = async (mvId: number) => {
@@ -454,7 +529,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (fileExt in mediaExts) {
           const imgBlob = await zf.async('blob');
           try {
-            const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt]);
+            const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt], zname);
             const czFile = zipReader.file(`${baseFileName}.txt`);
             let labelStr = '';
             if (czFile) {
@@ -469,10 +544,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               invalidLabel: false,
               source: source ?? null,
             });
-          } catch (e) {
-            showErrorNotification({
-              error: new Error(`An error occurred while parsing "${zname}".`),
-            });
+          } catch {
+            // Error already tracked and will be shown in showResizeWarnings
           }
         }
         return hasLabelFiles;
@@ -517,7 +590,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           return { parsedFiles: [] as ImageDataType[], hasAnyLabelFiles: false };
         } else {
           try {
-            const scaledUrl = await getResizedImgUrl(f, f.type);
+            const scaledUrl = await getResizedImgUrl(f, f.type, f.name);
             const label = data?.[f.name]?.label ?? '';
             const source = data?.[f.name]?.source ?? null;
             const parsed: ImageDataType[] = [
@@ -528,10 +601,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               parsedFiles: parsed,
               hasAnyLabelFiles: label !== '',
             };
-          } catch (e) {
-            showErrorNotification({
-              error: new Error(`An error occurred while parsing "${f.name}".`),
-            });
+          } catch {
+            // Error already tracked and will be shown in showResizeWarnings
             return { parsedFiles: [] as ImageDataType[], hasAnyLabelFiles: false };
           }
         }
