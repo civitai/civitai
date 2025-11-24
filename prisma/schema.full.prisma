@@ -320,7 +320,6 @@ model User {
   sessionInvalidation        SessionInvalidation[]
   stats                      UserStat?
   rank                       UserRank?
-  downloads                  DownloadHistory[]
   purchases                  Purchase[]
   cosmetics                  UserCosmetic[]
   postReactions              PostReaction[]
@@ -841,7 +840,6 @@ model ModelVersion {
   files                   ModelFile[]
   runStrategies           RunStrategy[]
   engagements             ModelVersionEngagement[]
-  downloads               DownloadHistory[]
   imageResources          ImageResource[]
   posts                   Post[]
   resourceReviews         ResourceReview[]
@@ -1047,19 +1045,6 @@ model ModelAssociations {
   @@index([toModelId], type: Hash)
   @@index([fromModelId], type: Hash)
   @@index([toArticleId], type: Hash)
-}
-
-
-model DownloadHistory {
-  userId         Int
-  modelVersionId Int
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  downloadAt     DateTime
-  hidden         Boolean      @default(false)
-
-  @@id([userId, modelVersionId])
-  @@index([userId, downloadAt])
 }
 
 
@@ -1406,15 +1391,15 @@ model Image {
   metadata          Json                    @default("{}") // file metadata
   nsfw              NsfwLevel               @default(None)
   nsfwLevel         Int                     @default(0)
-  nsfwLevelLocked   Boolean                 @default(false)
-  tosViolation      Boolean                 @default(false)
+  // nsfwLevelLocked   Boolean                 @default(false) // deprecated - migrated to flags
+  // tosViolation      Boolean                 @default(false) // deprecated - migrated to flags
   analysis          Json?
   generationProcess ImageGenerationProcess?
   featuredAt        DateTime?
   postId            Int?
   post              Post?                   @relation(fields: [postId], references: [id], onDelete: SetNull)
   needsReview       String?
-  hideMeta          Boolean                 @default(false)
+  // hideMeta          Boolean                 @default(false) // deprecated - migrated to flags
   index             Int?
   scannedAt         DateTime?
   scanRequestedAt   DateTime?
@@ -1425,9 +1410,10 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(now())
-  minor             Boolean                 @default(false)
-  poi               Boolean                 @default(false)
-  acceptableMinor   Boolean                 @default(false)
+  // minor             Boolean                 @default(false) // deprecated - migrated to flags
+  // poi               Boolean                 @default(false) // deprecated - migrated to flags
+  // acceptableMinor   Boolean                 @default(false) // deprecated - migrated to flags
+  flags             Int                    @default(0)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -1455,7 +1441,6 @@ model Image {
   tools               ImageTool[]
   techniques          ImageTechnique[]
   CosmeticShopSection CosmeticShopSection[]
-  flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
   tagsNew             TagsOnImageNew[]
   imageResourceNew    ImageResourceNew[]
@@ -1475,14 +1460,6 @@ model ImageTagForReview {
 
   @@id([imageId, tagId])
   @@index([tagId])
-}
-
-
-model ImageFlag {
-  imageId       Int     @id
-  image         Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  promptNsfw    Boolean @default(false)
-  resourcesNsfw Boolean @default(false)
 }
 
 enum BlockImageReason {

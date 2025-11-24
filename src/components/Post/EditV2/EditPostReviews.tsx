@@ -21,7 +21,7 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
   const imageResources = useMemo(() => {
     const resources = images
       .flatMap((x) => x.resourceHelper)
-      .map(({ modelVersionId, name }) => ({ modelVersionId, name }))
+      .map(({ modelVersionId, modelVersionName }) => ({ modelVersionId, name: modelVersionName }))
       .filter(isDefined);
     return uniqWith(resources, isEqual);
   }, [images]);

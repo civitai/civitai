@@ -21,7 +21,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   type: true,
   metadata: true,
   createdAt: true,
-  hideMeta: true,
+  flags: true,
   tags: {
     select: {
       tag: { select: { ...simpleTagSelect, type: true } },
@@ -56,31 +56,3 @@ export { imageSelectWithoutName };
 const image = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: imageSelect });
 export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 export type ImageModelWithIngestion = ImageModel & { ingestion: ImageIngestionStatus };
-
-export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHelperSelect>()({
-  imageId: true,
-  reviewId: true,
-  reviewRating: true,
-  reviewDetails: true,
-  reviewCreatedAt: true,
-  name: true,
-  modelVersionId: true,
-  modelVersionName: true,
-  modelVersionCreatedAt: true,
-  modelId: true,
-  modelName: true,
-  modelDownloadCount: true,
-  modelCommentCount: true,
-  modelThumbsUpCount: true,
-  modelThumbsDownCount: true,
-  modelType: true,
-  modelVersionBaseModel: true,
-  detected: true,
-});
-
-const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultArgs>()({
-  select: imageResourceHelperSelect,
-});
-export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
-  typeof imageResourceHelper
->;

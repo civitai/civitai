@@ -8,7 +8,7 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
+import { getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
@@ -105,12 +105,14 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (isRegionRestricted(region) || domainColor === 'green')
       _browsingLevel = sfwBrowsingLevelsFlag;
 
-    const fn = data.modelId || data.imageId ? getAllImages : getAllImagesIndex;
-
     const features = getFeatureFlags({ user: session?.user, req });
 
-    const { items, nextCursor } = await fn({
+    // Convert imageId to ids array for consistency with getAllImagesIndex
+    const ids = data.imageId ? [data.imageId] : undefined;
+
+    const { items, nextCursor } = await getAllImagesIndex({
       ...data,
+      ids,
       types: type ? [type] : undefined,
       limit,
       skip,

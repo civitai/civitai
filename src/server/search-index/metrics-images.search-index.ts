@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import type { BlockedReason } from '~/server/common/enums';
+import { ImageFlags, type BlockedReason } from '~/server/common/enums';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -314,8 +314,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     logger(`PullData :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
     if (step === 0) {
-      const engines = Object.keys(videoGenerationConfig2);
-
       const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
         i."id",
@@ -324,46 +322,26 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."url",
         i."nsfwLevel",
         i."aiNsfwLevel",
-        i."nsfwLevelLocked",
+        (i.flags & ${ImageFlags.nsfwLevelLocked}) != 0 AS "nsfwLevelLocked",
         i."width",
         i."height",
         i."hash",
-        i."hideMeta",
+        (i.flags & ${ImageFlags.hideMeta}) != 0 AS "hideMeta",
         GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
         i."type",
         i."userId",
         i."needsReview",
         i."blockedFor",
-        i.minor,
-        i.poi,
-        i."acceptableMinor",
+        (i.flags & ${ImageFlags.minor}) != 0 AS minor,
+        (i.flags & ${ImageFlags.poi}) != 0 AS poi,
+        (i.flags & ${ImageFlags.acceptableMinor}) != 0 AS "acceptableMinor",
         p."publishedAt",
         p."availability",
-        (
-          CASE
-            WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-            THEN TRUE
-            ELSE FALSE
-          END
-        ) AS "hasMeta",
-        (
-          CASE
-            WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-              AND i.meta->>'prompt' IS NOT NULL
-            THEN TRUE
-            ELSE FALSE
-          END
-        ) AS "hasPositivePrompt",
-        (
-          CASE
-            WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
-              OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
-                ${Prisma.join(engines)}
-              ]::text[])
-            THEN TRUE
-            ELSE FALSE
-          END
-        ) as "onSite",
+        (i.flags & ${ImageFlags.hasPrompt}) != 0
+        AND (i.flags & ${ImageFlags.hideMeta}) = 0 AS "hasMeta",
+        (i.flags & ${ImageFlags.hasPrompt}) != 0
+        AND (i.flags & ${ImageFlags.hideMeta}) = 0 AS "hasPositivePrompt",
+        (i.flags & ${ImageFlags.madeOnSite}) != 0 AS "onSite",
         p."modelVersionId" as "postedToId",
         i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i

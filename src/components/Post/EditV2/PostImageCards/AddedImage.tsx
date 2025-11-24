@@ -65,6 +65,7 @@ import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedReason } from '~/server/common/enums';
+import { ImageFlagsBitmask } from '~/server/utils/image-flags';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
@@ -181,7 +182,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     state.post?.id,
   ]);
 
-  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type } = storedImage;
+  const { id, meta, blockedFor, ingestion, nsfwLevel, flags, type } = storedImage;
+  const hideMeta = ImageFlagsBitmask.from(flags).hideMeta;
   const otherImages = images
     .map((img) => (img.type === 'added' ? img.data : null))
     .filter(isDefined)
@@ -250,7 +252,9 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const updateImageMutation = trpc.post.updateImage.useMutation({
     onSuccess: (_, { id, hideMeta }) => {
       updateImage(id, (image) => {
-        image.hideMeta = hideMeta ?? false;
+        const imageFlags = ImageFlagsBitmask.from(image.flags);
+        imageFlags.hideMeta = hideMeta ?? false;
+        image.flags = imageFlags.value;
       });
     },
   });
@@ -631,7 +635,8 @@ function EditDetail() {
   const postId = usePostEditStore((state) => state.post?.id);
   const updateImage = usePostEditStore((state) => state.updateImage);
 
-  const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
+  const { meta, flags, resourceHelper: resources, blockedFor } = image;
+  const hideMeta = ImageFlagsBitmask.from(flags).hideMeta;
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;

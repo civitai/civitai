@@ -5,10 +5,12 @@ import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { ImageFlagsBitmask } from '~/server/utils/image-flags';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  imageResourcesCache,
   modelVersionAccessCache,
   postStatCache,
   thumbnailCache,
@@ -613,8 +615,11 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
-  const tags = await getVotableImageTags({ ids: imageIds, user });
-  const thumbnails = await thumbnailCache.fetch(imageIds);
+  const [tags, thumbnails, resources] = await Promise.all([
+    getVotableImageTags({ ids: imageIds, user }),
+    thumbnailCache.fetch(imageIds),
+    imageResourcesCache.fetch(imageIds),
+  ]);
 
   return _images
     .map((image) => ({
@@ -624,6 +629,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
+      resourceHelper: resources[image.id]?.resources ?? [],
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 }
@@ -983,8 +989,9 @@ export async function bustCachesForPosts(postIds: number | number[]) {
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
+    select: { flags: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
   });
+  const currentFlags = ImageFlagsBitmask.from(currentImage.flags);
 
   const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
   const updatedIsVerifiable = isValidAIGeneration({
@@ -1018,7 +1025,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 
   // If changing hide meta, purge the resize cache so that we strip metadata
-  if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
+  if (image.hideMeta && currentFlags.hideMeta !== image.hideMeta) {
     await purgeResizeCache({ url: result.url });
   }
 
@@ -1151,11 +1158,15 @@ export const addResourceToPostImage = async ({
     }
   }
 
-  return dbWrite.imageResourceHelper.findMany({
-    where: {
-      imageId: { in: createdResources.map((x) => x.imageId) },
-      modelVersionId: { in: createdResources.map((x) => x.modelVersionId) },
-    },
+  // Bust and refresh cache for affected images
+  const affectedImageIds = createdResources.map((x) => x.imageId);
+  await imageResourcesCache.bust(affectedImageIds);
+  const cached = await imageResourcesCache.fetch(affectedImageIds);
+
+  // Return newly added resources from cache
+  return affectedImageIds.flatMap((imgId) => {
+    const resources = cached[imgId]?.resources ?? [];
+    return resources.filter((r) => r.modelVersionId === modelVersionId);
   });
 };
 

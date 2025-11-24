@@ -48,7 +48,6 @@ import {
   getEntitiesCoverImageHandler,
   getImageContestCollectionDetailsHandler,
   getImageHandler,
-  getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
   getModeratorReviewQueueHandler,
@@ -121,14 +120,6 @@ export const imageRouter = router({
     .input(getInfiniteImagesSchema)
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getImageSchema).query(getImageHandler),
-  getResources: publicProcedure
-    .input(getByIdSchema)
-    .use(
-      edgeCacheIt({
-        ttl: CacheTTL.sm,
-      })
-    )
-    .query(getImageResourcesHandler),
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),

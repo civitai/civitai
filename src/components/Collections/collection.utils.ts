@@ -8,6 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
+import { ImageFlagsBitmask } from '~/server/utils/image-flags';
 import type {
   EnableCollectionYoutubeSupportInput,
   GetAllCollectionsInfiniteSchema,
@@ -115,7 +116,8 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
           ? {
               ...collectionItem.data.coverImage,
               hasMeta:
-                !collectionItem.data.coverImage.hideMeta && !!collectionItem.data.coverImage.meta,
+                !ImageFlagsBitmask.from(collectionItem.data.coverImage.flags).hideMeta &&
+                !!collectionItem.data.coverImage.meta,
               onSite: false,
             }
           : undefined,

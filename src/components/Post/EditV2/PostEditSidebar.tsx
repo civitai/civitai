@@ -26,10 +26,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isValidAIGeneration, hasImageLicenseViolation } from '~/utils/image-utils';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
+import type { ImageResourceSlim } from '~/shared/types/image.types';
 
 const getLicenseViolationDetails = (
-  images: Array<{ nsfwLevel: number; resourceHelper: ImageResourceHelper[] }>
+  images: Array<{ nsfwLevel: number; resourceHelper: ImageResourceSlim[] }>
 ) => {
   const violatingImages = images.filter((image) => {
     return hasImageLicenseViolation(image).violation;
