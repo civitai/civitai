@@ -232,15 +232,18 @@ export async function processImageScanResult(req: NextApiRequest) {
     if (audit.blockedFor) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = audit.blockedFor;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
     } else if (audit.nsfw && !validAiGeneration) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = BlockedReason.AiNotVerified;
+      toUpdate.nsfwLevel = audit.nsfwLevel;
     } else {
       toUpdate.ingestion = ImageIngestionStatus.Scanned;
       toUpdate.needsReview = audit.reviewKey ?? null;
       toUpdate.minor = audit.minor;
       toUpdate.poi = audit.poi;
       toUpdate.blockedFor = null;
+      toUpdate.nsfwLevel = audit.nsfwLevel;
 
       toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
     }
