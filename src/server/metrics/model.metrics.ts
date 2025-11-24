@@ -171,16 +171,15 @@ async function bulkInsertMetrics<T extends readonly string[]>(
     await executeRefresh(ctx)`
       -- insert ${options.logName}
       WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("${idColumn}" INT, ${metricInsertColumns}))
-      INSERT INTO "${options.table}" ("${idColumn}", "timeframe", "updatedAt", ${metricInsertKeys})
+      INSERT INTO "${options.table}" ("${idColumn}", "updatedAt", ${metricInsertKeys})
       SELECT
         d."${options.idColumn}",
-        'AllTime'::"MetricTimeframe" AS timeframe,
         NOW() as "updatedAt",
         ${metricValues}
       FROM data d
-      LEFT JOIN "${table}" im ON im."${idColumn}" = d."${idColumn}" AND im."timeframe" = 'AllTime'
+      LEFT JOIN "${table}" im ON im."${idColumn}" = d."${idColumn}"
       WHERE EXISTS (SELECT 1 FROM "${table.replace('Metric', '')}" WHERE id = d."${idColumn}")
-      ON CONFLICT ("${options.idColumn}", "timeframe") DO UPDATE
+      ON CONFLICT ("${options.idColumn}") DO UPDATE
         SET
           ${metricOverrides},
           "updatedAt" = NOW()
@@ -589,8 +588,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
           SUM(mvm."tippedAmountCount") "tippedAmountCount"
         FROM "ModelVersionMetric" mvm
         JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-        WHERE mvm.timeframe = 'AllTime'
-          AND mv."modelId" = ANY($4::int[])
+        WHERE mv."modelId" = ANY($4::int[])
           AND mv."modelId" BETWEEN $5 AND $6
         GROUP BY mv."modelId"
       )
@@ -630,8 +628,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
         SUM(mvm."earnedAmount") "earnedAmount"
       FROM "ModelVersionMetric" mvm
       JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
-      WHERE mvm.timeframe = 'AllTime'
-        AND mv."modelId" = ANY($1::int[])
+      WHERE mv."modelId" = ANY($1::int[])
         AND mv."modelId" BETWEEN $2 AND $3
       GROUP BY mv."modelId"`,
       [ids, ids[0], ids[ids.length - 1]]

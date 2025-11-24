@@ -162,12 +162,8 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
     },
   },
   metrics: {
-    where: { timeframe: 'AllTime' },
     select: {
       downloadCount: true,
-      ratingCount: true,
-      rating: true,
-      favoriteCount: true,
       thumbsUpCount: true,
       thumbsDownCount: true,
       imageCount: true,
@@ -238,16 +234,10 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   metrics: {
     select: {
       commentCount: true,
-      favoriteCount: true,
       thumbsUpCount: true,
       downloadCount: true,
-      rating: true,
-      ratingCount: true,
       collectedCount: true,
       tippedAmountCount: true,
-    },
-    where: {
-      timeframe: MetricTimeframe.AllTime,
     },
   },
 });

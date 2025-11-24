@@ -137,6 +137,7 @@ import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
+import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -312,7 +313,7 @@ export const getModelsRaw = async ({
   const AND: Prisma.Sql[] = [];
 
   if (searchModelIds.length) {
-    AND.push(Prisma.sql`m.id IN (${Prisma.join(searchModelIds, ',')})`);
+    AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
   }
 
   const userId = sessionUser?.id;
@@ -324,23 +325,23 @@ export const getModelsRaw = async ({
 
   if (!archived) {
     AND.push(
-      Prisma.sql`(m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier")`
+      Prisma.sql`(mm."mode" IS NULL OR mm."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`(m."poi" = false OR m."userId" = ${userId})`);
+    AND.push(Prisma.sql`(mm."poi" = false OR mm."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`m."minor" = false`);
+    AND.push(Prisma.sql`mm."minor" = false`);
   }
 
   if (isModerator) {
     if (poiOnly) {
-      AND.push(Prisma.sql`m."poi" = true`);
+      AND.push(Prisma.sql`mm."poi" = true`);
     }
     if (minorOnly) {
-      AND.push(Prisma.sql`m."minor" = true`);
+      AND.push(Prisma.sql`mm."minor" = true`);
     }
   }
 
@@ -442,7 +443,7 @@ export const getModelsRaw = async ({
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
     AND.push(
-      Prisma.sql`(m."lastVersionAt" >= ${decreaseDate(
+      Prisma.sql`(mm."lastVersionAt" >= ${decreaseDate(
         new Date(),
         1,
         period.toLowerCase() as ManipulateType
@@ -451,11 +452,11 @@ export const getModelsRaw = async ({
   }
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
-    AND.push(Prisma.sql`m."status" = ${ModelStatus.Published}::"ModelStatus"`);
+    AND.push(Prisma.sql`mm."status" = ${ModelStatus.Published}::"ModelStatus"`);
   } else if (sessionUser?.isModerator) {
     if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
     AND.push(
-      Prisma.sql`m."status" IN (${Prisma.raw(
+      Prisma.sql`mm."status" IN (${Prisma.raw(
         status.map((s) => `'${s}'::"ModelStatus"`).join(',')
       )})`
     );
@@ -479,7 +480,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."allowDifferentLicense" = ${allowDifferentLicense}`);
   if (allowNoCredit !== undefined) AND.push(Prisma.sql`m."allowNoCredit" = ${allowNoCredit}`);
 
-  if (!!ids?.length) AND.push(Prisma.sql`m."id" IN (${Prisma.join(ids, ',')})`);
+  if (!!ids?.length) AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(ids, ',')})`);
 
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -515,10 +516,10 @@ export const getModelsRaw = async ({
       throw throwAuthorizationError();
     }
 
-    AND.push(Prisma.sql`m."availability" = ${availability}::"Availability"`);
+    AND.push(Prisma.sql`mm."availability" = ${availability}::"Availability"`);
   } else if (!isModerator) {
     // Makes it so that our feeds never contain private stuff by default.
-    AND.push(Prisma.sql`m."availability" != 'Private'::"Availability"`);
+    AND.push(Prisma.sql`mm."availability" != 'Private'::"Availability"`);
   }
 
   if (supportsGeneration) {
@@ -565,10 +566,10 @@ export const getModelsRaw = async ({
 
   // Exclude user content
   if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+    AND.push(Prisma.sql`mm."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
   }
 
-  let orderBy = `m."lastVersionAt" DESC NULLS LAST, m."id" DESC`;
+  let orderBy = `mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC`;
 
   if (sort === ModelSort.HighestRated)
     orderBy = `mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"`;
@@ -582,7 +583,7 @@ export const getModelsRaw = async ({
     orderBy = `mm."collectedCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.ImageCount)
     orderBy = `mm."imageCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
-  else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC, m."id"`;
+  else if (sort === ModelSort.Oldest) orderBy = `mm."lastVersionAt" ASC, mm."modelId"`;
 
   // eslint-disable-next-line prefer-const
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
@@ -601,13 +602,13 @@ export const getModelsRaw = async ({
     )`);
   }
 
-  const browsingLevelQuery = Prisma.sql`(m."nsfwLevel" & ${browsingLevel}) != 0`;
+  const browsingLevelQuery = Prisma.sql`(mm."nsfwLevel" & ${browsingLevel}) != 0`;
   if (pending && (isModerator || userId)) {
     if (isModerator) {
-      AND.push(Prisma.sql`(${browsingLevelQuery} OR m."nsfwLevel" = 0)`);
+      AND.push(Prisma.sql`(${browsingLevelQuery} OR mm."nsfwLevel" = 0)`);
     } else if (userId) {
       AND.push(
-        Prisma.sql`(${browsingLevelQuery} OR (m."nsfwLevel" = 0 AND m."userId" = ${userId}))`
+        Prisma.sql`(${browsingLevelQuery} OR (mm."nsfwLevel" = 0 AND mm."userId" = ${userId}))`
       );
     }
   } else {
@@ -670,15 +671,13 @@ export const getModelsRaw = async ({
         'thumbsUpCount', mm."thumbsUpCount",
         'thumbsDownCount', mm."thumbsDownCount",
         'commentCount', mm."commentCount",
-        'ratingCount', mm."ratingCount",
-        'rating', mm."rating",
         'collectedCount', mm."collectedCount",
         'tippedAmountCount', mm."tippedAmountCount"
       )                                               as "rank",
       m."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
-    FROM "Model" m
-         JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
+    FROM "ModelMetric" mm
+         JOIN "Model" m ON m."id" = mm."modelId"
       ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
     WHERE
       ${Prisma.join(AND, ' AND ')}
@@ -686,11 +685,6 @@ export const getModelsRaw = async ({
       ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
-
-  // TODO - break into multiple queries
-  // model query
-  // model version query
-  // additional subqueries?
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
@@ -2590,7 +2584,7 @@ export async function getModelsWithVersions({
 
   const modelIds = items.map(({ id }) => id);
   const metrics = await dbRead.modelMetric.findMany({
-    where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
+    where: { modelId: { in: modelIds } },
   });
 
   const versionMetrics = await dbRead.modelVersionMetric.findMany({

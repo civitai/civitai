@@ -96,7 +96,6 @@ type GetAllPostsRaw = {
   cursorId: Date | number | null;
   modelVersionId: number | null;
   collectionId: number | null;
-  availability: Availability;
   detail?: string | null;
   stats?: {
     commentCount: number;
@@ -130,6 +129,34 @@ const getPostStatsObject = async (data: { id: number }[]) => {
   }
 };
 
+/**
+ * Frontend References:
+ * - limit: All consumers (pagination)
+ * - cursor: All consumers (infinite scroll pagination)
+ * - query: src/components/Post/post.utils.ts:27 (postQueryParamSchema) - not currently exposed in UI
+ * - username: src/pages/user/[username]/posts.tsx:90, src/components/Post/post.utils.ts:33, src/components/ResourceReview/ResourceReviewDetail.tsx:46
+ * - excludedImageIds: Internal use only (hidden preferences)
+ * - excludedUserIds: Internal use only (hidden preferences)
+ * - period: src/pages/user/[username]/posts.tsx:42,90, src/components/Post/post.utils.ts:35, src/components/Post/Infinite/PostsInfinite.tsx:22, src/components/Collections/Collection.tsx:368,383,388
+ * - periodMode: Internal use only
+ * - sort: src/pages/user/[username]/posts.tsx:43,90, src/components/Post/post.utils.ts:36, src/components/Post/Infinite/PostsInfinite.tsx:23, src/components/Collections/Collection.tsx:370-372,382,389, src/components/ResourceReview/ResourceReviewDetail.tsx:48
+ * - user: Internal (session user from context)
+ * - tags: src/components/Post/post.utils.ts:30, src/components/Post/Infinite/PostsInfinite.tsx:20, src/components/Collections/Collection.tsx:378
+ * - modelVersionId: src/components/ResourceReview/ResourceReviewDetail.tsx:47, src/components/Post/post.utils.ts:32, src/components/Post/Infinite/PostsInfinite.tsx:19, src/components/Collections/Collection.tsx:377
+ * - ids: src/server/services/collection.service.ts:1347, src/server/services/clubPost.service.ts:321 (internal server-side use only)
+ * - collectionId: src/components/Post/post.utils.ts:37, src/components/Post/Infinite/PostsInfinite.tsx:24, src/components/Collections/Collection.tsx:384,390
+ * - include: Internal use (cosmetics, detail)
+ * - draftOnly: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:25, src/components/Collections/Collection.tsx:380,391
+ * - followed: src/pages/user/[username]/posts.tsx:90, src/components/Post/post.utils.ts:39, src/components/Collections/Collection.tsx:381,391
+ * - clubId: src/pages-old/clubs/[id]/posts.tsx:41
+ * - browsingLevel: src/components/Post/post.utils.ts:24,49,61, src/components/ResourceReview/ResourceReviewDetail.tsx:43,49
+ * - pending: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:27
+ * - excludedTagIds: src/components/Post/post.utils.ts:51-56,62 (from browsing settings addons)
+ * - disablePoi: src/components/Post/post.utils.ts:63 (from browsing settings addons)
+ * - disableMinor: src/components/Post/post.utils.ts:64 (from browsing settings addons)
+ * - poiOnly: Mod-only filter - not exposed to frontend
+ * - minorOnly: Mod-only filter - not exposed to frontend
+ */
 export const getPostsInfinite = async ({
   limit,
   cursor,
@@ -229,7 +256,7 @@ export const getPostsInfinite = async ({
     }
   } else {
     if (draftOnly) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
-    else AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
   if (period !== 'AllTime') {
@@ -291,7 +318,7 @@ export const getPostsInfinite = async ({
   }
 
   // sorting
-  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC NULLS LAST';
+  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC';
   if (sort === PostSort.MostComments) {
     orderBy = `p."commentCount" DESC`;
     AND.push(Prisma.sql`p."commentCount" > 0`);
@@ -350,11 +377,9 @@ export const getPostsInfinite = async ({
       p.title,
       p."userId",
       p."publishedAt",
-      p."unlisted",
       p."modelVersionId",
       p."collectionId",
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
-      p."availability",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     ${Prisma.raw(joins.join('\n'))}

@@ -801,11 +801,7 @@ export interface File {
 export interface ModelMetric {
   model?: Model;
   modelId: number;
-  timeframe: MetricTimeframe;
-  rating: number;
-  ratingCount: number;
   downloadCount: number;
-  favoriteCount: number;
   commentCount: number;
   collectedCount: number;
   imageCount: number;
@@ -816,6 +812,14 @@ export interface ModelMetric {
   thumbsDownCount: number;
   earnedAmount: number;
   updatedAt: Date;
+  poi: boolean;
+  minor: boolean;
+  nsfwLevel: number;
+  userId: number;
+  lastVersionAt: Date | null;
+  mode: ModelModifier | null;
+  status: ModelStatus;
+  availability: Availability;
 }
 
 export interface ModelVersionMetric {

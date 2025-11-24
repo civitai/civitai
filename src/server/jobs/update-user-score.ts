@@ -82,15 +82,13 @@ type Context = {
 async function getModelScore(ctx: Context) {
   await getScores(ctx, 'models')`
     SELECT
-      m."userId",
+      mm."userId",
       (
-          SUM(mm."ratingCount") * ${ctx.scoreMultipliers.models.reviews}
+          SUM(mm."thumbsUpCount") * ${ctx.scoreMultipliers.models.reviews}
         + SUM(mm."downloadCount") * ${ctx.scoreMultipliers.models.downloads}
         + SUM(mm."generationCount") * ${ctx.scoreMultipliers.models.generations}
       ) as score
     FROM "ModelMetric" mm
-    JOIN "Model" m ON m.id = mm."modelId"
-    WHERE mm.timeframe = 'AllTime'
     GROUP BY 1
     HAVING BOOL_OR(mm."updatedAt" > '${ctx.lastUpdate}')
   `;

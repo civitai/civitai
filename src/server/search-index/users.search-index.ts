@@ -220,14 +220,12 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
       // What we can get from model metrics
       const modelMetrics = await db.$queryRaw<UserMetric[]>`
         SELECT
-          m."userId",
+          mm."userId",
           SUM(mm."thumbsUpCount") AS "thumbsUpCount",
-          SUM(mm."downloadCount") AS "downladCount"
+          SUM(mm."downloadCount") AS "downloadCount"
         FROM "ModelMetric" mm
-        JOIN "Model" m ON m.id = mm."modelId"
-        WHERE m."userId" IN (${Prisma.join(userIds)})
-          AND mm.timeframe = 'AllTime'::"MetricTimeframe"
-        GROUP BY m."userId";
+        WHERE mm."userId" IN (${Prisma.join(userIds)})
+        GROUP BY mm."userId";
       `;
       // Not using stats because it hits other unnecessary tables
 
