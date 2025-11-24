@@ -37,18 +37,21 @@ import { postMetrics } from '~/server/metrics';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
+  getBaseModelFromResources,
   getUserFollows,
   imageMetaCache,
   imageMetadataCache,
-  imageMetricsCache,
-  imagesForModelVersionsCache,
+  imageResourcesCache,
   imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
   userImageVideoCountCache,
 } from '~/server/redis/caches';
+import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { createCachedObject } from '~/server/utils/cache-helpers';
+import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -90,14 +93,15 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
-import { collectionSelect } from '~/server/selectors/collection.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
+  getCollectionRandomSeed,
   getUserCollectionPermissionsById,
+  getUserCollectionPermissionsByIds,
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -159,6 +163,7 @@ import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-im
 import client from 'prom-client';
 
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { number } from 'zod';
 
 const {
   cacheHitRequestsTotal,
@@ -209,10 +214,13 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
-  const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
   // Set keys individually to avoid CROSSSLOT errors
   await Promise.all(
-    ids.map((id) => sysRedis.packed.set(`${cachePrefix}${id}` as any, 'false', { EX: 60 * 5 }))
+    ids.map((id) =>
+      sysRedis.packed.set(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}` as const, 'false', {
+        EX: 60 * 5,
+      })
+    )
   );
 };
 
@@ -220,6 +228,7 @@ async function getImageTagsForImages(
   imageIds: number[]
 ): Promise<(VotableTagModel & { imageId: number })[]> {
   const tagsByImage = await imageTagsCache.fetch(imageIds);
+
   return imageIds.flatMap(
     (imageId) =>
       tagsByImage[imageId]?.tags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
@@ -538,27 +547,27 @@ export const updateImageReportStatusByReason = ({
 };
 
 export const getImageDetail = async ({ id }: GetByIdInput) => {
-  return await dbWrite.image.findUnique({
-    where: { id },
-    select: {
-      resources: {
-        select: {
-          id: true,
-          modelVersion: { select: { id: true, name: true } },
-          detected: true,
-        },
-      },
-      tags: {
-        where: { disabled: false },
-        select: {
-          automated: true,
-          tag: {
-            select: simpleTagSelect,
-          },
-        },
-      },
+  const [resourcesData, tagsData] = await Promise.all([
+    imageResourcesCache.fetch([id]),
+    imageTagsCache.fetch([id]),
+  ]);
+
+  const resources = (resourcesData[id]?.resources ?? []).map((r) => ({
+    id: r.modelVersionId, // Use modelVersionId as identifier (ImageResourceNew has no id column)
+    modelVersion: { id: r.modelVersionId, name: r.versionName },
+    detected: r.detected,
+  }));
+
+  const tags = (tagsData[id]?.tags ?? []).map((t) => ({
+    automated: t.automated,
+    tag: {
+      id: t.tagId,
+      name: t.tagName,
+      isCategory: false, // ImageTag doesn't have isCategory, default to false
     },
-  });
+  }));
+
+  return { resources, tags };
 };
 
 export const getImageById = async ({ id }: GetByIdInput) => {
@@ -881,9 +890,6 @@ type GetAllImagesRaw = {
   imageId: number | null;
   publishedAt: Date | null;
   unpublishedAt?: Date | null;
-  username: string | null;
-  userImage: string | null;
-  deletedAt: Date | null;
   cursorId?: string;
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata | null;
@@ -959,22 +965,54 @@ export const getAllImages = async (
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
-  // nb - test code
-  // if (modelVersionId) {
-  //   const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
-  //   if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
-  // }
-
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
 
+  // Parse random cursor seed upfront (needed to determine if we need to fetch seed)
+  let parsedRandomCursorSeed: number | undefined;
+  if (sort === ImageSort.Random && cursor) {
+    const cursorStr = String(cursor);
+    const parts = cursorStr.split(':');
+    if (parts.length === 3) {
+      parsedRandomCursorSeed = Number(parts[0]);
+    }
+  }
+
+  // Prefetch independent async data in parallel
+  const needsCollectionSeed = collectionId && sort === ImageSort.Random && !parsedRandomCursorSeed;
+  const [
+    prefetchedHiddenImages,
+    prefetchedTargetUser,
+    prefetchedIsFlipt,
+    prefetchedUserFollows,
+    prefetchedCollectionPermissions,
+    prefetchedCollectionSeed,
+  ] = await Promise.all([
+    hidden && userId
+      ? dbRead.imageEngagement.findMany({
+          where: { userId, type: 'Hide' },
+          select: { imageId: true },
+        })
+      : undefined,
+    username && !targetUserId
+      ? dbRead.user.findUnique({ where: { username }, select: { id: true } })
+      : undefined,
+    prioritizedUserIds?.length
+      ? isFlipt('use-model-version-cache-for-images', modelVersionId?.toString(), {
+          isModerator: isModerator.toString(),
+          userId: userId?.toString() || 'anon',
+        })
+      : false,
+    userId && followed ? getUserFollows(userId) : undefined,
+    collectionId
+      ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
+      : undefined,
+    needsCollectionSeed ? getCollectionRandomSeed() : undefined,
+  ]);
+
   if (hidden) {
     if (!userId) throw throwAuthorizationError();
-    const hiddenImages = await dbRead.imageEngagement.findMany({
-      where: { userId, type: 'Hide' },
-      select: { imageId: true },
-    });
-    const imageIds = hiddenImages.map((x) => x.imageId);
+    const imageIds = prefetchedHiddenImages?.map((x) => x.imageId) ?? [];
     if (imageIds.length) {
       // cacheTime = 0;
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
@@ -984,19 +1022,13 @@ export const getAllImages = async (
   }
 
   if (username && !targetUserId) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) throw new Error('User not found');
-    targetUserId = targetUser.id;
+    if (!prefetchedTargetUser) throw new Error('User not found');
+    targetUserId = prefetchedTargetUser.id;
   }
 
   // Hacked this to use the model version image cache instead
   const prioritizeUser = !!prioritizedUserIds?.length;
-  const useModelVersionCache =
-    prioritizeUser &&
-    (await isFlipt('use-model-version-cache-for-images', modelVersionId?.toString(), {
-      isModerator: isModerator.toString(),
-      userId: userId?.toString() || 'anon',
-    }));
+  const useModelVersionCache = prioritizeUser && prefetchedIsFlipt;
   if (prioritizeUser && useModelVersionCache) {
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (!modelVersionId)
@@ -1094,8 +1126,8 @@ export const getAllImages = async (
 
     AND.push(
       // TOOD: Due to performance reasons we cannot add this here yet. Will need to revise with other teams.
-      // Prisma.sql`(u."id" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
-      Prisma.sql`u."id" = ${targetUserId}`
+      // Prisma.sql`(i."userId" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
+      Prisma.sql`i."userId" = ${targetUserId}`
     );
     // Don't cache self queries
     // cacheTime = 0;
@@ -1107,12 +1139,9 @@ export const getAllImages = async (
 
   // Filter only followed users
   // [x]
-  if (userId && followed) {
-    const userIds = await getUserFollows(userId);
-    if (userIds.length) {
-      // cacheTime = 0;
-      AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
-    }
+  if (userId && followed && prefetchedUserFollows?.length) {
+    // cacheTime = 0;
+    AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prefetchedUserFollows)})`);
   }
 
   // Filter to specific tags
@@ -1148,63 +1177,79 @@ export const getAllImages = async (
   }
 
   // Filter to a specific collection and relevant status:
-  if (collectionId) {
-    const permissions = await getUserCollectionPermissionsById({
-      userId,
-      isModerator,
-      id: collectionId,
-    });
+  // For random sort, parse seed from cursor (format: "seed:sortKey:id") for pagination continuity
+  let collectionSeed: number | undefined;
+  let parsedRandomCursor: { seed?: number; sortKey?: number; id?: number } | undefined;
 
-    // Check if user has access to collection
-    if (!permissions.read) {
+  if (collectionId) {
+    // Check if user has access to collection (prefetched)
+    if (!prefetchedCollectionPermissions?.read) {
       return { nextCursor: undefined, items: [] };
     }
 
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
-    // if (userId) cacheTime = 0;
-    const useRandomCursor = cursor && sort === ImageSort.Random;
 
+    // For random sort, use prefetched seed or parse from cursor
+    if (sort === ImageSort.Random) {
+      if (cursor) {
+        const cursorStr = String(cursor);
+        const parts = cursorStr.split(':');
+        if (parts.length === 3) {
+          parsedRandomCursor = {
+            seed: Number(parts[0]),
+            sortKey: Number(parts[1]),
+            id: Number(parts[2]),
+          };
+          collectionSeed = parsedRandomCursor.seed;
+        }
+      }
+      // Use prefetched seed if not in cursor
+      if (!collectionSeed) {
+        collectionSeed = prefetchedCollectionSeed;
+      }
+    }
+
+    const useRandomCursor = parsedRandomCursor && sort === ImageSort.Random;
+    const seedStr = collectionSeed?.toString() ?? '';
+
+    // Use subquery to compute hash once, then filter/sort on computed value
     WITH.push(
       Prisma.sql`
-        ${Prisma.raw(
-          useRandomCursor
-            ? `
-              ctcursor AS (
-                SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
-                  WHERE ci."collectionId" = ${collectionId}
-                    ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
-                    AND ci."imageId" = ${Number(cursor)}
-                  LIMIT 1
-              ),
-            `
-            : ''
-        )}
         ct AS (
-          SELECT ci."imageId", ci."randomId"
-          FROM "CollectionItem" ci
-          JOIN "Collection" c ON c.id = ci."collectionId"
-          WHERE ci."collectionId" = ${collectionId}
-            ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
-            AND ci."imageId" IS NOT NULL
-            AND (
-              (
-                ci."status" = 'ACCEPTED'
-                AND (
-                  (c.metadata::json->'submissionsHiddenUntilEndDate') IS NULL
-                  OR (c.metadata::json->'submissionsHiddenUntilEndDate')::TEXT = 'null'
-                  OR (c.metadata::json->'submissionsHiddenUntilEndDate')::TEXT = 'false'
-                  OR (c.metadata::json->>'submissionEndDate')::TIMESTAMP WITH TIME ZONE <= NOW()
+          SELECT "imageId", "sortKey"
+          FROM (
+            SELECT
+              ci."imageId",
+              abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
+                seedStr
+              )}')), 1000000000)) as "sortKey"
+            FROM "CollectionItem" ci
+            WHERE ci."collectionId" = ${collectionId}
+              ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
+              AND ci."imageId" IS NOT NULL
+              AND (
+                (
+                  ci."status" = 'ACCEPTED'
                 )
-                ${Prisma.raw(sort === ImageSort.Random ? `AND ci."randomId" IS NOT NULL` : '')}
+                ${Prisma.raw(displayOwnedItems)}
               )
-              ${Prisma.raw(displayOwnedItems)}
-            )
-            ${Prisma.raw(
-              useRandomCursor ? `AND ci."randomId" <= (SELECT "randomId" FROM ctcursor)` : ''
-            )}
-          ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
+          ) sub
+          ${Prisma.raw(
+            useRandomCursor &&
+              parsedRandomCursor?.sortKey !== undefined &&
+              parsedRandomCursor?.id !== undefined
+              ? `WHERE (
+                  "sortKey" < ${parsedRandomCursor.sortKey}
+                  OR (
+                    "sortKey" = ${parsedRandomCursor.sortKey}
+                    AND "imageId" < ${parsedRandomCursor.id}
+                  )
+                )`
+              : ''
+          )}
+          ${Prisma.raw(sort === ImageSort.Random ? `ORDER BY "sortKey" DESC` : '')}
         )`
     );
   }
@@ -1229,11 +1274,7 @@ export const getAllImages = async (
     //   orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
     //   if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
     // }
-    // else if (sort === ImageSort.MostTipped) {
-    //   orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
-    //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
-    // }
-    if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    if (sort === ImageSort.Random) orderBy = 'ct."sortKey" DESC, i."id" DESC';
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
     //   orderBy = 'i."sortAt" ASC';
@@ -1269,11 +1310,23 @@ export const getAllImages = async (
   // Handle cursor & skip conflict
   if (cursor && skip) throw new Error('Cannot use skip with cursor'); // [x]
 
-  // Handle cursor prop
-  let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
-  if (sort === ImageSort.Random) {
+  // Handle cursor prop - for random sort with collection, don't call getCursor since our cursor format is different
+  let cursorClause: Prisma.Sql | undefined;
+  let cursorProp: string | undefined;
+
+  if (sort === ImageSort.Random && collectionSeed !== undefined) {
+    // For random sort, generate compound cursor: seed:sortKey:id
+    // Cursor handling is done in the CTE above, so we don't need cursorClause here
+    cursorProp = `concat(${collectionSeed}::text, ':', ct."sortKey"::text, ':', i."id"::text)`;
+    cursorClause = undefined;
+  } else if (sort === ImageSort.Random) {
     cursorProp = 'i."id"';
     cursorClause = undefined;
+  } else {
+    // For non-random sort, use the standard getCursor helper
+    const cursorResult = getCursor(orderBy, cursor);
+    cursorClause = cursorResult.where;
+    cursorProp = cursorResult.prop;
   }
   if (cursorClause) AND.push(cursorClause);
 
@@ -1302,9 +1355,11 @@ export const getAllImages = async (
 
   if (userId && !!reactions?.length) {
     // cacheTime = 0;
-    joins.push(`JOIN "ImageReaction" ir ON ir."imageId" = i.id`);
-    AND.push(Prisma.sql`ir.reaction IN (${Prisma.join(reactions)})`);
-    AND.push(Prisma.sql`ir."userId" = ${userId}`);
+    // Use IN subquery - planner can start from reactions (small set per user) and join to images
+    AND.push(Prisma.sql`i.id IN (
+      SELECT ir."imageId" FROM "ImageReaction" ir
+      WHERE ir."userId" = ${userId} AND ir.reaction IN (${Prisma.join(reactions)})
+    )`);
   }
 
   if (!!tools?.length) {
@@ -1357,7 +1412,6 @@ export const getAllImages = async (
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
     ${Prisma.raw(joins.join('\n'))}
-    JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -1374,7 +1428,7 @@ export const getAllImages = async (
   const query = Prisma.sql`
     ${queryWith}
     SELECT
-      ${(reactions?.length ?? 0) > 0 ? Prisma.sql`DISTINCT ` : Prisma.sql``} i.id,
+      i.id,
       i.name,
       i.url,
       i."nsfwLevel",
@@ -1424,30 +1478,10 @@ export const getAllImages = async (
       p."publishedAt",
       p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
-      u.username,
-      u.image "userImage",
-      u."deletedAt",
       p."availability",
       i.minor,
       i.poi,
       i."acceptableMinor",
-      ${Prisma.raw(
-        include.includes('metaSelect')
-          ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
-          : ''
-      )}
-      ${Prisma.raw(
-        includeBaseModel
-          ? `(
-            SELECT mv."baseModel"
-            FROM "ImageResourceNew" ir
-            LEFT JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-            LEFT JOIN "Model" m ON mv."modelId" = m.id
-            WHERE m."type" = 'Checkpoint' AND ir."imageId" = i.id
-            LIMIT 1
-          ) "baseModel",`
-          : ''
-      )}
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -1464,18 +1498,8 @@ export const getAllImages = async (
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
-  let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (userId) {
-    const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId },
-      select: { imageId: true, reaction: true },
-    });
-    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-      acc[imageId] ??= [] as ReviewReactions[];
-      acc[imageId].push(reaction);
-      return acc;
-    }, {} as Record<number, ReviewReactions[]>);
-  }
+  const userIds = rawImages.map((i) => i.userId);
+  const videoIds = rawImages.filter((x) => x.type === MediaType.video).map((x) => x.id);
 
   let nextCursor: string | undefined;
   if (rawImages.length > limit) {
@@ -1483,39 +1507,64 @@ export const getAllImages = async (
     nextCursor = nextItem?.cursorId;
   }
 
-  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
-  if (include?.includes('tagIds')) {
-    tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
-  }
-
-  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
-  if (include?.includes('tags')) {
-    tagsVar = await getImageTagsForImages(imageIds);
-
-    if (userId) {
-      const userVotes = await dbRead.tagsOnImageVote.findMany({
-        where: { imageId: { in: imageIds }, userId },
-        select: { imageId: true, tagId: true, vote: true },
-      });
-
-      for (const tag of tagsVar) {
-        const userVote = userVotes.find(
-          (vote) => vote.tagId === tag.id && vote.imageId === tag.imageId
-        );
-        if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
-      }
-    }
-  }
-
-  const userIds = rawImages.map((i) => i.userId);
-  const [userCosmetics, profilePictures, cosmetics] = await Promise.all([
-    includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined,
-    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-    includeCosmetics ? await getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
+  // Fetch all cache data in parallel
+  const [
+    reactionsRaw,
+    tagIdsVar,
+    tagsVar,
+    userVotes,
+    userBasicData,
+    userCosmetics,
+    profilePictures,
+    cosmetics,
+    thumbnails,
+    imageMetrics,
+    imageMeta,
+    imageResources,
+  ] = await Promise.all([
+    userId
+      ? dbRead.imageReaction.findMany({
+          where: { imageId: { in: imageIds }, userId },
+          select: { imageId: true, reaction: true },
+        })
+      : undefined,
+    include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+    include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
+    include?.includes('tags') && userId
+      ? dbRead.tagsOnImageVote.findMany({
+          where: { imageId: { in: imageIds }, userId },
+          select: { imageId: true, tagId: true, vote: true },
+        })
+      : undefined,
+    getBasicDataForUsers(userIds),
+    includeCosmetics ? getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('profilePictures') ? getProfilePicturesForUsers(userIds) : undefined,
+    includeCosmetics ? getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
+    getThumbnailsForImages(videoIds),
+    getImageMetricsObject(rawImages),
+    include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
+    includeBaseModel ? imageResourcesCache.fetch(imageIds) : undefined,
   ]);
 
-  const videoIds = rawImages.filter((x) => x.type === MediaType.video).map((x) => x.id);
-  const thumbnails = await getThumbnailsForImages(videoIds);
+  // Process reactions into lookup
+  let userReactions: Record<number, ReviewReactions[]> | undefined;
+  if (reactionsRaw) {
+    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
+      acc[imageId] ??= [] as ReviewReactions[];
+      acc[imageId].push(reaction);
+      return acc;
+    }, {} as Record<number, ReviewReactions[]>);
+  }
+
+  // Merge user votes into tags
+  if (tagsVar && userVotes) {
+    for (const tag of tagsVar) {
+      const userVote = userVotes.find(
+        (vote) => vote.tagId === tag.id && vote.imageId === tag.imageId
+      );
+      if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+    }
+  }
 
   const now = new Date();
   const filtered = rawImages.filter((x) => {
@@ -1526,8 +1575,6 @@ export const getAllImages = async (
     // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
     return true;
   });
-
-  const imageMetrics = await getImageMetricsObject(filtered);
 
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
@@ -1553,47 +1600,50 @@ export const getAllImages = async (
       poi?: boolean;
       minor?: boolean;
     }
-  > = filtered.map(
-    ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
-      const match = imageMetrics[i.id];
-      const thumbnail = thumbnails[i.id];
+  > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, ...i }) => {
+    const match = imageMetrics[i.id];
+    const thumbnail = thumbnails[i.id];
+    const userData = userBasicData[creatorId];
 
-      return {
-        ...i,
-        nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
-        modelVersionIds: [], // TODO doing this basically just for TS
-        modelVersionIdsManual: [],
-        publishedAt: i.publishedAt ? i.sortAt : undefined,
-        user: {
-          id: creatorId,
-          username,
-          image: userImage,
-          deletedAt,
-          cosmetics: userCosmetics?.[creatorId] ?? [],
-          profilePicture: profilePictures?.[creatorId] ?? null,
-        },
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
+    return {
+      ...i,
+      meta: imageMeta?.[i.id] ?? null,
+      nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
+      modelVersionIds: [], // TODO doing this basically just for TS
+      modelVersionIdsManual: [],
+      publishedAt: i.publishedAt ? i.sortAt : undefined,
+      baseModel: imageResources
+        ? getBaseModelFromResources(imageResources[i.id]?.resources)
+        : undefined,
+      user: {
+        id: creatorId,
+        username: userData?.username ?? null,
+        image: userData?.image ?? null,
+        deletedAt: userData?.deletedAt ?? null,
+        cosmetics: userCosmetics?.[creatorId] ?? [],
+        profilePicture: profilePictures?.[creatorId] ?? null,
+      },
+      stats: {
+        likeCountAllTime: match?.reactionLike ?? 0,
+        laughCountAllTime: match?.reactionLaugh ?? 0,
+        heartCountAllTime: match?.reactionHeart ?? 0,
+        cryCountAllTime: match?.reactionCry ?? 0,
 
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
+        commentCountAllTime: match?.comment ?? 0,
+        collectedCountAllTime: match?.collection ?? 0,
+        tippedAmountCountAllTime: match?.buzz ?? 0,
 
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
-        reactions:
-          userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
-        tags: tagsVar?.filter((x) => x.imageId === i.id),
-        tagIds: tagIdsVar?.[i.id]?.tags,
-        cosmetic: cosmetics?.[i.id] ?? null,
-        thumbnailUrl: thumbnail?.url,
-      };
-    }
-  );
+        dislikeCountAllTime: 0,
+        viewCountAllTime: 0,
+      },
+      reactions:
+        userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
+      tags: tagsVar?.filter((x) => x.imageId === i.id),
+      tagIds: tagIdsVar?.[i.id]?.tags,
+      cosmetic: cosmetics?.[i.id] ?? null,
+      thumbnailUrl: thumbnail?.url,
+    };
+  });
 
   // Put into cached order if prioritizing user (model version showcase)
   if (prioritizeUser && useModelVersionCache) {
@@ -2811,7 +2861,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         if (hit.blockedFor && !isOwnContent) return false;
 
         // User can see their own scheduled or unpublished content
-        if ((!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) && !isOwnContent)
+        if (
+          (!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) &&
+          (!isOwnContent || notPublished === false)
+        )
           return false;
 
         // User can see their own unscanned content
@@ -3139,6 +3192,10 @@ export async function getResourceIdsForImages(imageIds: number[]) {
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
   postId?: number | null;
+  // User fields from JOIN (not in GetAllImagesRaw since main query uses cache)
+  username: string | null;
+  userImage: string | null;
+  deletedAt: Date | null;
 };
 export const getImage = async ({
   id,
@@ -3559,6 +3616,38 @@ export const getImagesForModelVersion = async ({
   return images;
 };
 
+type CachedImagesForModelVersions = {
+  modelVersionId: number;
+  images: ImagesForModelVersions[];
+};
+export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
+  key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
+  idKey: 'modelVersionId',
+  ttl: CacheTTL.sm,
+  // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
+  lookupFn: async (ids) => {
+    const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
+
+    const records: Record<number, CachedImagesForModelVersions> = {};
+    for (const image of images) {
+      if (!records[image.modelVersionId])
+        records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
+      records[image.modelVersionId].images.push(image);
+    }
+
+    return records;
+  },
+  appendFn: async (records) => {
+    const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
+    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
+    for (const entry of records) {
+      for (const image of entry.images) {
+        image.tags = tagIdsVar?.[image.id]?.tags ?? [];
+      }
+    }
+  },
+});
+
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
   const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
   const tagsForImages = await tagIdsForImagesCache.fetch(Object.keys(images).map(Number));
@@ -3606,10 +3695,7 @@ export const getImagesForPosts = async ({
   const isModerator = user?.isModerator ?? false;
 
   if (!Array.isArray(postIds)) postIds = [postIds];
-  const imageWhere: Prisma.Sql[] = [
-    Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
-    Prisma.sql`i."needsReview" IS NULL`,
-  ];
+  const imageWhere: Prisma.Sql[] = [Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`];
 
   //   if (!!excludedIds?.length)
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
@@ -3624,6 +3710,8 @@ export const getImagesForPosts = async ({
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
+    } else {
+      imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
@@ -4625,22 +4713,20 @@ export const getImageModerationReviewQueue = async ({
 
   if (tagReview) {
     tagsVar = await getImageTagsForImages(imageIds);
-    // Filter to only include tags that need review to prevent greyed-out images
-    // tagsVar = tagsVar?.filter((tag) => tag.needsReview);
   }
 
   const reviewTags =
     needsReview && imageIds.length > 0
       ? await dbWrite.$queryRaw<ReviewTag[]>`
-    SELECT
-      t.id,
-      t.name,
-      t."nsfwLevel",
-      itr."imageId"
-    FROM "ImageTagForReview" itr
-    JOIN "Tag" t ON itr."tagId" = t.id
-    WHERE itr."imageId" IN (${Prisma.join(imageIds)})
-  `
+          SELECT
+            t.id,
+            t.name,
+            t."nsfwLevel",
+            itr."imageId"
+          FROM "ImageTagForReview" itr
+          JOIN "Tag" t ON itr."tagId" = t.id
+          WHERE itr."imageId" IN (${Prisma.join(imageIds)})
+        `
       : [];
 
   let tosDetails: Map<number, { tosReason: string }> | undefined;
@@ -4753,11 +4839,6 @@ export const getImageModerationReviewQueue = async ({
       tosReason: tosDetails?.get(i.id)?.tosReason,
     })
   );
-
-  // Filter out images with no tags needing review to prevent greyed-out images in the queue
-  // const filteredImages = tagReview
-  //   ? images.filter((img) => img.tags && img.tags.length > 0)
-  //   : images;
 
   return { nextCursor, items: images };
 };
@@ -5553,32 +5634,18 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const { rows: resources } = await pgDbRead.query<{
-    imageId: number;
-    modelVersionId: number;
-    strength?: number;
-    modelId: number;
-    modelName: string;
-    modelType: ModelType;
-    versionId: number;
-    versionName: string;
-    baseModel: string;
-  }>(Prisma.sql`
-    SELECT
-      ir."imageId",
-      ir."modelVersionId",
-      ir.strength,
-      m.id as "modelId",
-      m.name as "modelName",
-      m.type as "modelType",
-      mv.id as "versionId",
-      mv.name as "versionName",
-      mv."baseModel" as "baseModel"
-    FROM "ImageResourceNew" ir
-    JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-    JOIN "Model" m on mv."modelId" = m.id
-      WHERE ir."imageId" = ${id}
-  `);
+  const cachedResources = await imageResourcesCache.fetch([id]);
+  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
+    imageId: r.imageId,
+    modelVersionId: r.modelVersionId,
+    strength: r.strength,
+    modelId: r.modelId,
+    modelName: r.modelName,
+    modelType: r.modelType as ModelType,
+    versionId: r.modelVersionId, // versionId is the same as modelVersionId
+    versionName: r.versionName,
+    baseModel: r.baseModel,
+  }));
 
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
@@ -5634,47 +5701,66 @@ export async function getImageGenerationData({ id }: { id: number }) {
   };
 }
 
+// LRU cache for contest collection items lookup - caches by imageId
+// This avoids repeated database queries for the same image's contest participation
+type ContestCollectionItem = {
+  id: number;
+  imageId: number;
+  status: string;
+  tag: { id: number; name: string } | null;
+  collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
+  scores: { userId: number; score: number }[];
+};
+const contestCollectionItemsCache = createLruCache({
+  name: 'contest-collection-items',
+  max: 10_000,
+  ttl: 5 * 60 * 1000, // 5 minutes
+  keyFn: (imageId: number) => `image:${imageId}`,
+  fetchFn: async (imageId: number) => {
+    return dbRead.$queryRaw<ContestCollectionItem[]>`
+      SELECT
+        ci.id,
+        ci."imageId",
+        ci.status,
+        CASE WHEN t.id IS NOT NULL
+          THEN jsonb_build_object('id', t.id, 'name', t.name)
+          ELSE NULL
+        END as tag,
+        jsonb_build_object('id', c.id, 'name', c.name, 'metadata', c.metadata, 'mode', c.mode) as collection,
+        COALESCE(
+          (SELECT jsonb_agg(jsonb_build_object('userId', cis."userId", 'score', cis.score))
+           FROM "CollectionItemScore" cis
+           WHERE cis."collectionItemId" = ci.id),
+          '[]'::jsonb
+        ) as scores
+      FROM "CollectionItem" ci
+      JOIN "Collection" c ON c.id = ci."collectionId"
+      LEFT JOIN "Tag" t ON t.id = ci."tagId"
+      WHERE ci."imageId" = ${imageId}
+        AND c.mode = 'Contest'
+    `;
+  },
+});
+
 export const getImageContestCollectionDetails = async ({
   id,
   userId,
 }: { userId?: number } & GetByIdInput) => {
-  const items = await dbRead.collectionItem.findMany({
-    where: {
-      collection: {
-        mode: CollectionMode.Contest,
-      },
-      imageId: id,
-    },
-    select: {
-      id: true,
-      imageId: true,
-      status: true,
-      createdAt: true,
-      reviewedAt: true,
-      collection: { select: collectionSelect },
-      scores: { select: { userId: true, score: true } },
-      tag: true,
-    },
+  const items = await contestCollectionItemsCache.fetch(id);
+
+  // Fetch all permissions in one query instead of N queries
+  const collectionIds = items.map((i) => i.collection.id);
+  const allPermissions = await getUserCollectionPermissionsByIds({
+    ids: collectionIds,
+    userId,
   });
-
-  const permissions = await Promise.all(
-    items.map(async (item) => {
-      const permissions = await getUserCollectionPermissionsById({
-        id: item.collection.id as number,
-        userId,
-      });
-
-      return permissions;
-    })
-  );
 
   return items.map((i) => ({
     ...i,
-    permissions: permissions.find((p) => p.collectionId === i.collection.id),
+    permissions: allPermissions.find((p) => p.collectionId === i.collection.id),
     collection: {
       ...i.collection,
       metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
-      tags: i.collection.tags.map((t) => t.tag),
     },
   }));
 };

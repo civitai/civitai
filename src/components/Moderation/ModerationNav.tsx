@@ -18,7 +18,7 @@ export function ModerationNav() {
         {
           label: 'Training Models',
           href: '/moderator/training-models',
-          hidden: !features.trainingModelsModeration
+          hidden: !features.trainingModelsModeration,
         },
         { label: 'Articles', href: '/moderator/articles' },
         { label: 'Tags', href: '/moderator/tags' },
@@ -40,6 +40,10 @@ export function ModerationNav() {
           label: 'Announcements',
           href: '/moderator/announcements',
           hidden: !features.announcements,
+        },
+        {
+          label: 'Code Gifts',
+          href: '/moderator/code-gifts',
         },
         {
           label: 'Blocklists',

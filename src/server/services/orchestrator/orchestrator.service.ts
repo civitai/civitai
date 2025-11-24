@@ -8,7 +8,7 @@ import type { GenerationSchema } from '~/server/orchestrator/generation/generati
 import { createVideoEnhancementStep } from '~/server/orchestrator/video-enhancement/video-enhancement';
 import { createVideoUpscalerStep } from '~/server/orchestrator/video-upscaler/video-upscaler';
 import { populateWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
-import { internalOrchestratorClient } from '~/server/services/orchestrator/common';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getUpscaleFactor } from '~/shared/constants/generation.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { getRoundedWidthHeight } from '~/utils/image-utils';

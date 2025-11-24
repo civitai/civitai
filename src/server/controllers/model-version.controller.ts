@@ -75,6 +75,7 @@ import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { WorkflowStatus } from '@civitai/client';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -745,19 +746,40 @@ export async function queryModelVersionsForModeratorHandler({
     },
   });
 
+  const workflowIds: string[] = [];
+  const mappedItems = items.map(({ files, meta, ...version }) => {
+    const trainingFile = files[0];
+    const trainingResults = (trainingFile?.metadata as FileMetadata)
+      ?.trainingResults as TrainingResultsV2;
+
+    if (trainingResults?.workflowId) workflowIds.push(trainingResults.workflowId);
+
+    return {
+      ...version,
+      meta: meta as ModelVersionMeta | null,
+      workflowId: trainingResults?.workflowId,
+    };
+  });
+
+  /*
+    querying the workflows here may seem pointless, but querying the workflow can cause the orchestrator to take action on a workflow with failed/expired jobs.
+
+    Perhaps we need to move this to a method that can be called from the client to refresh the list as needed
+  */
+  const workflows = await Promise.all(
+    workflowIds.map((workflowId) =>
+      getWorkflow({ token: env.ORCHESTRATOR_ACCESS_TOKEN, path: { workflowId } }).catch(() => null)
+    )
+  );
+
   return {
     nextCursor,
-    items: items.map(({ files, meta, ...version }) => {
-      const trainingFile = files[0];
-      const trainingResults = (trainingFile?.metadata as FileMetadata)
-        ?.trainingResults as TrainingResultsV2;
-
-      return {
-        ...version,
-        meta: meta as ModelVersionMeta | null,
-        workflowId: trainingResults?.workflowId,
-      };
-    }),
+    items: mappedItems
+      .map((item) => ({
+        ...item,
+        workflow: workflows.find((x) => x && x.id === item.workflowId),
+      }))
+      .filter((x) => x.workflow),
   };
 }
 

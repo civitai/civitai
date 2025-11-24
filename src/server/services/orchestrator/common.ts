@@ -12,10 +12,10 @@ import type {
   NsfwLevel,
   VideoUpscalerStep,
 } from '@civitai/client';
-import { createCivitaiClient } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
 import { env } from '~/env/server';
+import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -81,16 +81,8 @@ type WorkflowStepAggregate =
   | VideoEnhancementStep
   | VideoUpscalerStep;
 
-export function createOrchestratorClient(token: string) {
-  return createCivitaiClient({
-    baseUrl: env.ORCHESTRATOR_ENDPOINT,
-    env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
-    auth: token,
-  });
-}
-
-/** Used to perform orchestrator operations with the system user account */
-export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
+// Re-export for backward compatibility
+export { createOrchestratorClient, internalOrchestratorClient };
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(

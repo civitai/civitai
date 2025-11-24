@@ -17,6 +17,7 @@ import type { UserMeta } from '~/server/schema/user.schema';
 import { banReasonDetails } from '~/server/common/constants';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { getUserContentOverview as getUserContentOverviewFromCache } from '~/server/redis/caches';
+import { userUpdateCounter } from '~/server/prom/client';
 
 export const getUserContentOverview = async ({
   username,
@@ -80,10 +81,7 @@ export const getUserWithProfile = async ({
         userId: user.id,
       },
       select: {
-        ratingAllTime: true,
-        ratingCountAllTime: true,
         downloadCountAllTime: true,
-        favoriteCountAllTime: true,
         thumbsUpCountAllTime: true,
         followerCountAllTime: true,
         reactionCountAllTime: true,
@@ -172,6 +170,8 @@ export const updateUserProfile = async ({
           '${JSON.stringify(creatorCardStatsPreferences)}'::jsonb
         )
         WHERE "id" = ${userId}`);
+
+    userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
   await dbWrite.$transaction(

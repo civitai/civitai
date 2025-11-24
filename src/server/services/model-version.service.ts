@@ -19,6 +19,7 @@ import {
   modelVersionResourceCache,
 } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -1572,87 +1573,6 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
 
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
   return trainingResults.workflowId ?? null;
-};
-
-export const resourceDataCache = createCachedArray({
-  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-  cacheNotFound: false,
-  lookupFn: async (ids) => {
-    if (!ids.length) return {};
-    const dbResults = await dbWrite.$queryRaw<GenerationResourceDataModel[]>`
-      SELECT
-        mv."id",
-        mv."name",
-        mv."trainedWords",
-        mv."baseModel",
-        mv."settings",
-        mv."availability",
-        mv."clipSkip",
-        mv."vaeId",
-        mv."status",
-        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
-        gc."covered",
-        FALSE AS "hasAccess",
-        (
-          SELECT to_json(obj)
-          FROM (
-            SELECT
-              m."id",
-              m."name",
-              m."type",
-              m."nsfw",
-              m."poi",
-              m."minor",
-              m."userId",
-              m."sfwOnly"
-            FROM "Model" m
-            WHERE m.id = mv."modelId"
-          ) as obj
-        ) as model
-      FROM "ModelVersion" mv
-      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
-      WHERE mv.id IN (${Prisma.join(ids)})
-    `;
-
-    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>((acc, item) => {
-      if (['Public', 'Unsearchable'].includes(item.availability) && item.status === 'Published')
-        item.hasAccess = true;
-
-      return { ...acc, [item.id]: item };
-    }, {});
-    return results;
-  },
-  idKey: 'id',
-  dontCacheFn: (data) => {
-    return !data.hasAccess || !data.covered;
-  },
-  ttl: CacheTTL.hour,
-});
-
-export type GenerationResourceDataModel = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  clipSkip: number | null;
-  vaeId: number | null;
-  baseModel: string;
-  settings: RecommendedSettingsSchema | null;
-  availability: Availability;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
-  covered: boolean | null;
-  status: ModelStatus;
-  hasAccess: boolean;
-  epochNumber?: number;
-  model: {
-    id: number;
-    name: string;
-    type: ModelType;
-    nsfw: boolean;
-    poi: boolean;
-    minor: boolean;
-    userId: number;
-    sfwOnly: boolean;
-  };
 };
 
 export const createModelVersionPostFromTraining = async ({

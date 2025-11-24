@@ -48,7 +48,7 @@ import {
 } from '~/utils/number-helpers';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useQueryBuzzPackages } from '~/components/Buzz/buzz.utils';
+import { useQueryBuzzPackages } from '~/components/Buzz/useQueryBuzzPackages';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';

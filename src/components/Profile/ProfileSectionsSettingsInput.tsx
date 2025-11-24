@@ -1,9 +1,18 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Card, Group, Input, Paper, Stack, Switch, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import {
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Switch,
+  Text,
+  useComputedColorScheme,
+  useMantineTheme,
+} from '@mantine/core';
 import React, { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
-import { IconArrowsMove, IconGripVertical } from '@tabler/icons-react';
+import { IconArrowsMove } from '@tabler/icons-react';
 import {
   getAllAvailableProfileSections,
   profileSectionLabels,
@@ -13,6 +22,7 @@ import { rectIntersection, DndContext, PointerSensor, useSensor, useSensors } fr
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { isEqual } from 'lodash-es';
+import { withController } from '~/libs/form/hoc/withController';
 
 type ProfileSectionsSettingsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ProfileSectionSchema[];
@@ -111,3 +121,5 @@ export const ProfileSectionsSettingsInput = ({
     </Input.Wrapper>
   );
 };
+
+export const InputProfileSectionsSettingsInput = withController(ProfileSectionsSettingsInput);

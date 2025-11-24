@@ -34,7 +34,6 @@ import {
   Form,
   InputCheckbox,
   InputChipGroup,
-  InputCollectionSelect,
   InputMultiSelect,
   InputRadioGroup,
   InputRTE,
@@ -65,6 +64,7 @@ import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helper
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
+import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
 
 const schema = modelUpsertSchema
   .extend({

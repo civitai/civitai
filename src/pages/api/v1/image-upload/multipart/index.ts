@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { getMimeTypeFromExt } from '~/shared/constants/mime-types';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getMultipartPutUrl, getS3Client } from '~/utils/s3-utils';
 
 const s3Domain = (env.S3_IMAGE_UPLOAD_ENDPOINT ?? env.S3_UPLOAD_ENDPOINT).replace(

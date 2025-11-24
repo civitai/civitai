@@ -1,8 +1,14 @@
 import { Menu } from '@mantine/core';
 import { IconDeviceTabletStar } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
-import { openCardDecorationModal } from '~/components/Dialog/dialog-registry';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+
+const CardDecorationModal = dynamic(() => import('~/components/Modals/CardDecorationModal'), {
+  ssr: false,
+});
+const openCardDecorationModal = createDialogTrigger(CardDecorationModal);
 
 export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
   const currentCosmetic = props.currentCosmetic;

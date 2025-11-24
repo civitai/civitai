@@ -7,11 +7,11 @@ import React, { createContext, useCallback, useContext } from 'react';
 import { create } from 'zustand';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevelLabels,
   getIsSafeBrowsingLevel,
@@ -195,33 +195,6 @@ function ImageGuardContentInner({
         children
       )}
     </>
-  );
-}
-
-export function BrowsingLevelBadge({
-  browsingLevel,
-  className,
-  sfwClassName,
-  nsfwClassName,
-  ...badgeProps
-}: {
-  browsingLevel?: number;
-} & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel ?? NsfwLevel.XXX);
-
-  const badgeClass = clsx(className, {
-    [sfwClassName ? sfwClassName : '']: !nsfw,
-    [nsfwClassName ? nsfwClassName : '']: nsfw,
-  });
-
-  return (
-    <Badge
-      classNames={{ root: getBrowsingLevelClass(classes.root, browsingLevel) }}
-      className={badgeClass}
-      {...badgeProps}
-    >
-      {browsingLevelLabels[browsingLevel as NsfwLevel] ?? '?'}
-    </Badge>
   );
 }
 

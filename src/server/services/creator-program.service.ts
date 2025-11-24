@@ -51,7 +51,7 @@ import {
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,
@@ -69,6 +69,7 @@ import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
 import { toKebabCase } from '~/utils/string-helpers';
+import { userUpdateCounter } from '~/server/prom/client';
 
 type UserCapCacheItem = {
   id: number;
@@ -275,6 +276,9 @@ export async function joinCreatorsProgram(userId: number) {
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};
   `;
+
+  userUpdateCounter?.inc({ location: 'creator-program.service:completeOnboarding' });
+
   await refreshSession(userId);
 }
 
@@ -895,7 +899,7 @@ export async function getPoolParticipantsV2(
   let bannedParticipants: { userId: number }[] = [];
 
   if (participants.length > 0) {
-    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>` 
+    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT "id" as "userId"
       FROM "User"
       WHERE id IN (${Prisma.join(participants.map((p) => p.userId))})

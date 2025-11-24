@@ -124,6 +124,13 @@ export const creatorCompAmountPaidCounter = registerCounterWithLabels({
   labelNames: ['account_type'] as const,
 });
 
+// User update tracking metrics
+export const userUpdateCounter = registerCounterWithLabels({
+  name: 'user_update_total',
+  help: 'Total number of user table updates by location',
+  labelNames: ['location'] as const,
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;

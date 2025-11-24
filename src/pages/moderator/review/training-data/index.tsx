@@ -1,4 +1,4 @@
-import { Button, Center, Group, Loader, Text, Title, Tooltip } from '@mantine/core';
+import { Button, Center, Group, Loader, Text, Title, Tooltip, Badge } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -38,7 +38,7 @@ export default function ReviewTrainingDataPage() {
   });
 
   const handleRecheckTrainingStatus = (modelVersionId: number) => {
-    recheckTrainingStatusMutation.mutate({ id: modelVersionId });
+    queryUtils.moderator.modelVersions.invalidate();
   };
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
@@ -60,41 +60,43 @@ export default function ReviewTrainingDataPage() {
           </Center>
         ) : (
           <div className="flex flex-col gap-3">
-            {flatData?.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
-                <div className="flex flex-col items-center">
-                  <Text lineClamp={1}>
-                    {item.model.name} - {item.name}
-                  </Text>
-                  <Text c="dimmed" size="xs">
-                    Created: {formatDate(item.createdAt)}
-                  </Text>
-                  <Text c="dimmed" size="xs">
-                    WorkflowId: {item.workflowId}
-                  </Text>
-                </div>
-                <Group>
-                  <Button size="compact-sm" component={Link} href={`${router.asPath}/${item.id}`}>
-                    Review
-                  </Button>
+            {flatData?.map((item) => {
+              return (
+                <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
+                  <div className="flex flex-col items-center">
+                    <Text lineClamp={1}>
+                      {item.model.name} - {item.name}
+                    </Text>
+                    <Text c="dimmed" size="xs">
+                      Created: {formatDate(item.createdAt)}
+                    </Text>
+                    <Text c="dimmed" size="xs">
+                      WorkflowId: {item.workflowId}
+                    </Text>
+                  </div>
+                  <Group>
+                    <Button size="compact-sm" component={Link} href={`${router.asPath}/${item.id}`}>
+                      Review
+                    </Button>
 
-                  <Tooltip label="Recheck Training Status" withArrow>
-                    <LegacyActionIcon
-                      variant="light"
-                      size="md"
-                      radius="xl"
-                      loading={
-                        recheckTrainingStatusMutation.isLoading &&
-                        recheckTrainingStatusMutation.variables?.id === item.id
-                      }
-                      onClick={() => handleRecheckTrainingStatus(item.id)}
-                    >
-                      <IconRefresh size={16} />
-                    </LegacyActionIcon>
-                  </Tooltip>
-                </Group>
-              </div>
-            ))}
+                    <Tooltip label="Recheck Training Status" withArrow>
+                      <LegacyActionIcon
+                        variant="light"
+                        size="md"
+                        radius="xl"
+                        loading={
+                          recheckTrainingStatusMutation.isLoading &&
+                          recheckTrainingStatusMutation.variables?.id === item.id
+                        }
+                        onClick={() => handleRecheckTrainingStatus(item.id)}
+                      >
+                        <IconRefresh size={16} />
+                      </LegacyActionIcon>
+                    </Tooltip>
+                  </Group>
+                </div>
+              );
+            })}
           </div>
         )}
         {hasNextPage && (

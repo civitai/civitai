@@ -20,7 +20,7 @@ import type {
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import {
@@ -214,6 +214,7 @@ export const createTrainingWorkflow = async ({
   user,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
+  if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
   const { id: userId, isModerator } = user;
 
   const status = await getTrainingServiceStatus();
@@ -338,7 +339,7 @@ export const createTrainingWhatIfWorkflow = async ({
     engine,
     trainingDataImagesCount,
     params,
-    trainingData: '',
+    trainingData: 'https://fake',
     loraName: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,

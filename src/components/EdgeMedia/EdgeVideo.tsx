@@ -226,7 +226,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       } else {
         videoElem.pause();
       }
-    }, [canPlay, loaded, isCurrentStack, props.autoPlay]);
+    }, [canPlay, isCurrentStack, props.autoPlay]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {

@@ -52,12 +52,13 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -68,6 +69,9 @@ export const createCustomer = async ({ id, email }: { id: number; email: string 
     const customer = await getOrCreateCustomer({ email, userId: id });
 
     await dbWrite.user.update({ where: { id }, data: { paddleCustomerId: customer.id } });
+
+    userUpdateCounter?.inc({ location: 'paddle.service:createCustomer' });
+
     await refreshSession(id);
 
     return customer.id;

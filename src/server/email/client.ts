@@ -3,7 +3,12 @@ import { env } from '~/env/server';
 import { removeTags } from '~/utils/string-helpers';
 
 const shouldConnect =
-  env.EMAIL_HOST && env.EMAIL_PORT && env.EMAIL_USER && env.EMAIL_PASS && env.EMAIL_FROM;
+  !env.IS_BUILD &&
+  env.EMAIL_HOST &&
+  env.EMAIL_PORT &&
+  env.EMAIL_USER &&
+  env.EMAIL_PASS &&
+  env.EMAIL_FROM;
 const client = shouldConnect
   ? nodemailer.createTransport({
       pool: true,

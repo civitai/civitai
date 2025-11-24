@@ -69,13 +69,6 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
                   },
                 ]
               : undefined,
-            aggregateRating: stats
-              ? {
-                  '@type': 'AggregateRating',
-                  ratingValue: stats.ratingAllTime.toFixed(2),
-                  ratingCount: stats.ratingCountAllTime,
-                }
-              : undefined,
           },
         }
       : undefined;
@@ -85,9 +78,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
       {user && user.username && stats ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
-          description={`Average Rating: ${stats.ratingAllTime.toFixed(1)} (${abbreviateNumber(
-            stats.ratingCountAllTime
-          )}), Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
+          description={`Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
             stats.followerCountAllTime
           )}, Total Likes Received: ${abbreviateNumber(
             stats.thumbsUpCountAllTime

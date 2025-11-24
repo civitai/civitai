@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { getSessionUser } from '~/server/services/user.service';
+import { getSessionUser } from '~/server/auth/session-user';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
 

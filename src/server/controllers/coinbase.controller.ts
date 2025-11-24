@@ -24,4 +24,3 @@ export const createBuzzOrderHandler = async ({
     userId: ctx.user.id,
   });
 };
-

@@ -1,8 +1,7 @@
-import type { MantineTheme } from '@mantine/core';
 import type { IconProps, Icon } from '@tabler/icons-react';
 import { IconBolt, IconCurrencyDollar } from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 type CurrencyTheme = {

@@ -1,7 +1,7 @@
 import { Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { IconMessageCancel } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';

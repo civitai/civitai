@@ -6,8 +6,8 @@ import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers
 import { getModeratedTags } from '~/server/services/system-cache';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { invalidateSession } from '~/server/utils/session-helpers';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { invalidateSession } from '~/server/auth/session-invalidation';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 

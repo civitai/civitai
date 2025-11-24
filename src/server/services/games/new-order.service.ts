@@ -531,7 +531,7 @@ async function processImageRating({
               playerId,
               modId: -1, // System
               reason: 'Exceeded wrong answer limit',
-              size: 10,
+              size: newOrderConfig.smiteSize,
             });
             await acolyteFailedJudgments.reset({ id: playerId });
           }
@@ -1075,7 +1075,7 @@ export async function handleSanityCheckFailure(playerId: number, imageId: number
         modId: -1, // System
         reason:
           'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
-        size: 10,
+        size: newOrderConfig.smiteSize * 10,
       });
     }
 

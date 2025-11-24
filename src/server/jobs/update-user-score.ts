@@ -11,6 +11,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
+import { userUpdateCounter } from '~/server/prom/client';
 
 const BATCH_SIZE = 500;
 const log = createLogger('update-user-score');
@@ -81,15 +82,13 @@ type Context = {
 async function getModelScore(ctx: Context) {
   await getScores(ctx, 'models')`
     SELECT
-      m."userId",
+      mm."userId",
       (
-          SUM(mm."ratingCount") * ${ctx.scoreMultipliers.models.reviews}
+          SUM(mm."thumbsUpCount") * ${ctx.scoreMultipliers.models.reviews}
         + SUM(mm."downloadCount") * ${ctx.scoreMultipliers.models.downloads}
         + SUM(mm."generationCount") * ${ctx.scoreMultipliers.models.generations}
       ) as score
     FROM "ModelMetric" mm
-    JOIN "Model" m ON m.id = mm."modelId"
-    WHERE mm.timeframe = 'AllTime'
     GROUP BY 1
     HAVING BOOL_OR(mm."updatedAt" > '${ctx.lastUpdate}')
   `;
@@ -199,6 +198,8 @@ async function getUpdateTotalTasks(ctx: Context) {
     `);
     ctx.jobContext.on('cancel', updateQuery.cancel);
     await updateQuery.result();
+
+    userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
   });
 
   return tasks;

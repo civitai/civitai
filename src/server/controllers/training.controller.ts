@@ -1,3 +1,4 @@
+import type { WorkflowStatus } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import type { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
@@ -106,6 +107,8 @@ const getJobIdFromVersion = async (modelVersionId: number) => {
     path: { workflowId },
   });
 
+  if (!workflow) throw new Error(`Could not find workflow with id: ${workflowId}`);
+
   const step = workflow.steps?.[0] as CustomImageResourceTrainingStep | undefined;
   // nb: get exactly the second job
   const gateId = step?.jobs?.[1]?.id;
@@ -117,58 +120,74 @@ const getJobIdFromVersion = async (modelVersionId: number) => {
     throw throwNotFoundError('Could not find jobId for gate job');
   }
 
-  return gateId;
+  return { workflowId: workflow.id, status: workflow.status, gateId };
 };
 
 const moderateTrainingData = async ({
   modelVersionId,
-  gateJobId,
+  gateId,
   approve,
+  workflowId,
+  status,
 }: {
   modelVersionId: number;
-  gateJobId: string;
+  gateId: string;
   approve: boolean;
+  workflowId?: string | null;
+  status?: WorkflowStatus;
 }) => {
   if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
 
   try {
-    const gateResp = await fetch(
-      `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/ambientjobs/${gateJobId}`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({
-          approved: approve,
-          // message: ''
-        }),
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-        },
-      }
-    );
+    const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/manager/ambientjobs/${gateId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        approved: approve,
+        // message: ''
+      }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+      },
+    });
 
-    if (!gateResp.ok) {
+    if (response.ok) {
+      if (workflowId && status) {
+        // handle calling the webhook endpoint. Resolves an issue with the orchestrator that has been plaguing us
+        await fetch(
+          `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ workflowId, status }),
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+      logWebhook({
+        message: `${approve ? 'Approved' : 'Denied'} training dataset`,
+        type: 'info',
+        data: { modelVersionId },
+      });
+    } else {
       logWebhook({
         message: 'Could not connect to orchestrator',
         data: {
           modelVersionId,
           important: true,
-          status: gateResp.status,
-          gateJobId,
+          status: response.status,
+          gateJobId: gateId,
         },
       });
 
-      if (gateResp.status === 429) {
+      if (response.status === 429) {
         throw throwRateLimitError('Could not connect to orchestrator');
       } else {
         throw throwBadRequestError('Could not connect to orchestrator');
       }
     }
-    logWebhook({
-      message: `${approve ? 'Approved' : 'Denied'} training dataset`,
-      type: 'info',
-      data: { modelVersionId },
-    });
+
     return 'ok';
   } catch (e) {
     logWebhook({
@@ -186,12 +205,12 @@ const moderateTrainingData = async ({
 
 export async function handleApproveTrainingData({ input }: { input: GetByIdInput }) {
   const modelVersionId = input.id;
-  const gateJobId = await getJobIdFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, gateJobId, approve: true });
+  const { gateId, workflowId, status } = await getJobIdFromVersion(modelVersionId);
+  return await moderateTrainingData({ modelVersionId, gateId, workflowId, status, approve: true });
 }
 
 export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
   const modelVersionId = input.id;
-  const gateJobId = await getJobIdFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, gateJobId, approve: false });
+  const { gateId, workflowId, status } = await getJobIdFromVersion(modelVersionId);
+  return await moderateTrainingData({ modelVersionId, gateId, workflowId, status, approve: false });
 }

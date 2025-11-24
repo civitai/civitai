@@ -16,6 +16,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userCollectionCountCache } from '~/server/redis/caches';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { userPreferencesSchema } from '~/server/schema/base.schema';
 import type {
@@ -92,6 +93,30 @@ export type CollectionContributorPermissionFlags = {
   collectionMode: CollectionMode | null;
 };
 
+// Collection random ordering utilities
+// Generates an hourly seed for consistent random ordering across requests
+function computeHourlySeed(): number {
+  return Math.floor(Date.now() / (1000 * 60 * 60));
+}
+
+// Get the current random seed from Redis, or compute a new one
+export async function getCollectionRandomSeed(): Promise<number> {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED);
+  if (cached) return Number(cached);
+
+  const seed = computeHourlySeed();
+  // Store with 2 hour TTL to ensure it persists across the hour
+  await sysRedis.set(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED, seed.toString(), { EX: 60 * 60 * 2 });
+  return seed;
+}
+
+// Update the seed in Redis (called by the hourly job)
+export async function updateCollectionRandomSeed(): Promise<number> {
+  const seed = computeHourlySeed();
+  await sysRedis.set(REDIS_SYS_KEYS.COLLECTION.RANDOM_SEED, seed.toString(), { EX: 60 * 60 * 2 });
+  return seed;
+}
+
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
   input: { limit, cursor, privacy, types, userId, sort, ids, modes },
   user,
@@ -124,16 +149,161 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
   return collections;
 };
 
-export const getUserCollectionPermissionsById = async ({
+export async function getUserCollectionPermissionsByIds({
+  ids,
+  userId,
+  isModerator,
+}: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<CollectionContributorPermissionFlags[]> {
+  if (ids.length === 0) return [];
+
+  type CollectionPermissionRow = {
+    id: number;
+    read: CollectionReadConfiguration;
+    write: CollectionWriteConfiguration;
+    userId: number;
+    type: CollectionType | null;
+    mode: CollectionMode | null;
+    contributorPermissions: CollectionContributorPermission[] | null;
+  };
+
+  const collections = await dbRead.$queryRaw<CollectionPermissionRow[]>`
+    SELECT
+      c.id,
+      c.read::"CollectionReadConfiguration" as "read",
+      c.write::"CollectionWriteConfiguration" as "write",
+      c."userId",
+      c.type::"CollectionType" as "type",
+      c.mode::"CollectionMode" as "mode",
+      ${
+        userId
+          ? Prisma.sql`cc.permissions as "contributorPermissions"`
+          : Prisma.sql`NULL as "contributorPermissions"`
+      }
+    FROM "Collection" c
+    ${
+      userId
+        ? Prisma.sql`LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}`
+        : Prisma.empty
+    }
+    WHERE c.id IN (${Prisma.join(ids)})
+  `;
+
+  const collectionMap = new Map(collections.map((c) => [c.id, c]));
+
+  const results = ids.map((id) => {
+    const collection = collectionMap.get(id);
+
+    if (!collection) {
+      return createEmptyPermissions(id);
+    }
+
+    const permissions: CollectionContributorPermissionFlags = {
+      collectionId: collection.id,
+      read: false,
+      write: false,
+      writeReview: false,
+      manage: false,
+      follow: false,
+      isContributor: false,
+      isOwner: false,
+      publicCollection: false,
+      followPermissions: [],
+      collectionType: collection.type,
+      collectionMode: collection.mode,
+    };
+
+    if (
+      collection.read === CollectionReadConfiguration.Public ||
+      collection.read === CollectionReadConfiguration.Unlisted
+    ) {
+      permissions.read = true;
+      permissions.follow = true;
+      permissions.followPermissions.push(CollectionContributorPermission.VIEW);
+      permissions.publicCollection = true;
+    }
+
+    if (collection.write === CollectionWriteConfiguration.Public) {
+      permissions.follow = true;
+      permissions.write = true;
+      permissions.followPermissions.push(CollectionContributorPermission.ADD);
+    }
+
+    if (collection.write === CollectionWriteConfiguration.Review) {
+      permissions.follow = true;
+      permissions.writeReview = true;
+      permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
+    }
+
+    if (!userId) {
+      return permissions;
+    }
+
+    if (userId === collection.userId) {
+      permissions.isOwner = true;
+      permissions.manage = true;
+      permissions.read = true;
+      permissions.write = true;
+    }
+
+    if (isModerator && !permissions.isOwner) {
+      permissions.manage = true;
+      permissions.read = true;
+      permissions.write = collection.write === CollectionWriteConfiguration.Public;
+      permissions.writeReview = collection.write === CollectionWriteConfiguration.Review;
+    }
+
+    const contributorPermissions = collection.contributorPermissions;
+
+    if (!contributorPermissions || permissions.isOwner) {
+      return permissions;
+    }
+
+    permissions.isContributor = true;
+
+    if (contributorPermissions.includes(CollectionContributorPermission.VIEW)) {
+      permissions.read = true;
+    }
+
+    if (contributorPermissions.includes(CollectionContributorPermission.ADD)) {
+      permissions.write = true;
+    }
+
+    if (contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
+      permissions.writeReview = true;
+    }
+
+    if (contributorPermissions.includes(CollectionContributorPermission.MANAGE)) {
+      permissions.manage = true;
+    }
+
+    return permissions;
+  });
+
+  return results;
+}
+
+export async function getUserCollectionPermissionsById({
   id,
   userId,
   isModerator,
-}: GetByIdInput & {
+}: {
+  id: number;
   userId?: number;
   isModerator?: boolean;
-}) => {
-  const permissions: CollectionContributorPermissionFlags = {
-    collectionId: id,
+}): Promise<CollectionContributorPermissionFlags> {
+  console.time('getUserCollectionPermissionsById');
+  const results = await getUserCollectionPermissionsByIds({ ids: [id], userId, isModerator });
+  console.timeEnd('getUserCollectionPermissionsById');
+  return results[0] ?? createEmptyPermissions(id);
+}
+
+function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
+  return {
+    collectionId,
     read: false,
     write: false,
     writeReview: false,
@@ -146,112 +316,7 @@ export const getUserCollectionPermissionsById = async ({
     collectionType: null,
     collectionMode: null,
   };
-
-  const collection = await dbRead.collection.findFirst({
-    select: {
-      id: true,
-      read: true,
-      write: true,
-      userId: true,
-      type: true,
-      mode: true,
-      contributors: userId
-        ? {
-            select: {
-              permissions: true,
-            },
-            where: {
-              user: {
-                id: userId,
-              },
-            },
-          }
-        : false,
-    },
-    where: {
-      id,
-    },
-  });
-
-  if (!collection) {
-    return permissions;
-  }
-
-  permissions.collectionType = collection.type;
-  permissions.collectionMode = collection.mode;
-
-  if (
-    collection.read === CollectionReadConfiguration.Public ||
-    collection.read === CollectionReadConfiguration.Unlisted
-  ) {
-    permissions.read = true;
-    permissions.follow = true;
-    permissions.followPermissions.push(CollectionContributorPermission.VIEW);
-    permissions.publicCollection = true;
-  }
-
-  if (collection.write === CollectionWriteConfiguration.Public) {
-    // Follow will make it so that they can see the collection in their feed.
-    permissions.follow = true;
-    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
-    permissions.write = true;
-    permissions.followPermissions.push(CollectionContributorPermission.ADD);
-  }
-
-  if (collection.write === CollectionWriteConfiguration.Review) {
-    // Follow will make it so that they can see the collection in their feed.
-    permissions.follow = true;
-
-    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
-    permissions.writeReview = true;
-    permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
-  }
-
-  if (!userId) {
-    return permissions;
-  }
-
-  if (userId === collection.userId) {
-    permissions.isOwner = true;
-    permissions.manage = true;
-    permissions.read = true;
-    permissions.write = true;
-  }
-
-  if (isModerator && !permissions.isOwner) {
-    permissions.manage = true;
-    permissions.read = true;
-    // Makes sure that moderators' stuff still needs to be reviewed.
-    permissions.write = collection.write === CollectionWriteConfiguration.Public;
-    permissions.writeReview = collection.write === CollectionWriteConfiguration.Review;
-  }
-
-  const [contributorItem] = collection.contributors;
-
-  if (!contributorItem || permissions.isOwner) {
-    return permissions;
-  }
-
-  permissions.isContributor = true;
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.VIEW)) {
-    permissions.read = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD)) {
-    permissions.write = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
-    permissions.writeReview = true;
-  }
-
-  if (contributorItem.permissions.includes(CollectionContributorPermission.MANAGE)) {
-    permissions.manage = true;
-  }
-
-  return permissions;
-};
+}
 
 type CollectionForPermission = {
   id: number;
@@ -557,14 +622,13 @@ export const saveItemInCollections = async ({
   if (data.length > 0) {
     transactions.push(
       dbWrite.$executeRaw`
-      INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "randomId" , "${Prisma.raw(
+      INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(
         itemKey
       )}", "tagId")
       SELECT
         v."collectionId",
         v."addedById",
         v."status",
-        FLOOR(RANDOM() * 1000000000),
         v."${Prisma.raw(itemKey)}",
         v."tagId"
       FROM jsonb_to_recordset(${JSON.stringify(data)}::jsonb) AS v(
@@ -786,12 +850,7 @@ export const upsertCollection = async ({
         },
       });
 
-      if (updated.mode !== currentCollection.mode && updated.mode === CollectionMode.Contest) {
-        await tx.$executeRaw`
-            UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
-            WHERE ci."collectionId" = ${updated.id}
-        `;
-      }
+      // No need to set randomId when changing to Contest mode - hash-based ordering is computed on-the-fly
 
       await userCollectionCountCache.bust(updated.userId);
 
@@ -984,6 +1043,36 @@ export type CollectionItemExpanded = {
   scores?: { userId: number; score: number }[] | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
+// Helper to parse cursor for collection items
+// Format: "seed:sortKey:id" for contest random sort, or just "id" for other sorts
+function parseCollectionCursor(cursor: string | undefined): {
+  seed?: number;
+  sortKey?: number;
+  id?: number;
+} {
+  if (!cursor) return {};
+  const parts = cursor.split(':');
+  if (parts.length === 3) {
+    return {
+      seed: Number(parts[0]),
+      sortKey: Number(parts[1]),
+      id: Number(parts[2]),
+    };
+  }
+  // Fallback: just an id
+  return { id: Number(parts[0]) };
+}
+
+// Helper to create cursor for collection items
+function createCollectionCursor(seed: number, sortKey: number, id: number): string {
+  return `${seed}:${sortKey}:${id}`;
+}
+
+export type CollectionItemsResult = {
+  items: CollectionItemExpanded[];
+  nextCursor?: string;
+};
+
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
@@ -993,10 +1082,10 @@ export const getCollectionItemsByCollectionId = async ({
   // Requires user here because models service uses it
   user?: SessionUser;
   useLogicalReplica?: boolean;
-}) => {
+}): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
-    limit,
+    limit = 50,
     collectionId,
     page,
     cursor,
@@ -1027,60 +1116,157 @@ export const getCollectionItemsByCollectionId = async ({
 
   const collection = await dbRead.collection.findUniqueOrThrow({ where: { id: collectionId } });
 
-  const where: Prisma.CollectionItemWhereInput = {
-    collectionId,
-    status: { in: statuses },
-    // Ensure we only show images that have been scanned
-    image:
-      collection.type === CollectionType.Image && !forReview
-        ? { ingestion: ImageIngestionStatus.Scanned }
-        : undefined,
-    tagId: collectionTagId,
-  };
+  const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
 
-  const orderBy: Prisma.CollectionItemFindManyArgs['orderBy'] = [];
+  // For contest mode, use hash-based random ordering with cursor support
+  let collectionItems: {
+    id: number;
+    modelId: number | null;
+    postId: number | null;
+    imageId: number | null;
+    articleId: number | null;
+    status?: CollectionItemStatus;
+    createdAt: Date | null;
+    scores?: { userId: number; score: number }[];
+    sortKey?: number;
+  }[];
+  let currentSeed: number | undefined;
 
-  if (!forReview && collection.mode === CollectionMode.Contest) {
-    orderBy.push({ randomId: 'desc' });
-  } else if (forReview && reviewSort === CollectionReviewSort.Newest) {
-    orderBy.push({ createdAt: 'desc' });
-  } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
-    orderBy.push({ createdAt: 'asc' });
+  if (useRandomSort) {
+    // Parse cursor to get seed and position
+    const parsedCursor = parseCollectionCursor(cursor);
+
+    // Use seed from cursor for pagination continuity, or get current seed
+    currentSeed = parsedCursor.seed ?? (await getCollectionRandomSeed());
+
+    // Build the raw SQL query with hash-based ordering
+    const statusArray = statuses.map((s) => `'${s}'`).join(', ');
+    const tagCondition = collectionTagId
+      ? Prisma.sql`AND ci."tagId" = ${collectionTagId}`
+      : Prisma.sql``;
+    const imageIngestionCondition =
+      collection.type === CollectionType.Image
+        ? Prisma.sql`AND (i."ingestion" = 'Scanned' OR i.id IS NULL)`
+        : Prisma.sql``;
+
+    // Cursor condition for pagination
+    const cursorCondition =
+      parsedCursor.sortKey !== undefined && parsedCursor.id !== undefined
+        ? Prisma.sql`AND (
+            abs(mod(hashtext(concat(ci.id::text, ${currentSeed.toString()})), 1000000000)) < ${
+            parsedCursor.sortKey
+          }
+            OR (
+              abs(mod(hashtext(concat(ci.id::text, ${currentSeed.toString()})), 1000000000)) = ${
+            parsedCursor.sortKey
+          }
+              AND ci.id < ${parsedCursor.id}
+            )
+          )`
+        : Prisma.sql``;
+
+    const rawItems = await dbRead.$queryRaw<
+      {
+        id: number;
+        modelId: number | null;
+        postId: number | null;
+        imageId: number | null;
+        articleId: number | null;
+        status: CollectionItemStatus;
+        createdAt: Date | null;
+        sortKey: number;
+      }[]
+    >`
+      SELECT
+        ci.id,
+        ci."modelId",
+        ci."postId",
+        ci."imageId",
+        ci."articleId",
+        ci."status",
+        ci."createdAt",
+        abs(mod(hashtext(concat(ci.id::text, ${currentSeed.toString()})), 1000000000)) as "sortKey"
+      FROM "CollectionItem" ci
+      LEFT JOIN "Image" i ON ci."imageId" = i.id
+      WHERE ci."collectionId" = ${collectionId}
+        AND ci."status" IN (${Prisma.raw(statusArray)})
+        ${tagCondition}
+        ${imageIngestionCondition}
+        ${cursorCondition}
+      ORDER BY "sortKey" DESC, ci.id DESC
+      LIMIT ${limit + 1}
+    `;
+
+    collectionItems = rawItems;
   } else {
-    orderBy.push({ createdAt: 'desc' });
+    // For non-contest mode, use Prisma with standard ordering
+    const where: Prisma.CollectionItemWhereInput = {
+      collectionId,
+      status: { in: statuses },
+      image:
+        collection.type === CollectionType.Image && !forReview
+          ? { ingestion: ImageIngestionStatus.Scanned }
+          : undefined,
+      tagId: collectionTagId,
+    };
+
+    const orderBy: Prisma.CollectionItemFindManyArgs['orderBy'] = [];
+    if (forReview && reviewSort === CollectionReviewSort.Newest) {
+      orderBy.push({ createdAt: 'desc' });
+    } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
+      orderBy.push({ createdAt: 'asc' });
+    } else {
+      orderBy.push({ createdAt: 'desc' });
+    }
+    orderBy.push({ id: 'desc' }); // Tie-breaker
+
+    // Parse simple cursor for non-random sort
+    const parsedCursor = parseCollectionCursor(cursor);
+
+    collectionItems = await dbRead.collectionItem.findMany({
+      take: limit + 1, // Fetch one extra to determine if there's a next page
+      skip,
+      cursor: parsedCursor.id ? { id: parsedCursor.id } : undefined,
+      select: {
+        id: true,
+        modelId: true,
+        postId: true,
+        imageId: true,
+        articleId: true,
+        status: input.forReview,
+        createdAt: true,
+        scores: input.forReview
+          ? {
+              select: {
+                userId: true,
+                score: true,
+              },
+              where: {
+                userId: user?.id,
+              },
+            }
+          : undefined,
+      },
+      where,
+      orderBy,
+    });
   }
 
-  const collectionItems = await dbRead.collectionItem.findMany({
-    take: limit,
-    skip,
-    cursor: cursor ? { id: cursor } : undefined,
-    select: {
-      id: true,
-      modelId: true,
-      postId: true,
-      imageId: true,
-      articleId: true,
-      status: input.forReview,
-      createdAt: true,
-      randomId: true,
-      scores: input.forReview
-        ? {
-            select: {
-              userId: true,
-              score: true,
-            },
-            where: {
-              userId: user?.id,
-            },
-          }
-        : undefined,
-    },
-    where,
-    orderBy,
-  });
+  // Determine next cursor
+  let nextCursor: string | undefined;
+  if (collectionItems.length > limit) {
+    const lastItem = collectionItems[limit - 1]; // Get the actual last item (not the extra one)
+    collectionItems = collectionItems.slice(0, limit); // Remove the extra item
+
+    if (useRandomSort && currentSeed !== undefined && lastItem.sortKey !== undefined) {
+      nextCursor = createCollectionCursor(currentSeed, lastItem.sortKey, lastItem.id);
+    } else {
+      nextCursor = lastItem.id.toString();
+    }
+  }
 
   if (collectionItems.length === 0) {
-    return [];
+    return { items: [], nextCursor: undefined };
   }
 
   if (user && forReview) {
@@ -1226,7 +1412,7 @@ export const getCollectionItemsByCollectionId = async ({
     .filter(isDefined)
     .filter((collectionItem) => !!collectionItem.data);
 
-  return collectionItemsExpanded;
+  return { items: collectionItemsExpanded, nextCursor };
 };
 
 export const getUserCollectionItemsByItem = async ({
@@ -1502,11 +1688,7 @@ export const updateCollectionItemsStatus = async ({
       SET "reviewedById" = ${userId},
       "reviewedAt" = ${new Date()},
       "updatedAt" = ${new Date()},
-      "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
-      collection.mode === CollectionMode.Contest
-        ? ', "randomId" = FLOOR(RANDOM() * 1000000000)'
-        : ''
-    )}
+      "status" = ${status}::"CollectionItemStatus"
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
   }
@@ -2453,14 +2635,6 @@ export const enableCollectionYoutubeSupport = async ({
     throw throwBadRequestError('Failed to save youtube authentication code');
   }
 };
-
-export async function randomizeCollectionItems(collectionId: number) {
-  await dbWrite.$executeRaw`
-    UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
-    WHERE ci."collectionId" = ${collectionId}
-      AND ci."status" = 'ACCEPTED'
-  `;
-}
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';
 

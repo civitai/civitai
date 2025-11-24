@@ -52,6 +52,11 @@ export const rewardsAbusePrevention = createJob(
         RETURNING "id";
       `);
 
+      const { userUpdateCounter } = await import('~/server/prom/client');
+      if (affected.length > 0) {
+        userUpdateCounter?.inc({ location: 'job:rewards-abuse-prevention' }, affected.length);
+      }
+
       await userMultipliersCache.bust(affected.map((user) => user.id));
       await createNotification({
         userIds: affected.map((user) => user.id),

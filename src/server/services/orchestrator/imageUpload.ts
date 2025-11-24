@@ -1,5 +1,5 @@
 import { NsfwLevel, handleError, invokeImageUploadStepTemplate } from '@civitai/client';
-import { createOrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 

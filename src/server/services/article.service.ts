@@ -319,8 +319,6 @@ export const getArticles = async ({
       orderBy = `rank."reactionCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostCollected)
       orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
-    // else if (sort === ArticleSort.MostTipped)
-    //   orderBy = `rank."tippedAmountCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.RecentlyUpdated)
       orderBy = `a."updatedAt" DESC NULLS LAST, ${orderBy}`;
 

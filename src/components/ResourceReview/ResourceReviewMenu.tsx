@@ -19,7 +19,8 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { ResourceReviewPagedModel } from '~/types/router';
-import { openReportModal, openResourceReviewEditModal } from '~/components/Dialog/dialog-registry';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function ResourceReviewMenu({

@@ -1,7 +1,7 @@
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
-import { Coinbase } from '~/server/http/coinbase/coinbase.schema';
+import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 
 class CoinbaseCaller extends HttpCaller {
   private static instance: CoinbaseCaller;

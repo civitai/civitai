@@ -76,7 +76,7 @@ import {
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserDownloads,
+  getUserDownloadedModelVersions,
   getUserEngagedModels,
   getUserEngagedModelVersions,
   getUserList,
@@ -112,7 +112,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { refreshSession } from '~/server/utils/session-helpers';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -434,6 +434,7 @@ export const updateUserHandler = async ({
             }
           : undefined,
       },
+      updateSource: 'updateUser',
     });
 
     // Delete old profilePic and ingest new one
@@ -563,7 +564,7 @@ export const getUserEngagedModelVersionsHandler = async ({
 
   try {
     const engagements = await getUserEngagedModelVersions({ userId, modelVersionIds });
-    const downloads = await getUserDownloads({ userId, modelVersionIds });
+    const downloads = await getUserDownloadedModelVersions({ userId, modelVersionIds });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelVersionId as value
     const engagedModelVersions = engagements.reduce<Record<EngagedModelVersionType, number[]>>(
@@ -903,13 +904,10 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         },
         stats: {
           select: {
-            ratingMonth: true,
-            ratingCountMonth: true,
-            downloadCountMonth: true,
-            favoriteCountMonth: true,
-            thumbsUpCountMonth: true,
-            uploadCountMonth: true,
-            answerCountMonth: true,
+            downloadCountAllTime: true,
+            thumbsUpCountAllTime: true,
+            uploadCountAllTime: true,
+            answerCountAllTime: true,
           },
         },
         cosmetics: {
@@ -979,7 +977,11 @@ export const toggleMuteHandler = async ({
   const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-  const updatedUser = await updateUserById({ id, data: { muted: !user.muted } });
+  const updatedUser = await updateUserById({
+    id,
+    data: { muted: !user.muted },
+    updateSource: 'toggleMute',
+  });
   await refreshSession(id);
 
   await ctx.track.userActivity({
@@ -1185,7 +1187,11 @@ export const reportProhibitedRequestHandler = async ({
       constants.imageGeneration.requestBlocking.muted -
       constants.imageGeneration.requestBlocking.notified;
     if (count >= limit) {
-      await updateUserById({ id: userId, data: { muted: true } });
+      await updateUserById({
+        id: userId,
+        data: { muted: true },
+        updateSource: 'imageGenBlocking:autoMute',
+      });
       await refreshSession(userId);
 
       await ctx.track.userActivity({

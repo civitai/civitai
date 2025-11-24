@@ -4,7 +4,7 @@ import { createJob } from '~/server/jobs/job';
 import { modelVersionResourceCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { resourceDataCache } from '~/server/services/model-version.service';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';

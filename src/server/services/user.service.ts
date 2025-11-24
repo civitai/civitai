@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
-import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import {
@@ -11,11 +10,11 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { withRetries } from '~/utils/errorHandling';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
+import { userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -46,9 +45,7 @@ import type {
   UpdateContentSettingsInput,
   UserMeta,
   UserSettingsInput,
-  UserSubscriptionsByBuzzType,
 } from '~/server/schema/user.schema';
-import { userSettingsSchema } from '~/server/schema/user.schema';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -69,8 +66,6 @@ import {
   cancelAllPaddleSubscriptions,
   cancelSubscriptionPlan,
 } from '~/server/services/paddle.service';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
-import { getSystemPermissions } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -85,7 +80,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { invalidateSession, refreshSession } from '~/server/utils/session-helpers';
+import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type {
@@ -104,17 +99,15 @@ import {
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { getUserBanDetails } from '~/utils/user-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
 import type {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
   UserSettingsSchema,
-  UserTier,
 } from './../schema/user.schema';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
+import { clickhouse } from '~/server/clickhouse/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -140,6 +133,7 @@ export const getUsersByIds = async (userIds: number[]) => {
   }));
 };
 
+export type UserCreator = NonNullable<AsyncReturnType<typeof getUserCreator>>;
 export const getUserCreator = async ({
   leaderboardId,
   isModerator,
@@ -177,10 +171,7 @@ export const getUserCreator = async ({
       },
       stats: {
         select: {
-          ratingAllTime: true,
-          ratingCountAllTime: true,
           downloadCountAllTime: true,
-          favoriteCountAllTime: true,
           thumbsUpCountAllTime: true,
           followerCountAllTime: true,
           reactionCountAllTime: true,
@@ -364,9 +355,11 @@ export const isUsernamePermitted = (username: string) => {
 export const updateUserById = async ({
   id,
   data,
+  updateSource,
 }: {
   id: number;
   data: Prisma.UserUpdateInput;
+  updateSource?: string;
 }) => {
   if (data.email) {
     const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
@@ -381,6 +374,11 @@ export const updateUserById = async ({
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
+
+  // Track user update with optional source context
+  let location = 'user.service:updateUserById';
+  if (updateSource) location += `:${updateSource}`;
+  userUpdateCounter?.inc({ location });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
@@ -419,29 +417,44 @@ export async function getUserEngagedModelVersions({
   });
 }
 
-export async function getUserDownloads({
+export async function getUserDownloadedModelVersions({
   userId,
   modelVersionIds,
 }: {
   userId: number;
   modelVersionIds?: number | number[];
 }) {
-  const where: Prisma.DownloadHistoryWhereInput = {
-    userId,
-  };
-  if (modelVersionIds) {
-    const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
-    where.modelVersionId = { in: versionIds };
+  if (!clickhouse) {
+    return [];
   }
 
-  const { hideDownloadsSince } = await getUserSettings(userId);
-  if (hideDownloadsSince) where.downloadAt = { gt: new Date(hideDownloadsSince) };
+  const versionIds = modelVersionIds
+    ? Array.isArray(modelVersionIds)
+      ? modelVersionIds
+      : [modelVersionIds]
+    : null;
 
-  return dbRead.downloadHistory.findMany({
-    where,
-    select: { modelVersionId: true },
-    distinct: ['modelVersionId'],
-  });
+  const { hideDownloadsSince } = await getUserSettings(userId);
+
+  // Build WHERE conditions
+  const conditions: string[] = [`userId = ${userId}`];
+  if (versionIds && versionIds.length > 0) {
+    conditions.push(`modelVersionId IN (${versionIds.join(', ')})`);
+  }
+  if (hideDownloadsSince) {
+    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+  }
+
+  const whereClause = conditions.join(' AND ');
+
+  const results = await clickhouse.$query<{ modelVersionId: number }>`
+    SELECT DISTINCT modelVersionId
+    FROM userModelDownloads
+    WHERE ${whereClause}
+  `;
+
+  return results;
 }
 
 export const getUserEngagedModelByModelId = ({
@@ -712,6 +725,8 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     }),
   ]);
 
+  userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBasicDataForUser(id);
 
@@ -730,6 +745,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     SET "excludeFromLeaderboards" = ${setTo}
     WHERE id = ${id}
   `);
+  userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
 }
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
@@ -788,179 +804,6 @@ export const updateAccountScope = async ({
     const hasNewScope = scope?.split(' ').some((s) => !currentScope.includes(s));
     if (hasNewScope) await dbWrite.account.update({ where: { id: account.id }, data: { scope } });
   }
-};
-
-export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
-  if (!userId && !token) return undefined;
-
-  return withRetries(
-    async () => {
-      // Get UserId from Token
-      if (!userId && token) {
-        const now = new Date();
-        const result = await dbWrite.apiKey.findFirst({
-          where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
-          select: { userId: true },
-        });
-        if (!result) return undefined;
-        userId = result.userId;
-      }
-      if (!userId) return undefined;
-
-      // Get from cache
-      // ----------------------------------
-      const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}` as const;
-      const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
-      if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
-
-      // On cache miss get from database
-      // ----------------------------------
-      const where: Prisma.UserWhereInput = { deletedAt: null, id: userId };
-
-      // console.log(new Date().toISOString() + ' ::', 'running query');
-      // console.trace();
-
-      // TODO switch from prisma, or try to make this a direct/raw query
-      const response = await dbWrite.user.findFirst({
-        where,
-        include: {
-          referral: { select: { id: true } },
-          profilePicture: {
-            select: {
-              id: true,
-              url: true,
-              // nsfw: true,
-              hash: true,
-              userId: true,
-            },
-          },
-        },
-      });
-      // Get ALL user subscriptions (one per buzzType)
-      const allSubscriptions = await dbWrite.customerSubscription.findMany({
-        where: {
-          userId,
-          status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
-        },
-        include: {
-          product: true,
-          price: true,
-        },
-      });
-
-      if (!response) return undefined;
-
-      // nb: doing this because these fields are technically nullable, but prisma
-      // likes returning them as undefined. that messes with the typing.
-      const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
-
-      // Build subscriptions object per buzzType
-      const subscriptionsByBuzzType: UserSubscriptionsByBuzzType = {};
-
-      let highestTier: UserTier | undefined = undefined;
-      let primarySubscriptionId: string | undefined = undefined;
-      let memberInBadState = false;
-
-      const tierOrder: Record<string, number> = {
-        founder: 5,
-        gold: 4,
-        silver: 3,
-        bronze: 2,
-        free: 1,
-      };
-
-      for (const sub of allSubscriptions) {
-        const metadata = sub.product.metadata as any;
-        const tier = metadata?.[env.TIER_METADATA_KEY] as UserTier | undefined;
-        const isActive = ['active', 'trialing'].includes(sub.status);
-        const isBadState = ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
-          sub.status
-        );
-
-        if (isBadState) memberInBadState = true;
-
-        if (tier && tier !== 'free') {
-          subscriptionsByBuzzType[sub.buzzType] = {
-            tier,
-            isMember: isActive,
-            subscriptionId: sub.id,
-            status: sub.status,
-          };
-
-          // Track highest tier for backward compatibility
-          if (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0)) {
-            highestTier = tier;
-            primarySubscriptionId = sub.id;
-          }
-        }
-      }
-
-      const tier = highestTier;
-
-      const user = {
-        ...response,
-        image: response.image ?? undefined,
-        referral: response.referral ?? undefined,
-        name: response.name ?? undefined,
-        username: response.username ?? undefined,
-        email: response.email ?? undefined,
-        emailVerified: response.emailVerified ?? undefined,
-        isModerator: response.isModerator ?? undefined,
-        deletedAt: response.deletedAt ?? undefined,
-        customerId: response.customerId ?? undefined,
-        paddleCustomerId: response.paddleCustomerId ?? undefined,
-        mutedAt: response.mutedAt ?? undefined,
-        bannedAt: response.bannedAt ?? undefined,
-        autoplayGifs: response.autoplayGifs ?? undefined,
-        leaderboardShowcase: response.leaderboardShowcase ?? undefined,
-        filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
-        meta: userMeta,
-        banDetails: getUserBanDetails({ meta: userMeta }),
-        subscriptionId: primarySubscriptionId ?? undefined,
-        subscriptions: subscriptionsByBuzzType,
-      };
-
-      const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
-
-      const permissions: string[] = [];
-      const systemPermissions = await getSystemPermissions();
-      for (const [key, value] of Object.entries(systemPermissions)) {
-        if (value.includes(user.id)) permissions.push(key);
-      }
-
-      // let feedbackToken: string | undefined;
-      // if (!!user.username && !!user.email)
-      //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
-
-      const userSettings = userSettingsSchema.safeParse(settings ?? {});
-
-      const sessionUser: SessionUser = {
-        ...rest,
-        image: profilePicture?.url ?? rest.image,
-        tier: !!tier ? tier : undefined,
-        permissions,
-        memberInBadState,
-        allowAds:
-          userSettings.success && userSettings.data.allowAds != null
-            ? userSettings.data.allowAds
-            : tier != null
-            ? false
-            : true,
-        redBrowsingLevel:
-          userSettings.success && userSettings.data.redBrowsingLevel != null
-            ? userSettings.data.redBrowsingLevel
-            : undefined,
-        // feedbackToken,
-      };
-
-      await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
-      await invalidateCivitaiUser({ userId });
-
-      return sessionUser;
-    },
-    2, // 2 retries = 3 total attempts
-    100 // 100ms initial retry delay
-  );
 };
 
 export const removeAllContent = async ({ id }: { id: number }) => {
@@ -1258,6 +1101,7 @@ export const toggleBan = async ({
   const updatedUser = await updateUserById({
     id,
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
+    updateSource: 'toggleBan',
   });
 
   await invalidateSession(id);
@@ -1331,6 +1175,7 @@ export const toggleContestBan = async ({
   const updatedUser = await updateUserById({
     id,
     data: { meta: updatedMeta },
+    updateSource: 'toggleContestBan',
   });
 
   await refreshSession(id);
@@ -1862,6 +1707,7 @@ export async function updateContentSettings({
       where: { id: userId },
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
+    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
@@ -1919,6 +1765,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
       SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
       WHERE id = ${userId}
     `);
+  userUpdateCounter?.inc({ location: 'user.service:setUserSetting:set' });
 
   const toRemove = Object.entries(settings)
     .filter(([, value]) => value === undefined)
@@ -1929,6 +1776,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
       SET settings = settings - ${toRemove.join(' - ')}}
       WHERE id = ${userId}
     `);
+    userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 
   await userSettingsCache.bust([userId]);

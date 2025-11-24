@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Install Prisma Client - remove if not using Prisma
 
-COPY prisma ./
+COPY prisma ./prisma
 
 # Install dependencies based on the preferred package manager
 
@@ -31,13 +31,15 @@ ARG NEXT_PUBLIC_MAINTENANCE_MODE
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Restore generated schema.prisma from deps (COPY . . overwrites it with source which doesn't have it)
+COPY --from=deps /app/prisma/schema.prisma ./prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN \
-  if [ -f yarn.lock ]; then SKIP_ENV_VALIDATION=1 yarn build; \
-  elif [ -f package-lock.json ]; then SKIP_ENV_VALIDATION=1 NODE_OPTIONS="--max-old-space-size=4096" npm run build; \
-  elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && SKIP_ENV_VALIDATION=1 pnpm run build; \
+  if [ -f yarn.lock ]; then SKIP_ENV_VALIDATION=1 IS_BUILD=true yarn build; \
+  elif [ -f package-lock.json ]; then SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max-old-space-size=4096" npm run build; \
+  elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && SKIP_ENV_VALIDATION=1 IS_BUILD=true pnpm run build; \
   else echo "Lockfile not found." && exit 1; \
   fi
 

@@ -36,7 +36,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
@@ -46,7 +46,7 @@ import {
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

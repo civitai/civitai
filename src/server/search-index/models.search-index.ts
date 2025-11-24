@@ -5,7 +5,8 @@ import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
+import { modelTagCache } from '~/server/redis/caches';
+import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -20,9 +21,6 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
-
-const RATING_BAYESIAN_M = 3.5;
-const RATING_BAYESIAN_C = 10;
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -176,10 +174,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
 
-      const weightedRating =
-        (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
-        (metrics.ratingCount + RATING_BAYESIAN_C);
-
       const [version] = modelVersions;
       if (!version) return null;
 
@@ -249,15 +243,11 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           })) ?? [],
         metrics: {
           ...metrics,
-          weightedRating,
         },
         rank: {
           downloadCount: metrics?.downloadCount ?? 0,
-          favoriteCount: metrics.favoriteCount ?? 0,
           thumbsUpCount: metrics.thumbsUpCount ?? 0,
           commentCount: metrics.commentCount ?? 0,
-          ratingCount: metrics.ratingCount ?? 0,
-          rating: metrics.rating ?? 0,
           collectedCount: metrics.collectedCount ?? 0,
           tippedAmountCount: metrics.tippedAmountCount ?? 0,
         },

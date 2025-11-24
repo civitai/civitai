@@ -28,7 +28,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { capitalize } from '~/utils/string-helpers';
 import type {
   BuzzTransactionDetails,

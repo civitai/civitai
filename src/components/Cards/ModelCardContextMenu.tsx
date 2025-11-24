@@ -2,11 +2,9 @@ import { Menu } from '@mantine/core';
 import { IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import {
-  openAddToCollectionModal,
-  openBlockModelTagsModal,
-  openReportModal,
-} from '~/components/Dialog/dialog-registry';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
+import { openReportModal } from '~/components/Dialog/triggers/report';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';

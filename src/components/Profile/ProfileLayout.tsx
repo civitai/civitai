@@ -42,9 +42,7 @@ export function ProfileLayout({
       {user && stats ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
-          description={`Average Rating: ${stats.ratingAllTime.toFixed(1)} (${abbreviateNumber(
-            stats.ratingCountAllTime
-          )}), Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
+          description={`Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
             stats.followerCountAllTime
           )}, Total Likes Received: ${abbreviateNumber(
             stats.thumbsUpCountAllTime

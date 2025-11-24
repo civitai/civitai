@@ -46,7 +46,7 @@ import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { openUserProfileEditModal } from '~/components/Dialog/dialog-registry';
+import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
@@ -115,7 +115,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         : user.cosmetics
             .map((c) => c.cosmetic)
             .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-            .reverse(),
+            .reverse()
+            .filter((badge, index, self) => {
+              const data = (badge.data ?? {}) as BadgeCosmetic['data'];
+              const url = (data.url ?? '') as string;
+              // Keep only the first occurrence of each unique URL
+              return (
+                url &&
+                self.findIndex((b) => {
+                  const bData = (b.data ?? {}) as BadgeCosmetic['data'];
+                  return (bData.url ?? '') === url;
+                }) === index
+              );
+            }),
     [user]
   );
 

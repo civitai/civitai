@@ -1349,3 +1349,7 @@ export const EARLY_ACCESS_CONFIG: {
     [({ features }: { features?: FeatureAccess }) => features?.thirtyDayEarlyAccess ?? false, 30],
   ],
 };
+
+export const KEY_VALUE_KEYS = {
+  REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
+} as const;

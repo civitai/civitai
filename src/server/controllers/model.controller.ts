@@ -59,7 +59,6 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { addUserDownload } from '~/server/services/download.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -212,12 +211,9 @@ export const getModelHandler = async ({
       metrics: undefined,
       rank: {
         downloadCountAllTime: metrics?.downloadCount ?? 0,
-        favoriteCountAllTime: metrics?.favoriteCount ?? 0,
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
         thumbsDownCountAllTime: metrics?.thumbsDownCount ?? 0,
         commentCountAllTime: metrics?.commentCount ?? 0,
-        ratingCountAllTime: metrics?.ratingCount ?? 0,
-        ratingAllTime: Number(metrics?.rating?.toFixed(2) ?? 0),
         tippedAmountCountAllTime: metrics?.tippedAmountCount ?? 0,
         imageCountAllTime: metrics?.imageCount ?? 0,
         collectedCountAllTime: metrics?.collectedCount ?? 0,
@@ -304,8 +300,6 @@ export const getModelHandler = async ({
           rank: {
             generationCountAllTime: versionMetrics?.generationCount ?? 0,
             downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
-            ratingCountAllTime: versionMetrics?.ratingCount ?? 0,
-            ratingAllTime: Number(versionMetrics?.rating?.toFixed(2) ?? 0),
             thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
             thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
             earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
@@ -673,19 +667,16 @@ export const getModelsWithVersionsHandler = async ({
     const vaeFiles = await getVaeFiles({ vaeIds });
 
     const metrics = await dbRead.modelMetric.findMany({
-      where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
+      where: { modelId: { in: modelIds } },
     });
 
     function getStatsForModel(modelId: number) {
       const stats = metrics.find((x) => x.modelId === modelId);
       return {
         downloadCount: stats?.downloadCount ?? 0,
-        favoriteCount: stats?.favoriteCount ?? 0,
         thumbsUpCount: stats?.thumbsUpCount ?? 0,
         thumbsDownCount: stats?.thumbsDownCount ?? 0,
         commentCount: stats?.commentCount ?? 0,
-        ratingCount: stats?.ratingCount ?? 0,
-        rating: Number(stats?.rating?.toFixed(2) ?? 0),
         tippedAmountCount: stats?.tippedAmountCount ?? 0,
       };
     }
@@ -703,8 +694,6 @@ export const getModelsWithVersionsHandler = async ({
             files,
             stats: {
               downloadCount: metrics[0]?.downloadCount ?? 0,
-              ratingCount: metrics[0]?.ratingCount ?? 0,
-              rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
               thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
               thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
             },
@@ -864,7 +853,6 @@ export const getDownloadCommandHandler = async ({
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
-    await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
 
     if (isDownloadable) {
       // Best not to track for versions that are not downloadable.
@@ -1399,10 +1387,8 @@ export const getAssociatedResourcesCardDataHandler = async ({
             thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,
             thumbsDownCount: rank?.thumbsDownCountAllTime ?? 0,
             commentCount: rank?.commentCountAllTime ?? 0,
-            ratingCount: rank?.ratingCountAllTime ?? 0,
             collectedCount: rank?.collectedCountAllTime ?? 0,
             tippedAmountCount: rank?.tippedAmountCountAllTime ?? 0,
-            rating: rank.ratingAllTime ?? 0,
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,

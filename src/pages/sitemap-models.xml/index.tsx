@@ -7,10 +7,10 @@ import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const query = await pgDbRead.cancellableQuery<{ id: number; name: string; updatedAt: Date }>(`
-    SELECT id, name, COALESCE("lastVersionAt", "publishedAt") as "updatedAt"
-    FROM "Model" m
-    JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'
-    WHERE m."status" = 'Published' AND m."nsfwLevel" = 1
+    SELECT m.id, m.name, COALESCE(m."lastVersionAt", m."publishedAt") as "updatedAt"
+    FROM "ModelMetric" mm
+    JOIN "Model" m ON m.id = mm."modelId"
+    WHERE mm."status" = 'Published' AND mm."nsfwLevel" = 1
     ORDER BY mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"
     LIMIT 1000;
   `);
