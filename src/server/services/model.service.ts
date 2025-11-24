@@ -590,7 +590,7 @@ export const getModelsRaw = async ({
   if (!!fileFormats?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelFile" mf
-      JOIN "ModelVersion" mv ON mf."modelVersionId" = mv."id" AND mv."modelId" = m."id"
+      JOIN "ModelVersion" mv ON mf."modelVersionId" = mv."id" AND mv."modelId" = mm."modelId"
       WHERE mf."modelVersionId" = mv."id"
         AND mf."type" = 'Model'
         AND (${Prisma.join(
@@ -684,9 +684,13 @@ export const getModelsRaw = async ({
     LIMIT ${(take ?? 100) + 1}
   `;
 
-  const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
+  // const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
+  //   modelQuery
+  // );
+  const pgQuery = await pgDbRead.cancellableQuery<ModelRaw & { cursorId: string | bigint | null }>(
     modelQuery
   );
+  const models = await pgQuery.result();
 
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);

@@ -1,5 +1,5 @@
 drop view if exists public."UserStat";
-create view public."UserStat"
+create OR REPLACE view public."UserStat"
             ("userId", "uploadCountAllTime", "reviewCountAllTime", "downloadCountAllTime",
              "generationCountAllTime", "followingCountAllTime", "followerCountAllTime",
              "hiddenCountAllTime", "answerCountAllTime", "answerAcceptCountAllTime",
@@ -11,6 +11,8 @@ WITH user_model_metrics AS (
       sum(mm."generationCount") AS "generationCountAllTime",
       sum(mm."thumbsUpCount") AS "thumbsUpCountAllTime"
     FROM "ModelMetric" mm
+    WHERE mm.status = 'Published'
+    AND mm.availability != 'Private'
     GROUP BY mm."userId"
 ), user_counts AS (
     SELECT um."userId",
