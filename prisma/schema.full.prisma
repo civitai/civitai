@@ -2650,7 +2650,6 @@ model CollectionItem {
   reviewedAt   DateTime?
   note         String?
   status       CollectionItemStatus  @default(ACCEPTED)
-  randomId     Int?
   tagId        Int?
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]
