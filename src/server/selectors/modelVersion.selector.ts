@@ -25,11 +25,8 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   uploadType: true,
   usageControl: true,
   metrics: {
-    where: { timeframe: 'AllTime' },
     select: {
       downloadCount: true,
-      ratingCount: true,
-      rating: true,
       thumbsUpCount: true,
       thumbsDownCount: true,
     },
@@ -76,11 +73,8 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
     },
   },
   metrics: {
-    where: { timeframe: 'AllTime' },
     select: {
       downloadCount: true,
-      ratingCount: true,
-      rating: true,
       thumbsUpCount: true,
       thumbsDownCount: true,
       generationCount: true,

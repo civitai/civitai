@@ -128,12 +128,9 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       uploadType: true,
       usageControl: true,
       metrics: {
-        where: { timeframe: 'AllTime' },
         select: {
           generationCount: true,
           downloadCount: true,
-          ratingCount: true,
-          rating: true,
           thumbsUpCount: true,
           thumbsDownCount: true,
           earnedAmount: true,

@@ -171,10 +171,7 @@ export const getUserCreator = async ({
       },
       stats: {
         select: {
-          ratingAllTime: true,
-          ratingCountAllTime: true,
           downloadCountAllTime: true,
-          favoriteCountAllTime: true,
           thumbsUpCountAllTime: true,
           followerCountAllTime: true,
           reactionCountAllTime: true,

@@ -184,8 +184,6 @@ type ModelRaw = {
     thumbsUpCount: number;
     thumbsDownCount: number;
     commentCount: number;
-    ratingCount: number;
-    rating: number;
     collectedCount: number;
     tippedAmountCount: number;
   };
@@ -392,7 +390,7 @@ export const getModelsRaw = async ({
 
     if (!targetUser) throw new Error('User not found');
 
-    AND.push(Prisma.sql`u.id = ${targetUser.id}`);
+    AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
 
   if (types?.length) {
@@ -403,7 +401,7 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.sql`EXISTS (
           SELECT 1 FROM "ModelEngagement" e
-          WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Hide'::"ModelEngagementType")
+          WHERE e."modelId" = mm."modelId" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Hide'::"ModelEngagementType")
         `
     );
   }
@@ -425,7 +423,7 @@ export const getModelsRaw = async ({
       // Return no results.
       AND.push(Prisma.sql`1 = 0`);
     } else {
-      AND.push(Prisma.sql`u."id" IN (${Prisma.join(followedUsersIds, ',')})`);
+      AND.push(Prisma.sql`mm."userId" IN (${Prisma.join(followedUsersIds, ',')})`);
     }
 
     isPrivate = true;
@@ -486,7 +484,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" mv
       WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')})
-        AND mv."modelId" = m."id"
+        AND mv."modelId" = mm."modelId"
     )`);
   }
 
@@ -531,7 +529,7 @@ export const getModelsRaw = async ({
   if (isFeatured) {
     const featuredModels = await getFeaturedModels();
     AND.push(
-      Prisma.sql`m."id" IN (${Prisma.join(
+      Prisma.sql`mm."modelId" IN (${Prisma.join(
         featuredModels.map((m) => m.modelId),
         ','
       )})`
@@ -554,7 +552,7 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
-        WHERE ci."modelId" = m."id"
+        WHERE ci."modelId" = mm."modelId"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
         ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}
@@ -644,7 +642,7 @@ export const getModelsRaw = async ({
   const modelQuery = Prisma.sql`
     ${queryWith}
     SELECT
-      m."id",
+      mm."modelId" as "id",
       m."name",
       ${ifDetails`
         m."description",
@@ -653,19 +651,19 @@ export const getModelsRaw = async ({
         m."allowDerivatives",
         m."allowDifferentLicense",
       `} m."type",
-      m."minor",
+      mm."minor",
       m."sfwOnly",
-      m."poi",
+      mm."poi",
       m."nsfw",
-      m."nsfwLevel",
-      m."status",
+      mm."nsfwLevel",
+      mm."status",
       m."createdAt",
-      m."lastVersionAt",
+      mm."lastVersionAt",
       m."publishedAt",
       m."locked",
       m."earlyAccessDeadline",
-      m."mode",
-      m."availability",
+      mm."mode",
+      mm."availability",
       jsonb_build_object(
         'downloadCount', mm."downloadCount",
         'thumbsUpCount', mm."thumbsUpCount",
@@ -674,7 +672,7 @@ export const getModelsRaw = async ({
         'collectedCount', mm."collectedCount",
         'tippedAmountCount', mm."tippedAmountCount"
       )                                               as "rank",
-      m."userId",
+      mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     FROM "ModelMetric" mm
          JOIN "Model" m ON m."id" = mm."modelId"
@@ -769,8 +767,6 @@ export const getModelsRaw = async ({
             [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
             [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
             [`commentCount${input.period}`]: rank.commentCount,
-            [`ratingCount${input.period}`]: rank.ratingCount,
-            [`rating${input.period}`]: rank.rating,
             [`collectedCount${input.period}`]: rank.collectedCount,
             [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
           },
@@ -1163,10 +1159,8 @@ export const getModelsWithImagesAndModelVersions = async ({
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
             thumbsDownCount: rank?.[`thumbsDownCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
-            ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
             tippedAmountCount: rank?.[`tippedAmountCount${input.period}`] ?? 0,
-            rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
           // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
@@ -2588,19 +2582,16 @@ export async function getModelsWithVersions({
   });
 
   const versionMetrics = await dbRead.modelVersionMetric.findMany({
-    where: { modelVersionId: { in: modelVersionIds }, timeframe: MetricTimeframe.AllTime },
+    where: { modelVersionId: { in: modelVersionIds } },
   });
 
   function getStatsForModel(modelId: number) {
     const stats = metrics.find((x) => x.modelId === modelId);
     return {
       downloadCount: stats?.downloadCount ?? 0,
-      favoriteCount: 0,
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
       commentCount: stats?.commentCount ?? 0,
-      ratingCount: 0,
-      rating: 0,
       tippedAmountCount: stats?.tippedAmountCount ?? 0,
     };
   }
@@ -2609,8 +2600,6 @@ export async function getModelsWithVersions({
     const stats = versionMetrics.find((x) => x.modelVersionId === versionId);
     return {
       downloadCount: stats?.downloadCount ?? 0,
-      ratingCount: stats?.ratingCount ?? 0,
-      rating: Number(stats?.rating?.toFixed(2) ?? 0),
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
     };

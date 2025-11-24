@@ -300,8 +300,6 @@ export const getModelHandler = async ({
           rank: {
             generationCountAllTime: versionMetrics?.generationCount ?? 0,
             downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
-            ratingCountAllTime: versionMetrics?.ratingCount ?? 0,
-            ratingAllTime: Number(versionMetrics?.rating?.toFixed(2) ?? 0),
             thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
             thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
             earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
@@ -696,8 +694,6 @@ export const getModelsWithVersionsHandler = async ({
             files,
             stats: {
               downloadCount: metrics[0]?.downloadCount ?? 0,
-              ratingCount: metrics[0]?.ratingCount ?? 0,
-              rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
               thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
               thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
             },
@@ -1391,10 +1387,8 @@ export const getAssociatedResourcesCardDataHandler = async ({
             thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,
             thumbsDownCount: rank?.thumbsDownCountAllTime ?? 0,
             commentCount: rank?.commentCountAllTime ?? 0,
-            ratingCount: rank?.ratingCountAllTime ?? 0,
             collectedCount: rank?.collectedCountAllTime ?? 0,
             tippedAmountCount: rank?.tippedAmountCountAllTime ?? 0,
-            rating: rank.ratingAllTime ?? 0,
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
