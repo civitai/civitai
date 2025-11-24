@@ -209,8 +209,10 @@ export async function parseGenerateImageInput({
   whatIf?: boolean;
   batchAll?: boolean;
 }) {
+  delete originalParams.resolution;
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
+  delete originalParams.outputFormat;
   if (originalParams.workflow.startsWith('txt2img')) {
     originalParams.sourceImage = null;
     originalParams.images = null;

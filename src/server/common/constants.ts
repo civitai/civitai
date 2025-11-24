@@ -1,4 +1,3 @@
-import { openai } from './../services/ai/openai';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -15,8 +14,6 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const lipsum = `
@@ -665,6 +662,14 @@ export const ponyV7Sizes = [
   { label: '2:3', width: 1024, height: 1536 },
 ];
 
+const nanoBananaProSizes = [
+  { label: '16:9', width: 2560, height: 1440 },
+  { label: '4:3', width: 2304, height: 1728 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1728, height: 2304 },
+  { label: '9:16', width: 1440, height: 2560 },
+];
+
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -1022,7 +1027,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   NanoBanana: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: nanoBananaProSizes,
     checkpoint: {
       id: 2154472,
       name: 'Nano Banana',
@@ -1075,6 +1080,7 @@ export const generation = {
     clipSkip: 2,
     quantity: 2,
     aspectRatio: '1:1',
+    resolution: '2k',
     prompt: '',
     negativePrompt: '',
     nsfw: false,

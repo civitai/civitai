@@ -1,24 +1,37 @@
 import type {
   Gemini25FlashCreateImageGenInput,
   Gemini25FlashEditImageGenInput,
+  NanoBananaProImageGenInput,
 } from '@civitai/client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const;
 
 type GeminiModel = (typeof geminiModels)[number];
-export const geminiModels = ['2.5-flash'] as const;
+export const geminiModels = ['2.5-flash', 'nano-banana-pro'] as const;
 
-export const geminiModelVersionToModelMap = new Map<number, GeminiModel>([[2154472, '2.5-flash']]);
+export const geminiModelVersionMap = new Map<number, { model: GeminiModel; name: string }>([
+  [2154472, { model: '2.5-flash', name: 'Standard' }],
+  [2436219, { model: 'nano-banana-pro', name: 'Pro' }],
+]);
+
+export const nanoBananaProResolutions = ['1K', '2K', '4K'];
 
 export function getIsNanoBanana(modelVersionId?: number) {
-  return modelVersionId ? !!geminiModelVersionToModelMap.get(modelVersionId) : false;
+  return modelVersionId ? !!geminiModelVersionMap.get(modelVersionId) : false;
 }
 
 export function getIsNanoBananaFromResources(resources: { id: number }[]) {
-  return resources.some((x) => !!geminiModelVersionToModelMap.get(x.id));
+  return resources.some((x) => !!geminiModelVersionMap.get(x.id));
+}
+
+export function getIsNanoBananaPro(modelVersionId?: number) {
+  return modelVersionId
+    ? geminiModelVersionMap.get(modelVersionId)?.model === 'nano-banana-pro'
+    : false;
 }
 
 const baseSchema = z.object({
@@ -41,31 +54,55 @@ const schema = z.discriminatedUnion('operation', [
 ]);
 
 export const geminiConfig = ImageGenConfig({
-  metadataFn: (params) => ({
-    engine: 'gemini',
-    baseModel: params.baseModel,
-    process: !params.images?.length ? 'txt2img' : 'img2img',
-    images: params.images,
-    prompt: params.prompt,
-    quantity: params.quantity,
-  }),
-  inputFn: ({
-    params,
-    resources,
-  }): Gemini25FlashCreateImageGenInput | Gemini25FlashEditImageGenInput => {
-    let model = '2.5-flash';
+  metadataFn: (params, resources) => {
+    const isPro = resources.some((x) => getIsNanoBanana(x.id));
+
+    if (isPro) {
+      return {
+        engine: 'google',
+        baseModel: params.baseModel,
+        process: !params.images?.length ? 'txt2img' : 'img2img',
+        images: params.images,
+        prompt: params.prompt,
+        quantity: params.quantity,
+        resolution: params.resolution,
+        aspectRatio: params.aspectRatio,
+        negativePrompt: params.negativePrompt,
+        outputFormat: params.outputFormat,
+      };
+    } else
+      return {
+        engine: 'gemini',
+        baseModel: params.baseModel,
+        process: !params.images?.length ? 'txt2img' : 'img2img',
+        images: params.images,
+        prompt: params.prompt,
+        quantity: params.quantity,
+      };
+  },
+  inputFn: ({ params, resources }) => {
+    let model: GeminiModel = '2.5-flash';
     for (const resource of resources) {
-      const match = geminiModelVersionToModelMap.get(resource.id);
-      if (match) model = match;
+      const match = geminiModelVersionMap.get(resource.id);
+      if (match) model = match.model;
     }
 
-    return schema.parse({
-      engine: params.engine,
-      prompt: params.prompt,
-      images: params.images,
-      operation: params.images?.length ? 'editImage' : 'createImage',
-      model,
-      quantity: params.quantity,
-    });
+    if (model === '2.5-flash')
+      return schema.parse({
+        engine: 'gemini',
+        prompt: params.prompt,
+        images: params.images?.map((x) => x.url),
+        operation: params.images?.length ? 'editImage' : 'createImage',
+        model,
+        quantity: params.quantity,
+      }) as Gemini25FlashCreateImageGenInput | Gemini25FlashEditImageGenInput;
+    else
+      return {
+        ...params,
+        engine: 'google',
+        model,
+        images: params.images?.map((x) => x.url),
+        numImages: params.quantity,
+      } as NanoBananaProImageGenInput;
   },
 });
