@@ -29,7 +29,6 @@ import {
 } from '~/libs/form/components/MultiSelectWrapper';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
-import { CustomRadioGroup } from '~/libs/form/components/RadioGroupWrapper';
 import { RatingWrapper } from '~/libs/form/components/RatingWrapper';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
@@ -86,5 +85,4 @@ export const InputCheckbox = withController(Checkbox, ({ field }) => ({
 }));
 export const InputFlag = withController(FlagInput);
 export const InputCosmeticSelect = withController(CosmeticSelect);
-export const InputCustomRadioGroup = withController(CustomRadioGroup);
 export const InputBrowsingLevels = withController(BrowsingLevelsInput);

@@ -170,7 +170,7 @@ export function QueueItem({
   const canRemix =
     (step.params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow)) ||
-    !!(step.params as any).engine;
+    (!!(step.params as any).engine && step.images.length > 0);
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
