@@ -93,7 +93,6 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
-import { collectionSelect } from '~/server/selectors/collection.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -5704,28 +5703,42 @@ export async function getImageGenerationData({ id }: { id: number }) {
 
 // LRU cache for contest collection items lookup - caches by imageId
 // This avoids repeated database queries for the same image's contest participation
+type ContestCollectionItem = {
+  id: number;
+  imageId: number;
+  status: string;
+  tag: { id: number; name: string } | null;
+  collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
+  scores: { userId: number; score: number }[];
+};
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
   max: 10_000,
   ttl: 5 * 60 * 1000, // 5 minutes
   keyFn: (imageId: number) => `image:${imageId}`,
   fetchFn: async (imageId: number) => {
-    return dbRead.collectionItem.findMany({
-      where: {
-        collection: {
-          mode: CollectionMode.Contest,
-        },
-        imageId,
-      },
-      select: {
-        id: true,
-        imageId: true,
-        status: true,
-        collection: { select: collectionSelect },
-        scores: { select: { userId: true, score: true } },
-        tag: true,
-      },
-    });
+    return dbRead.$queryRaw<ContestCollectionItem[]>`
+      SELECT
+        ci.id,
+        ci."imageId",
+        ci.status,
+        CASE WHEN t.id IS NOT NULL
+          THEN jsonb_build_object('id', t.id, 'name', t.name)
+          ELSE NULL
+        END as tag,
+        jsonb_build_object('id', c.id, 'name', c.name, 'metadata', c.metadata, 'mode', c.mode) as collection,
+        COALESCE(
+          (SELECT jsonb_agg(jsonb_build_object('userId', cis."userId", 'score', cis.score))
+           FROM "CollectionItemScore" cis
+           WHERE cis."collectionItemId" = ci.id),
+          '[]'::jsonb
+        ) as scores
+      FROM "CollectionItem" ci
+      JOIN "Collection" c ON c.id = ci."collectionId"
+      LEFT JOIN "Tag" t ON t.id = ci."tagId"
+      WHERE ci."imageId" = ${imageId}
+        AND c.mode = 'Contest'
+    `;
   },
 });
 
@@ -5736,7 +5749,7 @@ export const getImageContestCollectionDetails = async ({
   const items = await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
-  const collectionIds = items.map((i) => i.collection.id as number);
+  const collectionIds = items.map((i) => i.collection.id);
   const allPermissions = await getUserCollectionPermissionsByIds({
     ids: collectionIds,
     userId,
@@ -5748,7 +5761,6 @@ export const getImageContestCollectionDetails = async ({
     collection: {
       ...i.collection,
       metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
-      tags: i.collection.tags.map((t) => t.tag),
     },
   }));
 };
