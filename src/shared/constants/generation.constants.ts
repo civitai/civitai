@@ -221,6 +221,11 @@ export function getIsChroma(baseModel?: string) {
   return baseModelSetType === 'Chroma';
 }
 
+export function getIsFlux2(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Flux2';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
@@ -241,6 +246,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Imagen4')) return 'Imagen4';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
     return 'Flux1Kontext';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2')) return 'Flux2';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';

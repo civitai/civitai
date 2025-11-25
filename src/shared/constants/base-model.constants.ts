@@ -23,6 +23,7 @@ const baseModelConfig = [
   { name: 'Flux.1 D', type: 'image', group: 'Flux1' },
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
+  { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
@@ -101,6 +102,7 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
   { name: 'Stable Diffusion', groups: ['SD1', 'SD2', 'SD3', 'SD3_5M'] },
   { name: 'Stable Diffusion XL', groups: ['SDXL', 'SDXLDistilled', 'Pony'] },
   { name: 'Flux', groups: ['Flux1'] },
+  { name: 'Flux 2', groups: ['Flux2'] },
   { name: 'Flux Kontext', groups: ['Flux1Kontext'] },
   { name: 'PixArt alpha', groups: ['PixArtA'] },
   { name: 'PixArt sigma', groups: ['PixArtE'] },
@@ -388,6 +390,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'Flux1Kontext',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Flux.1 Kontext'] }],
+  },
+  {
+    group: 'Flux2',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 D'],
+      },
+    ],
   },
   {
     group: 'HiDream',
