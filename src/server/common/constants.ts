@@ -543,6 +543,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
@@ -848,6 +849,25 @@ export const generationConfig = {
       model: {
         id: 618692,
         name: 'FLUX',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2439067,
+      name: '',
+      trainedWords: [],
+      baseModel: 'Flux.2 D',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2',
         type: 'Checkpoint',
       },
     } as GenerationResource,

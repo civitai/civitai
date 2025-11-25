@@ -107,6 +107,7 @@ import {
   getIsFluxKrea,
   getIsQwen,
   getIsChroma,
+  getIsFlux2,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -442,6 +443,7 @@ export function GenerationFormContent() {
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isChroma = getIsChroma(baseModel);
+  const isFlux2 = getIsFlux2(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
@@ -485,6 +487,7 @@ export function GenerationFormContent() {
                 !isFlux &&
                 !isQwen &&
                 !isChroma &&
+                !isFlux2 &&
                 !isPonyV7;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
@@ -497,13 +500,13 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen || isChroma || isPonyV7) {
+            if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isPonyV7) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -531,6 +534,7 @@ export function GenerationFormContent() {
               isQwen ||
               isNanoBanana ||
               isChroma ||
+              isFlux2 ||
               isSeedream ||
               isPonyV7;
             const disableDraft =
@@ -544,15 +548,29 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isChroma ||
+              isFlux2 ||
               isSeedream ||
               isPonyV7;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma && !isPonyV7) ||
+              (features.image &&
+                !isFlux &&
+                !isSD3 &&
+                !isQwen &&
+                !isChroma &&
+                !isFlux2 &&
+                !isPonyV7) ||
               isOpenAI ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
-              isFlux || isQwen || isSD3 || isFluxKontext || isChroma || isPonyV7 || isSeedream;
+              isFlux ||
+              isQwen ||
+              isSD3 ||
+              isFluxKontext ||
+              isChroma ||
+              isFlux2 ||
+              isPonyV7 ||
+              isSeedream;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
@@ -561,6 +579,7 @@ export function GenerationFormContent() {
               isSD3 ||
               isFluxKontext ||
               isChroma ||
+              isFlux2 ||
               isPonyV7 ||
               isSeedream;
             const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
@@ -840,7 +859,7 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isQwen && !isSD3 && !isChroma && !isPonyV7 && (
+                          {!isFlux && !isQwen && !isSD3 && !isChroma && !isFlux2 && !isPonyV7 && (
                             <ReadySection />
                           )}
                         </Card>
@@ -1351,6 +1370,7 @@ export function GenerationFormContent() {
                                       isFluxKontext ||
                                       isSD3 ||
                                       isChroma ||
+                                      isFlux2 ||
                                       isPonyV7
                                         ? undefined
                                         : [
@@ -1415,7 +1435,12 @@ export function GenerationFormContent() {
                                           sliderProps={sharedSliderProps}
                                           numberProps={sharedNumberProps}
                                           presets={
-                                            isFlux || isQwen || isSD3 || isChroma || isPonyV7
+                                            isFlux ||
+                                            isQwen ||
+                                            isSD3 ||
+                                            isChroma ||
+                                            isFlux2 ||
+                                            isPonyV7
                                               ? undefined
                                               : [
                                                   {
@@ -1706,6 +1731,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { running, helpers } = useTourContext();
   const [baseModel, model, resources, vae] = form.watch(['baseModel', 'model', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
+  const isFlux2 = getIsFlux2(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isOpenAI = baseModel === 'OpenAI';
@@ -1714,7 +1740,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
+    (!isFlux && !isFlux2 && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();

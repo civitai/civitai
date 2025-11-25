@@ -50,6 +50,7 @@ import {
   getInjectablResources,
   getIsChroma,
   getIsFlux,
+  getIsFlux2,
   getIsFluxStandard,
   getIsPonyV7,
   getIsQwen,
@@ -253,6 +254,12 @@ export async function parseGenerateImageInput({
 
   const isChroma = getIsChroma(originalParams.baseModel);
   if (isChroma) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
+  }
+
+  const isFlux2 = getIsFlux2(originalParams.baseModel);
+  if (isFlux2) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
   }
