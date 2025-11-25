@@ -8,6 +8,7 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
+  Badge,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
@@ -754,7 +755,9 @@ function GeneratedImageWorkflowMenuItems({
       {/* {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
-          <Menu.Item onClick={handleUpscaleVideo}>Upscale</Menu.Item>
+          <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
+            Upscale <Badge color="yellow">Preview</Badge>
+          </Menu.Item>
         </>
       )} */}
       {!workflowsOnly && (
