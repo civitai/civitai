@@ -38,7 +38,14 @@ async function getImageConnectedEntities(imageIds: number[]) {
 
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
-    articleIds: articles.map((x) => x.id),
+    articleIds: [
+      ...new Set([
+        ...articles.map((x) => x.id),
+        ...connections
+          .filter((x) => x.entityType === ImageConnectionType.Article)
+          .map((x) => x.entityId),
+      ]),
+    ],
     bountyIds: connections
       .filter((x) => x.entityType === ImageConnectionType.Bounty)
       .map((x) => x.entityId),
@@ -262,8 +269,8 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
         SELECT
           a.id,
           GREATEST(
-            COALESCE(cover."nsfwLevel", 0),
-            COALESCE(content_imgs."nsfwLevel", 0)
+            COALESCE(bit_or(cover."nsfwLevel"), 0),
+            COALESCE(bit_or(content_imgs."nsfwLevel"), 0)
           ) AS "nsfwLevel"
         FROM "Article" a
 

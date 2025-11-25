@@ -256,23 +256,6 @@ async function updateImage(
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
 
-      // NEW: Debounced article updates (prevents N+1 issue)
-      // Only process if feature flag is enabled
-      const featureFlags = getFeatureFlagsLazy({ req });
-      if (featureFlags.articleImageScanning) {
-        const articleConnections = await dbWrite.imageConnection.findMany({
-          where: { imageId: image.id, entityType: 'Article' },
-          select: { entityId: true },
-        });
-
-        if (articleConnections.length > 0) {
-          for (const { entityId } of articleConnections) {
-            // Uses debouncing: 50 images → 1 DB update
-            await debounceArticleUpdate(entityId);
-          }
-        }
-      }
-
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
       // - this is still active

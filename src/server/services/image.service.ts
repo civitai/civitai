@@ -618,24 +618,24 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
-    console.log('skipping image ingestion');
-    const updated = await dbClient.image.update({
-      where: { id: image.id },
-      select: { postId: true },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-        nsfwLevel: NsfwLevel.PG,
-      },
-    });
+  // if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
+  //   console.log('skipping image ingestion');
+  //   const updated = await dbClient.image.update({
+  //     where: { id: image.id },
+  //     select: { postId: true },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
 
-    // Update post NSFW level
-    if (updated.postId) await updatePostNsfwLevel(updated.postId);
+  //   // Update post NSFW level
+  //   if (updated.postId) await updatePostNsfwLevel(updated.postId);
 
-    return true;
-  }
+  //   return true;
+  // }
 
   const parsedImage = ingestImageSchema.safeParse(image);
   if (!parsedImage.success) throw new Error('Failed to parse image data');
@@ -653,7 +653,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  const useOrchestrator = userId === 5 || userId === 5418;
+  const useOrchestrator = userId === 5 || userId === 5418 || userId === 4;
   if (useOrchestrator) {
     const workflowResponse = await createImageIngestionRequest({
       imageId: id,

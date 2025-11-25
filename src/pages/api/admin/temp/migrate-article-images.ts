@@ -6,9 +6,10 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
-import { ingestImageBulk } from '~/server/services/image.service';
+import { ingestImage } from '~/server/services/image.service';
 import type { ExtractedMedia } from '~/utils/article-helpers';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ImageConnectionType } from '~/server/common/enums';
 
 const log = createLogger('migrate-article-images', 'blue');
 
@@ -76,7 +77,7 @@ export default WebhookEndpoint(async (req, res) => {
         );
         return { start: params.start, end: params.end ?? max ?? 0 };
       },
-      processor: async ({ start, end, cancelFns }) => {
+      processor: async ({ start, end }) => {
         const batchStart = Date.now();
 
         // Fetch articles by ID range
@@ -199,26 +200,25 @@ export default WebhookEndpoint(async (req, res) => {
 
                     // Queue for ingestion
                     if (newImages.length > 0) {
-                      await ingestImageBulk({
-                        images: newImages.map((img) => ({
-                          id: img.id,
-                          url: img.url,
-                          type: img.type,
-                        })),
-                        lowPriority: true,
-                        tx,
-                      }).catch((error) => {
-                        const errorMessage =
-                          error instanceof Error ? error.message : 'Unknown error';
-                        log(`⚠️  Failed to queue ${newImages.length} images: ${errorMessage}`);
-                      });
+                      for (const img of newImages) {
+                        await ingestImage({
+                          image: img,
+                          lowPriority: true,
+                          userId: 4, // System user
+                          tx,
+                        }).catch((error) => {
+                          const errorMessage =
+                            error instanceof Error ? error.message : 'Unknown error';
+                          log(`⚠️  Failed to queue image ${img.id}: ${errorMessage}`);
+                        });
+                      }
                     }
                   }
 
                   // Create connections
                   const allConnections: Array<{
                     imageId: number;
-                    entityType: 'Article';
+                    entityType: ImageConnectionType.Article;
                     entityId: number;
                   }> = [];
 
@@ -228,7 +228,7 @@ export default WebhookEndpoint(async (req, res) => {
                       if (imageId) {
                         allConnections.push({
                           imageId,
-                          entityType: 'Article' as const,
+                          entityType: ImageConnectionType.Article,
                           entityId: articleId,
                         });
                       }

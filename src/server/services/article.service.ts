@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { ImageConnectionType, NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
@@ -32,7 +32,12 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { createImage, deleteImageById, ingestImageBulk } from '~/server/services/image.service';
+import {
+  createImage,
+  deleteImageById,
+  ingestImage,
+  ingestImageBulk,
+} from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
@@ -639,7 +644,7 @@ export const getArticleById = async ({
 
     // Fetch connected images with ingestion status
     const imageConnections = await dbRead.imageConnection.findMany({
-      where: { entityId: id, entityType: 'Article' },
+      where: { entityId: id, entityType: ImageConnectionType.Article },
       include: {
         image: {
           select: { id: true, url: true, ingestion: true },
@@ -1356,11 +1361,11 @@ export async function linkArticleContentImages({
         where: {
           imageId_entityType_entityId: {
             imageId: image.id,
-            entityType: 'Article',
+            entityType: ImageConnectionType.Article,
             entityId: articleId,
           },
         },
-        create: { imageId: image.id, entityType: 'Article', entityId: articleId },
+        create: { imageId: image.id, entityType: ImageConnectionType.Article, entityId: articleId },
         update: {},
       });
     }
@@ -1371,7 +1376,7 @@ export async function linkArticleContentImages({
     // Get orphaned connections for this article
     const orphanedConnections = await tx.imageConnection.findMany({
       where: {
-        entityType: 'Article',
+        entityType: ImageConnectionType.Article,
         entityId: articleId,
         imageId: { notIn: contentImageIds },
       },
@@ -1383,7 +1388,7 @@ export async function linkArticleContentImages({
     // Delete the orphaned connections (safe - only affects this article)
     await tx.imageConnection.deleteMany({
       where: {
-        entityType: 'Article',
+        entityType: ImageConnectionType.Article,
         entityId: articleId,
         imageId: { notIn: contentImageIds },
       },
@@ -1417,13 +1422,15 @@ export async function linkArticleContentImages({
     // Queue newly created images for immediate ingestion
     if (imagesToIngest.length > 0) {
       // TODO.articleImageScan: remove the lowPriority flag
-      await ingestImageBulk({ images: imagesToIngest, tx }).catch((error) => {
-        // Log error but don't fail the article operation
-        handleLogError(error, 'article-image-ingestion', {
-          articleId,
-          imageIds: newlyCreatedImages.map((i) => i.id),
+      for (const img of imagesToIngest) {
+        await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
+          // Log error but don't fail the article operation
+          handleLogError(error, 'article-image-ingestion', {
+            articleId,
+            imageIds: newlyCreatedImages.map((i) => i.id),
+          });
         });
-      });
+      }
     }
   });
 }
@@ -1455,7 +1462,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   const connections = await dbRead.imageConnection.findMany({
     where: {
       entityId: id,
-      entityType: 'Article',
+      entityType: ImageConnectionType.Article,
     },
     include: { image: { select: { id: true, url: true, ingestion: true, blockedFor: true } } },
   });
@@ -1508,7 +1515,7 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
 
         // Get all connected images
         const connections = await tx.imageConnection.findMany({
-          where: { entityId: articleId, entityType: 'Article' },
+          where: { entityId: articleId, entityType: ImageConnectionType.Article },
           include: { image: { select: { ingestion: true } } },
         });
 
