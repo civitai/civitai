@@ -373,6 +373,8 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Pony',
   'Illustrious',
   'NoobAI',
+  'Flux1',
+  'FluxKrea',
 ];
 export type ExperimentalModeSupportedModel = (typeof EXPERIMENTAL_MODE_SUPPORTED_MODELS)[number];
 export const fluxModeOptions = [
