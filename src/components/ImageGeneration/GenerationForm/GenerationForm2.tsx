@@ -158,6 +158,7 @@ import {
 import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
 
 let total = 0;
 const tips = {
@@ -616,17 +617,24 @@ export function GenerationFormContent() {
                     </div>
                   )}
 
-                  <div className="-mb-1 flex items-center gap-1">
-                    <Input.Label style={{ fontWeight: 590 }} required>
-                      Model
-                    </Input.Label>
-                    <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                      <Text fw={400}>
-                        Models are the resources you&apos;re generating with. Using a different base
-                        model can drastically alter the style and composition of images, while
-                        adding additional resource can change the characters, concepts and objects
-                      </Text>
-                    </InfoPopover>
+                  <div className="-mb-1 flex items-end justify-between gap-1">
+                    <div className="flex items-center gap-1">
+                      <Input.Label style={{ fontWeight: 590 }} required>
+                        Model
+                      </Input.Label>
+                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                        <Text fw={400}>
+                          Models are the resources you&apos;re generating with. Using a different
+                          base model can drastically alter the style and composition of images,
+                          while adding additional resource can change the characters, concepts and
+                          objects
+                        </Text>
+                      </InfoPopover>
+                    </div>
+                    <BaseModelSelect
+                      value={model ? getBaseModelGroup(model.baseModel) : undefined}
+                      type="image"
+                    />
                   </div>
 
                   <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
