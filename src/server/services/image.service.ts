@@ -656,8 +656,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  const useOrchestrator = userId === 5 || userId === 5418;
-  if (useOrchestrator) {
+  if (env.IMAGE_SCANNER_NEW) {
     const workflowResponse = await createImageIngestionRequest({
       imageId: id,
       url,

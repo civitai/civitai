@@ -89,6 +89,7 @@ export const serverSchema = z.object({
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
   IMAGE_SCANNING_MODEL: z.string().optional(),
   IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
+  IMAGE_SCANNER_NEW: zc.booleanString.default(false),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
