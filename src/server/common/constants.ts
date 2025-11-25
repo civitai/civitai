@@ -648,9 +648,9 @@ export const seedreamSizes = [
 
 export const qwenSizes = [
   { label: '16:9', width: 1664, height: 928 },
-  { label: '4:3', width: 1472, height: 1140 },
+  { label: '4:3', width: 1472, height: 1104 },
   { label: '1:1', width: 1328, height: 1328 },
-  { label: '3:4', width: 1140, height: 1472 },
+  { label: '3:4', width: 1104, height: 1472 },
   { label: '9:16', width: 928, height: 1664 },
 ];
 
