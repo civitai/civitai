@@ -59,12 +59,13 @@ export const processSubscriptionsRequiringRenewal = createJob(
       await Promise.all(
         batch.map(async (subscription) => {
           // Send renewal email
-          await subscriptionRenewalReminderEmail.send({
-            user: {
-              email: subscription.user.email,
-              username: subscription.user.username as string,
-            },
-          });
+          // Disabled since we don't support purchasing subscriptions onsite for now
+          // await subscriptionRenewalReminderEmail.send({
+          //   user: {
+          //     email: subscription.user.email,
+          //     username: subscription.user.username as string,
+          //   },
+          // });
           // Mark the subscription as having had a renewal email sent
         })
       );

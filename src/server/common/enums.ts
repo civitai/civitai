@@ -12,7 +12,6 @@ export enum ModelSort {
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
-  // MostTipped = 'Most Buzz',
   MostDiscussed = 'Most Discussed',
   MostCollected = 'Most Collected',
   ImageCount = 'Most Images',
@@ -46,7 +45,6 @@ export enum QuestionStatus {
 
 export enum ImageSort {
   MostReactions = 'Most Reactions',
-  // MostTipped = 'Most Buzz',
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
@@ -105,7 +103,6 @@ export enum ImageScanType {
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
-  // MostTipped = 'Most Buzz',
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',

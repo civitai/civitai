@@ -24,6 +24,7 @@ export const textToImageParamsSchema = z.object({
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
+  resolution: z.string().optional(),
   quantity: z
     .number()
     .max(20)
@@ -54,6 +55,7 @@ export const textToImageParamsSchema = z.object({
   openAITransparentBackground: z.boolean().optional(),
   process: z.string().optional(),
   enhancedCompatibility: z.boolean().optional(),
+  outputFormat: z.string().optional(),
 });
 
 // #endregion

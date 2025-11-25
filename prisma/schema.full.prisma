@@ -970,11 +970,7 @@ enum MetricTimeframe {
 model ModelMetric {
   model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   modelId           Int
-  timeframe         MetricTimeframe
-  rating            Float           @default(0)
-  ratingCount       Int             @default(0)
   downloadCount     Int             @default(0)
-  favoriteCount     Int             @default(0)
   commentCount      Int             @default(0)
   collectedCount    Int             @default(0)
   imageCount        Int             @default(0)
@@ -986,17 +982,23 @@ model ModelMetric {
   earnedAmount      Int             @default(0)
   updatedAt         DateTime        @default(now())
 
-  @@id([modelId, timeframe])
+  // Model Metadata for quick access
+  poi Boolean          @default(false)
+  minor Boolean        @default(false)
+  nsfwLevel Int         @default(0)
+  userId   Int          @default(0)
+  lastVersionAt DateTime?
+  mode     ModelModifier?
+  status   ModelStatus  @default(Draft)
+  availability Availability @default(Public)
+
+  @@id([modelId])
 }
 
 model ModelVersionMetric {
   modelVersion      ModelVersion    @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   modelVersionId    Int
-  timeframe         MetricTimeframe
-  rating            Float           @default(0)
-  ratingCount       Int             @default(0)
   downloadCount     Int             @default(0)
-  favoriteCount     Int             @default(0)
   commentCount      Int             @default(0)
   collectedCount    Int             @default(0)
   imageCount        Int             @default(0)
@@ -1008,7 +1010,7 @@ model ModelVersionMetric {
   earnedAmount      Int             @default(0)
   updatedAt         DateTime        @default(now())
 
-  @@id([modelVersionId, timeframe])
+  @@id(modelVersionId)
 }
 
 
@@ -2646,7 +2648,6 @@ model CollectionItem {
   reviewedAt   DateTime?
   note         String?
   status       CollectionItemStatus  @default(ACCEPTED)
-  randomId     Int?
   tagId        Int?
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]
@@ -3993,80 +3994,17 @@ model ArticleRank {
 model UserStat {
   user                     User  @relation(fields: [userId], references: [id], onDelete: NoAction)
   userId                   Int   @id
-  uploadCountDay           Int
-  uploadCountWeek          Int
-  uploadCountMonth         Int
-  uploadCountYear          Int
   uploadCountAllTime       Int
-  reviewCountDay           Int
-  reviewCountWeek          Int
-  reviewCountMonth         Int
-  reviewCountYear          Int
   reviewCountAllTime       Int
-  downloadCountDay         Int
-  downloadCountWeek        Int
-  downloadCountMonth       Int
-  downloadCountYear        Int
   downloadCountAllTime     Int
-  generationCountDay       Int
-  generationCountWeek      Int
-  generationCountMonth     Int
-  generationCountYear      Int
   generationCountAllTime   Int
-  ratingCountDay           Int
-  ratingCountWeek          Int
-  ratingCountMonth         Int
-  ratingCountYear          Int
-  ratingCountAllTime       Int
-  followingCountDay        Int
-  followingCountWeek       Int
-  followingCountMonth      Int
-  followingCountYear       Int
   followingCountAllTime    Int
-  followerCountDay         Int
-  followerCountWeek        Int
-  followerCountMonth       Int
-  followerCountYear        Int
   followerCountAllTime     Int
-  hiddenCountDay           Int
-  hiddenCountWeek          Int
-  hiddenCountMonth         Int
-  hiddenCountYear          Int
   hiddenCountAllTime       Int
-  ratingDay                Float
-  ratingWeek               Float
-  ratingMonth              Float
-  ratingYear               Float
-  ratingAllTime            Float
-  favoriteCountDay         Int
-  favoriteCountWeek        Int
-  favoriteCountMonth       Int
-  favoriteCountYear        Int
-  favoriteCountAllTime     Int
-  answerCountDay           Int
-  answerCountWeek          Int
-  answerCountMonth         Int
-  answerCountYear          Int
   answerCountAllTime       Int
-  answerAcceptCountDay     Int
-  answerAcceptCountWeek    Int
-  answerAcceptCountMonth   Int
-  answerAcceptCountYear    Int
   answerAcceptCountAllTime Int
-  thumbsUpCountDay         Int
-  thumbsUpCountWeek        Int
-  thumbsUpCountMonth       Int
-  thumbsUpCountYear        Int
   thumbsUpCountAllTime     Int
-  thumbsDownCountDay       Int
-  thumbsDownCountWeek      Int
-  thumbsDownCountMonth     Int
-  thumbsDownCountYear      Int
   thumbsDownCountAllTime   Int
-  reactionCountDay         Int
-  reactionCountWeek        Int
-  reactionCountMonth       Int
-  reactionCountYear        Int
   reactionCountAllTime     Int
 }
 

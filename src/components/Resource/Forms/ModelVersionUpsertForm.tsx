@@ -45,7 +45,7 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { getActiveBaseModels } from '~/shared/constants/base-model.constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -759,7 +759,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               label="Base Model"
               placeholder="Base Model"
               style={{ flex: 1 }}
-              data={activeBaseModels.map((x) => ({ value: x, label: x }))}
+              data={getActiveBaseModels(currentUser?.isModerator).map((x) => ({
+                value: x.name,
+                label: x.name,
+              }))}
               allowDeselect={false}
               withAsterisk
             />

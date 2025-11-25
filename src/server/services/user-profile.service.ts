@@ -81,10 +81,7 @@ export const getUserWithProfile = async ({
         userId: user.id,
       },
       select: {
-        ratingAllTime: true,
-        ratingCountAllTime: true,
         downloadCountAllTime: true,
-        favoriteCountAllTime: true,
         thumbsUpCountAllTime: true,
         followerCountAllTime: true,
         reactionCountAllTime: true,

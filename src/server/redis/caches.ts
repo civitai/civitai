@@ -956,6 +956,73 @@ export type ModelVersionResourceCacheItem = {
   isFeatured: boolean;
   isNew: boolean;
 };
+export type ImageResourceCacheItem = {
+  imageId: number;
+  modelVersionId: number;
+  strength: number | null;
+  detected: boolean;
+  modelId: number;
+  modelName: string;
+  modelType: string;
+  versionName: string;
+  baseModel: BaseModel;
+  poi: boolean;
+  minor: boolean;
+};
+
+type ImageResourcesCacheItem = {
+  imageId: number;
+  resources: ImageResourceCacheItem[];
+};
+
+export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
+  key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
+  idKey: 'imageId',
+  ttl: CacheTTL.sm,
+  lookupFn: async (ids) => {
+    const imageIds = Array.isArray(ids) ? ids : [ids];
+    if (imageIds.length === 0) return {};
+
+    const resources = await dbRead.$queryRaw<ImageResourceCacheItem[]>`
+      SELECT
+        ir."imageId",
+        ir."modelVersionId",
+        ir.strength,
+        ir.detected,
+        m.id as "modelId",
+        m.name as "modelName",
+        m.type as "modelType",
+        mv.name as "versionName",
+        mv."baseModel",
+        m.poi,
+        m.minor
+      FROM "ImageResourceNew" ir
+      JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+      JOIN "Model" m ON mv."modelId" = m.id
+      WHERE ir."imageId" IN (${Prisma.join(imageIds)})
+    `;
+
+    // Group resources by imageId
+    const grouped = resources.reduce((acc, resource) => {
+      const { imageId } = resource;
+      acc[imageId] ??= { imageId, resources: [] };
+      acc[imageId].resources.push(resource);
+      return acc;
+    }, {} as Record<number, ImageResourcesCacheItem>);
+
+    return grouped;
+  },
+});
+
+/** Helper to get the baseModel for an image (from checkpoint resources) */
+export function getBaseModelFromResources(
+  resources: ImageResourceCacheItem[] | undefined
+): BaseModel | null {
+  if (!resources) return null;
+  const checkpoint = resources.find((r) => r.modelType === 'Checkpoint');
+  return checkpoint?.baseModel ?? null;
+}
+
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',

@@ -22,9 +22,6 @@ import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
 
-const RATING_BAYESIAN_M = 3.5;
-const RATING_BAYESIAN_C = 10;
-
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = MODELS_SEARCH_INDEX;
@@ -177,10 +174,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
 
-      const weightedRating =
-        (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
-        (metrics.ratingCount + RATING_BAYESIAN_C);
-
       const [version] = modelVersions;
       if (!version) return null;
 
@@ -250,15 +243,11 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           })) ?? [],
         metrics: {
           ...metrics,
-          weightedRating,
         },
         rank: {
           downloadCount: metrics?.downloadCount ?? 0,
-          favoriteCount: metrics.favoriteCount ?? 0,
           thumbsUpCount: metrics.thumbsUpCount ?? 0,
           commentCount: metrics.commentCount ?? 0,
-          ratingCount: metrics.ratingCount ?? 0,
-          rating: metrics.rating ?? 0,
           collectedCount: metrics.collectedCount ?? 0,
           tippedAmountCount: metrics.tippedAmountCount ?? 0,
         },

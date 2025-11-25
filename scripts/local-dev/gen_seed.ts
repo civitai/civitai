@@ -1116,7 +1116,6 @@ const genCollectionItems = (
       rand([null, rand(userIds)]), // addedById
       null, // note
       status, // status
-      null, // randomId
       isReviewed ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // reviewedAt
       isReviewed ? rand(userIds) : null, // reviewedById
       null, // tagId

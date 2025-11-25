@@ -25,7 +25,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { BuzzSpendType, TransactionType } from '~/shared/constants/buzz.constants';
 import { entityMetricRedis, EntityMetricsHelper } from '~/server/redis/entity-metric.redis';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { randomizeCollectionItems } from '~/server/services/collection.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
@@ -360,8 +359,7 @@ async function reviewEntries() {
     AND status = 'REJECTED';
   `;
 
-    // Randomize entries to get them visible
-    await randomizeCollectionItems(currentChallenge.collectionId);
+    // Entries are randomized using hash-based ordering with an hourly seed (no DB update needed)
 
     // TEMP: Remove judged tag from unjudged entries
     // Doing this because users can still manually add it

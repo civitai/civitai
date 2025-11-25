@@ -29,6 +29,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
     FROM "Image"
     WHERE ingestion = 'Pending'::"ImageIngestionStatus"
+    ORDER BY id
     LIMIT 20000
   `) ?? []
   ).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
@@ -38,6 +39,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
     FROM "Image"
     WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
+    ORDER BY id
     LIMIT 20000
   `) ?? [];
 

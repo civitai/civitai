@@ -463,22 +463,17 @@ export const collectionItemsInfiniteHandler = async ({
   // due to preferences and/or other statuses.
   const limit = 2 * input.limit;
   const features = getFeatureFlags({ user: ctx.user, req: ctx.req });
-  let collectionItems = await getCollectionItemsByCollectionId({
+  const result = await getCollectionItemsByCollectionId({
     input: { ...input, limit },
     user: ctx.user,
     useLogicalReplica: features.logicalReplica,
   });
 
-  let nextCursor: number | undefined;
-
-  if (collectionItems.length > input.limit) {
-    const nextItem = collectionItems[input.limit + 1];
-    nextCursor = nextItem?.id;
-    collectionItems = collectionItems.slice(0, input.limit);
-  }
+  // Trim to requested limit and use the nextCursor from the service
+  const collectionItems = result.items.slice(0, input.limit);
 
   return {
-    nextCursor,
+    nextCursor: result.nextCursor,
     collectionItems,
   };
 };

@@ -904,13 +904,10 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
         },
         stats: {
           select: {
-            ratingMonth: true,
-            ratingCountMonth: true,
-            downloadCountMonth: true,
-            favoriteCountMonth: true,
-            thumbsUpCountMonth: true,
-            uploadCountMonth: true,
-            answerCountMonth: true,
+            downloadCountAllTime: true,
+            thumbsUpCountAllTime: true,
+            uploadCountAllTime: true,
+            answerCountAllTime: true,
           },
         },
         cosmetics: {

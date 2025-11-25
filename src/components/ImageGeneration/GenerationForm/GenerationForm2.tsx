@@ -145,7 +145,12 @@ import {
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
 } from '~/shared/constants/base-model.constants';
-import { getIsNanoBanana } from '~/shared/orchestrator/ImageGen/gemini.config';
+import {
+  geminiModelVersionMap,
+  getIsNanoBanana,
+  getIsNanoBananaPro,
+  nanoBananaProResolutions,
+} from '~/shared/orchestrator/ImageGen/gemini.config';
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
@@ -451,6 +456,7 @@ export function GenerationFormContent() {
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
   const showImg2ImgMultiple = isNanoBanana || isSeedream;
+  const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
 
@@ -514,7 +520,7 @@ export function GenerationFormContent() {
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
-              isNanoBanana ||
+              (isNanoBanana && !isNanoBananaPro) ||
               isSeedream;
             const disableWorkflowSelect =
               isFlux ||
@@ -561,7 +567,7 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra || isImg2Img || (showImg2ImgMultiple && !isSeedream);
+              isFluxUltra || isImg2Img || (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro);
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -841,6 +847,19 @@ export function GenerationFormContent() {
                       );
                     }}
                   </Watch>
+
+                  {isNanoBanana && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...geminiModelVersionMap.entries()].map(([key, { name }]) => ({
+                        value: String(key),
+                        label: name,
+                      }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
 
                   {enableImageInput && (
                     <InputSourceImageUpload
@@ -1206,6 +1225,13 @@ export function GenerationFormContent() {
                         </div>
                       }
                     />
+                  )}
+
+                  {isNanoBananaPro && (
+                    <div className="flex flex-col gap-0.5">
+                      <Input.Label>Resolution</Input.Label>
+                      <InputSegmentedControl name="resolution" data={nanoBananaProResolutions} />
+                    </div>
                   )}
 
                   {!disableAspectRatio && (
@@ -1761,11 +1787,11 @@ const getAspectRatioControls = (
           </Center>
           <Stack gap={0}>
             <Text size="xs">{label}</Text>
-            {label !== subLabel.replace('x', ':') && (
+            {/* {label !== subLabel.replace('x', ':') && (
               <Text fz={10} c="dimmed">
                 {subLabel}
               </Text>
-            )}
+            )} */}
           </Stack>
         </Stack>
       ),
