@@ -14,7 +14,6 @@ import type {
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { env } from '~/env/server';
 import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
@@ -52,6 +51,7 @@ import {
   getIsFlux,
   getIsFlux2,
   getIsFluxStandard,
+  getIsFlux2Standard,
   getIsPonyV7,
   getIsQwen,
   getIsSD3,
@@ -262,6 +262,8 @@ export async function parseGenerateImageInput({
   if (isFlux2) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
+    originalParams.negativePrompt = '';
+    delete originalParams.clipSkip;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);
@@ -291,7 +293,8 @@ export async function parseGenerateImageInput({
     originalParams.draft = false;
   }
   const isFluxStandard = getIsFluxStandard(model.model.id);
-  if (!isFluxStandard) {
+  const isFlux2Standard = getIsFlux2Standard(model.model.id);
+  if (!isFluxStandard && !isFlux2Standard) {
     delete originalParams.fluxMode;
     delete originalParams.fluxUltraAspectRatio;
     delete originalParams.fluxUltraRaw;

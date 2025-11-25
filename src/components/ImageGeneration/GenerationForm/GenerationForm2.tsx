@@ -89,7 +89,6 @@ import {
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
-  fluxModeOptions,
   fluxStandardAir,
   fluxUltraAir,
   fluxUltraAspectRatios,
@@ -108,6 +107,9 @@ import {
   getIsQwen,
   getIsChroma,
   getIsFlux2,
+  getIsFlux2Standard,
+  getFluxModeOptions,
+  flux2ModelId,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -290,8 +292,10 @@ export function GenerationFormContent() {
     if (disablePriority) params.priority = 'low';
 
     const isFlux = getIsFlux(params.baseModel);
+    const isFlux2 = getIsFlux2(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
-    if (isFlux && isFluxStandard) {
+    const isFlux2Standard = getIsFlux2Standard(model.model.id);
+    if ((isFlux && isFluxStandard) || (isFlux2 && isFlux2Standard)) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -699,7 +703,12 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={isFluxStandard || isHiDream || (isImageGen && !isSeedream)}
+                            hideVersion={
+                              isFluxStandard ||
+                              getIsFlux2Standard(model.model.id) ||
+                              isHiDream ||
+                              (isImageGen && !isSeedream)
+                            }
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -970,18 +979,23 @@ export function GenerationFormContent() {
                     </>
                   )}
 
-                  {isFluxStandard && (
+                  {(isFluxStandard || getIsFlux2Standard(model.model.id)) && (
                     <Watch {...form} fields={['resources']}>
-                      {({ resources }) => (
-                        <div className="flex flex-col gap-0.5">
-                          <Input.Label className="flex items-center gap-1">Model Mode</Input.Label>
-                          <InputSegmentedControl
-                            name="fluxMode"
-                            data={fluxModeOptions}
-                            disabled={!!resources?.length}
-                          />
-                        </div>
-                      )}
+                      {({ resources }) => {
+                        const modeOptions = getFluxModeOptions(model.model.id);
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <Input.Label className="flex items-center gap-1">
+                              Model Mode
+                            </Input.Label>
+                            <InputSegmentedControl
+                              name="fluxMode"
+                              data={modeOptions}
+                              disabled={!!resources?.length}
+                            />
+                          </div>
+                        );
+                      }}
                     </Watch>
                   )}
 
