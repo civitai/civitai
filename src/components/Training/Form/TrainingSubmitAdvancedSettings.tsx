@@ -484,7 +484,8 @@ export const AdvancedSettings = ({
                 <Text className="text-gray-5 dark:text-gray-6">
                   Training Parameters{' '}
                   <Text component="span" size="xs" fs="italic">
-                    (disabled with &quot;Rapid Training&quot;)
+                    (disabled with &quot;Rapid Training&quot;{' '}
+                    {features.flux2Training ? 'or Flux.2' : ''})
                   </Text>
                 </Text>
                 <Box mr={4}>
