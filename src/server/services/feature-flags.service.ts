@@ -128,7 +128,7 @@ const featureFlags = createFeatureFlags({
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
-  annualMemberships: ['public'],
+  annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   coinbasePayments: ['public'],
