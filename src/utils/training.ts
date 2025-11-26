@@ -25,7 +25,14 @@ export const trainingBaseModelType = [
 ] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
-export const engineTypes = ['kohya', 'rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi', 'ai-toolkit'] as const;
+export const engineTypes = [
+  'kohya',
+  'rapid',
+  'flux2-dev',
+  'flux2-dev-edit',
+  'musubi',
+  'ai-toolkit',
+] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
@@ -347,7 +354,10 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
 };
 
 // Get default engine for base type
-export const getDefaultEngine = (baseType: TrainingBaseModelType, baseModel?: string): EngineTypes => {
+export const getDefaultEngine = (
+  baseType: TrainingBaseModelType,
+  baseModel?: string
+): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
