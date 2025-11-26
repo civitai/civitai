@@ -457,7 +457,7 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream;
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -553,13 +553,7 @@ export function GenerationFormContent() {
               isSeedream ||
               isPonyV7;
             const enableImageInput =
-              (features.image &&
-                !isFlux &&
-                !isSD3 &&
-                !isQwen &&
-                !isChroma &&
-                !isFlux2 &&
-                !isPonyV7) ||
+              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma && !isPonyV7) ||
               isOpenAI ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
@@ -588,7 +582,9 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra || isImg2Img || (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro);
+              isFluxUltra ||
+              isImg2Img ||
+              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2);
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)

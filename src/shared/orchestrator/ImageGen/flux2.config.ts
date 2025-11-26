@@ -1,5 +1,6 @@
 import { startCase } from 'lodash-es';
 import * as z from 'zod';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 type Flux2Model = (typeof flux2Models)[number];
@@ -33,7 +34,7 @@ export const flux2ModelModeOptions = Array.from(flux2ModelVersionToModelMap.entr
   })
 );
 
-const schema = z.object({
+const baseSchema = z.object({
   engine: z.literal(engine).catch(engine),
   model: z.enum(flux2Models),
   prompt: z.string(),
@@ -41,12 +42,25 @@ const schema = z.object({
   seed: z.number().nullish(),
 });
 
+const schema = z.discriminatedUnion('operation', [
+  baseSchema.extend({
+    operation: z.literal('createImage'),
+  }),
+  baseSchema
+    .extend({
+      operation: z.literal('editImage'),
+      images: sourceImageSchema.array(),
+    })
+    .transform((obj) => ({ ...obj, images: obj.images.map((x) => x.url) })),
+]);
+
 export const flux2Config = ImageGenConfig({
   metadataFn: (params) => {
     return {
       engine,
-      process: 'txt2img',
+      process: !params.images?.length ? 'txt2img' : 'img2img',
       baseModel: params.baseModel,
+      images: params.images,
       prompt: params.prompt,
       quantity: params.quantity,
       seed: params.seed,
@@ -63,6 +77,8 @@ export const flux2Config = ImageGenConfig({
       engine: params.engine,
       model,
       prompt: params.prompt,
+      images: params.images,
+      operation: params.images?.length ? 'editImage' : 'createImage',
       quantity: params.quantity,
       seed: params.seed,
     });
