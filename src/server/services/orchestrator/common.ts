@@ -14,7 +14,6 @@ import type {
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { env } from '~/env/server';
 import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
@@ -262,6 +261,8 @@ export async function parseGenerateImageInput({
   if (isFlux2) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
+    originalParams.negativePrompt = '';
+    delete originalParams.clipSkip;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);
