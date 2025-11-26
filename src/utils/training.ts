@@ -14,6 +14,7 @@ export const trainingBaseModelTypesImage = [
   'sdxl',
   'sd35',
   'flux',
+  'flux2',
   'chroma',
   'qwen',
 ] as const;
@@ -24,7 +25,7 @@ export const trainingBaseModelType = [
 ] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
-export const engineTypes = ['kohya', 'rapid', 'musubi', 'ai-toolkit'] as const;
+export const engineTypes = ['kohya', 'rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi', 'ai-toolkit'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
@@ -205,6 +206,25 @@ export const trainingModelInfo: {
     isNew: true,
     aiToolkit: { ecosystem: 'qwen' },
   },
+  //
+  flux2_dev: {
+    label: 'Dev',
+    pretty: 'Flux.2',
+    type: 'flux2',
+    description: 'Next generation high-quality image generation.',
+    air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
+    baseModel: 'Flux.2 D',
+    isNew: true,
+  },
+  // flux2_dev_edit: {
+  //   label: 'Dev Edit',
+  //   pretty: 'Flux.2 Edit',
+  //   type: 'flux2',
+  //   description: 'Next generation image editing and generation.',
+  //   air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
+  //   baseModel: 'Flux.2 D',
+  //   isNew: true,
+  // },
 };
 
 export const rapidEta = 5;
@@ -230,11 +250,19 @@ export async function unzipTrainingData<T = void>(
 }
 
 export const isValidRapid = (baseModel: TrainingBaseModelType, engine: EngineTypes) => {
-  return baseModel === 'flux' && engine === 'rapid';
+  // Flux1 rapid engine
+  if (baseModel === 'flux' && engine === 'rapid') return true;
+  // Flux2 uses its own rapid-like engines
+  if (baseModel === 'flux2' && (engine === 'flux2-dev' || engine === 'flux2-dev-edit')) return true;
+  return false;
 };
 
 export const isInvalidRapid = (baseModel: TrainingBaseModelType, engine: EngineTypes) => {
-  return baseModel !== 'flux' && engine === 'rapid';
+  // Rapid engine is only valid for Flux1
+  if (engine === 'rapid' && baseModel !== 'flux') return true;
+  // Flux2 engines are only valid for Flux2
+  if ((engine === 'flux2-dev' || engine === 'flux2-dev-edit') && baseModel !== 'flux2') return true;
+  return false;
 };
 
 export const getTrainingFields = {
@@ -247,13 +275,20 @@ export const getTrainingFields = {
     return isPriority ? OrchPriorityTypes.Normal : OrchPriorityTypes.Low;
   },
   getEngine: (engine: TrainingDetailsParams['engine']) => {
-    return engine === 'rapid'
-      ? OrchEngineTypes.Rapid
-      : engine === 'musubi'
-      ? OrchEngineTypes.Musubi
-      : engine === 'ai-toolkit'
-      ? OrchEngineTypes.AiToolkit
-      : OrchEngineTypes.Kohya;
+    switch (engine) {
+      case 'rapid':
+        return OrchEngineTypes.Rapid;
+      case 'flux2-dev':
+        return OrchEngineTypes.Flux2Dev;
+      case 'flux2-dev-edit':
+        return OrchEngineTypes.Flux2DevEdit;
+      case 'musubi':
+        return OrchEngineTypes.Musubi;
+      case 'ai-toolkit':
+        return OrchEngineTypes.AiToolkit;
+      default:
+        return OrchEngineTypes.Kohya;
+    }
   },
 };
 
@@ -291,7 +326,7 @@ export function getAiToolkitModelVariant(
 
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
-  // AI Toolkit supports all base model types
+  // AI Toolkit supports these base model types (flux2 is not included - it only uses rapid)
   const supportedTypes: TrainingBaseModelType[] = [
     'sd15',
     'sdxl',
@@ -312,9 +347,14 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
 };
 
 // Get default engine for base type
-export const getDefaultEngine = (baseType: TrainingBaseModelType): EngineTypes => {
+export const getDefaultEngine = (baseType: TrainingBaseModelType, baseModel?: string): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
+  // Flux2 uses its own rapid-like engines based on the specific model
+  if (baseType === 'flux2') {
+    if (baseModel === 'flux2_dev_edit') return 'flux2-dev-edit';
+    return 'flux2-dev'; // Default for flux2_dev
+  }
   return 'kohya';
 };
 

@@ -142,7 +142,7 @@ export const AdvancedSettings = ({
   // Adjust optimizer and related settings
   useEffect(() => {
     let newOptimizerArgs: string;
-    if (selectedRun.baseType === 'flux') {
+    if (selectedRun.baseType === 'flux' || selectedRun.baseType === 'flux2') {
       newOptimizerArgs =
         optimizerArgMapFlux[selectedRun.params.optimizerType][selectedRun.params.engine];
     } else if (isVideo) {
@@ -233,6 +233,7 @@ export const AdvancedSettings = ({
 
   return (
     <>
+      {/* Flux1 can toggle Rapid Training on/off */}
       {selectedRun.baseType === 'flux' && (
         <Group mt="md">
           <Switch
@@ -305,7 +306,7 @@ export const AdvancedSettings = ({
               onChange={(event) => {
                 const newEngine = event.currentTarget.checked
                   ? 'ai-toolkit'
-                  : getDefaultEngine(selectedRun.baseType);
+                  : getDefaultEngine(selectedRun.baseType, selectedRun.base);
 
                 updateRun(modelId, mediaType, selectedRun.id, {
                   params: { ...selectedRun.params, engine: newEngine },
@@ -483,7 +484,8 @@ export const AdvancedSettings = ({
                 <Text className="text-gray-5 dark:text-gray-6">
                   Training Parameters{' '}
                   <Text component="span" size="xs" fs="italic">
-                    (disabled with &quot;Rapid Training&quot;)
+                    (disabled with &quot;Rapid Training&quot;{' '}
+                    {features.flux2Training ? 'or Flux.2' : ''})
                   </Text>
                 </Text>
                 <Box mr={4}>

@@ -26,6 +26,7 @@ import {
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
+  trainingDetailsBaseModelsFlux2,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
@@ -166,6 +167,8 @@ const ModelSelector = ({
                   ? 'sdxl'
                   : ([...getBaseModelsByGroup('Flux1')] as string[]).includes(baseModel)
                   ? 'flux'
+                  : ([...getBaseModelsByGroup('Flux2')] as string[]).includes(baseModel)
+                  ? 'flux2'
                   : ([...getBaseModelsByGroup('SD3')] as string[]).includes(baseModel)
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
@@ -214,9 +217,10 @@ export const ModelSelect = ({
 
   // - Apply default params with overrides and calculations upon base model selection
   const makeDefaultParams = (data: TrainingRunUpdate) => {
-    // Determine the appropriate engine based on the base type
+    // Determine the appropriate engine based on the base type and model
     const engineToUse =
-      data.params?.engine ?? (data.baseType ? getDefaultEngine(data.baseType) : defaultEngine);
+      data.params?.engine ??
+      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined) : defaultEngine);
 
     const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
 
@@ -302,6 +306,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsWan as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelFlux2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsFlux2 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelChroma =
     !!formBaseModel &&
     (trainingDetailsBaseModelsChroma as ReadonlyArray<string>).includes(formBaseModel)
@@ -368,12 +377,23 @@ export const ModelSelect = ({
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="red"
-                    name="Flux"
+                    name="Flux.1"
                     value={baseModelFlux}
                     baseType="flux"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-09-01')}
                   />
+                  {features.flux2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="Flux.2"
+                      value={baseModelFlux2}
+                      baseType="flux2"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="teal"

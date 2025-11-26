@@ -23,18 +23,24 @@ export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTyp
     kohya: optimizerArgMap.Adafactor,
     musubi: '(empty)',
     rapid: '(empty)',
+    'flux2-dev': '(empty)',
+    'flux2-dev-edit': '(empty)',
     'ai-toolkit': '(empty)',
   },
   AdamW8Bit: {
     kohya: 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
     musubi: '(empty)',
     rapid: '(empty)',
+    'flux2-dev': '(empty)',
+    'flux2-dev-edit': '(empty)',
     'ai-toolkit': '(empty)',
   },
   Prodigy: {
     kohya: optimizerArgMap.Prodigy,
     musubi: '(empty)',
     rapid: '(empty)',
+    'flux2-dev': '(empty)',
+    'flux2-dev-edit': '(empty)',
     'ai-toolkit': '(empty)',
   },
 };
@@ -126,6 +132,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     disabled: true,
     overrides: {
       flux_dev: { all: { disabled: false } },
+      flux2_dev: { all: { disabled: true, default: 'flux2-dev' } },
+      // flux2_dev_edit: { all: { disabled: true, default: 'flux2-dev-edit' } }, // Disabled for now
       chroma: { all: { disabled: false } },
       hy_720_fp8: { all: { default: 'musubi' } },
       wan_2_1_i2v_14b_720p: { all: { default: 'musubi' } },
@@ -150,6 +158,10 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: 5 },
         rapid: { default: 1, min: 1, max: 1 },
       },
+      flux2_dev: {
+        all: { default: 1, min: 1, max: 1 },
+      },
+      // flux2_dev_edit: { all: { default: 1, min: 1, max: 1 } }, // Disabled for now
       chroma: {
         all: { default: 5 },
       },
@@ -269,6 +281,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: false,
     overrides: {
       flux_dev: { all: { disabled: true } },
+      flux2_dev: { all: { disabled: true } },
+      // flux2_dev_edit: { all: { disabled: true } }, // Disabled for now
       chroma: { all: { disabled: true } },
       qwen_image: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
@@ -297,6 +311,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       flux_dev: { all: { disabled: true } },
+      flux2_dev: { all: { disabled: true } },
+      // flux2_dev_edit: { all: { disabled: true } }, // Disabled for now
       chroma: { all: { disabled: true } },
       qwen_image: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
@@ -363,6 +379,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       anime: { all: { default: 1e-4 } },
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
+      flux2_dev: { all: { disabled: true, default: 0, max: 0 } },
+      // flux2_dev_edit: { all: { disabled: true, default: 0, max: 0 } }, // Disabled for now
       chroma: { all: { disabled: true, default: 0, max: 0 } },
       qwen_image: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_medium: { all: { disabled: true, default: 0, max: 0 } },

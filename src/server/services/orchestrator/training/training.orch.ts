@@ -116,11 +116,13 @@ const createTrainingStep_Run = (
       ...base,
       input,
     };
-  } else if (engine === 'flux-dev-fast') {
-    const input: FluxDevFastImageResourceTrainingInput = {
+  } else if (engine === 'flux-dev-fast' || engine === 'flux2-dev' || engine === 'flux2-dev-edit') {
+    // All rapid/fast training engines use the same input structure
+    // Type assertion needed because flux2 engine types aren't in @civitai/client yet
+    const input = {
       ...inputBase,
       engine,
-    };
+    } as FluxDevFastImageResourceTrainingInput;
     return {
       ...base,
       input,
