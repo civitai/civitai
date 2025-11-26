@@ -51,7 +51,6 @@ import {
   getIsFlux,
   getIsFlux2,
   getIsFluxStandard,
-  getIsFlux2Standard,
   getIsPonyV7,
   getIsQwen,
   getIsSD3,
@@ -293,8 +292,7 @@ export async function parseGenerateImageInput({
     originalParams.draft = false;
   }
   const isFluxStandard = getIsFluxStandard(model.model.id);
-  const isFlux2Standard = getIsFlux2Standard(model.model.id);
-  if (!isFluxStandard && !isFlux2Standard) {
+  if (!isFluxStandard) {
     delete originalParams.fluxMode;
     delete originalParams.fluxUltraAspectRatio;
     delete originalParams.fluxUltraRaw;

@@ -226,16 +226,6 @@ export function getIsFlux2(baseModel?: string) {
   return baseModelSetType === 'Flux2';
 }
 
-export function getIsFlux2Standard(modelId: number) {
-  return modelId === flux2ModelId;
-}
-
-export function getFluxModeOptions(modelId: number) {
-  if (getIsFluxStandard(modelId)) return fluxModeOptions;
-  if (getIsFlux2Standard(modelId)) return flux2ModeOptions;
-  return [];
-}
-
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
@@ -382,12 +372,6 @@ export const fluxKreaAir = 'urn:air:flux1:checkpoint:civitai:618692@2068000';
 export const fluxUltraAirId = 1088507;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
-// Flux 2 constants
-export const flux2ModelId = 983611;
-export const flux2DevAir = 'urn:air:flux2:checkpoint:civitai:983611@2439067';
-export const flux2FlexAir = 'urn:air:flux2:checkpoint:civitai:983611@2439047';
-export const flux2ProAir = 'urn:air:flux2:checkpoint:civitai:983611@2439442';
-
 // Experimental mode supported models - only for Text-to-Image workflow
 export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'SD1',
@@ -406,12 +390,6 @@ export const fluxModeOptions = [
   { label: 'Krea', value: fluxKreaAir },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
   { label: 'Ultra', value: fluxUltraAir },
-];
-
-export const flux2ModeOptions = [
-  { label: 'Dev', value: flux2DevAir },
-  { label: 'Flex', value: flux2FlexAir },
-  { label: 'Pro', value: flux2ProAir },
 ];
 
 // #endregion
