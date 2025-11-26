@@ -114,7 +114,11 @@ import {
   getIsFluxKontext,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
-import { flux2ModelModeOptions, getIsFlux2 } from '~/shared/orchestrator/ImageGen/flux2.config';
+import {
+  flux2ModelModeOptions,
+  getIsFlux2,
+  getIsFlux2ProOrFlex,
+} from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   getModelVersionUsesImageGen,
   imageGenModelVersionMap,
@@ -283,7 +287,7 @@ export function GenerationFormContent() {
       upscaleWidth,
       ...params
     } = data;
-    const additionalResources = formResources ?? [];
+    let additionalResources = formResources ?? [];
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
@@ -291,6 +295,7 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
+    const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
     if (isFlux && isFluxStandard) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
@@ -300,6 +305,8 @@ export function GenerationFormContent() {
       delete params.fluxMode;
       delete params.fluxUltraAspectRatio;
     }
+
+    if (isFlux2ProOrFlex) additionalResources = []; // No additional resources allowed
 
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
@@ -462,6 +469,18 @@ export function GenerationFormContent() {
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
 
+  // Model mode configuration - add new models here
+  const modelModeConfig = useMemo(
+    () => [
+      { isActive: isFluxKontext, options: flux1ModelModeOptions },
+      { isActive: isFlux2, options: flux2ModelModeOptions },
+      // Add future model modes here
+    ],
+    [isFluxKontext, isFlux2]
+  );
+
+  const activeModelMode = modelModeConfig.find((config) => config.isActive);
+
   const stepProviderValue = useMemo(() => ({ baseModel }), [baseModel]);
 
   return (
@@ -513,8 +532,15 @@ export function GenerationFormContent() {
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
+            const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
             const disableAdditionalResources =
-              runsOnFalAI || isOpenAI || isImagen4 || isFluxKontext || isNanoBanana || isSeedream;
+              runsOnFalAI ||
+              isOpenAI ||
+              isImagen4 ||
+              isFluxKontext ||
+              isNanoBanana ||
+              isSeedream ||
+              isFlux2ProOrFlex;
             const disableAdvanced =
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
@@ -915,27 +941,12 @@ export function GenerationFormContent() {
                     </Alert>
                   )}
 
-                  {isFluxKontext && (
+                  {activeModelMode && (
                     <div className="flex flex-col gap-0.5">
                       <Input.Label>Model Mode</Input.Label>
                       <SegmentedControl
                         value={String(model.id)}
-                        data={flux1ModelModeOptions}
-                        onChange={(value) => {
-                          const modelVersionId = Number(value);
-                          if (model.id !== modelVersionId)
-                            form.setValue('model', { ...model, id: modelVersionId });
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {isFlux2 && (
-                    <div className="flex flex-col gap-0.5">
-                      <Input.Label>Model Mode</Input.Label>
-                      <SegmentedControl
-                        value={String(model.id)}
-                        data={flux2ModelModeOptions}
+                        data={activeModelMode.options}
                         onChange={(value) => {
                           const modelVersionId = Number(value);
                           if (model.id !== modelVersionId)
@@ -1832,11 +1843,11 @@ const getAspectRatioControls = (
           </Center>
           <Stack gap={0}>
             <Text size="xs">{label}</Text>
-            {/* {label !== subLabel.replace('x', ':') && (
+            {label !== subLabel.replace('x', ':') && (
               <Text fz={10} c="dimmed">
                 {subLabel}
               </Text>
-            )} */}
+            )}
           </Stack>
         </Stack>
       ),

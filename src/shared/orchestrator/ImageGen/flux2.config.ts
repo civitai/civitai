@@ -1,6 +1,11 @@
 import { startCase } from 'lodash-es';
 import * as z from 'zod';
-import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
+import {
+  promptSchema,
+  seedSchema,
+  sourceImageSchema,
+} from '~/server/orchestrator/infrastructure/base.schema';
+import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 type Flux2Model = (typeof flux2Models)[number];
@@ -11,12 +16,18 @@ export const flux2ModelId = 983611;
 
 export const flux2ModelVersionToModelMap = new Map<number, Flux2Model>([
   [2439067, 'dev'],
-  [2439047, 'flex'],
   [2439442, 'pro'],
+  [2439047, 'flex'],
 ]);
 
 export function getIsFlux2(modelVersionId?: number) {
   return modelVersionId ? !!flux2ModelVersionToModelMap.get(modelVersionId) : false;
+}
+
+export function getIsFlux2ProOrFlex(modelVersionId?: number) {
+  if (!modelVersionId) return false;
+  const model = flux2ModelVersionToModelMap.get(modelVersionId);
+  return model === 'pro' || model === 'flex';
 }
 
 export function getIsFlux2FromResources(resources: { id: number }[]) {
@@ -37,9 +48,14 @@ export const flux2ModelModeOptions = Array.from(flux2ModelVersionToModelMap.entr
 const baseSchema = z.object({
   engine: z.literal(engine).catch(engine),
   model: z.enum(flux2Models),
-  prompt: z.string(),
+  prompt: promptSchema,
+  width: z.number(),
+  height: z.number(),
+  cfgScale: z.number().optional(),
+  steps: z.number().optional(),
   quantity: z.number().optional(),
-  seed: z.number().nullish(),
+  seed: seedSchema,
+  resources: workflowResourceSchema.array().default([]),
 });
 
 const schema = z.discriminatedUnion('operation', [
@@ -64,6 +80,10 @@ export const flux2Config = ImageGenConfig({
       prompt: params.prompt,
       quantity: params.quantity,
       seed: params.seed,
+      width: params.width,
+      height: params.height,
+      cfgScale: params.cfgScale,
+      steps: params.steps,
     };
   },
   inputFn: ({ params, resources }) => {
@@ -81,6 +101,10 @@ export const flux2Config = ImageGenConfig({
       operation: params.images?.length ? 'editImage' : 'createImage',
       quantity: params.quantity,
       seed: params.seed,
+      width: params.width,
+      height: params.height,
+      cfgScale: params.cfgScale,
+      steps: params.steps,
     });
   },
 });
