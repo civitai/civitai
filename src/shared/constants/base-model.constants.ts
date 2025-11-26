@@ -96,6 +96,7 @@ const baseModelConfig = [
   { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B', engine: 'wan' },
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
+  { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [

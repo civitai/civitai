@@ -43,6 +43,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   NoobAI: 'NAI',
   HiDream: 'HID',
   Chroma: 'CHR',
+  ZImageTurbo: 'ZIT',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {

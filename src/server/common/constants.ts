@@ -569,6 +569,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
+  ZImageTurbo: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
