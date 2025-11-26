@@ -403,7 +403,7 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2025-10-01')}
                   />
-                  {features.aiToolkitTraining && (
+                  {features.qwenTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="orange"
