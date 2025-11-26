@@ -82,7 +82,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
 
-const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan', 'chroma'];
+const prefersCaptions: TrainingBaseModelType[] = ['flux', 'flux2', 'sd35', 'hunyuan', 'wan', 'chroma'];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
