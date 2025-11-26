@@ -300,10 +300,6 @@ function ResourceSelectModalContent() {
   if (or.length) meiliFilters.push(`(${or.join(' OR ')})`);
 
   const exclude: string[] = ['NOT tags.name = "celebrity"'];
-  if (!features.flux2Generation) {
-    exclude.push('NOT versions.baseModel = "Flux.2 D"');
-    exclude.push('NOT id = 2165902');
-  }
 
   // nb - it would be nice to do this, but meili filters the entire top level object only
   // if (excludeIds.length > 0) {
