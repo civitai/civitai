@@ -44,6 +44,7 @@ const featureFlags = createFeatureFlags({
   imageTraining: ['user'],
   videoTraining: ['mod', 'bronze', 'silver', 'gold'],
   aiToolkitTraining: ['mod'],
+  flux2Training: ['mod'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],

@@ -216,15 +216,15 @@ export const trainingModelInfo: {
     baseModel: 'Flux.2 D',
     isNew: true,
   },
-  flux2_dev_edit: {
-    label: 'Dev Edit',
-    pretty: 'Flux.2 Edit',
-    type: 'flux2',
-    description: 'Next generation image editing and generation.',
-    air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
-    baseModel: 'Flux.2 D',
-    isNew: true,
-  },
+  // flux2_dev_edit: {
+  //   label: 'Dev Edit',
+  //   pretty: 'Flux.2 Edit',
+  //   type: 'flux2',
+  //   description: 'Next generation image editing and generation.',
+  //   air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
+  //   baseModel: 'Flux.2 D',
+  //   isNew: true,
+  // },
 };
 
 export const rapidEta = 5;

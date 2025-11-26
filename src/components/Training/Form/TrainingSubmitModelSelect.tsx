@@ -219,7 +219,8 @@ export const ModelSelect = ({
   const makeDefaultParams = (data: TrainingRunUpdate) => {
     // Determine the appropriate engine based on the base type and model
     const engineToUse =
-      data.params?.engine ?? (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined) : defaultEngine);
+      data.params?.engine ??
+      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined) : defaultEngine);
 
     const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
 
@@ -376,21 +377,23 @@ export const ModelSelect = ({
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="red"
-                    name="Flux"
+                    name="Flux.1"
                     value={baseModelFlux}
                     baseType="flux"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-09-01')}
                   />
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="orange"
-                    name="Flux.2"
-                    value={baseModelFlux2}
-                    baseType="flux2"
-                    makeDefaultParams={makeDefaultParams}
-                    isNew
-                  />
+                  {features.flux2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="Flux.2"
+                      value={baseModelFlux2}
+                      baseType="flux2"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="teal"
