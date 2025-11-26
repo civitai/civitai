@@ -1,5 +1,18 @@
 import { useState } from 'react';
-import { Button, Card, Stack, Text, Title, TextInput, Modal, Group } from '@mantine/core';
+import {
+  Button,
+  Card,
+  Stack,
+  Text,
+  Title,
+  TextInput,
+  Modal,
+  Group,
+  List,
+  ThemeIcon,
+  Alert,
+} from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
@@ -8,6 +21,11 @@ import { trpc } from '~/utils/trpc';
 export function DeleteCard() {
   const currentUser = useCurrentUser();
   const { logout } = useAccountContext();
+  const { data: subscriptions, isLoading: subscriptionsLoading } =
+    trpc.subscriptions.getAllUserSubscriptions.useQuery(undefined, {
+      enabled: !!currentUser,
+    });
+  const hasActiveMembership = !subscriptionsLoading && !!subscriptions && subscriptions.length > 0;
 
   const deleteAccountMutation = trpc.user.delete.useMutation({
     async onSuccess() {
@@ -19,9 +37,23 @@ export function DeleteCard() {
   });
 
   // Separate state for each modal
+  const [membershipWarningModalOpen, setMembershipWarningModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [wipeModalOpen, setWipeModalOpen] = useState(false);
   const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
+
+  const handleDeleteClick = () => {
+    if (hasActiveMembership) {
+      setMembershipWarningModalOpen(true);
+    } else {
+      setDeleteModalOpen(true);
+    }
+  };
+
+  const handleMembershipWarningConfirm = () => {
+    setMembershipWarningModalOpen(false);
+    setTimeout(() => setDeleteModalOpen(true), 200);
+  };
 
   const handleConfirmDelete = () => {
     setDeleteModalOpen(false); // Close first modal
@@ -42,7 +74,59 @@ export function DeleteCard() {
 
   return (
     <>
-      {/* FIRST MODAL: Confirm account deletion */}
+      {/* MEMBERSHIP WARNING MODAL: Show if user has active membership */}
+      <Modal
+        opened={membershipWarningModalOpen}
+        onClose={() => setMembershipWarningModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <ThemeIcon color="red" variant="light" size="lg">
+              <IconAlertTriangle size={20} />
+            </ThemeIcon>
+            <Text fw={600} size="lg">
+              You have an active Membership on this account!
+            </Text>
+          </Group>
+        }
+        centered
+        size="md"
+      >
+        <Stack>
+          <Text fw={500}>Deleting your account will:</Text>
+          <List spacing="xs" size="sm">
+            <List.Item>Permanently cancel your active Membership</List.Item>
+            <List.Item>Permanently remove any remaining Membership time</List.Item>
+            <List.Item>Permanently delete any remaining Buzz balance</List.Item>
+          </List>
+          <Alert color="red" variant="light">
+            <Text size="sm" fw={500}>
+              This cannot be undone. Your Membership and Buzz cannot be refunded, restored, or
+              transferred to another account after deletion.
+            </Text>
+          </Alert>
+          <Stack mt="md">
+            <Button
+              color="red"
+              fullWidth
+              onClick={handleMembershipWarningConfirm}
+              styles={{ label: { whiteSpace: 'normal', lineHeight: 1.4 } }}
+              style={{ height: 'auto', padding: '10px 16px' }}
+            >
+              Yes, permanently delete my account and forfeit my Membership &amp; any remaining Buzz
+              balance
+            </Button>
+            <Button
+              fullWidth
+              variant="outline"
+              onClick={() => setMembershipWarningModalOpen(false)}
+            >
+              Cancel
+            </Button>
+          </Stack>
+        </Stack>
+      </Modal>
+
+      {/* SECOND MODAL: Confirm account deletion */}
       <Modal
         opened={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
@@ -112,7 +196,7 @@ export function DeleteCard() {
             Once you delete your account, there is no going back. Please be certain when taking this
             action.
           </Text>
-          <Button variant="outline" color="red" onClick={() => setDeleteModalOpen(true)}>
+          <Button variant="outline" color="red" onClick={handleDeleteClick}>
             Delete your account
           </Button>
         </Stack>
