@@ -2,6 +2,10 @@ import {
   flux1KontextConfig,
   fluxKontextModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import {
+  flux2Config,
+  flux2ModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/flux2.config';
 import { geminiConfig, geminiModelVersionMap } from '~/shared/orchestrator/ImageGen/gemini.config';
 import {
   googleConfig,
@@ -21,6 +25,7 @@ export const imageGenConfig = {
   openai: openaiConfig,
   google: googleConfig,
   flux1: flux1KontextConfig,
+  flux2: flux2Config,
   gemini: geminiConfig,
   seedream: seedreamConfig,
 };
@@ -30,6 +35,7 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
     .concat([...openaiModelVersionToModelMap.keys()].map((key) => [key, 'openai']))
     .concat([...googleModelVersionToModelMap.keys()].map((key) => [key, 'google']))
     .concat([...fluxKontextModelVersionToModelMap.keys()].map((key) => [key, 'flux1']))
+    .concat([...flux2ModelVersionToModelMap.keys()].map((key) => [key, 'flux2']))
     .concat([...geminiModelVersionMap.keys()].map((key) => [key, 'gemini']))
     .concat([...seedreamModelVersionToModelMap.keys()].map((key) => [key, 'seedream']))
 );

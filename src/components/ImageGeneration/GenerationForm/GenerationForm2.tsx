@@ -107,7 +107,6 @@ import {
   getIsFluxKrea,
   getIsQwen,
   getIsChroma,
-  getIsFlux2,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -115,6 +114,7 @@ import {
   getIsFluxKontext,
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
+import { flux2ModelModeOptions, getIsFlux2 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   getModelVersionUsesImageGen,
   imageGenModelVersionMap,
@@ -443,7 +443,6 @@ export function GenerationFormContent() {
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isChroma = getIsChroma(baseModel);
-  const isFlux2 = getIsFlux2(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
@@ -455,9 +454,10 @@ export function GenerationFormContent() {
   const isOpenAI = baseModel === 'OpenAI';
   const isImagen4 = getIsImagen4(model.id);
   const isFluxKontext = getIsFluxKontext(model.id);
+  const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream;
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -519,6 +519,7 @@ export function GenerationFormContent() {
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
+              isFlux2 ||
               isQwen ||
               isOpenAI ||
               isFluxKontext ||
@@ -552,13 +553,7 @@ export function GenerationFormContent() {
               isSeedream ||
               isPonyV7;
             const enableImageInput =
-              (features.image &&
-                !isFlux &&
-                !isSD3 &&
-                !isQwen &&
-                !isChroma &&
-                !isFlux2 &&
-                !isPonyV7) ||
+              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma && !isPonyV7) ||
               isOpenAI ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
@@ -582,11 +577,14 @@ export function GenerationFormContent() {
               isFlux2 ||
               isPonyV7 ||
               isSeedream;
-            const disableVae = isFlux || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
+            const disableVae =
+              isFlux || isFlux2 || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra || isImg2Img || (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro);
+              isFluxUltra ||
+              isImg2Img ||
+              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2);
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -699,7 +697,9 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={isFluxStandard || isHiDream || (isImageGen && !isSeedream)}
+                            hideVersion={
+                              isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
+                            }
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -930,6 +930,21 @@ export function GenerationFormContent() {
                     </div>
                   )}
 
+                  {isFlux2 && (
+                    <div className="flex flex-col gap-0.5">
+                      <Input.Label>Model Mode</Input.Label>
+                      <SegmentedControl
+                        value={String(model.id)}
+                        data={flux2ModelModeOptions}
+                        onChange={(value) => {
+                          const modelVersionId = Number(value);
+                          if (model.id !== modelVersionId)
+                            form.setValue('model', { ...model, id: modelVersionId });
+                        }}
+                      />
+                    </div>
+                  )}
+
                   {isHiDream && hiDreamResource && (
                     <>
                       <div className="flex flex-col gap-0.5">
@@ -972,16 +987,20 @@ export function GenerationFormContent() {
 
                   {isFluxStandard && (
                     <Watch {...form} fields={['resources']}>
-                      {({ resources }) => (
-                        <div className="flex flex-col gap-0.5">
-                          <Input.Label className="flex items-center gap-1">Model Mode</Input.Label>
-                          <InputSegmentedControl
-                            name="fluxMode"
-                            data={fluxModeOptions}
-                            disabled={!!resources?.length}
-                          />
-                        </div>
-                      )}
+                      {({ resources }) => {
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <Input.Label className="flex items-center gap-1">
+                              Model Mode
+                            </Input.Label>
+                            <InputSegmentedControl
+                              name="fluxMode"
+                              data={fluxModeOptions}
+                              disabled={!!resources?.length}
+                            />
+                          </div>
+                        );
+                      }}
                     </Watch>
                   )}
 
@@ -1731,7 +1750,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { running, helpers } = useTourContext();
   const [baseModel, model, resources, vae] = form.watch(['baseModel', 'model', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
-  const isFlux2 = getIsFlux2(baseModel);
+  const isFlux2 = getIsFlux2(model.id);
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isOpenAI = baseModel === 'OpenAI';
