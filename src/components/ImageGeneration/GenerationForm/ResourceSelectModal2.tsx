@@ -175,7 +175,6 @@ function ResourceSelectModalContent() {
     'SDXL 1.0',
     'Illustrious',
     'Flux.1 D',
-    'Flux.2 D',
     'OpenAI',
     'HiDream',
     'Imagen4',
