@@ -4186,8 +4186,8 @@ type GetEntityImageRaw = {
   metadata: MixedObject | null;
   entityId: number;
   entityType: string;
-  poi: boolean | null;
-  minor: boolean | null;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getEntityCoverImage = async ({
