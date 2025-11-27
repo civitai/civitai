@@ -89,16 +89,16 @@ export const flux2Config = ImageGenConfig({
     };
   },
   inputFn: ({ params, resources }): Flux2DevImageGenInput => {
-    // let model: Flux2Model = 'dev';
-    // for (const resource of resources) {
-    //   const match = flux2ModelVersionToModelMap.get(resource.id);
-    //   if (match) model = match;
-    // }
+    let model: Flux2Model = 'dev';
+    for (const resource of resources) {
+      const match = flux2ModelVersionToModelMap.get(resource.id);
+      if (match) model = match;
+    }
     const loras = resources.slice(1); // first resource is always the flux2 model itself
 
     return schema.parse({
       ...params,
-      model: 'dev' as const,
+      model: model as any, // TODO: fix any when typings accept pro | flex
       operation: params.images?.length ? 'editImage' : 'createImage',
       loras,
     });
