@@ -4610,10 +4610,20 @@ export const getImageModerationReviewQueue = async ({
   let cursorDirection = 'DESC';
 
   if (tagReview) {
-    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review LIMIT ${limit + 1})`);
+    // Optimize: avoid CTE + IN + DISTINCT; use EXISTS for early stop and better plans
     AND.push(Prisma.sql`
       i."nsfwLevel" < ${NsfwLevel.Blocked}
     `);
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" = i.id
+        AND toi."needsReview"
+        AND toi.disabled = false
+    )`);
+    // When paginating tag review, apply cursor directly on image id (DESC)
+    if (cursor) {
+      AND.push(Prisma.sql`i."id" < ${cursor}`);
+    }
   } else {
     if (reportReview) {
       // Add this to the WHERE:
@@ -4637,21 +4647,6 @@ export const getImageModerationReviewQueue = async ({
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const query = Prisma.sql`
-    ${Prisma.raw(
-      tagReview
-        ? `WITH tags_review AS (
-            SELECT
-              toi."imageId"
-            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
-            WHERE
-            toi."needsReview"
-            AND toi.disabled = false
-            AND i."nsfwLevel" < 32
-            ${cursor ? `AND "imageId" <= ${cursor}` : ''}
-            ORDER BY (toi."imageId", toi."tagId") DESC
-          )`
-        : ''
-    )}
     -- Image moderation queue
     SELECT
       i.id,

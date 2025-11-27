@@ -142,8 +142,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
       const additionalResources =
         resources?.map((x) => {
-          if (!x.epochDetails?.epochNumber) return { id: x.id as number };
-          return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber };
+          return { id: x.id as number, epochNumber: x.epochDetails?.epochNumber, air: x.air };
         }) ?? [];
 
       if (!promptFocused && params.prompt !== undefined) {

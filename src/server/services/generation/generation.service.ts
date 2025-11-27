@@ -547,7 +547,7 @@ type GenerationResourceBase = {
   earlyAccessConfig?: ModelVersionEarlyAccessConfig;
   canGenerate: boolean;
   hasAccess: boolean;
-  // air: string;
+  air?: string;
   // covered: boolean;
   additionalResourceCost?: boolean;
   availability?: Availability;

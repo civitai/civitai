@@ -96,7 +96,7 @@ export const draftInjectableResources = [
 
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
-export function getInjectablResources(baseModelSetType: BaseModelGroup) {
+export function getInjectableResources(baseModelSetType: BaseModelGroup) {
   const isSdxl = getIsSdxl(baseModelSetType);
   let value = baseModelSetType;
   if (isSdxl) value = 'SDXL';

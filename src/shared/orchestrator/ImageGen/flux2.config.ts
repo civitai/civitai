@@ -1,11 +1,12 @@
+import type { Flux2DevImageGenInput } from '@civitai/client';
 import { startCase } from 'lodash-es';
 import * as z from 'zod';
 import {
   promptSchema,
+  resourceSchema,
   seedSchema,
   sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 type Flux2Model = (typeof flux2Models)[number];
@@ -47,7 +48,8 @@ export const flux2ModelModeOptions = Array.from(flux2ModelVersionToModelMap.entr
 
 const baseSchema = z.object({
   engine: z.literal(engine).catch(engine),
-  model: z.enum(flux2Models),
+  // model: z.enum(flux2Models),
+  model: z.literal('dev').catch('dev'), // only 'dev' is currently supported
   prompt: promptSchema,
   width: z.number(),
   height: z.number(),
@@ -55,7 +57,7 @@ const baseSchema = z.object({
   steps: z.number().optional(),
   quantity: z.number().optional(),
   seed: seedSchema,
-  resources: workflowResourceSchema.array().default([]),
+  loras: resourceSchema.array().optional(),
 });
 
 const schema = z.discriminatedUnion('operation', [
@@ -86,25 +88,19 @@ export const flux2Config = ImageGenConfig({
       steps: params.steps,
     };
   },
-  inputFn: ({ params, resources }) => {
-    let model: Flux2Model = 'dev';
-    for (const resource of resources) {
-      const match = flux2ModelVersionToModelMap.get(resource.id);
-      if (match) model = match;
-    }
+  inputFn: ({ params, resources }): Flux2DevImageGenInput => {
+    // let model: Flux2Model = 'dev';
+    // for (const resource of resources) {
+    //   const match = flux2ModelVersionToModelMap.get(resource.id);
+    //   if (match) model = match;
+    // }
+    const loras = resources.slice(1); // first resource is always the flux2 model itself
 
     return schema.parse({
-      engine: params.engine,
-      model,
-      prompt: params.prompt,
-      images: params.images,
+      ...params,
+      model: 'dev' as const,
       operation: params.images?.length ? 'editImage' : 'createImage',
-      quantity: params.quantity,
-      seed: params.seed,
-      width: params.width,
-      height: params.height,
-      cfgScale: params.cfgScale,
-      steps: params.steps,
+      loras,
     });
   },
 });

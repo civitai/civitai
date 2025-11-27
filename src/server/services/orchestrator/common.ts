@@ -46,7 +46,7 @@ import {
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
-  getInjectablResources,
+  getInjectableResources,
   getIsChroma,
   getIsFlux,
   getIsFlux2,
@@ -308,7 +308,7 @@ export async function parseGenerateImageInput({
 
   let params = { ...originalParams };
 
-  const injectableResources = getInjectablResources(params.baseModel);
+  const injectableResources = getInjectableResources(params.baseModel);
 
   // handle missing draft resource
   if (params.draft && !injectableResources.draft)
@@ -639,7 +639,7 @@ function formatTextToImageStep({
 
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
-  const injectable = getInjectablResources(baseModel);
+  const injectable = getInjectableResources(baseModel);
 
   const injectableIds = Object.values(injectable)
     .map((x) => x?.id)

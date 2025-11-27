@@ -99,6 +99,7 @@ export const additionalResourceSchema = z.object({
   type: z.string().optional(),
   strength: z.number().optional(),
   strengthClip: z.number().optional(),
+  air: z.string().optional(),
 });
 
 export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
