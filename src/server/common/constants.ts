@@ -694,7 +694,6 @@ export const generationConfig = {
         name: 'DreamShaper',
         type: 'Checkpoint',
       },
-      
     } as GenerationResource,
   },
   SDXL: {

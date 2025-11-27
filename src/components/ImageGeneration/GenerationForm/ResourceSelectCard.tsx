@@ -164,11 +164,11 @@ function CheckpointInfo({
             {isPreview && (
               <HoverCard position="bottom" withArrow>
                 <HoverCard.Target>
-                  <LegacyActionIcon size={18} color="yellow.5" variant="filled">
+                  <LegacyActionIcon size={18} color="orange.5" variant="filled">
                     <IconFlask2 size={14} />
                   </LegacyActionIcon>
                 </HoverCard.Target>
-                <HoverCard.Dropdown>
+                <HoverCard.Dropdown maw={350}>
                   <Text size="sm">
                     This resource is a preview version and may have limited functionality.
                   </Text>
