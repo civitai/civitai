@@ -107,6 +107,7 @@ import {
   getIsFluxKrea,
   getIsQwen,
   getIsChroma,
+  getIsZImageTurbo,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -450,6 +451,7 @@ export function GenerationFormContent() {
   const isSD3 = getIsSD3(baseModel);
   const isQwen = getIsQwen(baseModel);
   const isChroma = getIsChroma(baseModel);
+  const isZImageTurbo = getIsZImageTurbo(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
@@ -506,6 +508,7 @@ export function GenerationFormContent() {
                 !isFlux &&
                 !isQwen &&
                 !isChroma &&
+                !isZImageTurbo &&
                 !isFlux2 &&
                 !isPonyV7;
             const minQuantity = !!isDraft ? 4 : 1;
@@ -514,20 +517,31 @@ export function GenerationFormContent() {
               : !!isDraft
               ? Math.floor(status.limits.quantity / 4) * 4
               : status.limits.quantity;
-            const cfgDisabled = isDraft;
+            const cfgDisabled = isDraft || isZImageTurbo;
             const samplerDisabled = isDraft;
-            const stepsDisabled = isDraft;
+            const stepsDisabled = isDraft || isZImageTurbo;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
             if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
+
+            if (isZImageTurbo) {
+              stepsMin = 9;
+              stepsMax = 9;
+            }
+
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
             if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
+            }
+
+            if (isZImageTurbo) {
+              cfgScaleMin = 1;
+              cfgScaleMax = 1;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -561,6 +575,7 @@ export function GenerationFormContent() {
               isQwen ||
               isNanoBanana ||
               isChroma ||
+              isZImageTurbo ||
               isFlux2 ||
               isSeedream ||
               isPonyV7;
@@ -575,11 +590,18 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isChroma ||
+              isZImageTurbo ||
               isFlux2 ||
               isSeedream ||
               isPonyV7;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma && !isPonyV7) ||
+              (features.image &&
+                !isFlux &&
+                !isSD3 &&
+                !isQwen &&
+                !isChroma &&
+                !isZImageTurbo &&
+                !isPonyV7) ||
               isOpenAI ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
@@ -589,6 +611,7 @@ export function GenerationFormContent() {
               isSD3 ||
               isFluxKontext ||
               isChroma ||
+              isZImageTurbo ||
               isFlux2 ||
               isPonyV7 ||
               isSeedream;
@@ -600,11 +623,19 @@ export function GenerationFormContent() {
               isSD3 ||
               isFluxKontext ||
               isChroma ||
+              isZImageTurbo ||
               isFlux2 ||
               isPonyV7 ||
               isSeedream;
             const disableVae =
-              isFlux || isFlux2 || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
+              isFlux ||
+              isFlux2 ||
+              isQwen ||
+              isSD3 ||
+              isFluxKontext ||
+              isPonyV7 ||
+              isSeedream ||
+              isZImageTurbo;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
@@ -726,6 +757,7 @@ export function GenerationFormContent() {
                             hideVersion={
                               isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
                             }
+                            isPreview={isZImageTurbo}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -885,9 +917,13 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isQwen && !isSD3 && !isChroma && !isFlux2 && !isPonyV7 && (
-                            <ReadySection />
-                          )}
+                          {!isFlux &&
+                            !isQwen &&
+                            !isSD3 &&
+                            !isChroma &&
+                            !isZImageTurbo &&
+                            !isFlux2 &&
+                            !isPonyV7 && <ReadySection />}
                         </Card>
                       );
                     }}
@@ -1400,6 +1436,7 @@ export function GenerationFormContent() {
                                       isFluxKontext ||
                                       isSD3 ||
                                       isChroma ||
+                                      isZImageTurbo ||
                                       isFlux2 ||
                                       isPonyV7
                                         ? undefined
@@ -1469,6 +1506,7 @@ export function GenerationFormContent() {
                                             isQwen ||
                                             isSD3 ||
                                             isChroma ||
+                                            isZImageTurbo ||
                                             isFlux2 ||
                                             isPonyV7
                                               ? undefined
