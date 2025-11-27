@@ -628,7 +628,14 @@ export function GenerationFormContent() {
               isPonyV7 ||
               isSeedream;
             const disableVae =
-              isFlux || isFlux2 || isQwen || isSD3 || isFluxKontext || isPonyV7 || isSeedream;
+              isFlux ||
+              isFlux2 ||
+              isQwen ||
+              isSD3 ||
+              isFluxKontext ||
+              isPonyV7 ||
+              isSeedream ||
+              isZImageTurbo;
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
