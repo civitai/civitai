@@ -14,6 +14,7 @@ import {
 import {
   IconAlertTriangle,
   IconBolt,
+  IconFlask2,
   IconLock,
   IconReplace,
   IconShield,
@@ -49,6 +50,7 @@ type Props = {
   groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
   isPartiallySupported?: boolean;
+  isPreview?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
@@ -94,6 +96,7 @@ function CheckpointInfo({
   hideVersion,
   groupPosition,
   isPartiallySupported,
+  isPreview,
 }: Props) {
   const features = useFeatureFlags();
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
@@ -155,6 +158,20 @@ function CheckpointInfo({
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
                   <Text size="sm">This resource cannot be used to generate mature content</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            )}
+            {isPreview && (
+              <HoverCard position="bottom" withArrow>
+                <HoverCard.Target>
+                  <LegacyActionIcon size={18} color="yellow.5" variant="filled">
+                    <IconFlask2 size={14} />
+                  </LegacyActionIcon>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">
+                    This resource is a preview version and may have limited functionality.
+                  </Text>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}

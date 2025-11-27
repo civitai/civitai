@@ -750,6 +750,7 @@ export function GenerationFormContent() {
                             hideVersion={
                               isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
                             }
+                            isPreview={isZImageTurbo}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
