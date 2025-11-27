@@ -249,6 +249,7 @@ export async function parseGenerateImageInput({
       delete originalParams.cfgScale;
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
+      delete originalParams.enhancedCompatibility;
     }
   }
 
