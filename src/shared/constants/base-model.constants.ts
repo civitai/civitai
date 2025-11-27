@@ -549,7 +549,7 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'ZImageTurbo',
     support: [
       {
-        modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA, ModelType.LoCon],
+        modelTypes: [ModelType.Checkpoint],
         baseModels: ['ZImageTurbo'],
       },
     ],

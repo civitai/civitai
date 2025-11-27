@@ -517,9 +517,9 @@ export function GenerationFormContent() {
               : !!isDraft
               ? Math.floor(status.limits.quantity / 4) * 4
               : status.limits.quantity;
-            const cfgDisabled = isDraft || isZImageTurbo;
+            const cfgDisabled = isDraft;
             const samplerDisabled = isDraft;
-            const stepsDisabled = isDraft || isZImageTurbo;
+            const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
             if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
@@ -528,8 +528,8 @@ export function GenerationFormContent() {
             }
 
             if (isZImageTurbo) {
-              stepsMin = 9;
-              stepsMax = 9;
+              stepsMin = 1;
+              stepsMax = 50;
             }
 
             let cfgScaleMin = 1;
@@ -541,7 +541,7 @@ export function GenerationFormContent() {
 
             if (isZImageTurbo) {
               cfgScaleMin = 1;
-              cfgScaleMax = 1;
+              cfgScaleMax = 10;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });

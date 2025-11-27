@@ -380,10 +380,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
         const fluxBaseModels: BaseModelGroup[] = ['Flux1', 'Flux1Kontext'];
         if (!!baseModel && !!prevBaseModel) {
-          if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel))
+          if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel)) {
             form.setValue('cfgScale', 3.5);
+          }
           // else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
           //   form.setValue('cfgScale', 7);
+
+          if (baseModel === 'ZImageTurbo' && prevBaseModel !== baseModel) {
+            form.setValue('steps', 9);
+            form.setValue('cfgScale', 1);
+          }
         }
 
         if (
@@ -393,6 +399,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ) {
           form.setValue('sampler', 'Euler a');
         }
+
         prevBaseModelRef.current = watchedValues.baseModel;
       }
 
