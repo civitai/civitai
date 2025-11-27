@@ -54,7 +54,6 @@ import {
   getIsPonyV7,
   getIsQwen,
   getIsSD3,
-  getIsZImageTurbo,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -254,12 +253,6 @@ export async function parseGenerateImageInput({
 
   const isChroma = getIsChroma(originalParams.baseModel);
   if (isChroma) {
-    originalParams.sampler = 'undefined';
-    originalParams.draft = false;
-  }
-
-  const isZImageTurbo = getIsZImageTurbo(originalParams.baseModel);
-  if (isZImageTurbo) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
   }

@@ -1066,25 +1066,6 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
-  ZImageTurbo: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2442439,
-      name: 'v1.0',
-      trainedWords: [],
-      baseModel: 'ZImageTurbo',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2168935,
-        name: 'ZImageTurbo',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
 
   Other: {
     aspectRatios: commonAspectRatios,

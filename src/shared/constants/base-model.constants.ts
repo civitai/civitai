@@ -545,15 +545,6 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'Veo3',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],
   },
-  {
-    group: 'ZImageTurbo',
-    support: [
-      {
-        modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA, ModelType.LoCon],
-        baseModels: ['ZImageTurbo'],
-      },
-    ],
-  },
 ];
 
 type BaseModelSupportType = 'full' | 'partial';
