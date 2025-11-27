@@ -4186,6 +4186,8 @@ type GetEntityImageRaw = {
   metadata: MixedObject | null;
   entityId: number;
   entityType: string;
+  poi: boolean | null;
+  minor: boolean | null;
 };
 
 export const getEntityCoverImage = async ({
@@ -4227,7 +4229,9 @@ export const getEntityCoverImage = async ({
       i."index",
       i."postId",
       t."entityId",
-      t."entityType"
+      t."entityType",
+      i."poi",
+      i."minor"
     FROM (
       -- NOTE: Adding "order1/2/3" looks a bit hacky, but it avoids using partitions and makes it far more performant.
       -- It might may look weird, but it has 0 practical effect other than better performance.
