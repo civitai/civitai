@@ -517,9 +517,9 @@ export function GenerationFormContent() {
               : !!isDraft
               ? Math.floor(status.limits.quantity / 4) * 4
               : status.limits.quantity;
-            const cfgDisabled = isDraft;
+            const cfgDisabled = isDraft || isZImageTurbo;
             const samplerDisabled = isDraft;
-            const stepsDisabled = isDraft;
+            const stepsDisabled = isDraft || isZImageTurbo;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
             if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
