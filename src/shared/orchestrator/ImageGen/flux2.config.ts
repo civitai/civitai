@@ -48,8 +48,7 @@ export const flux2ModelModeOptions = Array.from(flux2ModelVersionToModelMap.entr
 
 const baseSchema = z.object({
   engine: z.literal(engine).catch(engine),
-  // model: z.enum(flux2Models),
-  model: z.literal('dev').catch('dev'), // only 'dev' is currently supported
+  model: z.enum(flux2Models),
   prompt: promptSchema,
   width: z.number(),
   height: z.number(),
@@ -98,9 +97,9 @@ export const flux2Config = ImageGenConfig({
 
     return schema.parse({
       ...params,
-      model: model as any, // TODO: fix any when typings accept pro | flex
+      model,
       operation: params.images?.length ? 'editImage' : 'createImage',
       loras,
-    });
+    }) as unknown as Flux2DevImageGenInput; // TODO: fix any when typings accept pro | flex
   },
 });
