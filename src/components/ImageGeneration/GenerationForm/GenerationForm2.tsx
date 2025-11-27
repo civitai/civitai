@@ -522,15 +522,26 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen || isChroma || isZImageTurbo || isFlux2 || isPonyV7) {
+            if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
+
+            if (isZImageTurbo) {
+              stepsMin = 5;
+              stepsMax = 50;
+            }
+
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isZImageTurbo || isFlux2 || isPonyV7) {
+            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
+            }
+
+            if (isZImageTurbo) {
+              cfgScaleMin = 1;
+              cfgScaleMax = 20;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -584,7 +595,13 @@ export function GenerationFormContent() {
               isSeedream ||
               isPonyV7;
             const enableImageInput =
-              (features.image && !isFlux && !isSD3 && !isQwen && !isChroma && !isZImageTurbo && !isPonyV7) ||
+              (features.image &&
+                !isFlux &&
+                !isSD3 &&
+                !isQwen &&
+                !isChroma &&
+                !isZImageTurbo &&
+                !isPonyV7) ||
               isOpenAI ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
@@ -892,9 +909,13 @@ export function GenerationFormContent() {
                               </Alert>
                             </Card.Section>
                           )}
-                          {!isFlux && !isQwen && !isSD3 && !isChroma && !isZImageTurbo && !isFlux2 && !isPonyV7 && (
-                            <ReadySection />
-                          )}
+                          {!isFlux &&
+                            !isQwen &&
+                            !isSD3 &&
+                            !isChroma &&
+                            !isZImageTurbo &&
+                            !isFlux2 &&
+                            !isPonyV7 && <ReadySection />}
                         </Card>
                       );
                     }}
