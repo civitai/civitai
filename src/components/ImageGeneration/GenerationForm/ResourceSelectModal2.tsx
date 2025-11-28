@@ -427,7 +427,7 @@ function ResourceSelectModalContent() {
           </div>
         </div>
 
-        <Divider />
+        {/* <Divider />
 
         {selectedTab === 'all' && (
           <>
@@ -451,7 +451,7 @@ function ResourceSelectModalContent() {
             </Group>
             <Divider />
           </>
-        )}
+        )} */}
       </div>
 
       {isLoadingExtra ? (
