@@ -139,6 +139,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       wan_2_1_i2v_14b_720p: { all: { default: 'musubi' } },
       wan_2_1_t2v_14b: { all: { default: 'musubi' } },
       qwen_image: { all: { default: 'ai-toolkit' } },
+      zimageturbo: { all: { default: 'ai-toolkit' } },
     },
   },
   {
@@ -166,6 +167,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: 5 },
       },
       qwen_image: {
+        all: { default: 5 },
+      },
+      zimageturbo: {
         all: { default: 5 },
       },
       // sd3_medium: { all: { default: 5 } },
@@ -207,6 +211,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: 4, max: 4 },
       },
       qwen_image: {
+        all: { default: 4, max: 4 },
+      },
+      zimageturbo: {
         all: { default: 4, max: 4 },
       },
       // sd3_medium: { all: { default: 4, max: 4 } },
@@ -285,6 +292,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       // flux2_dev_edit: { all: { disabled: true } }, // Disabled for now
       chroma: { all: { disabled: true } },
       qwen_image: { all: { disabled: true } },
+      zimageturbo: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
       // sd3_large: { all: { disabled: true } },
       hy_720_fp8: { all: { disabled: true } },
@@ -315,6 +323,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       // flux2_dev_edit: { all: { disabled: true } }, // Disabled for now
       chroma: { all: { disabled: true } },
       qwen_image: { all: { disabled: true } },
+      zimageturbo: { all: { disabled: true } },
       // sd3_medium: { all: { disabled: true } },
       // sd3_large: { all: { disabled: true } },
       hy_720_fp8: { all: { disabled: true } },
@@ -383,6 +392,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       // flux2_dev_edit: { all: { disabled: true, default: 0, max: 0 } }, // Disabled for now
       chroma: { all: { disabled: true, default: 0, max: 0 } },
       qwen_image: { all: { disabled: true, default: 0, max: 0 } },
+      zimageturbo: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       // sd3_large: { all: { disabled: true, default: 0, max: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
@@ -462,6 +472,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: { kohya: { default: 2 } },
       chroma: { all: { default: 2 } },
       qwen_image: { all: { default: 2 } },
+      zimageturbo: { all: { default: 2 } },
       // sd3_medium: { all: { default: 2 } },
       // sd3_large: { all: { default: 2 } },
     },
@@ -550,6 +561,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       qwen_image: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      zimageturbo: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       hy_720_fp8: { all: { default: optimizerArgMapVideo.AdamW8Bit } },

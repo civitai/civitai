@@ -31,6 +31,7 @@ import {
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
+  trainingDetailsBaseModelsZImageTurbo,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { TrainingRun, TrainingRunUpdate } from '~/store/training.store';
@@ -173,6 +174,8 @@ const ModelSelector = ({
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
                   ? 'qwen'
+                  : ([...getBaseModelsByGroup('ZImageTurbo')] as string[]).includes(baseModel)
+                  ? 'zimageturbo'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
                   : 'sd15';
@@ -321,6 +324,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelZImageTurbo =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsZImageTurbo as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -410,6 +418,17 @@ export const ModelSelect = ({
                       name="Qwen"
                       value={baseModelQwen}
                       baseType="qwen"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.zimageturboTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="yellow"
+                      name="Z Image"
+                      value={baseModelZImageTurbo}
+                      baseType="zimageturbo"
                       makeDefaultParams={makeDefaultParams}
                       isNew
                     />

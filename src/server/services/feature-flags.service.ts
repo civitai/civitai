@@ -46,6 +46,7 @@ const featureFlags = createFeatureFlags({
   aiToolkitTraining: ['mod'],
   qwenTraining: ['mod'],
   flux2Training: ['mod'],
+  zimageturboTraining: ['mod'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],

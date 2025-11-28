@@ -17,6 +17,7 @@ export const trainingBaseModelTypesImage = [
   'flux2',
   'chroma',
   'qwen',
+  'zimageturbo',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
 export const trainingBaseModelType = [
@@ -214,6 +215,17 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'qwen' },
   },
   //
+  zimageturbo: {
+    label: 'Turbo',
+    pretty: 'ZImageTurbo',
+    type: 'zimageturbo',
+    description: 'High-speed image generation with turbo acceleration.',
+    air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
+    baseModel: 'ZImageTurbo',
+    isNew: true,
+    aiToolkit: { ecosystem: 'zimageturbo' },
+  },
+  //
   flux2_dev: {
     label: 'Dev',
     pretty: 'Flux.2',
@@ -343,13 +355,14 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'wan',
     'chroma',
     'qwen',
+    'zimageturbo',
   ];
   return supportedTypes.includes(baseType);
 };
 
 // Check if AI Toolkit is mandatory (cannot use other engines)
 export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
-  const mandatoryTypes: TrainingBaseModelType[] = ['qwen'];
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimageturbo'];
   return mandatoryTypes.includes(baseType);
 };
 
@@ -359,6 +372,7 @@ export const getDefaultEngine = (
   baseModel?: string
 ): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
+  if (baseType === 'zimageturbo') return 'ai-toolkit'; // ZImageTurbo requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
   if (baseType === 'flux2') {
