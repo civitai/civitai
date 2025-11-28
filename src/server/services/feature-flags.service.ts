@@ -45,7 +45,7 @@ const featureFlags = createFeatureFlags({
   videoTraining: ['mod', 'bronze', 'silver', 'gold'],
   aiToolkitTraining: ['mod'],
   qwenTraining: ['mod'],
-  flux2Training: ['mod'],
+  flux2Training: ['public'],
   zimageturboTraining: ['mod'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
