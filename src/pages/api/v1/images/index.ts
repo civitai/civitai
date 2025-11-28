@@ -8,7 +8,7 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
+import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
@@ -105,27 +105,45 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (isRegionRestricted(region) || domainColor === 'green')
       _browsingLevel = sfwBrowsingLevelsFlag;
 
-    const fn = data.modelId || data.imageId ? getAllImages : getAllImagesIndex;
-
     const features = getFeatureFlags({ user: session?.user, req });
 
-    const { items, nextCursor } = await fn({
-      ...data,
-      types: type ? [type] : undefined,
-      limit,
-      skip,
-      cursor,
-      include: ['metaSelect', 'tagIds', 'profilePictures'],
-      periodMode: 'published',
-      headers: { src: '/api/v1/images' },
-      browsingLevel: _browsingLevel,
-      withMeta,
-      user: session?.user,
-      disableMinor: true,
-      disablePoi: true,
-      includeBaseModel: true,
-      useLogicalReplica: features.logicalReplica,
-    });
+    // Use legacy getAllImages for specific model/image lookups, new feed service for index queries
+    const useLegacyMethod = data.modelId || data.imageId;
+
+    const { items, nextCursor } = useLegacyMethod
+      ? await getAllImages({
+          ...data,
+          types: type ? [type] : undefined,
+          limit,
+          skip,
+          cursor,
+          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          periodMode: 'published',
+          headers: { src: '/api/v1/images' },
+          browsingLevel: _browsingLevel,
+          withMeta,
+          user: session?.user,
+          disableMinor: true,
+          disablePoi: true,
+          includeBaseModel: true,
+          useLogicalReplica: features.logicalReplica,
+        })
+      : await getImagesFromFeedSearch({
+          ...data,
+          types: type ? [type] : undefined,
+          limit,
+          skip,
+          cursor,
+          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          periodMode: 'published',
+          browsingLevel: _browsingLevel,
+          withMeta,
+          currentUserId: session?.user?.id,
+          isModerator: session?.user?.isModerator,
+          useCombinedNsfwLevel: !features.canViewNsfw,
+          disableMinor: true,
+          disablePoi: true,
+        });
 
     const metadata: Metadata = {
       nextCursor,

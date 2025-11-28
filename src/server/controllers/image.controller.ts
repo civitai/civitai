@@ -8,7 +8,6 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
-import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -26,7 +25,6 @@ import {
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,
-  getImagesFromFeedSearch,
   getPostDetailByImageId,
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
@@ -75,6 +73,7 @@ import {
   moderateImages,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 
 export const moderateImageHandler = async ({
   input,
@@ -251,25 +250,26 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
-  const useFeedSearch = features.imageIndexFeed && input.useIndex;
+  // Use getAllImagesIndex (old Meilisearch) when useIndex is true
+  // Use getAllImages (DB) otherwise
+  // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
+  const useIndex = features.imageIndexFeed && input.useIndex;
 
-  // Track when useIndex is false or undefined
-  if (!useFeedSearch) {
+  if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
   }
 
   try {
-    if (useFeedSearch) {
-      // getImagesFromFeedSearch uses ImageSearchInput (currentUserId, isModerator)
-      return await getImagesFromFeedSearch({
+    if (useIndex) {
+      return await getAllImagesIndex({
         ...input,
-        currentUserId: user?.id,
-        isModerator: user?.isModerator,
+        user,
         useCombinedNsfwLevel: !features.canViewNsfw,
+        headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
+        useLogicalReplica: features.logicalReplica,
       });
     } else {
-      // getAllImages uses GetAllImagesInput (user object)
       return await getAllImages({
         ...input,
         user,
@@ -310,8 +310,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
+    // Use getAllImagesIndex (old Meilisearch) when feature flag is enabled
+    // Use getAllImages (DB) otherwise
+    // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
     const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
-    // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
     type ResultType = typeof features.imageIndex extends true
       ? ImageResultSearchIndex
       : ImageResultDB;
