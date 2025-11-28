@@ -31,6 +31,7 @@ import {
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
+  trainingDetailsBaseModelsZImageTurbo,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { TrainingRun, TrainingRunUpdate } from '~/store/training.store';
@@ -47,7 +48,7 @@ import {
 import { stringifyAIR } from '~/shared/utils/air';
 import {
   getDefaultEngine,
-  isAiToolkitMandatory,
+  isSamplePromptsRequired,
   type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
@@ -173,6 +174,8 @@ const ModelSelector = ({
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
                   ? 'qwen'
+                  : ([...getBaseModelsByGroup('ZImageTurbo')] as string[]).includes(baseModel)
+                  ? 'zimageturbo'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
                   : 'sd15';
@@ -231,9 +234,9 @@ export const ModelSelect = ({
         defaultParams.trainBatchSize
     );
 
-    // Pre-fill sample prompts if AI Toolkit is mandatory
+    // Pre-fill sample prompts if required (AI Toolkit mandatory models or Flux2)
     const samplePrompts = data.samplePrompts || selectedRun.samplePrompts || ['', '', ''];
-    if (data.baseType && isAiToolkitMandatory(data.baseType)) {
+    if (data.baseType && isSamplePromptsRequired(data.baseType)) {
       // Get captions from uploaded images
       const imageList = useTrainingImageStore.getState()[modelId]?.imageList || [];
       const captionsWithContent = imageList
@@ -319,6 +322,11 @@ export const ModelSelect = ({
   const baseModelQwen =
     !!formBaseModel &&
     (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelZImageTurbo =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsZImageTurbo as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -410,6 +418,17 @@ export const ModelSelect = ({
                       name="Qwen"
                       value={baseModelQwen}
                       baseType="qwen"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.zimageturboTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="yellow"
+                      name="Z Image"
+                      value={baseModelZImageTurbo}
+                      baseType="zimageturbo"
                       makeDefaultParams={makeDefaultParams}
                       isNew
                     />

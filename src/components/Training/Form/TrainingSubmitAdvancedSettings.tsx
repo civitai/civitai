@@ -46,6 +46,7 @@ import {
   isValidRapid,
   isAiToolkitSupported,
   isAiToolkitMandatory,
+  isSamplePromptsRequired,
   getDefaultEngine,
   rapidEta,
   trainingBaseModelTypesVideo,
@@ -344,7 +345,7 @@ export const AdvancedSettings = ({
             <Stack gap={4}>
               <Group gap="sm">
                 <Text>Sample Media Prompts</Text>
-                {selectedRun.params.engine === 'ai-toolkit' && (
+                {isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) && (
                   <Badge color="red" size="sm">
                     Required
                   </Badge>
@@ -352,8 +353,8 @@ export const AdvancedSettings = ({
               </Group>
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" c="dimmed">
-                  {selectedRun.params.engine === 'ai-toolkit'
-                    ? `AI Toolkit requires sample prompts. These are pre-filled from your image captions.`
+                  {isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
+                    ? `This model requires sample prompts. These are pre-filled from your image captions.`
                     : `Set your own prompts for any of the ${isVideo ? '2' : '3'} sample ${
                         isVideo ? 'videos' : 'images'
                       } we generate for each epoch.`}
@@ -366,16 +367,16 @@ export const AdvancedSettings = ({
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #1`}
                 placeholder={
-                  selectedRun.params.engine === 'ai-toolkit'
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
                     ? 'Required - pre-filled from captions'
                     : 'Automatically set'
                 }
                 value={selectedRun.samplePrompts[0]}
-                required={selectedRun.params.engine === 'ai-toolkit'}
+                required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
                 error={
-                  selectedRun.params.engine === 'ai-toolkit' &&
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                   !selectedRun.samplePrompts[0]?.trim()
-                    ? 'Required for AI Toolkit'
+                    ? 'Required'
                     : undefined
                 }
                 onChange={(event) => {
@@ -391,16 +392,16 @@ export const AdvancedSettings = ({
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #2`}
                 placeholder={
-                  selectedRun.params.engine === 'ai-toolkit'
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
                     ? 'Required - pre-filled from captions'
                     : 'Automatically set'
                 }
                 value={selectedRun.samplePrompts[1]}
-                required={selectedRun.params.engine === 'ai-toolkit'}
+                required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
                 error={
-                  selectedRun.params.engine === 'ai-toolkit' &&
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                   !selectedRun.samplePrompts[1]?.trim()
-                    ? 'Required for AI Toolkit'
+                    ? 'Required'
                     : undefined
                 }
                 onChange={(event) => {
@@ -417,16 +418,16 @@ export const AdvancedSettings = ({
                 <TextInputWrapper
                   label={`${isVideo ? 'Video' : 'Image'} #3`}
                   placeholder={
-                    selectedRun.params.engine === 'ai-toolkit'
+                    isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
                       ? 'Required - pre-filled from captions'
                       : 'Automatically set'
                   }
                   value={selectedRun.samplePrompts[2]}
-                  required={selectedRun.params.engine === 'ai-toolkit'}
+                  required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
                   error={
-                    selectedRun.params.engine === 'ai-toolkit' &&
+                    isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                     !selectedRun.samplePrompts[2]?.trim()
-                      ? 'Required for AI Toolkit'
+                      ? 'Required'
                       : undefined
                   }
                   onChange={(event) => {
