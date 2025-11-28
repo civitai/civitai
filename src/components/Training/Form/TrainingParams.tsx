@@ -262,7 +262,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
       wan_2_1_t2v_14b: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
-      zimageturbo: { all: { default: 512 } },
+      zimageturbo: { all: { default: 1024 } },
     },
   },
   {
@@ -454,7 +454,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
-      zimageturbo: { all: { default: 5 } },
+      zimageturbo: { all: { default: 0 } },
     },
   },
   {
@@ -474,7 +474,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: { kohya: { default: 2 } },
       chroma: { all: { default: 2 } },
       qwen_image: { all: { default: 2 } },
-      zimageturbo: { all: { default: 2 } },
+      zimageturbo: { all: { default: 32 } },
       // sd3_medium: { all: { default: 2 } },
       // sd3_large: { all: { default: 2 } },
     },
@@ -505,7 +505,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { default: 1 } },
       wan_2_1_i2v_14b_720p: { all: { default: 1 } },
       wan_2_1_t2v_14b: { all: { default: 1 } },
-      zimageturbo: { all: { default: 16 } },
+      zimageturbo: { all: { default: 32 } },
     },
   },
   {
@@ -522,7 +522,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
-      zimageturbo: { all: { default: 0.1 } },
+      zimageturbo: { all: { default: 0 } },
     },
   },
   {
