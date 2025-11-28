@@ -277,7 +277,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
       SELECT
         arrayJoin(resourcesUsed) as modelVersionId
       FROM orchestration.jobs
-      WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy')
+      WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'falFlux2Image')
         AND createdAt >= ${ctx.lastUpdate}
     )
   `;
@@ -290,7 +290,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     log('getGenerationTasks', i + 1, 'of', tasks.length);
     const generations = await ctx.ch.$query<VersionTimeframeRow>`
       SELECT modelVersionId,
-             count(*) all_time
+        count(*) all_time
       FROM daily_user_resource
       WHERE modelVersionId IN (${ids})
       GROUP BY modelVersionId;
