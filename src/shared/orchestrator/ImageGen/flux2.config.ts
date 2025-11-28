@@ -52,8 +52,8 @@ const baseSchema = z.object({
   prompt: promptSchema,
   width: z.number(),
   height: z.number(),
-  cfgScale: z.number().optional(),
-  steps: z.number().optional(),
+  guidanceScale: z.number().optional(),
+  numInferenceSteps: z.number().optional(),
   quantity: z.number().optional(),
   seed: seedSchema,
   loras: resourceSchema.array().optional(),
@@ -83,8 +83,8 @@ export const flux2Config = ImageGenConfig({
       seed: params.seed,
       width: params.width,
       height: params.height,
-      cfgScale: params.cfgScale,
-      steps: params.steps,
+      guidanceScale: params.cfgScale,
+      numInferenceSteps: params.steps,
     };
   },
   inputFn: ({ params, resources }): Flux2DevImageGenInput => {
@@ -97,8 +97,8 @@ export const flux2Config = ImageGenConfig({
 
     return schema.parse({
       ...params,
-      model,
       operation: params.images?.length ? 'editImage' : 'createImage',
+      model,
       loras,
     }) as unknown as Flux2DevImageGenInput; // TODO: fix any when typings accept pro | flex
   },
