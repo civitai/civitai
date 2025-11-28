@@ -262,6 +262,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
       wan_2_1_t2v_14b: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
+      zimageturbo: { all: { default: 512 } },
     },
   },
   {
@@ -453,6 +454,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, max: 0 } },
+      zimageturbo: { all: { default: 5 } },
     },
   },
   {
@@ -503,6 +505,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { default: 1 } },
       wan_2_1_i2v_14b_720p: { all: { default: 1 } },
       wan_2_1_t2v_14b: { all: { default: 1 } },
+      zimageturbo: { all: { default: 16 } },
     },
   },
   {
@@ -519,6 +522,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_i2v_14b_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       wan_2_1_t2v_14b: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      zimageturbo: { all: { default: 0.1 } },
     },
   },
   {
