@@ -43,3 +43,7 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
 export function getModelVersionUsesImageGen(modelVersionId: number) {
   return !!imageGenModelVersionMap.get(modelVersionId);
 }
+
+export function getImageGenConfigKey(modelVersionId: number): ImageGenConfigKey | undefined {
+  return imageGenModelVersionMap.get(modelVersionId);
+}
