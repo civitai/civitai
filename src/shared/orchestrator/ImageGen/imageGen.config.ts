@@ -15,6 +15,7 @@ import {
   openaiConfig,
   openaiModelVersionToModelMap,
 } from '~/shared/orchestrator/ImageGen/openai.config';
+import { qwenConfig, qwenModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/qwen.config';
 import {
   seedreamConfig,
   seedreamModelVersionToModelMap,
@@ -27,6 +28,7 @@ export const imageGenConfig = {
   flux1: flux1KontextConfig,
   flux2: flux2Config,
   gemini: geminiConfig,
+  qwen: qwenConfig,
   seedream: seedreamConfig,
 };
 
@@ -37,6 +39,7 @@ export const imageGenModelVersionMap = new Map<number, ImageGenConfigKey>(
     .concat([...fluxKontextModelVersionToModelMap.keys()].map((key) => [key, 'flux1']))
     .concat([...flux2ModelVersionToModelMap.keys()].map((key) => [key, 'flux2']))
     .concat([...geminiModelVersionMap.keys()].map((key) => [key, 'gemini']))
+    .concat([...qwenModelVersionToModelMap.keys()].map((key) => [key, 'qwen']))
     .concat([...seedreamModelVersionToModelMap.keys()].map((key) => [key, 'seedream']))
 );
 

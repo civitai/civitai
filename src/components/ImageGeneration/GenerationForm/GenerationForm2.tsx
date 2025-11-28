@@ -124,6 +124,10 @@ import {
   getModelVersionUsesImageGen,
   imageGenModelVersionMap,
 } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import {
+  qwenModelModeOptions,
+  getIsQwen as getIsQwenImageGen,
+} from '~/shared/orchestrator/ImageGen/qwen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
@@ -466,7 +470,7 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2;
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isQwen;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -476,6 +480,7 @@ export function GenerationFormContent() {
     () => [
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
+      // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
     [isFluxKontext, isFlux2]
