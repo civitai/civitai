@@ -398,6 +398,21 @@ export const isInvalidAiToolkit = (
   return !isAiToolkitSupported(baseModel) && engine === 'ai-toolkit';
 };
 
+// Check if sample prompts are required for training
+// This includes AI Toolkit mandatory models and Flux2
+export const isSamplePromptsRequired = (
+  baseType: TrainingBaseModelType,
+  engine?: EngineTypes
+): boolean => {
+  // AI Toolkit mandatory models always require sample prompts
+  if (isAiToolkitMandatory(baseType)) return true;
+  // Flux2 requires sample prompts
+  if (baseType === 'flux2') return true;
+  // AI Toolkit engine requires sample prompts
+  if (engine === 'ai-toolkit') return true;
+  return false;
+};
+
 // TODO get this back from the dryRun
 export const discountInfo = {
   amt: 0,

@@ -48,7 +48,7 @@ import {
 import { stringifyAIR } from '~/shared/utils/air';
 import {
   getDefaultEngine,
-  isAiToolkitMandatory,
+  isSamplePromptsRequired,
   type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
@@ -234,9 +234,9 @@ export const ModelSelect = ({
         defaultParams.trainBatchSize
     );
 
-    // Pre-fill sample prompts if AI Toolkit is mandatory
+    // Pre-fill sample prompts if required (AI Toolkit mandatory models or Flux2)
     const samplePrompts = data.samplePrompts || selectedRun.samplePrompts || ['', '', ''];
-    if (data.baseType && isAiToolkitMandatory(data.baseType)) {
+    if (data.baseType && isSamplePromptsRequired(data.baseType)) {
       // Get captions from uploaded images
       const imageList = useTrainingImageStore.getState()[modelId]?.imageList || [];
       const captionsWithContent = imageList
