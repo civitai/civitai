@@ -832,6 +832,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           </AlertWithIcon>
         )}
+
       {!prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
@@ -873,6 +874,24 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <Group gap="sm" justify="space-between" wrap="nowrap">
             <Text>Video training requires that all files are labeled.</Text>
             <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+          </Group>
+        </AlertWithIcon>
+      )}
+
+      {selectedRun.baseType === 'zimageturbo' && (
+        <AlertWithIcon
+          icon={<IconAlertTriangle size={16} />}
+          iconColor="yellow"
+          radius={0}
+          size="md"
+          color="yellow"
+          mt="sm"
+        >
+          <Group gap="sm" justify="space-between" wrap="nowrap">
+            <Text>
+              Z&ndash;Image Turbo training is experimental, and we’re still fine-tuning things
+              behind the scenes{' '}
+            </Text>
           </Group>
         </AlertWithIcon>
       )}
