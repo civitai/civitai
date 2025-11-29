@@ -170,7 +170,7 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: 5 },
       },
       zimageturbo: {
-        all: { default: 5 },
+        all: { default: 10 },
       },
       // sd3_medium: { all: { default: 5 } },
       // sd3_large: { all: { default: 5 } },
