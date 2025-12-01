@@ -24,6 +24,7 @@ const baseModelConfig = [
   { name: 'Flux.1 D', type: 'image', group: 'Flux1' },
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
+  { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
@@ -96,6 +97,7 @@ const baseModelConfig = [
   { name: 'Wan Video 2.2 T2V-A14B', type: 'video', group: 'WanVideo-22-T2V-A14B', engine: 'wan' },
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
+  { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 export const baseModelGroupConfig = {
@@ -295,6 +297,7 @@ const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
   { name: 'Stable Diffusion', groups: ['SD1', 'SD2', 'SD3', 'SD3_5M'] },
   { name: 'Stable Diffusion XL', groups: ['SDXL', 'SDXLDistilled', 'Pony'] },
   { name: 'Flux', groups: ['Flux1'] },
+  { name: 'Flux 2', groups: ['Flux2'] },
   { name: 'Flux Kontext', groups: ['Flux1Kontext'] },
   { name: 'PixArt alpha', groups: ['PixArtA'] },
   { name: 'PixArt sigma', groups: ['PixArtE'] },
@@ -584,6 +587,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Flux.1 Kontext'] }],
   },
   {
+    group: 'Flux2',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 D'],
+      },
+    ],
+  },
+  {
     group: 'HiDream',
     support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['HiDream'] }],
   },
@@ -726,6 +738,15 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
   {
     group: 'Veo3',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],
+  },
+  {
+    group: 'ZImageTurbo',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['ZImageTurbo'],
+      },
+    ],
   },
 ];
 

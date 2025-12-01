@@ -17,6 +17,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   Pony: <IconHorse size={16} strokeWidth={2.5} />,
   'Flux.1 D': 'F1',
   'Flux.1 S': 'F1',
+  'Flux.2 D': 'F2',
   'SD 1.4': 'SD1',
   'SD 1.5': 'SD1',
   'SD 1.5 LCM': 'SD1',
@@ -42,6 +43,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   NoobAI: 'NAI',
   HiDream: 'HID',
   Chroma: 'CHR',
+  ZImageTurbo: 'ZIT',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {

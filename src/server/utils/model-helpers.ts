@@ -68,21 +68,47 @@ export const getFileDisplayName = ({
   return startCase(file.type);
 };
 
+export const getEpochJobAndFileName = (downloadUrl: string) => {
+
+  let jobFileUrl; // Leaves you with: ${jobId}/assets/${fileName}
+  let jobId;
+  let fileName;
+
+  if (downloadUrl.includes('/jobs/')) {
+    jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
+    jobId = jobFileUrl.split('/assets/')[0];
+    fileName = jobFileUrl.split('/assets/')[1];
+  } else if (downloadUrl.includes('/consumer/blobs')) {
+    jobId = 'blob';
+    fileName = downloadUrl.split('/consumer/blobs/')[1].split('?')[0];
+  } else {
+    console.warn('Download URL does not contain expected /jobs/ path:', downloadUrl);
+    return null;
+  }
+
+  if (!jobId || !fileName) {
+    throw new Error('Could not get jobId or fileName');
+  }
+
+  return { jobId, fileName };
+  
+}
+
 export const getTrainingFileEpochNumberDetails = (
   file: { type: string | ModelFileType; metadata: FileMetadata },
   epochNumber?: number
 ) => {
+  console.log('getTrainingFileEpochNumberDetails');
   const epoch =
     file.metadata.trainingResults?.epochs?.find((e) =>
       'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
     ) ?? file.metadata.trainingResults?.epochs?.pop();
+  
 
   if (!epoch) return null;
 
   const downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
-  const jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
-  const jobId = jobFileUrl.split('/assets/')[0];
-  const fileName = jobFileUrl.split('/assets/')[1];
+  const { jobId, fileName } = getEpochJobAndFileName(downloadUrl)!;
   const completeDate =
     file.metadata.trainingResults?.version === 2
       ? file.metadata.trainingResults.completedAt

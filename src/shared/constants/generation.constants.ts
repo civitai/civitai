@@ -96,7 +96,7 @@ export const draftInjectableResources = [
 
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
-export function getInjectablResources(baseModelSetType: BaseModelGroup) {
+export function getInjectableResources(baseModelSetType: BaseModelGroup) {
   const isSdxl = getIsSdxl(baseModelSetType);
   let value = baseModelSetType;
   if (isSdxl) value = 'SDXL';
@@ -221,6 +221,16 @@ export function getIsChroma(baseModel?: string) {
   return baseModelSetType === 'Chroma';
 }
 
+export function getIsFlux2(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Flux2';
+}
+
+export function getIsZImageTurbo(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'ZImageTurbo';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
@@ -241,12 +251,15 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Imagen4')) return 'Imagen4';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
     return 'Flux1Kontext';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2')) return 'Flux2';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Chroma')) return 'Chroma';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'Seedream')) return 'Seedream';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'PonyV7')) return 'PonyV7';
+  else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageTurbo'))
+    return 'ZImageTurbo';
   else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
   // video base models
   for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
@@ -373,6 +386,8 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Pony',
   'Illustrious',
   'NoobAI',
+  'Flux1',
+  'FluxKrea',
 ];
 export type ExperimentalModeSupportedModel = (typeof EXPERIMENTAL_MODE_SUPPORTED_MODELS)[number];
 export const fluxModeOptions = [

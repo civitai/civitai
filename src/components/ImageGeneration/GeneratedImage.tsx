@@ -8,6 +8,7 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
+  Badge,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
@@ -56,6 +57,7 @@ import {
   getIsPonyV7,
   getIsQwen,
   getIsSD3,
+  getIsZImageTurbo,
 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
@@ -513,8 +515,16 @@ function GeneratedImageWorkflowMenuItems({
   const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
+  const isZImageTurbo = !isVideo && getIsZImageTurbo(step.params.baseModel);
   const canImg2Img =
-    !isQwen && !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream && !isPonyV7;
+    !isQwen &&
+    !isFlux &&
+    !isSD3 &&
+    !isVideo &&
+    !isImageGen &&
+    !isHiDream &&
+    !isPonyV7 &&
+    !isZImageTurbo;
 
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
   const img2imgWorkflows =
@@ -754,7 +764,9 @@ function GeneratedImageWorkflowMenuItems({
       {/* {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
-          <Menu.Item onClick={handleUpscaleVideo}>Upscale</Menu.Item>
+          <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
+            Upscale <Badge color="yellow">Preview</Badge>
+          </Menu.Item>
         </>
       )} */}
       {!workflowsOnly && (

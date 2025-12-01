@@ -6,7 +6,6 @@ import type {
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
-import { removeEmpty } from '~/utils/object-helpers';
 
 export const imagen4AspectRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'] as const;
 
@@ -91,7 +90,7 @@ export const geminiConfig = ImageGenConfig({
       return schema.parse({
         engine: 'gemini',
         prompt: params.prompt,
-        images: params.images?.map((x) => x.url),
+        images: params.images,
         operation: params.images?.length ? 'editImage' : 'createImage',
         model,
         quantity: params.quantity,

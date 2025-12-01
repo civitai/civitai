@@ -62,18 +62,23 @@ export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realisti
 export const trainingDetailsBaseModelsXL = ['sdxl', 'pony', 'illustrious'] as const;
 // export const trainingDetailsBaseModels35 = ['sd3_medium', 'sd3_large'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
+export const trainingDetailsBaseModelsFlux2 = ['flux2_dev'] as const;
+// export const trainingDetailsBaseModelsFlux2Edit = ['flux2_dev_edit'] as const; // Disabled for now
 export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
 export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2v_14b'] as const;
 export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
 export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
+export const trainingDetailsBaseModelsZImageTurbo = ['zimageturbo'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
   ...trainingDetailsBaseModelsXL,
   // ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
+  ...trainingDetailsBaseModelsFlux2,
   ...trainingDetailsBaseModelsChroma,
   ...trainingDetailsBaseModelsQwen,
+  ...trainingDetailsBaseModelsZImageTurbo,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -160,7 +165,9 @@ const aiToolkitTrainingDetailsParams = z.object({
 
 // Union type for database storage - supports both formats
 export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
-  trainingDetailsParams.extend({ engine: z.enum(['kohya', 'rapid', 'musubi'] as const) }),
+  trainingDetailsParams.extend({
+    engine: z.enum(['kohya', 'rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
+  }),
   aiToolkitTrainingDetailsParams,
 ]);
 export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
