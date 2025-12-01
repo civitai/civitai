@@ -15,7 +15,10 @@ type BaseModelConfig = typeof baseModelConfig;
 export type BaseModel = BaseModelConfig[number]['name'];
 export type BaseModelGroup = BaseModelConfig[number]['group'];
 
-export const baseModelFamilyConfig = {
+export const baseModelFamilyConfig: Record<
+  string,
+  { name: string; description: string; disabled?: boolean }
+> = {
   Flux: {
     name: 'Flux',
     description: "Black Forest Labs' family of state-of-the-art image generation models",
@@ -55,12 +58,13 @@ export const baseModelFamilyConfig = {
   Qwen: {
     name: 'Qwen',
     description: "Alibaba's multimodal model family with image generation capabilities",
+    disabled: true,
   },
   ZImageTurbo: {
     name: 'ZImageTurbo',
     description: 'Fast turbo-optimized image generation models',
   },
-} as const;
+};
 
 export type BaseModelFamily = keyof typeof baseModelFamilyConfig;
 

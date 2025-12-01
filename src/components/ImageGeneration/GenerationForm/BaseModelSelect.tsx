@@ -79,9 +79,9 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
     // Convert to array and sort: families first (alphabetically), then standalone items
     const result: FamilyGroup[] = [];
 
-    // Add family groups first
+    // Add family groups first (excluding disabled families)
     const families = [...familyMap.entries()]
-      .filter(([family]) => family !== null)
+      .filter(([family]) => family !== null && !baseModelFamilyConfig[family!].disabled)
       .sort(([a], [b]) => {
         const nameA = baseModelFamilyConfig[a!].name;
         const nameB = baseModelFamilyConfig[b!].name;
@@ -97,9 +97,14 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
       });
     }
 
-    // Add standalone items (no family) at the end
-    const standalone = familyMap.get(null);
-    if (standalone?.length) {
+    // Items from disabled families go to standalone
+    const disabledFamilyItems = [...familyMap.entries()]
+      .filter(([family]) => family !== null && baseModelFamilyConfig[family!].disabled)
+      .flatMap(([, items]) => items);
+
+    // Add standalone items (no family + items from disabled families) at the end
+    const standalone = [...(familyMap.get(null) ?? []), ...disabledFamilyItems];
+    if (standalone.length) {
       result.push({
         family: null,
         familyName: null,
