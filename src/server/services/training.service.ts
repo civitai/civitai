@@ -22,6 +22,7 @@ export type TrainingRequest = {
   userId: number;
   fileMetadata: FileMetadata | null;
   modelVersionId: number;
+  modelVersionMetadata?: MixedObject | null;
 };
 
 async function getSubmittedAt(modelVersionId: number, userId: number) {

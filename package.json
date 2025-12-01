@@ -49,6 +49,7 @@
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
     "test:reset": "make bootstrap-db",
     "meilisearch:migrate": "NODE_ENV=development tsx scripts/oneoffs/meilisearch-migration.ts",
+    "tsscript": "NODE_ENV=development tsx",
     "madge:orphans": "madge --orphans --image ./public/orphans-graph.svg --ts-config ./tsconfig.json --extensions ts,tsx src/",
     "depcheck": "depcheck",
     "generate-types": "typed-scss-modules src"

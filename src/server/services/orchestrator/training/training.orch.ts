@@ -11,6 +11,7 @@ import type {
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   AiToolkitTrainingParams,
   ImageTrainingStepSchema,
@@ -21,6 +22,7 @@ import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import {
@@ -230,7 +232,8 @@ export const createTrainingWorkflow = async ({
            mf.url      "trainingUrl",
            mf.id       "fileId",
            mf.metadata "fileMetadata",
-           mv.id       "modelVersionId"
+           mv.id       "modelVersionId",
+           mv."meta" "modelVersionMetadata"
     FROM "ModelVersion" mv
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
@@ -318,7 +321,44 @@ export const createTrainingWorkflow = async ({
     },
   });
 
-  // check workflow.status?
+  // Update file and version status immediately after workflow creation
+  const now = new Date().toISOString();
+  const existingTrainingResults = (fileMetadata.trainingResults ?? {}) as Partial<TrainingResultsV2>;
+  const existingHistory = existingTrainingResults.history ?? [];
+
+  const newTrainingResults: TrainingResultsV2 = {
+    ...existingTrainingResults,
+    version: 2,
+    workflowId: workflow.id ?? 'unk',
+    submittedAt: now,
+    startedAt: null,
+    completedAt: null,
+    epochs: existingTrainingResults.epochs ?? [],
+    history: [...existingHistory, { time: now, status: TrainingStatus.Submitted }],
+    sampleImagesPrompts: samplePrompts,
+    transactionData: workflow.transactions?.list ?? [],
+  };
+
+  const newMetadata: FileMetadata = {
+    ...fileMetadata,
+    trainingResults: newTrainingResults,
+  };
+
+  await dbWrite.modelFile.update({
+    where: { id: modelFileId },
+    data: { metadata: newMetadata },
+  });
+
+  await dbWrite.modelVersion.update({
+    where: { id: modelVersionId },
+    data: {
+      trainingStatus: TrainingStatus.Submitted,
+      meta: {
+        ...(modelVersion.modelVersionMetadata ?? {}),
+        trainingWorkflowId: workflow.id,
+      },
+    },
+  });
 
   return workflow;
 };
