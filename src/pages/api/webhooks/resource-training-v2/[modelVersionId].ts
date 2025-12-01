@@ -86,6 +86,7 @@ export default WebhookEndpoint(async (req, res) => {
           token: env.ORCHESTRATOR_ACCESS_TOKEN,
           path: { workflowId },
         });
+        console.log(workflow);
         await updateRecords(workflow, status);
       } catch (e: unknown) {
         const err = e as Error | undefined;
@@ -118,7 +119,8 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
   if (!step) throw new Error('Missing step data');
   if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
 
-  // console.dir(step);
+  console.log('Updating records for workflow:', workflowId);
+  console.log(JSON.stringify(step, null, 2));
 
   const {
     metadata: { modelFileId },
