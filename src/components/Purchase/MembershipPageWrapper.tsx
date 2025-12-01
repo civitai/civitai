@@ -68,33 +68,6 @@ export function MembershipPageWrapper({
             </Alert>
           )}
 
-          {/* Holiday banner */}
-          {isHolidays && !redirectReason && (
-            <Alert color="blue">
-              <div className="flex flex-col items-center gap-4 md:flex-row">
-                <Image
-                  src="/images/holiday/happy-holidays-robot.png"
-                  alt="happy-holidays"
-                  width={150}
-                  height={150}
-                  className="hidden rounded-md md:block"
-                />
-                <Stack gap="xs">
-                  <Text size="md">
-                    To celebrate the holidays and our amazing community, new subscribers and current
-                    members alike will receive 20% additional Blue Buzz along with their standard
-                    Buzz disbursement!
-                  </Text>
-                  <Text size="md">
-                    This bonus applies when a new membership is purchased or an active membership
-                    renews.
-                  </Text>
-                  <Text size="md">Happy Holidays from Civitai!</Text>
-                </Stack>
-              </div>
-            </Alert>
-          )}
-
           {/* Title and intro text */}
           <Title className={clsx(classes.title, 'text-center')}>{title}</Title>
           {introText && (

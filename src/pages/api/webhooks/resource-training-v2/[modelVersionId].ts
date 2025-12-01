@@ -76,6 +76,8 @@ export default WebhookEndpoint(async (req, res) => {
 
   switch (status) {
     case 'unassigned':
+    case 'preparing':
+    case 'scheduled':
     case 'processing':
     case 'failed':
     case 'expired':
@@ -86,6 +88,7 @@ export default WebhookEndpoint(async (req, res) => {
           token: env.ORCHESTRATOR_ACCESS_TOKEN,
           path: { workflowId },
         });
+        console.log(workflow);
         await updateRecords(workflow, status);
       } catch (e: unknown) {
         const err = e as Error | undefined;
@@ -96,9 +99,6 @@ export default WebhookEndpoint(async (req, res) => {
         return res.status(500).json({ ok: false, error: err?.message, workflowId });
       }
 
-      break;
-    case 'preparing':
-    case 'scheduled':
       break;
     default:
       logWebhook({
@@ -112,13 +112,11 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 export async function updateRecords(workflow: Workflow, status: WorkflowStatus) {
-  const { transactions, steps, id: workflowId, createdAt } = workflow;
+  const { transactions, steps, id: workflowId, createdAt, status: workflowStatus } = workflow;
 
   const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
   if (!step) throw new Error('Missing step data');
   if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
-
-  // console.dir(step);
 
   const {
     metadata: { modelFileId },
@@ -126,7 +124,8 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
     startedAt,
     completedAt,
   } = step;
-  let trainingStatus = mapTrainingStatus[status];
+
+  let trainingStatus = mapTrainingStatus[workflowStatus ?? status];
 
   // Determine step type and extract data accordingly
   const stepType = step.$type;
