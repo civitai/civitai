@@ -672,6 +672,7 @@ const nanoBananaProSizes = [
   { label: '9:16', width: 1440, height: 2560 },
 ];
 
+export type GenerationConfigKey = keyof typeof generationConfig;
 export const generationConfig = {
   SD1: {
     aspectRatios: [

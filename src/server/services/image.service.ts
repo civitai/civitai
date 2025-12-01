@@ -656,7 +656,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  if (env.IMAGE_SCANNER_NEW) {
+  if (env.IMAGE_SCANNER_NEW || userId === 5) {
     const workflowResponse = await createImageIngestionRequest({
       imageId: id,
       url,
