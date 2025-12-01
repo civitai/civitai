@@ -104,7 +104,7 @@ export const baseModelGroupConfig = {
   AuraFlow: {
     name: 'AuraFlow',
     description:
-      'Open-source flow-based text-to-image model from Fal.ai with strong prompt adherence',
+      'Open-source text-to-image model from Fal.ai with strong prompt adherence',
   },
   Chroma: {
     name: 'Chroma',
@@ -145,7 +145,7 @@ export const baseModelGroupConfig = {
   },
   Imagen4: {
     name: 'Imagen 4',
-    description: "Google's latest text-to-image model with photorealistic capabilities",
+    description: "One of Google's text-to-image models with photorealistic capabilities",
   },
   Kolors: {
     name: 'Kolors',
@@ -157,7 +157,7 @@ export const baseModelGroupConfig = {
   },
   Lumina: {
     name: 'Lumina',
-    description: 'Open-source flow-based model with strong architectural foundations',
+    description: 'Open-source model with strong foundations',
   },
   Mochi: {
     name: 'Mochi',
@@ -165,7 +165,7 @@ export const baseModelGroupConfig = {
   },
   NanoBanana: {
     name: 'Nano Banana',
-    description: 'Compact experimental image generation model',
+    description: "Google's state-of-the-art image generation model",
   },
   NoobAI: {
     name: 'NoobAI',
@@ -177,7 +177,7 @@ export const baseModelGroupConfig = {
   },
   OpenAI: {
     name: 'OpenAI',
-    description: "OpenAI's image generation models including DALL-E",
+    description: "OpenAI’s family of creative, high-quality image generation models",
   },
   Other: {
     name: 'Other',
@@ -237,7 +237,7 @@ export const baseModelGroupConfig = {
   },
   Seedream: {
     name: 'Seedream',
-    description: "ByteDance's image generation model",
+    description: "ByteDance's groundbreaking image generation model",
   },
   Sora2: {
     name: 'Sora 2',
