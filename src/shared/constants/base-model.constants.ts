@@ -15,6 +15,55 @@ type BaseModelConfig = typeof baseModelConfig;
 export type BaseModel = BaseModelConfig[number]['name'];
 export type BaseModelGroup = BaseModelConfig[number]['group'];
 
+export const baseModelFamilyConfig = {
+  Flux: {
+    name: 'Flux',
+    description: "Black Forest Labs' family of state-of-the-art image generation models",
+  },
+  StableDiffusion: {
+    name: 'Stable Diffusion',
+    description: "Stability AI's foundational open-source diffusion models",
+  },
+  SDXLCommunity: {
+    name: 'SDXL Community',
+    description: 'Community-trained models built on the SDXL architecture',
+  },
+  Hunyuan: {
+    name: 'Hunyuan',
+    description: "Tencent's family of image and video generation models",
+  },
+  WanVideo: {
+    name: 'Wan Video',
+    description: "Alibaba's video generation model series with various sizes and modes",
+  },
+  PixArt: {
+    name: 'PixArt',
+    description: 'Efficient transformer-based text-to-image models',
+  },
+  Google: {
+    name: 'Google',
+    description: "Google's image and video generation models",
+  },
+  OpenAI: {
+    name: 'OpenAI',
+    description: "OpenAI's creative image and video generation models",
+  },
+  Pony: {
+    name: 'Pony Diffusion',
+    description: 'Community models with extensive tag-based prompt support',
+  },
+  Qwen: {
+    name: 'Qwen',
+    description: "Alibaba's multimodal model family with image generation capabilities",
+  },
+  ZImageTurbo: {
+    name: 'ZImageTurbo',
+    description: 'Fast turbo-optimized image generation models',
+  },
+} as const;
+
+export type BaseModelFamily = keyof typeof baseModelFamilyConfig;
+
 // type BaseModel
 const baseModelConfig = [
   { name: 'AuraFlow', type: 'image', group: 'AuraFlow' },
@@ -100,11 +149,16 @@ const baseModelConfig = [
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
-export const baseModelGroupConfig = {
+type BaseModelGroupConfigEntry = {
+  name: string;
+  description: string;
+  family?: BaseModelFamily;
+};
+
+export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEntry> = {
   AuraFlow: {
     name: 'AuraFlow',
-    description:
-      'Open-source text-to-image model from Fal.ai with strong prompt adherence',
+    description: 'Open-source text-to-image model from Fal.ai with strong prompt adherence',
   },
   Chroma: {
     name: 'Chroma',
@@ -116,16 +170,23 @@ export const baseModelGroupConfig = {
   },
   Flux1: {
     name: 'Flux.1',
-    description:
-      'State-of-the-art text-to-image model from Black Forest Labs with exceptional quality',
+    family: 'Flux',
+    description: 'First generation Flux with schnell and dev variants',
   },
   FluxKrea: {
     name: 'Flux.1 Krea',
+    family: 'Flux',
     description: 'Krea-trained variant of Flux optimized for creative generation',
   },
   Flux1Kontext: {
     name: 'Flux.1 Kontext',
+    family: 'Flux',
     description: 'Flux variant specialized for context-aware image editing and generation',
+  },
+  Flux2: {
+    name: 'Flux.2',
+    family: 'Flux',
+    description: 'Next-generation Flux with enhanced capabilities',
   },
   HiDream: {
     name: 'HiDream',
@@ -133,19 +194,23 @@ export const baseModelGroupConfig = {
   },
   HyDit1: {
     name: 'Hunyuan DiT',
-    description: "Tencent's diffusion transformer for bilingual Chinese-English image generation",
+    family: 'Hunyuan',
+    description: 'Diffusion transformer for bilingual Chinese-English image generation',
   },
   HyV1: {
     name: 'Hunyuan Video',
-    description: "Tencent's video generation model with strong motion coherence",
+    family: 'Hunyuan',
+    description: 'Video generation model with strong motion coherence',
   },
   Illustrious: {
     name: 'Illustrious',
+    family: 'SDXLCommunity',
     description: 'SDXL-based model specialized for anime and illustration styles',
   },
   Imagen4: {
     name: 'Imagen 4',
-    description: "One of Google's text-to-image models with photorealistic capabilities",
+    family: 'Google',
+    description: 'Text-to-image model with photorealistic capabilities',
   },
   Kolors: {
     name: 'Kolors',
@@ -165,10 +230,12 @@ export const baseModelGroupConfig = {
   },
   NanoBanana: {
     name: 'Nano Banana',
-    description: "Google's state-of-the-art image generation model",
+    family: 'Google',
+    description: 'Experimental image generation model',
   },
   NoobAI: {
     name: 'NoobAI',
+    family: 'SDXLCommunity',
     description: 'SDXL-based model trained for anime and stylized content',
   },
   ODOR: {
@@ -177,7 +244,8 @@ export const baseModelGroupConfig = {
   },
   OpenAI: {
     name: 'OpenAI',
-    description: "OpenAI’s family of creative, high-quality image generation models",
+    family: 'OpenAI',
+    description: 'Image generation models including DALL-E',
   },
   Other: {
     name: 'Other',
@@ -185,10 +253,12 @@ export const baseModelGroupConfig = {
   },
   PixArtA: {
     name: 'PixArt Alpha',
+    family: 'PixArt',
     description: 'Efficient transformer-based model with fast training and strong quality',
   },
   PixArtE: {
     name: 'PixArt Sigma',
+    family: 'PixArt',
     description: 'Enhanced PixArt with 4K resolution support and improved detail',
   },
   PlaygroundV2: {
@@ -197,101 +267,129 @@ export const baseModelGroupConfig = {
   },
   Pony: {
     name: 'Pony Diffusion',
+    family: 'Pony',
     description: 'SDXL-based model with extensive tag-based prompt support',
   },
   PonyV7: {
     name: 'Pony Diffusion V7',
+    family: 'Pony',
     description: 'Latest Pony Diffusion built on AuraFlow architecture',
   },
   Qwen: {
     name: 'Qwen',
-    description: "Alibaba's multimodal model with image generation capabilities",
+    family: 'Qwen',
+    description: 'Multimodal model with image generation capabilities',
   },
   SCascade: {
     name: 'Stable Cascade',
-    description: "Stability AI's cascaded latent diffusion model for high-resolution output",
+    family: 'StableDiffusion',
+    description: 'Cascaded latent diffusion model for high-resolution output',
   },
   SD1: {
     name: 'Stable Diffusion 1.x',
+    family: 'StableDiffusion',
     description: 'The original Stable Diffusion with broad community support',
   },
   SD2: {
     name: 'Stable Diffusion 2.x',
+    family: 'StableDiffusion',
     description: 'Second generation SD with improved architecture and 768px support',
   },
   SD3: {
     name: 'Stable Diffusion 3',
-    description: "Stability AI's multimodal diffusion transformer architecture",
+    family: 'StableDiffusion',
+    description: 'Multimodal diffusion transformer architecture',
   },
   SD3_5M: {
     name: 'Stable Diffusion 3.5 Medium',
+    family: 'StableDiffusion',
     description: 'Balanced SD3.5 variant optimized for quality and speed',
   },
   SDXL: {
     name: 'Stable Diffusion XL',
+    family: 'StableDiffusion',
     description: 'High-resolution SD with improved prompt understanding and detail',
   },
   SDXLDistilled: {
     name: 'SDXL Distilled',
+    family: 'StableDiffusion',
     description: 'Faster SDXL variants with reduced inference steps',
   },
   Seedream: {
     name: 'Seedream',
-    description: "ByteDance's groundbreaking image generation model",
+    description: "ByteDance's image generation model",
   },
   Sora2: {
     name: 'Sora 2',
-    description: "OpenAI's advanced video generation model",
+    family: 'OpenAI',
+    description: 'Advanced video generation model',
   },
   SVD: {
     name: 'Stable Video Diffusion',
-    description: "Stability AI's image-to-video diffusion model",
+    family: 'StableDiffusion',
+    description: 'Image-to-video diffusion model',
   },
   Veo3: {
     name: 'Veo 3',
-    description: "Google DeepMind's latest video generation model",
+    family: 'Google',
+    description: 'Latest video generation model from DeepMind',
   },
   WanVideo: {
     name: 'Wan Video',
-    description: "Alibaba's video generation model series",
+    family: 'WanVideo',
+    description: 'Base video generation model',
   },
   WanVideo1_3B_T2V: {
     name: 'Wan Video 1.3B T2V',
-    description: 'Lightweight Wan Video for text-to-video generation',
+    family: 'WanVideo',
+    description: 'Lightweight text-to-video model',
   },
   WanVideo14B_T2V: {
     name: 'Wan Video 14B T2V',
-    description: 'Full-scale Wan Video for high-quality text-to-video',
+    family: 'WanVideo',
+    description: 'Full-scale text-to-video model',
   },
   WanVideo14B_I2V_480p: {
     name: 'Wan Video 14B I2V 480p',
-    description: 'Wan Video image-to-video at 480p resolution',
+    family: 'WanVideo',
+    description: 'Image-to-video at 480p resolution',
   },
   WanVideo14B_I2V_720p: {
     name: 'Wan Video 14B I2V 720p',
-    description: 'Wan Video image-to-video at 720p resolution',
+    family: 'WanVideo',
+    description: 'Image-to-video at 720p resolution',
   },
   'WanVideo-22-TI2V-5B': {
     name: 'Wan Video 2.2 TI2V 5B',
-    description: 'Wan Video 2.2 text/image-to-video 5B parameter model',
+    family: 'WanVideo',
+    description: 'Text/image-to-video 5B parameter model',
   },
   'WanVideo-22-I2V-A14B': {
     name: 'Wan Video 2.2 I2V A14B',
-    description: 'Wan Video 2.2 image-to-video 14B parameter model',
+    family: 'WanVideo',
+    description: 'Image-to-video 14B parameter model',
   },
   'WanVideo-22-T2V-A14B': {
     name: 'Wan Video 2.2 T2V A14B',
-    description: 'Wan Video 2.2 text-to-video 14B parameter model',
+    family: 'WanVideo',
+    description: 'Text-to-video 14B parameter model',
   },
   'WanVideo-25-T2V': {
     name: 'Wan Video 2.5 T2V',
-    description: 'Latest Wan Video 2.5 for text-to-video generation',
+    family: 'WanVideo',
+    description: 'Latest text-to-video generation',
   },
   'WanVideo-25-I2V': {
     name: 'Wan Video 2.5 I2V',
-    description: 'Latest Wan Video 2.5 for image-to-video generation',
+    family: 'WanVideo',
+    description: 'Latest image-to-video generation',
   },
-} as const satisfies Record<BaseModelGroup, { name: string; description: string }>;
+  ZImageTurbo: {
+    name: 'ZImageTurbo',
+    family: 'ZImageTurbo',
+    description: 'Fast turbo-optimized image generation model',
+  },
+};
 
 const groupNameOverrides: { name: string; groups: BaseModelGroup[] }[] = [
   { name: 'Stable Diffusion', groups: ['SD1', 'SD2', 'SD3', 'SD3_5M'] },
