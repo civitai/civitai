@@ -44,7 +44,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
-import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -337,16 +337,11 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
       )}
     </ImageGuard2>
   ) : (
-    <Embla
-      loop
-      duration={0}
-      className="flex h-full flex-col"
-      // key={data.images.map((x) => x.id).join('_')}
-    >
-      <Embla.Viewport className="flex-1">
-        <Embla.Container className="flex h-full">
+    <SimpleImageCarousel loop total={data.images.length} className="flex h-full flex-col">
+      <SimpleImageCarousel.Viewport className="relative flex-1">
+        <SimpleImageCarousel.Container className="h-full">
           {data.images.map((image, index) => (
-            <Embla.Slide key={index} index={index} className="relative flex-[0_0_100%]">
+            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
               <ImageGuard2 image={image} connectType="post" connectId={postId}>
                 {(safe) => (
                   <>
@@ -389,7 +384,6 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                             placeholder="empty"
                             wrapperProps={{ style: { zIndex: 1 } }}
                             skip={getSkipValue(image)}
-                            // fadeIn
                             className="z-[1] object-cover"
                           />
                         )}
@@ -430,15 +424,15 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   </>
                 )}
               </ImageGuard2>
-            </Embla.Slide>
+            </SimpleImageCarousel.Slide>
           ))}
-        </Embla.Container>
-      </Embla.Viewport>
-      <Embla.Controls />
-      <Embla.Indicators
+        </SimpleImageCarousel.Container>
+        <SimpleImageCarousel.Controls />
+      </SimpleImageCarousel.Viewport>
+      <SimpleImageCarousel.Indicators
         className="flex w-full gap-px"
         indicatorClassName="h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100"
       />
-    </Embla>
+    </SimpleImageCarousel>
   );
 }

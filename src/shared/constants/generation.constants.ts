@@ -389,7 +389,6 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Flux1',
   'FluxKrea',
 ];
-export type ExperimentalModeSupportedModel = (typeof EXPERIMENTAL_MODE_SUPPORTED_MODELS)[number];
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },
