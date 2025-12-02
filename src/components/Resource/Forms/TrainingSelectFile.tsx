@@ -6,17 +6,17 @@ import {
   Image,
   Loader,
   Paper,
+  Progress,
   Stack,
   Text,
   Textarea,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconFileDownload, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
-import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
@@ -199,6 +199,13 @@ export default function TrainingSelectFile({
     existingModelFile?.metadata?.selectedEpochUrl
   );
   const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{
+    current: number;
+    total: number;
+    epochNumber: number;
+    fileProgress: number; // 0-100 for current file
+  } | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
@@ -360,19 +367,147 @@ export default function TrainingSelectFile({
       modelVersion.trainingStatus !== TrainingStatus.Approved) ||
     noEpochs;
 
+  const cancelDownload = () => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  };
+
   const downloadAll = async () => {
-    if (noEpochs) return;
+    if (noEpochs || downloading) return;
+
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 1000;
+
+    // Create new AbortController for this download session
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const downloadWithProgress = async (
+      url: string,
+      epochNumber: number,
+      currentIndex: number,
+      total: number
+    ): Promise<Blob> => {
+      const response = await fetch(url, { signal: abortController.signal });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const contentLength = response.headers.get('content-length');
+      const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
+
+      // If no content-length header, fall back to simple blob download
+      if (!totalSize || !response.body) {
+        setDownloadProgress({ current: currentIndex, total, epochNumber, fileProgress: 50 });
+        return response.blob();
+      }
+
+      // Stream the response and track progress
+      const reader = response.body.getReader();
+      const chunks: BlobPart[] = [];
+      let receivedLength = 0;
+
+      try {
+        while (true) {
+          // Check for cancellation during streaming
+          if (abortController.signal.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunks.push(value);
+          receivedLength += value.length;
+
+          const fileProgress = Math.round((receivedLength / totalSize) * 100);
+          setDownloadProgress({ current: currentIndex, total, epochNumber, fileProgress });
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      return new Blob(chunks);
+    };
+
+    const downloadWithRetry = async (
+      epochData: (typeof epochs)[number],
+      currentIndex: number,
+      total: number
+    ): Promise<boolean> => {
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        // Check for cancellation before starting
+        if (abortController.signal.aborted) {
+          return false;
+        }
+
+        try {
+          setDownloadProgress({
+            current: currentIndex,
+            total,
+            epochNumber: epochData.epochNumber,
+            fileProgress: 0,
+          });
+
+          const blob = await downloadWithProgress(
+            epochData.modelUrl,
+            epochData.epochNumber,
+            currentIndex,
+            total
+          );
+
+          // Check for cancellation after download
+          if (abortController.signal.aborted) {
+            return false;
+          }
+
+          // Create object URL for download with custom filename
+          const blobUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = `${model.name}_epoch_${epochData.epochNumber}.safetensors`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(blobUrl);
+
+          return true;
+        } catch (error) {
+          // Don't retry if aborted
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            return false;
+          }
+
+          const isLastAttempt = attempt === MAX_RETRIES;
+          if (isLastAttempt) {
+            showErrorNotification({
+              title: `Failed to download epoch ${epochData.epochNumber}`,
+              error: error instanceof Error ? error : new Error('Unknown error'),
+              autoClose: false,
+            });
+            return false;
+          }
+          // Wait before retrying with exponential backoff
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+        }
+      }
+      return false;
+    };
 
     setDownloading(true);
+    setDownloadProgress({ current: 0, total: epochs.length, epochNumber: 0, fileProgress: 0 });
 
-    await Promise.all(
-      epochs.map(async (epochData) => {
-        const epochBlob = await fetch(epochData.modelUrl).then((res) => res.blob());
-        saveAs(epochBlob, `${model.name}_epoch_${epochData.epochNumber}.safetensors`);
-      })
-    );
+    for (let i = 0; i < epochs.length; i++) {
+      // Check for cancellation before each file
+      if (abortController.signal.aborted) {
+        break;
+      }
+      await downloadWithRetry(epochs[i], i + 1, epochs.length);
+    }
 
     setDownloading(false);
+    setDownloadProgress(null);
+    abortControllerRef.current = null;
   };
 
   const canGenerateWithEpochBool = canGenerateWithEpoch(completeDate);
@@ -441,16 +576,43 @@ export default function TrainingSelectFile({
               </Stack>
             </DismissibleAlert>
           )}
-          <Flex justify="flex-end">
-            <Button
-              color="cyan"
-              loading={downloading}
-              leftSection={<IconFileDownload size={18} />}
-              onClick={downloadAll}
-            >
-              Download All ({epochs.length})
-            </Button>
-          </Flex>
+          <Stack gap="xs">
+            <Flex justify="flex-end" align="center" gap="md">
+              {downloadProgress && (
+                <Text size="sm" c="dimmed">
+                  Downloading epoch {downloadProgress.epochNumber} ({downloadProgress.current}/
+                  {downloadProgress.total}) - {downloadProgress.fileProgress}%
+                </Text>
+              )}
+              {downloading ? (
+                <Button
+                  color="red"
+                  variant="light"
+                  leftSection={<IconX size={18} />}
+                  onClick={cancelDownload}
+                >
+                  Cancel
+                </Button>
+              ) : (
+                <Button
+                  color="cyan"
+                  leftSection={<IconFileDownload size={18} />}
+                  onClick={downloadAll}
+                >
+                  Download All ({epochs.length})
+                </Button>
+              )}
+            </Flex>
+            {downloadProgress && (
+              <Progress.Root size="sm">
+                <Progress.Section
+                  value={(((downloadProgress.current - 1) / downloadProgress.total) * 100) +
+                    (downloadProgress.fileProgress / downloadProgress.total)}
+                  color="cyan"
+                />
+              </Progress.Root>
+            )}
+          </Stack>
           <Center>
             <Title order={4}>Recommended</Title>
           </Center>

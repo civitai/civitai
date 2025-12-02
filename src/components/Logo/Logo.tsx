@@ -22,8 +22,8 @@ const gradients = {
     outer: ['#F78C22', '#C98C17'],
   },
   christmas: {
-    inner: ['#126515', '#070F0C'],
-    outer: ['#45A72A', '#377B39'],
+    inner: ['#7B0A0A', '#2C0202'],
+    outer: ['#FF3B30', '#C21A1A'],
   },
   newyear: {
     inner: ['#081692', '#1E043C'],

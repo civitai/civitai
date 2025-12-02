@@ -3,7 +3,7 @@ import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import { getImageGenConfigKey } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { trpc } from '~/utils/trpc';
 
 // const featureInfo = {
@@ -72,7 +72,8 @@ export const ModelVersionPopularity = ({
     { enabled: features.modelVersionPopularity }
   );
 
-  if (getModelVersionUsesImageGen(versionId)) return <></>;
+  const configKey = getImageGenConfigKey(versionId);
+  if (configKey && configKey !== 'flux2') return <></>;
 
   if (!features.modelVersionPopularity) return <></>;
   // if we want to show this for non checkpoints, simply remove this line

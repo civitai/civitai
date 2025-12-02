@@ -68,6 +68,7 @@ const generationResourceSchemaBase = z.object({
       isExpired: z.boolean(),
     })
     .optional(),
+  air: z.string().optional(),
 });
 export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = generationResourceSchemaBase.extend({

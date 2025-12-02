@@ -26,10 +26,12 @@ import {
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsFlux,
+  trainingDetailsBaseModelsFlux2,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
+  trainingDetailsBaseModelsZImageTurbo,
 } from '~/server/schema/model-version.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { TrainingRun, TrainingRunUpdate } from '~/store/training.store';
@@ -46,7 +48,7 @@ import {
 import { stringifyAIR } from '~/shared/utils/air';
 import {
   getDefaultEngine,
-  isAiToolkitMandatory,
+  isSamplePromptsRequired,
   type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
@@ -166,10 +168,14 @@ const ModelSelector = ({
                   ? 'sdxl'
                   : ([...getBaseModelsByGroup('Flux1')] as string[]).includes(baseModel)
                   ? 'flux'
+                  : ([...getBaseModelsByGroup('Flux2')] as string[]).includes(baseModel)
+                  ? 'flux2'
                   : ([...getBaseModelsByGroup('SD3')] as string[]).includes(baseModel)
                   ? 'sd35'
                   : ([...getBaseModelsByGroup('Qwen')] as string[]).includes(baseModel)
                   ? 'qwen'
+                  : ([...getBaseModelsByGroup('ZImageTurbo')] as string[]).includes(baseModel)
+                  ? 'zimageturbo'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
                   : 'sd15';
@@ -214,9 +220,10 @@ export const ModelSelect = ({
 
   // - Apply default params with overrides and calculations upon base model selection
   const makeDefaultParams = (data: TrainingRunUpdate) => {
-    // Determine the appropriate engine based on the base type
+    // Determine the appropriate engine based on the base type and model
     const engineToUse =
-      data.params?.engine ?? (data.baseType ? getDefaultEngine(data.baseType) : defaultEngine);
+      data.params?.engine ??
+      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined) : defaultEngine);
 
     const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
 
@@ -227,9 +234,9 @@ export const ModelSelect = ({
         defaultParams.trainBatchSize
     );
 
-    // Pre-fill sample prompts if AI Toolkit is mandatory
+    // Pre-fill sample prompts if required (AI Toolkit mandatory models or Flux2)
     const samplePrompts = data.samplePrompts || selectedRun.samplePrompts || ['', '', ''];
-    if (data.baseType && isAiToolkitMandatory(data.baseType)) {
+    if (data.baseType && isSamplePromptsRequired(data.baseType)) {
       // Get captions from uploaded images
       const imageList = useTrainingImageStore.getState()[modelId]?.imageList || [];
       const captionsWithContent = imageList
@@ -302,6 +309,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsWan as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelFlux2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsFlux2 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelChroma =
     !!formBaseModel &&
     (trainingDetailsBaseModelsChroma as ReadonlyArray<string>).includes(formBaseModel)
@@ -310,6 +322,11 @@ export const ModelSelect = ({
   const baseModelQwen =
     !!formBaseModel &&
     (trainingDetailsBaseModelsQwen as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelZImageTurbo =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsZImageTurbo as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -368,12 +385,23 @@ export const ModelSelect = ({
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="red"
-                    name="Flux"
+                    name="Flux.1"
                     value={baseModelFlux}
                     baseType="flux"
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2024-09-01')}
                   />
+                  {features.flux2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="Flux.2"
+                      value={baseModelFlux2}
+                      baseType="flux2"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="teal"
@@ -383,13 +411,24 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                     isNew={new Date() < new Date('2025-10-01')}
                   />
-                  {features.aiToolkitTraining && (
+                  {features.qwenTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="orange"
                       name="Qwen"
                       value={baseModelQwen}
                       baseType="qwen"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.zimageturboTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="yellow"
+                      name="Z Image"
+                      value={baseModelZImageTurbo}
+                      baseType="zimageturbo"
                       makeDefaultParams={makeDefaultParams}
                       isNew
                     />

@@ -1,3 +1,4 @@
+import { Upload } from '@aws-sdk/lib-storage';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -10,7 +11,7 @@ import type {
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
 import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
+import { deleteObject, getGetUrl, getPutUrl, getS3Client, parseKey } from '~/utils/s3-utils';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
@@ -22,6 +23,7 @@ export type TrainingRequest = {
   userId: number;
   fileMetadata: FileMetadata | null;
   modelVersionId: number;
+  modelVersionMetadata?: MixedObject | null;
 };
 
 async function getSubmittedAt(modelVersionId: number, userId: number) {
@@ -51,15 +53,88 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
 const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
 
+const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
+
 type MoveAssetRow = {
   metadata: FileMetadata | null;
   updatedAt: Date;
 };
-export const moveAsset = async ({
+
+async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVersionId: number }) {
+  console.log('[moveAssetFromBlob] Starting', { url, modelVersionId });
+
+  const urlMatch = url.match(blobUrlRegex);
+  if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid blob URL');
+  const { blobId, extension } = urlMatch.groups;
+  const assetName = `${blobId}.${extension}`;
+  console.log('[moveAssetFromBlob] Parsed blob URL', { blobId, extension, assetName });
+
+  const {
+    url: destinationUri,
+    bucket,
+    key,
+  } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
+  console.log('[moveAssetFromBlob] Got put URL', { bucket, key });
+
+  // Download the blob
+  console.log('[moveAssetFromBlob] Fetching blob...');
+  const response = await fetch(url);
+  console.log('[moveAssetFromBlob] Fetch response', {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+  });
+  if (!response.ok) {
+    throw throwBadRequestError('Failed to download blob. Please try selecting the file again.');
+  }
+
+  const contentLength = response.headers.get('content-length');
+  const fileSize = contentLength ? parseInt(contentLength, 10) : 0;
+  console.log('[moveAssetFromBlob] Content info', { contentLength, fileSize });
+
+  if (!response.body) {
+    throw throwBadRequestError('Failed to download blob. No response body.');
+  }
+
+  // Upload to S3
+  console.log('[moveAssetFromBlob] Starting S3 upload...');
+  const s3Client = getS3Client();
+
+  const upload = new Upload({
+    client: s3Client,
+    params: {
+      Bucket: bucket,
+      Key: key,
+      // @ts-ignore - Node.js ReadableStream from fetch is compatible
+      Body: response.body,
+      ContentLength: fileSize || undefined,
+    },
+    queueSize: 4,
+    partSize: 100 * 1024 * 1024, // 100 MB
+    leavePartsOnError: false,
+  });
+
+  await upload.done();
+  console.log('[moveAssetFromBlob] S3 upload complete');
+
+  const newUrl = destinationUri.split('?')[0];
+  console.log('[moveAssetFromBlob] Done', { newUrl, fileSize });
+
+  return {
+    newUrl,
+    fileSize,
+  };
+}
+
+async function moveAssetFromJob({
   url,
   modelVersionId,
   userId,
-}: MoveAssetInput & { userId: number }) => {
+}: {
+  url: string;
+  modelVersionId: number;
+  userId: number;
+}) {
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
@@ -102,6 +177,20 @@ export const moveAsset = async ({
     newUrl,
     fileSize: result.fileSize,
   };
+}
+
+export const moveAsset = async ({
+  url,
+  modelVersionId,
+  userId,
+}: MoveAssetInput & { userId: number }) => {
+  // Check if it's a blob URL (new format)
+  if (blobUrlRegex.test(url)) {
+    return moveAssetFromBlob({ url, modelVersionId });
+  }
+
+  // Otherwise, use the job asset flow (legacy format)
+  return moveAssetFromJob({ url, modelVersionId, userId });
 };
 
 export const deleteAssets = async (jobId: string, submittedAt?: Date) => {

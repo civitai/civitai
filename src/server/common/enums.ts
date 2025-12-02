@@ -325,6 +325,8 @@ export enum OrchPriorityTypes {
 export enum OrchEngineTypes {
   Kohya = 'kohya',
   Rapid = 'flux-dev-fast',
+  Flux2Dev = 'flux2-dev',
+  Flux2DevEdit = 'flux2-dev-edit',
   Musubi = 'musubi',
   AiToolkit = 'ai-toolkit',
 }

@@ -1897,6 +1897,17 @@ const AttestDiv = () => {
           sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be
           removed and reported to the relevant authorities.
         </List.Item>
+        <List.Item mb={2}>
+          Safety: I confirm that my training data and the intended use of this resource comply with
+          Civitai’s{' '}
+          <Link href="/safety" color="blue">
+            <Text component="span" c="primary" size="sm" style={{ textDecoration: 'underline' }}>
+              Responsible Resource Development
+            </Text>
+          </Link>{' '}
+          guidelines, including prohibitions on depictions of minors, sexualized depictions of real
+          people, and extreme, graphic, or illegal content.
+        </List.Item>
       </List>
     </>
   );

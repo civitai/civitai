@@ -543,6 +543,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
@@ -568,6 +569,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
+  ZImageTurbo: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -648,9 +650,9 @@ export const seedreamSizes = [
 
 export const qwenSizes = [
   { label: '16:9', width: 1664, height: 928 },
-  { label: '4:3', width: 1472, height: 1140 },
+  { label: '4:3', width: 1472, height: 1104 },
   { label: '1:1', width: 1328, height: 1328 },
-  { label: '3:4', width: 1140, height: 1472 },
+  { label: '3:4', width: 1104, height: 1472 },
   { label: '9:16', width: 928, height: 1664 },
 ];
 
@@ -670,6 +672,7 @@ const nanoBananaProSizes = [
   { label: '9:16', width: 1440, height: 2560 },
 ];
 
+export type GenerationConfigKey = keyof typeof generationConfig;
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -848,6 +851,25 @@ export const generationConfig = {
       model: {
         id: 618692,
         name: 'FLUX',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2439067,
+      name: '',
+      trainedWords: [],
+      baseModel: 'Flux.2 D',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2',
         type: 'Checkpoint',
       },
     } as GenerationResource,
@@ -1041,6 +1063,25 @@ export const generationConfig = {
       model: {
         id: 1903424,
         name: `Google Nano Banana`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  ZImageTurbo: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2442439,
+      name: 'v1.0',
+      trainedWords: [],
+      baseModel: 'ZImageTurbo',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2168935,
+        name: 'ZImageTurbo',
         type: 'Checkpoint',
       },
     } as GenerationResource,
