@@ -45,7 +45,8 @@ export const qwenModelModeOptions = Array.from(qwenModelVersionToModelMap.entrie
 );
 
 const baseSchema = z.object({
-  engine: z.literal(engine).catch(engine),
+  engine: z.literal('sdcpp').catch('sdcpp'),
+  ecosystem: z.literal(engine).catch(engine),
   model: z.literal('20b').catch('20b'),
   prompt: promptSchema,
   negativePrompt: negativePromptSchema.optional(),
