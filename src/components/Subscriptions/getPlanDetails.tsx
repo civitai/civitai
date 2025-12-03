@@ -21,7 +21,6 @@ import type {
 } from '~/server/schema/subscriptions.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan } from '~/server/services/subscriptions.service';
-import { isHolidaysTime } from '~/utils/date-helpers';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -52,23 +51,6 @@ export const getPlanDetails: (
           </Text>
         ),
       },
-
-      isHolidaysTime()
-        ? {
-            icon: <IconChristmasTree size={benefitIconSize} />,
-            iconColor: (metadata?.monthlyBuzz ?? 0) === 0 ? 'gray' : 'green',
-            iconVariant: 'light' as ThemeIconVariant,
-            content: (
-              <Text>
-                <Text span c={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'green.7'}>
-                  +
-                  {numberWithCommas(Math.floor((metadata?.monthlyBuzz ?? 0) * HOLIDAY_PROMO_VALUE))}{' '}
-                  Blue Buzz for December
-                </Text>
-              </Text>
-            ),
-          }
-        : null,
 
       features.membershipsV2
         ? {
