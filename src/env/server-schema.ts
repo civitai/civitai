@@ -20,7 +20,6 @@ export const serverSchema = z.object({
   DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
-  LOGICAL_REPLICA_DB_URL: z.url(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),

@@ -50,7 +50,7 @@ const instanceUrlMap: Record<ClientInstanceType, string> = {
   primary: env.DATABASE_URL,
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
-  logicalReplica: env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL,
+  logicalReplica: env.DATABASE_REPLICA_URL,
 };
 
 export function getClient(
