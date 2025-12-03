@@ -23,7 +23,7 @@ export function VideoInterpolationModal({
   videoUrl,
   interpolationFactor = 2,
   metadata,
-  multipliers = [2, 3],
+  multipliers = [2, 3, 4],
   maxFrames = 120,
 }: {
   videoUrl: string;
@@ -59,7 +59,7 @@ export function VideoInterpolationModal({
 
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutate({
-      $type: 'videoUpscaler',
+      $type: 'videoInterpolation',
       data: { videoUrl, ...data, metadata },
     });
     dialog.onClose();

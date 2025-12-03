@@ -16,7 +16,7 @@ export async function createVideoInterpolationStep({
   return {
     $type: 'videoInterpolation',
     input: {
-      videoUrl,
+      video: videoUrl,
       interpolationFactor,
     },
     metadata,
