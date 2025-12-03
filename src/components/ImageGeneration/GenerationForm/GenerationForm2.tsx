@@ -503,7 +503,10 @@ export function GenerationFormContent() {
           {({ fluxMode, draft, workflow, sourceImage }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
-              workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
+              workflow?.startsWith('img') ||
+              (isImageGen && sourceImage) ||
+              isFluxKontext ||
+              isQwenEdit;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir
