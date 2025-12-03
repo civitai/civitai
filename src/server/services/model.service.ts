@@ -323,7 +323,7 @@ export const getModelsRaw = async ({
 
   if (!archived) {
     AND.push(
-      Prisma.sql`(mm."mode" IS NULL OR mm."mode" != ${ModelModifier.Archived})`
+      Prisma.sql`(mm."mode" IS NULL OR mm."mode" != CAST(${ModelModifier.Archived} AS "ModelModifier"))`
     );
   }
 
