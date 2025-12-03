@@ -166,7 +166,7 @@ export const HiddenUsers = createUserCache({
         SELECT
           ue."targetUserId" "id"
         FROM "UserEngagement" ue
-        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Hide}::"UserEngagementType"
+        WHERE "userId" = ${userId} AND type = CAST(${UserEngagementType.Hide} AS "UserEngagementType")
       `,
 });
 
@@ -177,7 +177,7 @@ export const BlockedUsers = createUserCache({
         SELECT
           ue."targetUserId" "id"
         FROM "UserEngagement" ue
-        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+        WHERE "userId" = ${userId} AND type = CAST(${UserEngagementType.Block} AS "UserEngagementType")
       `,
 });
 
@@ -188,7 +188,7 @@ export const BlockedByUsers = createUserCache({
         SELECT
           ue."userId" "id"
         FROM "UserEngagement" ue
-        WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+        WHERE "targetUserId" = ${userId} AND type = CAST(${UserEngagementType.Block} AS "UserEngagementType")
       `,
 });
 

@@ -156,7 +156,7 @@ const parseImageMeta = (meta: ImageMetaProps) => {
 
 const WHERE = [
   Prisma.sql`c."userId" != -1`,
-  Prisma.sql`c.read = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"`,
+  Prisma.sql`c.read = CAST(${CollectionReadConfiguration.Public} AS "CollectionReadConfiguration")`,
   // Don't index empty collections:
   Prisma.sql`EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = c.id)`,
   Prisma.sql`c."availability" != 'Unsearchable'::"Availability"`,

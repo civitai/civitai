@@ -213,7 +213,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           bes."reactionCountAllTime" AS "reactionCountAllTime"
       FROM "BountyEntry" be
       LEFT JOIN "BountyEntryStat" bes on bes."bountyEntryId" = be.id
-      LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
+      LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = CAST(${currency} AS "Currency")
       WHERE be."bountyId" = ${id}
       GROUP BY be.id, be."userId", bes."reactionCountAllTime"
       ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
@@ -233,7 +233,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
             bf."buzzTransactionId"
         FROM "BountyBenefactor" bf
         WHERE bf."bountyId" = ${id}
-          AND bf.currency = ${currency}::"Currency"
+          AND bf.currency = CAST(${currency} AS "Currency")
           AND bf."awardedToId" IS NULL;
       `;
 
@@ -336,7 +336,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           bf."buzzTransactionId"
       FROM "BountyBenefactor" bf
       WHERE bf."bountyId" = ${id}
-        AND bf.currency = ${currency}::"Currency"
+        AND bf.currency = CAST(${currency} AS "Currency")
         AND bf."awardedToId" IS NULL;
     `;
 

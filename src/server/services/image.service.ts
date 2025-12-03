@@ -537,11 +537,11 @@ export const updateImageReportStatusByReason = ({
   status: ReportStatus;
 }) => {
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}::"ReportStatus"
+    UPDATE "Report" r SET status = CAST(${status} AS "ReportStatus")
     FROM "ImageReport" i
     WHERE i."reportId" = r.id
       AND i."imageId" = ${id}
-      AND r.reason = ${reason}::"ReportReason"
+      AND r.reason = CAST(${reason} AS "ReportReason")
     RETURNING id, "userId"
   `;
 };
@@ -844,7 +844,7 @@ export const ingestImageBulk = async ({
 //     const OR = [
 //       Prisma.join(
 //         [
-//           Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+//           Prisma.sql`i."ingestion" = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")`,
 //           Prisma.sql`NOT EXISTS (
 //           SELECT 1 FROM "TagsOnImageDetails" toi
 //           WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
@@ -1403,7 +1403,7 @@ export const getAllImages = async (
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+        : Prisma.sql`i.ingestion = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")`
     );
   }
 
@@ -3207,7 +3207,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")`,
           withoutPost
             ? null
             : Prisma.sql`
@@ -3717,7 +3717,7 @@ export const getImagesForPosts = async ({
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+        : Prisma.sql`i.ingestion = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")`
     );
   }
 
@@ -3975,7 +3975,7 @@ export const getImagesByEntity = async ({
 
   const AND: Prisma.Sql[] = !isModerator
     ? [
-        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+        Prisma.sql`(i."ingestion" = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")${
           userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
         })`,
       ]
@@ -5152,7 +5152,7 @@ export async function getImageRatingRequests({
   //       ) "votes"
   //       FROM "ImageRatingRequest" irr
   //       JOIN "Image" i on i.id = irr."imageId"
-  //       WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+  //       WHERE irr.status = CAST(${ReportStatus.Pending} AS "ReportStatus")
   //         AND i."nsfwLevel" != ${NsfwLevel.Blocked}
   //       GROUP BY irr."imageId", i.id
   //   )
@@ -5173,7 +5173,7 @@ export async function getImageRatingRequests({
   //       i."nsfwLevel"  "imageNsfwLevel"
   //     FROM "ImageRatingRequest" irr
   //     JOIN "Image" i ON i.id = irr."imageId"
-  //     WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+  //     WHERE irr.status = CAST(${ReportStatus.Pending} AS "ReportStatus")
   //     AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
   //     ORDER BY irr."createdAt"
   //   ),

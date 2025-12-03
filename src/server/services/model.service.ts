@@ -450,7 +450,7 @@ export const getModelsRaw = async ({
   }
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
-    AND.push(Prisma.sql`mm."status" = ${ModelStatus.Published}::"ModelStatus"`);
+    AND.push(Prisma.sql`mm."status" = CAST(${ModelStatus.Published} AS "ModelStatus")`);
   } else if (sessionUser?.isModerator) {
     if (status?.includes(ModelStatus.Unpublished)) status.push(ModelStatus.UnpublishedViolation);
     AND.push(
@@ -490,7 +490,7 @@ export const getModelsRaw = async ({
 
   if (checkpointType && (!types?.length || types?.includes('Checkpoint'))) {
     const TypeOr: Prisma.Sql[] = [
-      Prisma.sql`m."checkpointType" = ${checkpointType}::"CheckpointType"`,
+      Prisma.sql`m."checkpointType" = CAST(${checkpointType} AS "CheckpointType")`,
     ];
 
     const otherTypes = (types ?? []).filter((t) => t !== 'Checkpoint');
@@ -514,7 +514,7 @@ export const getModelsRaw = async ({
       throw throwAuthorizationError();
     }
 
-    AND.push(Prisma.sql`mm."availability" = ${availability}::"Availability"`);
+    AND.push(Prisma.sql`mm."availability" = CAST(${availability} AS "Availability")`);
   } else if (!isModerator) {
     // Makes it so that our feeds never contain private stuff by default.
     AND.push(Prisma.sql`mm."availability" != 'Private'::"Availability"`);

@@ -93,7 +93,7 @@ export const getBountyEntryEarnedBuzz = async ({
         be.id,
         COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount"
     FROM "BountyEntry" be
-    LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
+    LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = CAST(${currency} AS "Currency")
     WHERE be.id IN (${Prisma.join(ids)})
     GROUP BY be.id
   `;

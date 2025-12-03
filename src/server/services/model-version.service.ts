@@ -1015,7 +1015,7 @@ export const getModelVersionsByModelType = async ({
   baseModel,
   take,
 }: GetModelVersionByModelTypeProps) => {
-  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
+  const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = CAST(${type} AS "ModelType")`];
   if (baseModel) {
     const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
     if (baseModels.length)

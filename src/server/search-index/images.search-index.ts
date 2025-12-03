@@ -152,7 +152,7 @@ type BaseImage = {
 
 const imageWhere = [
   Prisma.sql`i."postId" IS NOT NULL`,
-  Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+  Prisma.sql`i."ingestion" = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")`,
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`i."minor" = false`,

@@ -54,7 +54,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
       VALUES (
         ${data.key},
         ${data.type},
-        ${data.category}::"NotificationCategory",
+        CAST(${data.category} AS "NotificationCategory"),
         ${'{' + targets.join(',') + '}'},
         ${JSON.stringify(data.details)}::jsonb,
         ${data.debounceSeconds}
@@ -92,7 +92,7 @@ export async function getUserNotifications({
 }) {
   const AND = [Prisma.sql`un."userId" = ${userId}`];
   if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
-  if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
+  if (category) AND.push(Prisma.sql`n.category = CAST(${category} AS "NotificationCategory")`);
 
   if (cursor) AND.push(Prisma.sql`un."createdAt" < ${cursor}`);
   // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
@@ -139,7 +139,7 @@ export async function getUserNotificationCount({
   // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
   // this seems unused
-  if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
+  if (category) AND.push(Prisma.sql`n.category = CAST(${category} AS "NotificationCategory")`);
 
   const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
     SELECT
@@ -170,7 +170,7 @@ export const markNotificationsRead = async ({
       Prisma.sql`un."userId" = ${userId}`,
       Prisma.sql`un.viewed IS FALSE`,
     ];
-    if (category) AND.push(Prisma.sql`n."category" = ${category}::"NotificationCategory"`);
+    if (category) AND.push(Prisma.sql`n."category" = CAST(${category} AS "NotificationCategory")`);
 
     await notifDbWrite.query(Prisma.sql`
       UPDATE "UserNotification" un

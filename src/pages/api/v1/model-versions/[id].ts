@@ -137,7 +137,7 @@ export default MixedAuthEndpoint(async function handler(
         ) as model
       FROM "ModelVersion" mv
       WHERE mv.id = ${id}
-        ${status ? Prisma.sql`AND mv.status = ${status}::"ModelStatus"` : Prisma.empty}
+        CAST(${status ? Prisma.sql`AND mv.status = ${status} AS "ModelStatus")` : Prisma.empty}
         AND (mv."nsfwLevel" & ${allowedBrowsingLevels}) != 0
       LIMIT 1
     `.then((results) => results[0] || null);

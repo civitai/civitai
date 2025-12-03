@@ -300,8 +300,8 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"
-      WHERE status = ${ModelStatus.Published}::"ModelStatus"
-          AND availability != ${Availability.Unsearchable}::"Availability"
+      WHERE status = CAST(${ModelStatus.Published} AS "ModelStatus")
+          AND availability != CAST(${Availability.Unsearchable} AS "Availability")
       ${
         lastUpdatedAt
           ? Prisma.sql`
@@ -324,8 +324,8 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       while (true) {
         const ids = await db.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Model"
-        WHERE status = ${ModelStatus.Published}::"ModelStatus"
-            AND availability != ${Availability.Unsearchable}::"Availability"
+        WHERE status = CAST(${ModelStatus.Published} AS "ModelStatus")
+            AND availability != CAST(${Availability.Unsearchable} AS "Availability")
             AND "updatedAt" >= ${lastUpdatedAt}
         OFFSET ${offset} LIMIT ${READ_BATCH_SIZE};
         `;

@@ -47,7 +47,7 @@ export async function upsertModelFlag({
       ${scanResult?.minor ?? false},
       ${scanResult?.triggerWords ?? false},
       ${scanResult?.poiName ?? false},
-      ${Prisma.sql`${ModelFlagStatus.Pending}::"ModelFlagStatus"`},
+      CAST(${Prisma.sql`${ModelFlagStatus.Pending} AS "ModelFlagStatus")`},
       ${details ? Prisma.sql`${JSON.stringify(details)}::jsonb` : Prisma.JsonNull}
       ${scanResult?.sfwOnly ?? false}
     )

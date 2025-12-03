@@ -242,7 +242,7 @@ export const getArticles = async ({
 
     if (!isOwnerRequest) {
       if (!isMod) {
-        AND.push(Prisma.sql`a."status" = ${ArticleStatus.Published}::"ArticleStatus"`);
+        AND.push(Prisma.sql`a."status" = CAST(${ArticleStatus.Published} AS "ArticleStatus")`);
       }
       if (!!excludedUserIds?.length) {
         AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
@@ -266,13 +266,13 @@ export const getArticles = async ({
       if (favorites) {
         AND.push(
           Prisma.sql`EXISTS (
-            SELECT 1 FROM "ArticleEngagement" ae WHERE ae."articleId" = a.id AND ae."userId" = ${sessionUser?.id} AND ae."type" = ${ArticleEngagementType.Favorite}::"ArticleEngagementType"
+            SELECT 1 FROM "ArticleEngagement" ae WHERE ae."articleId" = a.id AND ae."userId" = ${sessionUser?.id} AND ae."type" = CAST(${ArticleEngagementType.Favorite} AS "ArticleEngagementType")
           )`
         );
       } else if (hidden) {
         AND.push(
           Prisma.sql`EXISTS (
-            SELECT 1 FROM "ArticleEngagement" ae WHERE ae."articleId" = a.id AND ae."userId" = ${sessionUser?.id} AND ae."type" = ${ArticleEngagementType.Hide}::"ArticleEngagementType"
+            SELECT 1 FROM "ArticleEngagement" ae WHERE ae."articleId" = a.id AND ae."userId" = ${sessionUser?.id} AND ae."type" = CAST(${ArticleEngagementType.Hide} AS "ArticleEngagementType")
           )`
         );
       }

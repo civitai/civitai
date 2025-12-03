@@ -15,7 +15,7 @@ export async function enqueueJobs(
       VALUES ${Prisma.join(
         batch.map(
           ({ entityId, entityType, type }) =>
-            Prisma.sql`(${entityId}::integer, ${entityType}::"EntityType", ${type}::"JobQueueType")`
+            Prisma.sql`(${entityId}::integer, CAST(${entityType} AS "EntityType"), CAST(${type} AS "JobQueueType"))`
         )
       )}
       ON CONFLICT DO NOTHING;

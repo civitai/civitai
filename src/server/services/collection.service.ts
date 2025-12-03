@@ -344,7 +344,7 @@ export const getUserCollectionsWithPermissions = async <
   );
 
   if (input.type) {
-    AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
+    AND.push(Prisma.sql`(c."type" = CAST(${input.type} AS "CollectionType") OR c."type" IS NULL)`);
   }
 
   const queries: Prisma.Sql[] = [
@@ -365,7 +365,7 @@ export const getUserCollectionsWithPermissions = async <
     queries.push(Prisma.sql`
       ${SELECT}
       FROM "Collection" c
-      WHERE "write" = ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration"
+      WHERE "write" = CAST(${CollectionWriteConfiguration.Public} AS "CollectionWriteConfiguration")
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
     `);
   }
@@ -381,7 +381,7 @@ export const getUserCollectionsWithPermissions = async <
     queries.push(Prisma.sql`
       ${SELECT}
       FROM "Collection" c
-      WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
+      WHERE "read" = CAST(${CollectionReadConfiguration.Public} AS "CollectionReadConfiguration")
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
 
     `);
@@ -1604,11 +1604,11 @@ export const getAvailableCollectionItemsFilterForUser = ({
     });
 
     rawAND.push(
-      Prisma.sql`(ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus" OR (ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus" AND ci."addedById" = ${userId}))`
+      Prisma.sql`(ci."status" = CAST(${CollectionItemStatus.ACCEPTED} AS "CollectionItemStatus") OR (ci."status" = CAST(${CollectionItemStatus.REVIEW} AS "CollectionItemStatus") AND ci."addedById" = ${userId}))`
     );
   } else {
     AND.push({ status: CollectionItemStatus.ACCEPTED });
-    rawAND.push(Prisma.sql`ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"`);
+    rawAND.push(Prisma.sql`ci."status" = CAST(${CollectionItemStatus.ACCEPTED} AS "CollectionItemStatus")`);
   }
 
   return { AND, rawAND };
@@ -1688,7 +1688,7 @@ export const updateCollectionItemsStatus = async ({
       SET "reviewedById" = ${userId},
       "reviewedAt" = ${new Date()},
       "updatedAt" = ${new Date()},
-      "status" = ${status}::"CollectionItemStatus"
+      "status" = CAST(${status} AS "CollectionItemStatus")
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
   }
@@ -1737,7 +1737,7 @@ export function getCollectionItemCount({
   if (ids.length === 0) return [] as { id: number; count: number }[];
 
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
-  if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
+  if (status) where.push(Prisma.sql`"status" = CAST(${status} AS "CollectionItemStatus")`);
 
   return dbRead.$queryRaw<{ id: number; count: number }[]>`
     SELECT "collectionId" as "id", COUNT(*) as "count"

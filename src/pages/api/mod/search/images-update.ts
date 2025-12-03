@@ -22,7 +22,7 @@ const IMAGE_WHERE: (start: number, end?: number) => Prisma.Sql[] = (
 ) => [
   end ? Prisma.sql`i."id" BETWEEN ${start} AND ${end}` : Prisma.sql`i."id" > ${start}`,
   Prisma.sql`i."postId" IS NOT NULL`,
-  Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+  Prisma.sql`i."ingestion" = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus")`,
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,

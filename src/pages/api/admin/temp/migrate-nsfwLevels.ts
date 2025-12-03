@@ -132,7 +132,7 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           WHERE toi."imageId" = i.id
             AND toi."disabled" IS FALSE
         )
-        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" AND NOT i."nsfwLevelLocked"
+        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = CAST(${ImageIngestionStatus.Scanned} AS "ImageIngestionStatus") AND NOT i."nsfwLevelLocked"
         RETURNING id;
       `);
       cancelFns.push(cancel);
@@ -501,7 +501,7 @@ async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
             LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
             LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
             LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
-            WHERE ci."collectionId" = c.id AND ci.status = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
+            WHERE ci."collectionId" = c.id AND ci.status = CAST(${CollectionItemStatus.ACCEPTED} AS "CollectionItemStatus")
           )
           WHERE c.id BETWEEN ${start} AND ${end};
       `);
