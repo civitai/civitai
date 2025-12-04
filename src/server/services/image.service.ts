@@ -140,7 +140,12 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
+import type {
+  ModelType,
+  ReportReason,
+  ReviewReactions,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
@@ -1953,31 +1958,71 @@ export async function getImagesFromFeedSearch(
     const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
 
     // Transform PopulatedImage to match getAllImagesIndex return type
-    // Remove extra fields that getAllImagesIndex doesn't have
-    const transformedItems = feedResult.items.map((img) => {
-      // Destructure to remove extra fields
+    // Remove extra fields that PopulatedImage has but getAllImagesIndex doesn't
+    const transformedItems: ImagesInfiniteModel[] = feedResult.items.map((img) => {
+      // Destructure to remove all extra fields from PopulatedImage/ImageDocument
+      // that aren't in ImagesInfiniteModel
       const {
+        // Timestamp unix fields (not in ImagesInfiniteModel)
         sortAtUnix,
         publishedAtUnix,
         existedAtUnix,
+        // Array fields handled differently
         tagIds,
+        toolIds,
+        techniqueIds,
+        // Flags object (not in ImagesInfiniteModel)
         flags,
+        // NSFW fields (different handling)
         aiNsfwLevel,
         combinedNsfwLevel,
+        // Metric counts (stats object has these instead)
+        reactionCount,
+        commentCount,
+        collectedCount,
+        // Other fields not in ImagesInfiniteModel
+        userId,
+        acceptableMinor,
+        // Fields that need type transformation
+        reactions,
+        tags,
         ...rest
       } = img;
+
+      // Transform tags to match VotableTagModel (add missing fields with defaults)
+      // Note: tag.type and tag.nsfwLevel need casting because PopulatedImage uses
+      // its own type definitions from event-engine-common, while VotableTagModel
+      // uses types from ~/server/common/enums
+      const transformedTags: VotableTagModel[] = tags.map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        type: tag.type as unknown as TagType,
+        nsfwLevel: tag.nsfwLevel as unknown as NsfwLevel,
+        score: 0,
+        upVotes: 0,
+        downVotes: 0,
+      }));
+
+      // Transform reactions to use ReviewReactions enum
+      const transformedReactions = reactions.map((r) => ({
+        userId: r.userId,
+        reaction: r.reaction as ReviewReactions,
+      }));
 
       // Return structure matching getAllImagesIndex
       return {
         ...rest,
-        type: img.type as MediaType, // Cast to MediaType enum
-        availability: img.availability ?? Availability.Public, // Ensure non-undefined
+        nsfwLevel: img.nsfwLevel as NsfwLevel,
+        type: img.type as MediaType,
+        availability: img.availability ?? Availability.Public,
+        reactions: transformedReactions,
+        tags: transformedTags,
       };
     });
 
     return {
       nextCursor: feedResult.nextCursor,
-      items: transformedItems as any, // Cast to match getAllImagesIndex return type
+      items: transformedItems,
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
