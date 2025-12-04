@@ -46,6 +46,7 @@ import {
   isValidRapid,
   isAiToolkitSupported,
   isAiToolkitMandatory,
+  isSamplePromptsRequired,
   getDefaultEngine,
   rapidEta,
   trainingBaseModelTypesVideo,
@@ -142,7 +143,7 @@ export const AdvancedSettings = ({
   // Adjust optimizer and related settings
   useEffect(() => {
     let newOptimizerArgs: string;
-    if (selectedRun.baseType === 'flux') {
+    if (selectedRun.baseType === 'flux' || selectedRun.baseType === 'flux2') {
       newOptimizerArgs =
         optimizerArgMapFlux[selectedRun.params.optimizerType][selectedRun.params.engine];
     } else if (isVideo) {
@@ -233,6 +234,7 @@ export const AdvancedSettings = ({
 
   return (
     <>
+      {/* Flux1 can toggle Rapid Training on/off */}
       {selectedRun.baseType === 'flux' && (
         <Group mt="md">
           <Switch
@@ -278,43 +280,50 @@ export const AdvancedSettings = ({
       )}
 
       {/* AI Toolkit Training Toggle or Required Badge */}
-      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
-        <Group mt="md">
-          {!isAiToolkitMandatory(selectedRun.baseType) && (
-            // Show toggle for optional AI Toolkit
-            <Switch
-              label={
-                <Group gap={4} wrap="nowrap">
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
-                    <Text>
-                      Train using the AI Toolkit engine, offering improved quality and flexibility.
-                      {selectedRun.baseType === 'flux' && selectedRun.params.engine === 'rapid' && (
-                        <> Note: Rapid Training is currently enabled and must be disabled first.</>
-                      )}
-                    </Text>
-                  </InfoPopover>
-                  <Text>AI Toolkit Training</Text>
-                  <Badge color="blue" size="xs">
-                    Beta
-                  </Badge>
-                </Group>
-              }
-              labelPosition="left"
-              checked={selectedRun.params.engine === 'ai-toolkit'}
-              disabled={selectedRun.params.engine === 'rapid'}
-              onChange={(event) => {
-                const newEngine = event.currentTarget.checked
-                  ? 'ai-toolkit'
-                  : getDefaultEngine(selectedRun.baseType);
+      {/* AI Toolkit is public for SD1.5 and SDXL, mod-only for other supported models */}
+      {(features.aiToolkitTraining || ['sd15', 'sdxl'].includes(selectedRun.baseType)) &&
+        isAiToolkitSupported(selectedRun.baseType) && (
+          <Group mt="md">
+            {!isAiToolkitMandatory(selectedRun.baseType) && (
+              // Show toggle for optional AI Toolkit
+              <Switch
+                label={
+                  <Group gap={4} wrap="nowrap">
+                    <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                      <Text>
+                        Train using the AI Toolkit engine, offering improved quality and
+                        flexibility.
+                        {selectedRun.baseType === 'flux' &&
+                          selectedRun.params.engine === 'rapid' && (
+                            <>
+                              {' '}
+                              Note: Rapid Training is currently enabled and must be disabled first.
+                            </>
+                          )}
+                      </Text>
+                    </InfoPopover>
+                    <Text>AI Toolkit Training</Text>
+                    <Badge color="blue" size="xs">
+                      Beta
+                    </Badge>
+                  </Group>
+                }
+                labelPosition="left"
+                checked={selectedRun.params.engine === 'ai-toolkit'}
+                disabled={selectedRun.params.engine === 'rapid'}
+                onChange={(event) => {
+                  const newEngine = event.currentTarget.checked
+                    ? 'ai-toolkit'
+                    : getDefaultEngine(selectedRun.baseType, selectedRun.base);
 
-                updateRun(modelId, mediaType, selectedRun.id, {
-                  params: { ...selectedRun.params, engine: newEngine },
-                });
-              }}
-            />
-          )}
-        </Group>
-      )}
+                  updateRun(modelId, mediaType, selectedRun.id, {
+                    params: { ...selectedRun.params, engine: newEngine },
+                  });
+                }}
+              />
+            )}
+          </Group>
+        )}
 
       <Title mt="md" order={5}>
         Advanced Settings
@@ -336,7 +345,7 @@ export const AdvancedSettings = ({
             <Stack gap={4}>
               <Group gap="sm">
                 <Text>Sample Media Prompts</Text>
-                {selectedRun.params.engine === 'ai-toolkit' && (
+                {isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) && (
                   <Badge color="red" size="sm">
                     Required
                   </Badge>
@@ -344,8 +353,8 @@ export const AdvancedSettings = ({
               </Group>
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" c="dimmed">
-                  {selectedRun.params.engine === 'ai-toolkit'
-                    ? `AI Toolkit requires sample prompts. These are pre-filled from your image captions.`
+                  {isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
+                    ? `This model requires sample prompts. These are pre-filled from your image captions.`
                     : `Set your own prompts for any of the ${isVideo ? '2' : '3'} sample ${
                         isVideo ? 'videos' : 'images'
                       } we generate for each epoch.`}
@@ -358,16 +367,16 @@ export const AdvancedSettings = ({
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #1`}
                 placeholder={
-                  selectedRun.params.engine === 'ai-toolkit'
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
                     ? 'Required - pre-filled from captions'
                     : 'Automatically set'
                 }
                 value={selectedRun.samplePrompts[0]}
-                required={selectedRun.params.engine === 'ai-toolkit'}
+                required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
                 error={
-                  selectedRun.params.engine === 'ai-toolkit' &&
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                   !selectedRun.samplePrompts[0]?.trim()
-                    ? 'Required for AI Toolkit'
+                    ? 'Required'
                     : undefined
                 }
                 onChange={(event) => {
@@ -383,16 +392,16 @@ export const AdvancedSettings = ({
               <TextInputWrapper
                 label={`${isVideo ? 'Video' : 'Image'} #2`}
                 placeholder={
-                  selectedRun.params.engine === 'ai-toolkit'
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
                     ? 'Required - pre-filled from captions'
                     : 'Automatically set'
                 }
                 value={selectedRun.samplePrompts[1]}
-                required={selectedRun.params.engine === 'ai-toolkit'}
+                required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
                 error={
-                  selectedRun.params.engine === 'ai-toolkit' &&
+                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                   !selectedRun.samplePrompts[1]?.trim()
-                    ? 'Required for AI Toolkit'
+                    ? 'Required'
                     : undefined
                 }
                 onChange={(event) => {
@@ -409,16 +418,16 @@ export const AdvancedSettings = ({
                 <TextInputWrapper
                   label={`${isVideo ? 'Video' : 'Image'} #3`}
                   placeholder={
-                    selectedRun.params.engine === 'ai-toolkit'
+                    isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
                       ? 'Required - pre-filled from captions'
                       : 'Automatically set'
                   }
                   value={selectedRun.samplePrompts[2]}
-                  required={selectedRun.params.engine === 'ai-toolkit'}
+                  required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
                   error={
-                    selectedRun.params.engine === 'ai-toolkit' &&
+                    isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                     !selectedRun.samplePrompts[2]?.trim()
-                      ? 'Required for AI Toolkit'
+                      ? 'Required'
                       : undefined
                   }
                   onChange={(event) => {
@@ -483,7 +492,8 @@ export const AdvancedSettings = ({
                 <Text className="text-gray-5 dark:text-gray-6">
                   Training Parameters{' '}
                   <Text component="span" size="xs" fs="italic">
-                    (disabled with &quot;Rapid Training&quot;)
+                    (disabled with &quot;Rapid Training&quot;{' '}
+                    {features.flux2Training ? 'or Flux.2' : ''})
                   </Text>
                 </Text>
                 <Box mr={4}>

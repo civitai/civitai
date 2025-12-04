@@ -8,6 +8,7 @@ import {
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
+  Badge,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
@@ -56,6 +57,7 @@ import {
   getIsPonyV7,
   getIsQwen,
   getIsSD3,
+  getIsZImageTurbo,
 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationFormStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
@@ -83,6 +85,7 @@ import { getIsFluxContextFromEngine } from '~/shared/orchestrator/ImageGen/flux1
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
+import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -386,29 +389,6 @@ export function GeneratedImage({
   );
 }
 
-function BlockedBlock({
-  title,
-  message,
-}: {
-  title: string;
-  message: string | (() => JSX.Element);
-}) {
-  return (
-    <Stack gap="xs" className="p-2">
-      <Text c="red" fw="bold" align="center" size="sm">
-        {title}
-      </Text>
-      {typeof message === 'string' ? (
-        <Text align="center" size="sm">
-          {message}
-        </Text>
-      ) : (
-        message()
-      )}
-    </Stack>
-  );
-}
-
 export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedImage }) {
   const dialog = useDialogContext();
   const { requests, steps } = useGetTextToImageRequestsImages();
@@ -535,8 +515,16 @@ function GeneratedImageWorkflowMenuItems({
   const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
+  const isZImageTurbo = !isVideo && getIsZImageTurbo(step.params.baseModel);
   const canImg2Img =
-    !isQwen && !isFlux && !isSD3 && !isVideo && !isImageGen && !isHiDream && !isPonyV7;
+    !isQwen &&
+    !isFlux &&
+    !isSD3 &&
+    !isVideo &&
+    !isImageGen &&
+    !isHiDream &&
+    !isPonyV7 &&
+    !isZImageTurbo;
 
   const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
   const img2imgWorkflows =
@@ -551,7 +539,7 @@ function GeneratedImageWorkflowMenuItems({
     : [];
 
   const notSelectableMap: Partial<Record<WorkflowDefinitionKey, VoidFunction>> = {
-    'img2img-upscale': handleUpscale,
+    'img2img-upscale': handleUpscaleImage,
     'img2img-background-removal': handleRemoveBackground,
     'img2img-upscale-enhancement-realism': handleUpscaleEnhance,
   };
@@ -666,7 +654,7 @@ function GeneratedImageWorkflowMenuItems({
     handleGenerate({ sourceImage: image.url as any });
   }
 
-  async function handleUpscale() {
+  async function handleUpscaleImage() {
     if (step.$type !== 'videoGen') {
       const sourceImage = await getSourceImageFromUrl({ url: image.url, upscale: true });
       dialogStore.trigger({
@@ -678,6 +666,16 @@ function GeneratedImageWorkflowMenuItems({
         },
       });
     }
+  }
+
+  function handleUpscaleVideo() {
+    dialogStore.trigger({
+      component: UpscaleVideoModal,
+      props: {
+        videoUrl: image.url,
+        metadata: step.metadata,
+      },
+    });
   }
 
   function handleDeleteImage() {
@@ -763,9 +761,12 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
-      {/* {!isBlocked && image.type === 'video' && (
+      {/* {!isBlocked && step.$type === 'videoGen' && (
         <>
-          <Menu.Item onClick={handleEnhanceVideo}>Upscale Video</Menu.Item>
+          <Menu.Divider />
+          <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
+            Upscale <Badge color="yellow">Preview</Badge>
+          </Menu.Item>
         </>
       )} */}
       {!workflowsOnly && (

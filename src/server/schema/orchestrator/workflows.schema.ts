@@ -22,7 +22,7 @@ export const workflowResourceSchema = z.object({
   id: z.number(),
   strength: z.number().default(1),
   epochNumber: z.number().optional(),
-  // air: z.string(),
+  air: z.string().optional(),
 });
 
 export const jsonPatchSchema = z.object({

@@ -367,17 +367,26 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     }
 
-    // Validate image integrity by attempting to draw and read from canvas
-    // This catches partially corrupt images that load but have invalid data
+    // Validate image integrity by fully decoding the image (similar to PIL's verify + exif_transpose)
+    // This catches truncated/corrupt images by forcing a full decode and sampling multiple regions
     try {
       const testCanvas = document.createElement('canvas');
-      testCanvas.width = Math.min(width, 1);
-      testCanvas.height = Math.min(height, 1);
+      // Use full image dimensions to force complete decode (like PIL's exif_transpose)
+      testCanvas.width = width;
+      testCanvas.height = height;
       const testCtx = testCanvas.getContext('2d');
       if (!testCtx) throw new Error('Canvas context unavailable');
-      testCtx.drawImage(img, 0, 0, 1, 1);
-      // Try to read pixel data - this will fail for corrupt images
+
+      // Draw the entire image - this forces full decode and will fail for truncated images
+      testCtx.drawImage(img, 0, 0, width, height);
+
+      // Sample pixel data from multiple regions to catch partial corruption
+      // Check top-left corner
       testCtx.getImageData(0, 0, 1, 1);
+      // Check bottom-right corner (where truncation typically manifests)
+      testCtx.getImageData(width - 1, height - 1, 1, 1);
+      // Check center
+      testCtx.getImageData(Math.floor(width / 2), Math.floor(height / 2), 1, 1);
     } catch {
       URL.revokeObjectURL(imgUrl);
       const name = fileName ?? 'image';
@@ -1896,6 +1905,17 @@ const AttestDiv = () => {
           Legality: I will not upload any material that is illegal or exploitative (e.g., child
           sexual abuse material, non-consensual imagery, extremist propaganda). Such content will be
           removed and reported to the relevant authorities.
+        </List.Item>
+        <List.Item mb={2}>
+          Safety: I confirm that my training data and the intended use of this resource comply with
+          Civitai’s{' '}
+          <Link href="/safety" color="blue">
+            <Text component="span" c="primary" size="sm" style={{ textDecoration: 'underline' }}>
+              Responsible Resource Development
+            </Text>
+          </Link>{' '}
+          guidelines, including prohibitions on depictions of minors, sexualized depictions of real
+          people, and extreme, graphic, or illegal content.
         </List.Item>
       </List>
     </>

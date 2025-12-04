@@ -12,14 +12,23 @@ export function ImageGenConfig<
   metadataFn,
   inputFn,
 }: {
-  metadataFn: (params: Omit<GenerateImageSchema['params'], 'priority'>) => TMetadataParams;
+  metadataFn: (
+    params: Omit<GenerateImageSchema['params'], 'priority'>,
+    resources: GenerateImageSchema['resources']
+  ) => TMetadataParams;
   inputFn: (args: Omit<GenerateImageSchema, 'params'> & { params: TMetadataParams }) => TOutput;
 }) {
-  function getParamsMetadata({ params }: { params: GenerateImageSchema['params'] }) {
+  function getParamsMetadata({
+    params,
+    resources,
+  }: {
+    params: GenerateImageSchema['params'];
+    resources: GenerateImageSchema['resources'];
+  }) {
     const { priority, ...rest } = params;
     const seed =
       !('seed' in rest) || !rest.seed ? Math.floor(Math.random() * maxRandomSeed) : rest.seed;
-    return metadataFn({ ...rest, seed });
+    return metadataFn({ ...rest, seed }, resources);
   }
 
   function getImageMetadata(args: GenerateImageSchema) {

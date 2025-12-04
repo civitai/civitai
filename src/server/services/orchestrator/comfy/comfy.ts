@@ -101,6 +101,7 @@ export async function createComfyStep(
       params: removeEmpty(input.params),
       remixOfId: input.remixOfId,
       maxNsfwLevel: isPrivateGen ? 'pG13' : undefined,
+      isPrivateGeneration: isPrivateGen,
     },
   } as ComfyStepTemplate;
 }

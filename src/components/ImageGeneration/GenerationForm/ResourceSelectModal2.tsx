@@ -298,8 +298,7 @@ function ResourceSelectModalContent() {
   }
   if (or.length) meiliFilters.push(`(${or.join(' OR ')})`);
 
-  const exclude: string[] = [];
-  exclude.push('NOT tags.name = "celebrity"');
+  const exclude: string[] = ['NOT tags.name = "celebrity"'];
 
   // nb - it would be nice to do this, but meili filters the entire top level object only
   // if (excludeIds.length > 0) {
@@ -428,7 +427,7 @@ function ResourceSelectModalContent() {
           </div>
         </div>
 
-        <Divider />
+        {/* <Divider />
 
         {selectedTab === 'all' && (
           <>
@@ -452,7 +451,7 @@ function ResourceSelectModalContent() {
             </Group>
             <Divider />
           </>
-        )}
+        )} */}
       </div>
 
       {isLoadingExtra ? (

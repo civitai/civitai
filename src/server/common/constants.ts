@@ -1,4 +1,3 @@
-import { openai } from './../services/ai/openai';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -15,8 +14,6 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { CurrencyConfig } from '~/shared/constants/currency.constants';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
 
 export const lipsum = `
@@ -353,7 +350,7 @@ export const constants = {
   },
 } as const;
 
-export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
+export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
 export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
 export const maxVideoDimension = 3840;
@@ -546,6 +543,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
@@ -571,6 +569,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Qwen: baseLicenses['apache 2.0'],
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
+  ZImageTurbo: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -651,9 +650,9 @@ export const seedreamSizes = [
 
 export const qwenSizes = [
   { label: '16:9', width: 1664, height: 928 },
-  { label: '4:3', width: 1472, height: 1140 },
+  { label: '4:3', width: 1472, height: 1104 },
   { label: '1:1', width: 1328, height: 1328 },
-  { label: '3:4', width: 1140, height: 1472 },
+  { label: '3:4', width: 1104, height: 1472 },
   { label: '9:16', width: 928, height: 1664 },
 ];
 
@@ -665,6 +664,15 @@ export const ponyV7Sizes = [
   { label: '2:3', width: 1024, height: 1536 },
 ];
 
+const nanoBananaProSizes = [
+  { label: '16:9', width: 2560, height: 1440 },
+  { label: '4:3', width: 2304, height: 1728 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1728, height: 2304 },
+  { label: '9:16', width: 1440, height: 2560 },
+];
+
+export type GenerationConfigKey = keyof typeof generationConfig;
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -847,6 +855,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  Flux2: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2439067,
+      name: '',
+      trainedWords: [],
+      baseModel: 'Flux.2 D',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   Qwen: {
     aspectRatios: qwenSizes,
     checkpoint: {
@@ -1022,7 +1049,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   NanoBanana: {
-    aspectRatios: commonAspectRatios,
+    aspectRatios: nanoBananaProSizes,
     checkpoint: {
       id: 2154472,
       name: 'Nano Banana',
@@ -1036,6 +1063,25 @@ export const generationConfig = {
       model: {
         id: 1903424,
         name: `Google Nano Banana`,
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  ZImageTurbo: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2442439,
+      name: 'v1.0',
+      trainedWords: [],
+      baseModel: 'ZImageTurbo',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2168935,
+        name: 'ZImageTurbo',
         type: 'Checkpoint',
       },
     } as GenerationResource,
@@ -1075,6 +1121,7 @@ export const generation = {
     clipSkip: 2,
     quantity: 2,
     aspectRatio: '1:1',
+    resolution: '2k',
     prompt: '',
     negativePrompt: '',
     nsfw: false,

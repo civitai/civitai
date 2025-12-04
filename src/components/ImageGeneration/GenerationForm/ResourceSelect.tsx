@@ -24,6 +24,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   groupPosition?: GroupProps['justify'];
   showAsCheckpoint?: boolean;
   disabled?: boolean;
+  isPreview?: boolean;
 };
 
 export const ResourceSelect = forwardRef<HTMLDivElement, Props>(
@@ -41,6 +42,7 @@ export const ResourceSelect = forwardRef<HTMLDivElement, Props>(
       hideVersion,
       groupPosition,
       showAsCheckpoint,
+      isPreview,
       ...inputWrapperProps
     },
     ref
@@ -104,6 +106,7 @@ export const ResourceSelect = forwardRef<HTMLDivElement, Props>(
             hideVersion={hideVersion}
             groupPosition={groupPosition}
             showAsCheckpoint={showAsCheckpoint}
+            isPreview={isPreview}
           />
         )}
       </Input.Wrapper>

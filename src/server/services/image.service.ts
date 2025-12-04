@@ -667,8 +667,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  const useOrchestrator = userId === 5 || userId === 5418;
-  if (useOrchestrator) {
+  if (env.IMAGE_SCANNER_NEW || userId === 5) {
     const workflowResponse = await createImageIngestionRequest({
       imageId: id,
       url,
@@ -4275,6 +4274,8 @@ type GetEntityImageRaw = {
   metadata: MixedObject | null;
   entityId: number;
   entityType: string;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getEntityCoverImage = async ({
@@ -4316,7 +4317,9 @@ export const getEntityCoverImage = async ({
       i."index",
       i."postId",
       t."entityId",
-      t."entityType"
+      t."entityType",
+      i."poi",
+      i."minor"
     FROM (
       -- NOTE: Adding "order1/2/3" looks a bit hacky, but it avoids using partitions and makes it far more performant.
       -- It might may look weird, but it has 0 practical effect other than better performance.
@@ -4695,10 +4698,20 @@ export const getImageModerationReviewQueue = async ({
   let cursorDirection = 'DESC';
 
   if (tagReview) {
-    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review LIMIT ${limit + 1})`);
+    // Optimize: avoid CTE + IN + DISTINCT; use EXISTS for early stop and better plans
     AND.push(Prisma.sql`
       i."nsfwLevel" < ${NsfwLevel.Blocked}
     `);
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" = i.id
+        AND toi."needsReview"
+        AND toi.disabled = false
+    )`);
+    // When paginating tag review, apply cursor directly on image id (DESC)
+    if (cursor) {
+      AND.push(Prisma.sql`i."id" < ${cursor}`);
+    }
   } else {
     if (reportReview) {
       // Add this to the WHERE:
@@ -4722,21 +4735,6 @@ export const getImageModerationReviewQueue = async ({
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const query = Prisma.sql`
-    ${Prisma.raw(
-      tagReview
-        ? `WITH tags_review AS (
-            SELECT
-              toi."imageId"
-            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
-            WHERE
-            toi."needsReview"
-            AND toi.disabled = false
-            AND i."nsfwLevel" < 32
-            ${cursor ? `AND "imageId" <= ${cursor}` : ''}
-            ORDER BY (toi."imageId", toi."tagId") DESC
-          )`
-        : ''
-    )}
     -- Image moderation queue
     SELECT
       i.id,

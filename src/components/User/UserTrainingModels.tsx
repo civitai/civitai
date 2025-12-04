@@ -246,6 +246,7 @@ export default function UserTrainingModels() {
                 const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
                 const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
                 const isPaused = mv.trainingStatus === TrainingStatus.Paused;
+                const isFailed = mv.trainingStatus === TrainingStatus.Failed;
                 const isRunning = isSubmitted || isProcessing;
                 const isNotDeletable = isRunning || isPaused;
 
@@ -266,6 +267,7 @@ export default function UserTrainingModels() {
                     ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
                     : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
+                const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
                 const startDate = thisFileMetadata?.trainingResults?.submittedAt;
                 const startStr = !!startDate
@@ -355,6 +357,24 @@ export default function UserTrainingModels() {
                               </HoverCard>
                             </>
                           )}
+                          {hasFailedWithEpochs && (
+                            <>
+                              <Divider size="sm" orientation="vertical" />
+                              <HoverCard shadow="md" width={250} zIndex={100} withArrow>
+                                <HoverCard.Target>
+                                  <Badge variant="filled" color="yellow">
+                                    {`${epochsDone} epoch${epochsDone > 1 ? 's' : ''} available`}
+                                  </Badge>
+                                </HoverCard.Target>
+                                <HoverCard.Dropdown>
+                                  <Text>
+                                    Training failed but {epochsDone} epoch
+                                    {epochsDone > 1 ? 's were' : ' was'} completed
+                                  </Text>
+                                </HoverCard.Dropdown>
+                              </HoverCard>
+                            </>
+                          )}
                           {(mv.trainingStatus === TrainingStatus.Failed ||
                             mv.trainingStatus === TrainingStatus.Denied) && (
                             <Button
@@ -427,6 +447,21 @@ export default function UserTrainingModels() {
                               size="compact-sm"
                             >
                               Review
+                            </Button>
+                          </Link>
+                        )}
+                        {hasFailedWithEpochs && (
+                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
+                            <Button
+                              component="a"
+                              radius="xl"
+                              color="yellow"
+                              onClick={(e: React.MouseEvent<HTMLAnchorElement>) =>
+                                e.stopPropagation()
+                              }
+                              size="compact-sm"
+                            >
+                              View Epochs
                             </Button>
                           </Link>
                         )}

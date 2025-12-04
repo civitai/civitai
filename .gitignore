@@ -94,3 +94,5 @@ docs/working/
 local/
 .eslintcache
 nul
+
+scripts/local-dev/

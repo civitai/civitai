@@ -10,10 +10,10 @@ import type {
   ImageBlob,
   VideoBlob,
   NsfwLevel,
+  VideoUpscalerStep,
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
-import { env } from '~/env/server';
 import { createOrchestratorClient, internalOrchestratorClient } from './client';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
@@ -46,13 +46,15 @@ import {
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
-  getInjectablResources,
+  getInjectableResources,
   getIsChroma,
   getIsFlux,
+  getIsFlux2,
   getIsFluxStandard,
   getIsPonyV7,
   getIsQwen,
   getIsSD3,
+  getIsZImageTurbo,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -77,7 +79,8 @@ type WorkflowStepAggregate =
   | ImageGenStep
   | TextToImageStep
   | VideoGenStep
-  | VideoEnhancementStep;
+  | VideoEnhancementStep
+  | VideoUpscalerStep;
 
 // Re-export for backward compatibility
 export { createOrchestratorClient, internalOrchestratorClient };
@@ -209,8 +212,10 @@ export async function parseGenerateImageInput({
   whatIf?: boolean;
   batchAll?: boolean;
 }) {
+  delete originalParams.resolution;
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
+  delete originalParams.outputFormat;
   if (originalParams.workflow.startsWith('txt2img')) {
     originalParams.sourceImage = null;
     originalParams.images = null;
@@ -244,6 +249,7 @@ export async function parseGenerateImageInput({
       delete originalParams.cfgScale;
       delete originalParams.negativePrompt;
       delete originalParams.clipSkip;
+      delete originalParams.enhancedCompatibility;
     }
   }
 
@@ -251,6 +257,20 @@ export async function parseGenerateImageInput({
   if (isChroma) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
+  }
+
+  const isZImageTurbo = getIsZImageTurbo(originalParams.baseModel);
+  if (isZImageTurbo) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
+  }
+
+  const isFlux2 = getIsFlux2(originalParams.baseModel);
+  if (isFlux2) {
+    originalParams.sampler = 'undefined';
+    originalParams.draft = false;
+    originalParams.negativePrompt = '';
+    delete originalParams.clipSkip;
   }
 
   const isSD3 = getIsSD3(originalParams.baseModel);
@@ -288,7 +308,7 @@ export async function parseGenerateImageInput({
 
   let params = { ...originalParams };
 
-  const injectableResources = getInjectablResources(params.baseModel);
+  const injectableResources = getInjectableResources(params.baseModel);
 
   // handle missing draft resource
   if (params.draft && !injectableResources.draft)
@@ -492,6 +512,7 @@ function formatWorkflowStep(args: {
     case 'imageGen':
       return formatImageGenStep(args);
     case 'videoGen':
+    case 'videoUpscaler':
     case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
@@ -618,7 +639,7 @@ function formatTextToImageStep({
 
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
-  const injectable = getInjectablResources(baseModel);
+  const injectable = getInjectableResources(baseModel);
 
   const injectableIds = Object.values(injectable)
     .map((x) => x?.id)
@@ -740,6 +761,7 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
     case 'textToImage':
       return step.output?.images.map((image) => ({ ...image, type: 'image' }));
     case 'videoGen':
+    case 'videoUpscaler':
     case 'videoEnhancement':
       return step.output?.video ? [{ ...step.output.video, type: 'video' }] : undefined;
   }
