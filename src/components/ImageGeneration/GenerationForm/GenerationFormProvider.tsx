@@ -281,6 +281,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     });
   }
 
+  useEffect(() => {
+    setTimeout(() => {
+      console.log('set form values');
+      setValues(form.getValues());
+    }, 0);
+  }, []);
+
   // TODO.Briant - determine a better way to pipe the data into the form
   // #region [effects]
   useEffect(() => {
@@ -378,17 +385,28 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         ) {
           form.setValue('workflow', 'txt2img');
         }
-        const fluxBaseModels: BaseModelGroup[] = ['Flux1', 'Flux1Kontext'];
+        const fluxBaseModels: BaseModelGroup[] = ['Flux1', 'Flux1Kontext', 'FluxKrea'];
+
         if (!!baseModel && !!prevBaseModel) {
           if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel)) {
-            form.setValue('cfgScale', 3.5);
-          }
-          // else if (!fluxBaseModels.includes(baseModel) && fluxBaseModels.includes(prevBaseModel))
-          //   form.setValue('cfgScale', 7);
-
-          if (baseModel === 'ZImageTurbo' && prevBaseModel !== baseModel) {
-            form.setValue('steps', 9);
-            form.setValue('cfgScale', 1);
+            setTimeout(() => {
+              form.setValue('cfgScale', 3.5);
+              form.setValue('steps', 25);
+            }, 0);
+          } else if (baseModel === 'ZImageTurbo' && prevBaseModel !== baseModel) {
+            setTimeout(() => {
+              form.setValue('cfgScale', 1);
+              form.setValue('steps', 9);
+            }, 0);
+          } else if (
+            baseModel !== 'ZImageTurbo' &&
+            !fluxBaseModels.includes(baseModel) &&
+            (prevBaseModel === 'ZImageTurbo' || fluxBaseModels.includes(prevBaseModel))
+          ) {
+            setTimeout(() => {
+              form.setValue('cfgScale', 7);
+              form.setValue('steps', 30);
+            }, 0);
           }
         }
 
@@ -466,7 +484,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function getDefaultValues(overrides: PartialFormData): PartialFormData {
-    prevBaseModelRef.current = defaultValues.baseModel;
+    prevBaseModelRef.current = overrides.baseModel;
     const isMember = currentUser?.isPaidMember ?? false;
     const sanitized = sanitizeTextToImageParams(
       {

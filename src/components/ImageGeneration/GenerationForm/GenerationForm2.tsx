@@ -530,7 +530,7 @@ export function GenerationFormContent() {
 
             if (isZImageTurbo) {
               stepsMin = 1;
-              stepsMax = 50;
+              stepsMax = 15;
             }
 
             let cfgScaleMin = 1;
@@ -542,7 +542,7 @@ export function GenerationFormContent() {
 
             if (isZImageTurbo) {
               cfgScaleMin = 1;
-              cfgScaleMax = 10;
+              cfgScaleMax = 2;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });

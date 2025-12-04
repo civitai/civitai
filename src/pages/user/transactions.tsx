@@ -46,6 +46,8 @@ const transactionTypes = [
   TransactionType[TransactionType.Sell],
   TransactionType[TransactionType.Compensation],
   TransactionType[TransactionType.Donation],
+  TransactionType[TransactionType.Bid],
+  TransactionType[TransactionType.Redeemable],
 ];
 
 const defaultFilters = {
