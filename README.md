@@ -14,15 +14,16 @@
 
 ## Table of Contents
 
+- [Table of Contents](#table-of-contents)
 - [About the Project](#about-the-project)
-    - [Tech Stack](#tech-stack)
+  - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
-    - [Prerequisites](#prerequisites)
-    - [Installation](#installation)
-    - [Altering your user](#altering-your-user)
-    - [Known limitations](#known-limitations)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Altering your user](#altering-your-user)
+  - [Known limitations](#known-limitations)
 - [Contributing](#contributing)
-    - [Data Migrations](#data-migrations)
+  - [Data Migrations](#data-migrations)
 - [Sponsors](#sponsors)
 - [License](#license)
 
@@ -104,7 +105,8 @@ First, make sure that you have the following installed on your machine:
         - `EMAIL_USER`
         - `EMAIL_PASS`
         - `EMAIL_FROM` (Valid email format needed)
-5. Finally, visit [http://localhost:3000](http://localhost:3000) to see the website.
+5. Run `git submodule update --recursive`
+6. Finally, visit [http://localhost:3000](http://localhost:3000) to see the website.
 
 _&ast; Note that account creation will run emails through maildev, which can be accessed at [http://localhost:1080](http://localhost:1080)._
 
