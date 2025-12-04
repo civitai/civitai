@@ -61,6 +61,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
+import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import type { NextApiRequest } from 'next';
 
 // const REQUIRED_SCANS = 2;
 
@@ -115,7 +118,7 @@ export default WebhookEndpoint(async (req, res) => {
     const imageId = Number(req.query.imageId);
     const image = await getImage(imageId);
     const result = await auditImageScanResults({ image });
-    if (req.query.rescan) await updateImage(image, result);
+    if (req.query.rescan) await updateImage(image, result, req);
     return res.status(200).json({ audit: result, image });
   }
   if (req.method !== 'POST')
@@ -175,7 +178,7 @@ export default WebhookEndpoint(async (req, res) => {
         });
         break;
       case Status.Success:
-        await handleSuccess(data);
+        await handleSuccess(data, req);
         break;
       default: {
         await logScanResultError({ id: data.id, message: 'unhandled data type' });
@@ -207,7 +210,7 @@ async function isBlocked(hash: string) {
   return count > 0;
 }
 
-async function handleSuccess(args: BodyProps) {
+async function handleSuccess(args: BodyProps, req: NextApiRequest) {
   const { id } = args;
   try {
     const scanned = await processScanResult(args);
@@ -219,7 +222,7 @@ async function handleSuccess(args: BodyProps) {
 
     const result = await auditImageScanResults({ image });
 
-    await updateImage(image, result);
+    await updateImage(image, result, req);
   } catch (e: any) {
     await logScanResultError({ id, message: e.message, error: e });
     throw new Error(e.message);
@@ -228,7 +231,8 @@ async function handleSuccess(args: BodyProps) {
 
 async function updateImage(
   image: GetImageReturn,
-  { data, reviewKey, tagsForReview = [], flags }: AuditImageScanResultsReturn
+  { data, reviewKey, tagsForReview = [], flags }: AuditImageScanResultsReturn,
+  req: NextApiRequest
 ) {
   const { id } = image;
   try {
