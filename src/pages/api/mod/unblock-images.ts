@@ -51,7 +51,6 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
         withMeta: false,
         include: [],
         blockedFor: ['moderated', 'Moderated'],
-        useLogicalReplica: features.logicalReplica,
       });
       if (!images.length) {
         console.log(

@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
-import type { SearchParams, SearchResponse } from 'meilisearch';
+import { MeiliSearch, type SearchParams, type SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
@@ -29,7 +29,7 @@ import {
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
-import { pgDbRead } from '~/server/db/pgDb';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -48,8 +48,8 @@ import {
   thumbnailCache,
   userImageVideoCountCache,
 } from '~/server/redis/caches';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -140,7 +140,12 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { ModelType, ReportReason, ReviewReactions } from '~/shared/utils/prisma/enums';
+import type {
+  ModelType,
+  ReportReason,
+  ReviewReactions,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
@@ -161,7 +166,18 @@ import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
-
+import { getExplainSql } from '~/server/db/db-helpers';
+import { ImagesFeed } from '../../../event-engine-common/feeds';
+import { MetricService } from '../../../event-engine-common/services/metrics';
+import { CacheService } from '../../../event-engine-common/services/cache';
+import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
+import type {
+  IClickhouseClient,
+  IDbClient,
+  IRedisClient,
+} from '../../../event-engine-common/types/package-stubs';
+import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
+import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { number } from 'zod';
 
@@ -1867,7 +1883,8 @@ export const makeMeiliImageSearchSort = (
   return `${field}:${criteria}`;
 };
 
-type ImageSearchInput = GetAllImagesInput & {
+type ImageSearchInput = GetInfiniteImagesOutput & {
+  useCombinedNsfwLevel?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -1893,6 +1910,124 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   return searchFn(input);
+}
+
+export async function getImagesFromFeedSearch(
+  input: ImageSearchInput
+): Promise<GetAllImagesIndexResult> {
+  try {
+    // Evaluate feature flags before creating feed
+    let enableExistenceCheck = false;
+    const fliptClient = await FliptSingleton.getInstance();
+    if (fliptClient) {
+      try {
+        const flag = fliptClient.evaluateBoolean({
+          flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+          entityId: input.currentUserId?.toString() || 'anonymous',
+          context: {},
+        });
+        enableExistenceCheck = flag.enabled;
+      } catch (err) {
+        console.log('[getImagesFromFeedSearch] Flipt evaluation failed:', err);
+      }
+    }
+
+    const feed = new ImagesFeed(
+      ({ apiKey, host }) =>
+        new MeiliSearch({
+          host,
+          apiKey,
+        }) as IMeilisearch,
+      clickhouse as IClickhouseClient,
+      pgDbWrite as IDbClient,
+      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
+      new CacheService(
+        redis as unknown as IRedisClient,
+        pgDbWrite as IDbClient,
+        clickhouse as IClickhouseClient
+      )
+    );
+
+    // Convert cursor to string if it's not already, and add feature flag result
+    const feedInput = {
+      ...input,
+      cursor: input.cursor ? String(input.cursor) : undefined,
+      enableExistenceCheck,
+    };
+
+    const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
+
+    // Transform PopulatedImage to match getAllImagesIndex return type
+    // Remove extra fields that PopulatedImage has but getAllImagesIndex doesn't
+    const transformedItems: ImagesInfiniteModel[] = feedResult.items.map((img) => {
+      // Destructure to remove all extra fields from PopulatedImage/ImageDocument
+      // that aren't in ImagesInfiniteModel
+      const {
+        // Timestamp unix fields (not in ImagesInfiniteModel)
+        sortAtUnix,
+        publishedAtUnix,
+        existedAtUnix,
+        // Array fields handled differently
+        tagIds,
+        toolIds,
+        techniqueIds,
+        // Flags object (not in ImagesInfiniteModel)
+        flags,
+        // NSFW fields (different handling)
+        aiNsfwLevel,
+        combinedNsfwLevel,
+        // Metric counts (stats object has these instead)
+        reactionCount,
+        commentCount,
+        collectedCount,
+        // Other fields not in ImagesInfiniteModel
+        userId,
+        acceptableMinor,
+        // Fields that need type transformation
+        reactions,
+        tags,
+        ...rest
+      } = img;
+
+      // Transform tags to match VotableTagModel (add missing fields with defaults)
+      // Note: tag.type and tag.nsfwLevel need casting because PopulatedImage uses
+      // its own type definitions from event-engine-common, while VotableTagModel
+      // uses types from ~/server/common/enums
+      const transformedTags: VotableTagModel[] = tags.map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        type: tag.type as unknown as TagType,
+        nsfwLevel: tag.nsfwLevel as unknown as NsfwLevel,
+        score: 0,
+        upVotes: 0,
+        downVotes: 0,
+      }));
+
+      // Transform reactions to use ReviewReactions enum
+      const transformedReactions = reactions.map((r) => ({
+        userId: r.userId,
+        reaction: r.reaction as ReviewReactions,
+      }));
+
+      // Return structure matching getAllImagesIndex
+      return {
+        ...rest,
+        nsfwLevel: img.nsfwLevel as NsfwLevel,
+        type: img.type as MediaType,
+        availability: img.availability ?? Availability.Public,
+        reactions: transformedReactions,
+        tags: transformedTags,
+      };
+    });
+
+    return {
+      nextCursor: feedResult.nextCursor,
+      items: transformedItems,
+    };
+  } catch (err) {
+    console.error('Error in getImagesFromFeedSearch:', err);
+    throw err;
+  }
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
@@ -1938,7 +2073,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
-    useLogicalReplica,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -2534,7 +2668,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     poiOnly,
     minorOnly,
     blockedFor,
-    useLogicalReplica,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;

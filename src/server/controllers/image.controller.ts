@@ -8,7 +8,6 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
-import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -74,6 +73,7 @@ import {
   moderateImages,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 
 export const moderateImageHandler = async ({
   input,
@@ -250,24 +250,35 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
+  // Use getAllImagesIndex (old Meilisearch) when useIndex is true
+  // Use getAllImages (DB) otherwise
+  // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
+  const useIndex = features.imageIndexFeed && input.useIndex;
 
-  // Track when useIndex is false or undefined
-  if (input.useIndex === false || input.useIndex == null) {
+  if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
   }
 
-  const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
-  // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
-
   try {
-    return await fetchFn({
-      ...input,
-      user,
-      useCombinedNsfwLevel: !features.canViewNsfw,
-      headers: { src: 'getInfiniteImagesHandler' },
-      include: [...input.include, 'tagIds'],
-      useLogicalReplica: features.logicalReplica,
-    });
+    if (useIndex) {
+      return await getAllImagesIndex({
+        ...input,
+        user,
+        useCombinedNsfwLevel: !features.canViewNsfw,
+        headers: { src: 'getInfiniteImagesHandler' },
+        include: [...input.include, 'tagIds'],
+        useLogicalReplica: features.logicalReplica,
+      });
+    } else {
+      return await getAllImages({
+        ...input,
+        user,
+        useCombinedNsfwLevel: !features.canViewNsfw,
+        headers: { src: 'getInfiniteImagesHandler' },
+        include: [...input.include, 'tagIds'],
+        useLogicalReplica: features.logicalReplica,
+      });
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -299,8 +310,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
+    // Use getAllImagesIndex (old Meilisearch) when feature flag is enabled
+    // Use getAllImages (DB) otherwise
+    // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
     const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
-    // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
     type ResultType = typeof features.imageIndex extends true
       ? ImageResultSearchIndex
       : ImageResultDB;
