@@ -1065,6 +1065,9 @@ export const deleteArticleById = async ({
       const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
+      await tx.imageConnection.deleteMany({
+        where: { entityId: id, entityType: ImageConnectionType.Article },
+      });
 
       return article;
     });

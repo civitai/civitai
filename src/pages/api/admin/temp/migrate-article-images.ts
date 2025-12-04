@@ -9,6 +9,7 @@ import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
 import { ingestImage } from '~/server/services/image.service';
 import type { ExtractedMedia } from '~/utils/article-helpers';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ImageConnectionType } from '~/server/common/enums';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -149,8 +150,9 @@ export default WebhookEndpoint(async (req, res) => {
             log(`Extracted ${allUrls.size} unique URLs from ${articleMediaMap.size} articles`);
 
             // Process batch in single transaction
+            let newImages: Array<{ id: number; url: string; type: MediaType }> = [];
             try {
-              await dbWrite.$transaction(
+              const transactionResult = await dbWrite.$transaction(
                 async (tx) => {
                   // Fetch existing images
                   const existingImages = await tx.image.findMany({
@@ -163,6 +165,7 @@ export default WebhookEndpoint(async (req, res) => {
                   // Create missing images
                   const missingUrls = Array.from(allUrls).filter((url) => !existingUrlMap.has(url));
 
+                  let createdImages: Array<{ id: number; url: string; type: MediaType }> = [];
                   if (missingUrls.length > 0) {
                     const mediaByUrl = new Map<
                       string,
@@ -177,7 +180,7 @@ export default WebhookEndpoint(async (req, res) => {
                       }
                     }
 
-                    const newImages = await tx.image.createManyAndReturn({
+                    createdImages = await tx.image.createManyAndReturn({
                       data: Array.from(mediaByUrl.entries()).map(
                         ([url, { type, userId, name }]) => ({
                           url,
@@ -192,27 +195,11 @@ export default WebhookEndpoint(async (req, res) => {
                       skipDuplicates: true,
                     });
 
-                    newImages.forEach((img) => {
+                    createdImages.forEach((img) => {
                       existingUrlMap.set(img.url, img.id);
                     });
 
-                    batchStats.imagesCreated += newImages.length;
-
-                    // Queue for ingestion
-                    if (newImages.length > 0) {
-                      for (const img of newImages) {
-                        await ingestImage({
-                          image: img,
-                          lowPriority: true,
-                          userId: 4, // System user
-                          tx,
-                        }).catch((error) => {
-                          const errorMessage =
-                            error instanceof Error ? error.message : 'Unknown error';
-                          log(`⚠️  Failed to queue image ${img.id}: ${errorMessage}`);
-                        });
-                      }
-                    }
+                    batchStats.imagesCreated += createdImages.length;
                   }
 
                   // Create connections
@@ -254,13 +241,33 @@ export default WebhookEndpoint(async (req, res) => {
                       data: { contentScannedAt: new Date() },
                     });
                   }
+
+                  return { newImages: createdImages };
                 },
                 { timeout: 60000, maxWait: 10000 }
               );
 
+              newImages = transactionResult.newImages;
+
               log(
                 `  Transaction complete: ${batchStats.imagesCreated} images, ${batchStats.connectionsCreated} connections`
               );
+
+              // Queue images for ingestion AFTER transaction commits
+              // This prevents race conditions where webhooks fire before the transaction commits
+              if (newImages.length > 0) {
+                log(`  Queueing ${newImages.length} images for scanning...`);
+                for (const img of newImages) {
+                  await ingestImage({
+                    image: img,
+                    lowPriority: true,
+                    userId: 4, // System user
+                  }).catch((error) => {
+                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                    log(`⚠️  Failed to queue image ${img.id}: ${errorMessage}`);
+                  });
+                }
+              }
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Unknown error';
               const errorMsg = `Batch transaction failed: ${errorMessage}`;
