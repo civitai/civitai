@@ -283,6 +283,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     setTimeout(() => {
+      console.log('set form values');
       setValues(form.getValues());
     }, 0);
   }, []);
@@ -378,7 +379,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (!name || name === 'baseModel') {
-        console.log({ baseModel, prevBaseModel });
         if (
           (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') &&
           watchedValues.workflow !== 'txt2img'
@@ -389,18 +389,24 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
         if (!!baseModel && !!prevBaseModel) {
           if (fluxBaseModels.includes(baseModel) && !fluxBaseModels.includes(prevBaseModel)) {
-            form.setValue('cfgScale', 3.5);
-            form.setValue('steps', 25);
+            setTimeout(() => {
+              form.setValue('cfgScale', 3.5);
+              form.setValue('steps', 25);
+            }, 0);
           } else if (baseModel === 'ZImageTurbo' && prevBaseModel !== baseModel) {
-            form.setValue('cfgScale', 1);
-            form.setValue('steps', 9);
+            setTimeout(() => {
+              form.setValue('cfgScale', 1);
+              form.setValue('steps', 9);
+            }, 0);
           } else if (
             baseModel !== 'ZImageTurbo' &&
             !fluxBaseModels.includes(baseModel) &&
             (prevBaseModel === 'ZImageTurbo' || fluxBaseModels.includes(prevBaseModel))
           ) {
-            form.setValue('cfgScale', 7);
-            form.setValue('steps', 30);
+            setTimeout(() => {
+              form.setValue('cfgScale', 7);
+              form.setValue('steps', 30);
+            }, 0);
           }
         }
 
