@@ -83,7 +83,7 @@ const getBankableBuzzTypeString = (buzzType: BuzzSpendType) => {
 };
 
 const getBankAccountType = (buzzType: BuzzSpendType): BuzzCreatorProgramType => {
-  return buzzType === 'green' ? 'creatorprogrambankgreen' : 'creatorprogrambank';
+  return buzzType === 'green' ? 'creatorProgramBankGreen' : 'creatorProgramBank';
 };
 
 const createUserCapCache = (buzzType: BuzzSpendType) => {
@@ -572,11 +572,11 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
       ids.map(async (id) => {
         const pending = await getUserBuzzAccount({
           accountId: id,
-          accountType: 'cashpending',
+          accountType: 'cashPending',
         });
         const settled = await getUserBuzzAccount({
           accountId: id,
-          accountType: 'cashsettled',
+          accountType: 'cashSettled',
         });
         return {
           id,
@@ -719,7 +719,7 @@ export async function withdrawCash(userId: number, amount: number) {
     const { transactionId } = await createBuzzTransaction({
       amount,
       fromAccountId: userId,
-      fromAccountType: 'cashsettled',
+      fromAccountType: 'cashSettled',
       toAccountId: 0,
       toAccountType: 'yellow',
       type: TransactionType.Withdrawal,
@@ -891,7 +891,7 @@ export async function getPoolParticipantsV2(
   const monthAccount = getMonthAccount(month);
   const data = await getTopContributors({
     accountIds: [monthAccount],
-    accountType: accountType === 'yellow' ? 'creatorprogrambank' : 'creatorprogrambankgreen',
+    accountType: accountType === 'yellow' ? 'creatorProgramBank' : 'creatorProgramBankGreen',
     limit: 10000,
     all: true,
   });
@@ -940,7 +940,7 @@ export const updateCashWithdrawal = async ({
       await withRetries(async () => {
         const transaction = await createBuzzTransaction({
           type: TransactionType.Refund,
-          toAccountType: 'cashsettled',
+          toAccountType: 'cashSettled',
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount: withdrawal.amount - (fees ?? 0),
