@@ -790,6 +790,7 @@ export const articleStatCache = createCachedObject<ArticleStatLookup>({
   key: REDIS_KEYS.CACHES.ARTICLE_STATS,
   idKey: 'articleId',
   ttl: CacheTTL.day,
+  cacheNotFound: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
     const articleIds = Array.isArray(ids) ? ids : [ids];
