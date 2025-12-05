@@ -6,6 +6,7 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   METRICS_IMAGES_SEARCH_INDEX,
+  METRICS_MODELS_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -21,6 +22,7 @@ import {
   collectionsSearchIndex,
   bountiesSearchIndex,
   toolsSearchIndex,
+  modelsMetricsSearchIndex,
 } from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedEnumArray, commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -38,6 +40,7 @@ export const schema = z.object({
     COLLECTIONS_SEARCH_INDEX,
     BOUNTIES_SEARCH_INDEX,
     TOOLS_SEARCH_INDEX,
+    METRICS_MODELS_SEARCH_INDEX,
   ]),
 });
 export default ModEndpoint(async function updateIndexSync(
@@ -101,6 +104,13 @@ export default ModEndpoint(async function updateIndexSync(
             await imagesMetricsSearchIndex.updateSync(data, jobContext);
           }
           break;
+        case METRICS_MODELS_SEARCH_INDEX:
+          if (processQueuesOpts) {
+            await modelsMetricsSearchIndex.processQueues(processQueuesOpts, jobContext);
+          } else {
+            await modelsMetricsSearchIndex.updateSync(data, jobContext);
+          }
+          break;
         case COLLECTIONS_SEARCH_INDEX:
           if (processQueuesOpts) {
             await collectionsSearchIndex.processQueues(processQueuesOpts, jobContext);
@@ -129,6 +139,7 @@ export default ModEndpoint(async function updateIndexSync(
 
     res.status(200).send({ status: 'ok' });
   } catch (error: unknown) {
+    console.error(error);
     res.status(500).send(error);
   }
 });
