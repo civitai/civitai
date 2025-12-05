@@ -68,7 +68,6 @@ import { signalClient } from '~/utils/signal-client';
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
-import { toKebabCase } from '~/utils/string-helpers';
 import { userUpdateCounter } from '~/server/prom/client';
 
 type UserCapCacheItem = {
@@ -79,7 +78,7 @@ type UserCapCacheItem = {
 };
 
 const getBankableBuzzTypeString = (buzzType: BuzzSpendType) => {
-  return `'${toKebabCase(BuzzTypes.toApiType(buzzType))}'`;
+  return `'${buzzType}'`;
 };
 
 const getBankAccountType = (buzzType: BuzzSpendType): BuzzCreatorProgramType => {
@@ -841,7 +840,6 @@ export async function getPoolParticipants(
 
   const bankableBuzzTypeString = getBankableBuzzTypeString(buzzType);
   const bankAccountType = getBankAccountType(buzzType);
-  const bankAccountTypeKebab = toKebabCase(BuzzTypes.toApiType(bankAccountType));
   const monthAccount = getMonthAccount(month);
   const participants = await clickhouse!.$query<{
     userId: number;
@@ -849,18 +847,18 @@ export async function getPoolParticipants(
     extracted: number;
   }>`
     SELECT
-      if(toAccountType = '${bankAccountTypeKebab}', fromAccountId, toAccountId) as userId,
-      SUM(if(toAccountType = '${bankAccountTypeKebab}', amount, -amount)) as amount,
-      SUM(if(toAccountType = '${bankAccountTypeKebab}', 0, bt.amount)) as extracted
+      if(toAccountType = '${bankAccountType}', fromAccountId, toAccountId) as userId,
+      SUM(if(toAccountType = '${bankAccountType}', amount, -amount)) as amount,
+      SUM(if(toAccountType = '${bankAccountType}', 0, bt.amount)) as extracted
     FROM buzzTransactions bt
     WHERE (
       -- Banks
-      toAccountType = '${bankAccountTypeKebab}'
+      toAccountType = '${bankAccountType}'
       AND toAccountId = ${monthAccount}
       AND fromAccountType IN (${bankableBuzzTypeString})
     ) OR (
       -- Extracts
-      fromAccountType = '${bankAccountTypeKebab}'
+      fromAccountType = '${bankAccountType}'
       AND fromAccountId = ${monthAccount}
       AND toAccountType IN (${bankableBuzzTypeString})
     )
