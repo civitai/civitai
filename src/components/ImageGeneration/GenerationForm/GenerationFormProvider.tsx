@@ -283,7 +283,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     setTimeout(() => {
-      console.log('set form values');
       setValues(form.getValues());
     }, 0);
   }, []);
