@@ -165,6 +165,7 @@ import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
+import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
 
 let total = 0;
 const tips = {
@@ -568,7 +569,8 @@ export function GenerationFormContent() {
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
-              isSeedream;
+              isSeedream ||
+              isZImageTurbo;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -1387,10 +1389,15 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
+                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
+                  {!disablePriority && (
+                    <InputRequestPriority name="priority" label="Request Priority" />
+                  )}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
                       variant="contained"
+                      className="mt-5"
                       classNames={{
                         item: classes.accordionItem,
                         control: classes.accordionControl,
@@ -1633,9 +1640,6 @@ export function GenerationFormContent() {
                         </Accordion.Panel>
                       </Accordion.Item>
                     </PersistentAccordion>
-                  )}
-                  {!disablePriority && (
-                    <InputRequestPriority name="priority" label="Request Priority" />
                   )}
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">

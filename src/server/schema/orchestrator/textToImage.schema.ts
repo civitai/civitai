@@ -55,7 +55,7 @@ export const textToImageParamsSchema = z.object({
   openAITransparentBackground: z.boolean().optional(),
   process: z.string().optional(),
   enhancedCompatibility: z.boolean().optional(),
-  outputFormat: z.string().optional(),
+  outputFormat: z.enum(['png', 'jpeg']).optional(),
 });
 
 // #endregion

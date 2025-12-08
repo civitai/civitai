@@ -265,6 +265,7 @@ export async function parseGenerateImageInput({
   if (isZImageTurbo) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
+    delete originalParams.negativePrompt;
   }
 
   const isFlux2 = getIsFlux2(originalParams.baseModel);
