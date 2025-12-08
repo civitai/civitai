@@ -350,18 +350,19 @@ export const constants = {
   },
 } as const;
 
-export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
+export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
 export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
-export const orchestratorUrls = [
-  'https://orchestration.civitai.com',
-  'https://orchestration-dev.civitai.com',
-  'https://orchestration-stage.civitai.com',
-];
+
 export function isOrchestratorUrl(url: string) {
-  return orchestratorUrls.some((orchestratorUrl) => url.startsWith(orchestratorUrl));
+  try {
+    const { host } = new URL(url);
+    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+  } catch {
+    return false;
+  }
 }
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

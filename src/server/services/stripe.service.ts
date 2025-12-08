@@ -688,7 +688,15 @@ export const cancelSubscription = async ({
 }) => {
   if (!subscriptionId && userId) {
     const subscription = await dbWrite.customerSubscription.findFirst({
-      where: { userId },
+      where: {
+        userId,
+        product: {
+          provider: 'Stripe',
+        },
+        status: {
+          in: ['active', 'past_due', 'trialing'],
+        },
+      },
       select: { id: true },
     });
     if (!subscription) return;

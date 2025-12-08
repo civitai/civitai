@@ -70,7 +70,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
                 fromAccountId: 0,
                 fromAccountType: 'yellow',
                 toAccountId: monthAccount,
-                toAccountType: 'creatorprogrambank',
+                toAccountType: 'creatorProgramBank',
                 type: TransactionType.Bank,
                 description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
               });
@@ -81,7 +81,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
             await createBuzzTransaction({
               amount: userBanked.total,
               fromAccountId: monthAccount,
-              fromAccountType: 'creatorprogrambank',
+              fromAccountType: 'creatorProgramBank',
               toAccountId: userId,
               toAccountType: 'yellow',
               type: TransactionType.Extract,
@@ -99,9 +99,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       await createBuzzTransaction({
         amount: shouldTakeMoneyFromBank ? Math.min(Math.abs(change), currentValue) : change,
         fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
-        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'yellow',
+        fromAccountType: shouldTakeMoneyFromBank ? 'creatorProgramBank' : 'yellow',
         toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
-        toAccountType: shouldTakeMoneyFromBank ? 'yellow' : 'creatorprogrambank',
+        toAccountType: shouldTakeMoneyFromBank ? 'yellow' : 'creatorProgramBank',
         type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
         description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
       });

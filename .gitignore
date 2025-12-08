@@ -90,6 +90,7 @@ src/pages/api/dev-local/*
 /.serena/
 
 docs/working/
+.claude/*.local.*
 local/
 .eslintcache
 nul
