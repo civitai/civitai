@@ -166,7 +166,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
   let trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
-    model,
+
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
     trainingData: {
       type: 'zip',
@@ -194,11 +194,13 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
   if (aiToolkitParams.ecosystem === 'sd1') {
     trainingInput = {
       ...trainingInput,
+      model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as Sd1AiToolkitTrainingInput;
   } else if (aiToolkitParams.ecosystem === 'sdxl') {
     trainingInput = {
       ...trainingInput,
+      model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
   }
