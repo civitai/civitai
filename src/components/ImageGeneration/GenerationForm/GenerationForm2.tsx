@@ -535,6 +535,7 @@ export function GenerationFormContent() {
 
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
+            const cfgScaleStep = 0.5;
             if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
@@ -543,6 +544,7 @@ export function GenerationFormContent() {
             if (isZImageTurbo) {
               cfgScaleMin = 1;
               cfgScaleMax = 2;
+              cfgScaleStep = 0.1;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -1434,7 +1436,7 @@ export function GenerationFormContent() {
                                     }
                                     min={cfgScaleMin}
                                     max={cfgScaleMax}
-                                    step={0.5}
+                                    step={cfgScaleStep}
                                     precision={1}
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
