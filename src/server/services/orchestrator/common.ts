@@ -11,6 +11,7 @@ import type {
   VideoBlob,
   NsfwLevel,
   VideoUpscalerStep,
+  VideoInterpolationStep,
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
@@ -80,7 +81,8 @@ type WorkflowStepAggregate =
   | TextToImageStep
   | VideoGenStep
   | VideoEnhancementStep
-  | VideoUpscalerStep;
+  | VideoUpscalerStep
+  | VideoInterpolationStep;
 
 // Re-export for backward compatibility
 export { createOrchestratorClient, internalOrchestratorClient };
@@ -514,6 +516,7 @@ function formatWorkflowStep(args: {
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':
+    case 'videoInterpolation':
       return formatVideoGenStep(args);
     default:
       throw new Error(
@@ -763,6 +766,7 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':
+    case 'videoInterpolation':
       return step.output?.video ? [{ ...step.output.video, type: 'video' }] : undefined;
   }
 }

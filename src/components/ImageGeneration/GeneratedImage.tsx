@@ -86,6 +86,7 @@ import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButt
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
 import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
+import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -678,6 +679,16 @@ function GeneratedImageWorkflowMenuItems({
     });
   }
 
+  function handleVideoInterpolation() {
+    dialogStore.trigger({
+      component: VideoInterpolationModal,
+      props: {
+        videoUrl: image.url,
+        metadata: step.metadata,
+      },
+    });
+  }
+
   function handleDeleteImage() {
     openConfirmModal({
       title: 'Delete image',
@@ -761,14 +772,23 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
-      {/* {!isBlocked && step.$type === 'videoGen' && (
+      {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
           <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
-            Upscale <Badge color="yellow">Preview</Badge>
+            Upscale{' '}
+            <Badge color="yellow" className="ml-1">
+              Preview
+            </Badge>
+          </Menu.Item>
+          <Menu.Item onClick={handleVideoInterpolation} className="flex items-center gap-1">
+            Interpolation{' '}
+            <Badge color="yellow" className="ml-1">
+              Preview
+            </Badge>
           </Menu.Item>
         </>
-      )} */}
+      )}
       {!workflowsOnly && (
         <>
           <Menu.Divider />

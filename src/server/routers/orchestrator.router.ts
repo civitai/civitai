@@ -77,6 +77,7 @@ import {
 import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
+import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -115,6 +116,10 @@ const orchestratorGuardedProcedure = guardedProcedure
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 export const orchestratorRouter = router({
+  getVideoMetadata: orchestratorProcedure
+    .input(z.object({ videoUrl: z.string() }))
+    .query(({ ctx, input }) => getVideoMetadata(input)),
+
   // #region [requests]
   deleteWorkflow: orchestratorProcedure
     .input(workflowIdSchema)
