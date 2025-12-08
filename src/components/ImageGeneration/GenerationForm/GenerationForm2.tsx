@@ -535,7 +535,7 @@ export function GenerationFormContent() {
 
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
-            const cfgScaleStep = 0.5;
+            let cfgScaleStep = 0.5;
             if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
