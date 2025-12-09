@@ -27,7 +27,7 @@ export const trainingStatusFields: {
   [TrainingStatus.Processing]: {
     color: 'teal',
     description:
-      'The training job is actively processing. In other words: the model is banking. You will be emailed when it is complete.',
+      'The training job is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
   },
   [TrainingStatus.InReview]: {
     color: 'green',
