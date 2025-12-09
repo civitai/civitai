@@ -283,7 +283,7 @@ const getCreatorProgramUsers = async () => {
   return users.map((u) => u.userId);
 };
 
-export const bakingPhaseEndingNotification = createJob(
+export const bankingPhaseEndingNotification = createJob(
   'creator-program-banking-phase-ending',
   `0 0 L-${EXTRACTION_PHASE_DURATION + 1} * *`,
   async () => {
@@ -338,7 +338,7 @@ export const creatorProgramJobs = [
   creatorsProgramInviteTipalti,
   creatorsProgramRollover,
   creatorsProgramSettleCash,
-  bakingPhaseEndingNotification,
+  bankingPhaseEndingNotification,
   extractionPhaseStartedNotification,
   extractionPhaseEndingNotification,
 ];
