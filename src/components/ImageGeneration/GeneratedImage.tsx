@@ -772,7 +772,7 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
-      {/* {!isBlocked && step.$type === 'videoGen' && (
+      {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
           <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
@@ -788,7 +788,7 @@ function GeneratedImageWorkflowMenuItems({
             </Badge>
           </Menu.Item>
         </>
-      )} */}
+      )}
       {!workflowsOnly && (
         <>
           <Menu.Divider />

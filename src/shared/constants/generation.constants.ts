@@ -188,8 +188,16 @@ export function getBaseModelSetType(baseModel?: string, defaultType: BaseModelGr
   return getBaseModelGroup(baseModel ?? defaultType);
 }
 
+export function getIsSd1(baseModel?: string) {
+  return baseModel ? getBaseModelEcosystem(baseModel) === 'sd1' : false;
+}
+
 export function getIsSdxl(baseModel?: string) {
   return baseModel ? getBaseModelEcosystem(baseModel) === 'sdxl' : false;
+}
+
+export function getAllowOutputFormat(baseModel?: string) {
+  return baseModel ? ['sd1', 'sdxl'].includes(getBaseModelEcosystem(baseModel)) : false;
 }
 
 export function getIsHiDream(baseModel?: string) {
