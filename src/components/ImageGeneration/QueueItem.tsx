@@ -141,6 +141,12 @@ export function QueueItem({
 
   const handleCopy = () => {
     copy(request.id);
+    if (currentUser?.isModerator) {
+      window.open(
+        `https://orchestration-dashboard.civitai.com/job-search?workflow=${request.id}`,
+        '_blank'
+      );
+    }
   };
 
   const handleGenerate = () => {
