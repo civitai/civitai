@@ -29,7 +29,6 @@ export function Wan25FormInput() {
   const baseModelGroup: BaseModelGroup =
     process === 'txt2vid' ? 'WanVideo-25-T2V' : 'WanVideo-25-I2V';
   const resources = getGenerationBaseModelResourceOptions(baseModelGroup);
-  console.log({ resources, filtered: resources.filter((x) => x.type !== 'Checkpoint') });
 
   return (
     <>

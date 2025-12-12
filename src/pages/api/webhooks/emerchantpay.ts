@@ -33,20 +33,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 
-  console.log({
-    q: req.query,
-    b: req.body,
-    headers: req.headers,
-  });
-
   const buf = await buffer(req);
 
   try {
     // Parse the form-encoded body first to get signature and unique_id
     const formPayload = buf.toString('utf8');
-    console.log({ formPayload });
     const notification = EmerchantPayCaller.parseWebhookNotification(formPayload);
-    console.log({ parsedNotification: notification });
 
     // Verify signature using EmerchantPay's method: SHA Hash of <unique_id><API password>
     const apiPassword = env.EMERCHANTPAY_PASSWORD;

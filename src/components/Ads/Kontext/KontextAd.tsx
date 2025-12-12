@@ -49,7 +49,6 @@ function KontextAdContent({ index, className }: { index: number; className?: str
         },
         onAdView: () => console.log('ad view'),
         onBid: async (value) => {
-          console.log({ bid: value });
           return !!value;
         },
       }
