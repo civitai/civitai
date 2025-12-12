@@ -105,7 +105,7 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   costInfo: CostInfo | null;
 };
 
-const modelsLimit = 10;
+const DEFAULT_PAGE_SIZE = 10;
 
 // Helper to extract dates and other derived info from training data
 function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
@@ -205,6 +205,7 @@ export default function UserTrainingModels() {
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
 
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [modalData, setModalData] = useState<ModalData>({});
   const [opened, { open, close }] = useDisclosure(false);
 
@@ -253,7 +254,7 @@ export default function UserTrainingModels() {
 
   const { data, isLoading, isFetching } = trpc.model.getMyTrainingModels.useQuery({
     page,
-    limit: modelsLimit,
+    limit: pageSize,
     query: debouncedSearch || undefined,
     trainingStatus: effectiveStatusFilter,
     type: typeFilter || undefined,
@@ -264,7 +265,7 @@ export default function UserTrainingModels() {
     items: [],
     totalItems: 0,
     currentPage: 1,
-    pageSize: modelsLimit,
+    pageSize,
     totalPages: 1,
   };
 
@@ -879,9 +880,13 @@ export default function UserTrainingModels() {
           onPaginationChange={(updater) => {
             const newPagination =
               typeof updater === 'function'
-                ? updater({ pageIndex: page - 1, pageSize: modelsLimit })
+                ? updater({ pageIndex: page - 1, pageSize })
                 : updater;
             setPage(newPagination.pageIndex + 1);
+            if (newPagination.pageSize !== pageSize) {
+              setPageSize(newPagination.pageSize);
+              setPage(1); // Reset to first page when changing page size
+            }
           }}
           onSortingChange={setSorting}
           enableMultiSort={false}
@@ -912,7 +917,7 @@ export default function UserTrainingModels() {
           }}
           state={{
             isLoading,
-            pagination: { pageIndex: page - 1, pageSize: modelsLimit },
+            pagination: { pageIndex: page - 1, pageSize },
             showProgressBars: isFetching,
             sorting,
           }}
