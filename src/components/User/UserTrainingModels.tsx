@@ -4,15 +4,17 @@ import {
   Badge,
   Button,
   Center,
+  Checkbox,
   Divider,
   Group,
   HoverCard,
   Loader,
   Modal,
-  MultiSelect,
+  Popover,
   ScrollArea,
   Select,
   Stack,
+  Switch,
   Text,
   TextInput,
   Tooltip,
@@ -22,6 +24,7 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertCircle,
   IconCheck,
+  IconChevronDown,
   IconCircleCheck,
   IconCopy,
   IconExclamationCircle,
@@ -83,12 +86,19 @@ type ModalData = {
   params?: TrainingDetailsParamsUnion;
 };
 
+type RefundInfo = {
+  isRefunded: boolean;
+  yellowBuzz?: number;
+  blueBuzz?: number;
+  greenBuzz?: number;
+};
+
 type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   startDate: Date | null;
   endDate: Date | null;
   trainingType: string;
   baseModelPretty: string;
-  refundInfo: { isRefunded: boolean; amount?: number; accountType?: string } | null;
+  refundInfo: RefundInfo | null;
 };
 
 const modelsLimit = 10;
@@ -125,14 +135,18 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
 
     // Extract refund info (from V2 transactionData)
     // A refund is a 'credit' transaction (buzz going back to the user)
-    let refundInfo: { isRefunded: boolean; amount?: number; accountType?: string } | null = null;
+    let refundInfo: RefundInfo | null = null;
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
-      const refundTx = trainingResults.transactionData.find((tx) => tx.type === 'credit');
-      if (refundTx) {
+      const refundTxs = trainingResults.transactionData.filter((tx) => tx.type === 'credit');
+      if (refundTxs.length > 0) {
+        const yellowTx = refundTxs.find((tx) => tx.accountType === 'yellow');
+        const blueTx = refundTxs.find((tx) => tx.accountType === 'blue');
+        const greenTx = refundTxs.find((tx) => tx.accountType === 'green');
         refundInfo = {
           isRefunded: true,
-          amount: refundTx.amount,
-          accountType: refundTx.accountType ?? undefined,
+          yellowBuzz: yellowTx?.amount,
+          blueBuzz: blueTx?.amount,
+          greenBuzz: greenTx?.amount,
         };
       } else if (mv.trainingStatus === TrainingStatus.Failed) {
         // Failed but no refund transaction yet
@@ -178,6 +192,22 @@ export default function UserTrainingModels() {
   const [statusFilter, setStatusFilter] = useState<TrainingStatus[]>([]);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [baseModelFilter, setBaseModelFilter] = useState<string | null>(null);
+  const [hidePending, setHidePending] = useState(false);
+  const [hideFailed, setHideFailed] = useState(false);
+
+  // Build effective status filter based on toggles
+  const effectiveStatusFilter = useMemo(() => {
+    if (statusFilter.length > 0) return statusFilter;
+    if (!hidePending && !hideFailed) return undefined;
+
+    // Get all statuses except the hidden ones
+    const allStatuses = Object.values(TrainingStatus);
+    return allStatuses.filter((s) => {
+      if (hidePending && s === TrainingStatus.Pending) return false;
+      if (hideFailed && s === TrainingStatus.Failed) return false;
+      return true;
+    });
+  }, [statusFilter, hidePending, hideFailed]);
 
   // Sort state for table column headers
   const [sorting, setSorting] = useState<MRT_SortingState>([{ id: 'startDate', desc: true }]);
@@ -191,10 +221,6 @@ export default function UserTrainingModels() {
         return desc ? 'startDesc' : 'startAsc';
       case 'endDate':
         return desc ? 'endDesc' : 'endAsc';
-      case 'createdAt':
-        return desc ? 'createdDesc' : 'createdAsc';
-      case 'updatedAt':
-        return desc ? 'updatedDesc' : 'updatedAsc';
       default:
         return 'startDesc';
     }
@@ -207,7 +233,7 @@ export default function UserTrainingModels() {
     page,
     limit: modelsLimit,
     query: debouncedSearch || undefined,
-    trainingStatus: statusFilter.length > 0 ? statusFilter : undefined,
+    trainingStatus: effectiveStatusFilter,
     type: typeFilter || undefined,
     baseModel: baseModelFilter || undefined,
     sort,
@@ -255,10 +281,7 @@ export default function UserTrainingModels() {
     }
   };
 
-  const handleDelete = (
-    e: React.MouseEvent<HTMLButtonElement>,
-    modelVersion: TrainingModelRow
-  ) => {
+  const handleDelete = (e: React.MouseEvent<HTMLButtonElement>, modelVersion: TrainingModelRow) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -327,7 +350,9 @@ export default function UserTrainingModels() {
           <Group gap={4} wrap="nowrap">
             <Text lineClamp={1}>{row.original.model.name}</Text>
             {row.original.name !== row.original.model.name && (
-              <Text c="dimmed" size="sm">({row.original.name})</Text>
+              <Text c="dimmed" size="sm">
+                ({row.original.name})
+              </Text>
             )}
           </Group>
         ),
@@ -427,31 +452,6 @@ export default function UserTrainingModels() {
                   </HoverCard>
                 </>
               )}
-              {isFailed && mv.refundInfo && (
-                <>
-                  <Divider size="sm" orientation="vertical" />
-                  <HoverCard shadow="md" width={250} zIndex={100} withArrow withinPortal>
-                    <HoverCard.Target>
-                      <Badge
-                        variant="filled"
-                        color={mv.refundInfo.isRefunded ? 'green' : 'orange'}
-                        leftSection={<IconCurrencyDollar size={12} />}
-                      >
-                        {mv.refundInfo.isRefunded
-                          ? `Refunded${mv.refundInfo.amount ? ` ${mv.refundInfo.amount}` : ''}`
-                          : 'Pending Refund'}
-                      </Badge>
-                    </HoverCard.Target>
-                    <HoverCard.Dropdown>
-                      <Text>
-                        {mv.refundInfo.isRefunded
-                          ? `Buzz refunded${mv.refundInfo.accountType ? ` to ${mv.refundInfo.accountType} account` : ''}`
-                          : 'Refund is being processed (within 24 hours)'}
-                      </Text>
-                    </HoverCard.Dropdown>
-                  </HoverCard>
-                </>
-              )}
               {(mv.trainingStatus === TrainingStatus.Failed ||
                 mv.trainingStatus === TrainingStatus.Denied) && (
                 <Button
@@ -498,18 +498,47 @@ export default function UserTrainingModels() {
         ),
       },
       {
-        accessorKey: 'createdAt',
-        header: 'Created',
-        id: 'createdAt',
-        size: 130,
-        Cell: ({ row }) => <Text size="sm">{formatDate(row.original.createdAt)}</Text>,
-      },
-      {
-        accessorKey: 'updatedAt',
-        header: 'Updated',
-        id: 'updatedAt',
-        size: 130,
-        Cell: ({ row }) => <Text size="sm">{formatDate(row.original.updatedAt)}</Text>,
+        id: 'refund',
+        header: 'Refund',
+        enableSorting: false,
+        size: 140,
+        Cell: ({ row }) => {
+          const mv = row.original;
+          if (!mv.refundInfo) return null;
+
+          if (!mv.refundInfo.isRefunded) {
+            return (
+              <Badge variant="light" color="orange" size="sm">
+                Pending
+              </Badge>
+            );
+          }
+
+          return (
+            <Group gap={4} wrap="nowrap">
+              {mv.refundInfo.yellowBuzz && (
+                <Badge variant="filled" color="yellow" size="sm">
+                  {mv.refundInfo.yellowBuzz.toLocaleString()}
+                </Badge>
+              )}
+              {mv.refundInfo.blueBuzz && (
+                <Badge variant="filled" color="blue" size="sm">
+                  {mv.refundInfo.blueBuzz.toLocaleString()}
+                </Badge>
+              )}
+              {mv.refundInfo.greenBuzz && (
+                <Badge variant="filled" color="green" size="sm">
+                  {mv.refundInfo.greenBuzz.toLocaleString()}
+                </Badge>
+              )}
+              {!mv.refundInfo.yellowBuzz && !mv.refundInfo.blueBuzz && !mv.refundInfo.greenBuzz && (
+                <Badge variant="light" color="green" size="sm">
+                  Refunded
+                </Badge>
+              )}
+            </Group>
+          );
+        },
       },
       {
         id: 'missingInfo',
@@ -521,15 +550,28 @@ export default function UserTrainingModels() {
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
 
+          const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const hasFiles = !!thisFile;
           const hasTrainingParams = !!thisTrainingDetails?.params;
           const needsInfo = !hasFiles || !hasTrainingParams;
+
+          if (isFailed) {
+            return (
+              <Tooltip label="Failed!" withArrow withinPortal>
+                <Center>
+                  <IconX color="red" size={20} />
+                </Center>
+              </Tooltip>
+            );
+          }
 
           return (
             <Tooltip
               label={
                 needsInfo
-                  ? `${!hasFiles ? 'Needs training files (Step 2)' : ''} ${!hasTrainingParams ? 'Needs training parameters (Step 3)' : ''}`
+                  ? `${!hasFiles ? 'Needs training files (Step 2)' : ''} ${
+                      !hasTrainingParams ? 'Needs training parameters (Step 3)' : ''
+                    }`
                   : 'All good!'
               }
               withArrow
@@ -669,7 +711,7 @@ export default function UserTrainingModels() {
       </AlertWithIcon>
 
       {/* Filter Bar */}
-      <Group gap="sm">
+      <Group gap="sm" wrap="wrap">
         <TextInput
           placeholder="Search by name..."
           leftSection={<IconSearch size={16} />}
@@ -684,7 +726,7 @@ export default function UserTrainingModels() {
           placeholder="Type"
           data={['Character', 'Style', 'Concept', 'Effect'].map((t) => ({
             label: t,
-            value: t.toLowerCase(),
+            value: t,
           }))}
           value={typeFilter}
           onChange={(value) => {
@@ -708,19 +750,62 @@ export default function UserTrainingModels() {
           clearable
           w={150}
         />
-        <MultiSelect
-          placeholder="Status"
-          data={Object.values(TrainingStatus).map((s) => ({
-            label: s === TrainingStatus.InReview ? 'Ready' : splitUppercase(s),
-            value: s,
-          }))}
-          value={statusFilter}
-          onChange={(value) => {
-            setStatusFilter(value as TrainingStatus[]);
+        <Popover position="bottom-start" withArrow shadow="md">
+          <Popover.Target>
+            <Button variant="default" rightSection={<IconChevronDown size={14} />} w={140}>
+              {statusFilter.length === 0 ? 'Status' : `${statusFilter.length} selected`}
+            </Button>
+          </Popover.Target>
+          <Popover.Dropdown>
+            <Stack gap="xs">
+              {Object.values(TrainingStatus).map((s) => (
+                <Checkbox
+                  key={s}
+                  label={s === TrainingStatus.InReview ? 'Ready' : splitUppercase(s)}
+                  checked={statusFilter.includes(s)}
+                  onChange={(e) => {
+                    if (e.currentTarget.checked) {
+                      setStatusFilter([...statusFilter, s]);
+                    } else {
+                      setStatusFilter(statusFilter.filter((f) => f !== s));
+                    }
+                    handleFilterChange();
+                  }}
+                />
+              ))}
+              {statusFilter.length > 0 && (
+                <>
+                  <Divider />
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    onClick={() => {
+                      setStatusFilter([]);
+                      handleFilterChange();
+                    }}
+                  >
+                    Clear all
+                  </Button>
+                </>
+              )}
+            </Stack>
+          </Popover.Dropdown>
+        </Popover>
+        <Switch
+          label="Hide Pending"
+          checked={hidePending}
+          onChange={(e) => {
+            setHidePending(e.currentTarget.checked);
             handleFilterChange();
           }}
-          clearable
-          w={200}
+        />
+        <Switch
+          label="Hide Failed"
+          checked={hideFailed}
+          onChange={(e) => {
+            setHideFailed(e.currentTarget.checked);
+            handleFilterChange();
+          }}
         />
       </Group>
 
