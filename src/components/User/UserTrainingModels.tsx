@@ -64,13 +64,10 @@ import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trainingStatusFields } from '~/shared/constants/training.constants';
 import type { TrainingModelsSort } from '~/server/schema/model.schema';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
-
-const DEFAULT_TRAINING_ANNOUNCEMENT = `Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in processing. Not to worry though, if your LoRA training fails your Buzz will be refunded within 24 hours. If your training has been processing for more than 24 hours it will be auto failed and a refund will be issued to you. If your training fails it's recommended that you try again.`;
 
 type TrainingFileData = {
   type: string;
@@ -93,12 +90,19 @@ type RefundInfo = {
   greenBuzz?: number;
 };
 
+type CostInfo = {
+  yellowBuzz?: number;
+  blueBuzz?: number;
+  greenBuzz?: number;
+};
+
 type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   startDate: Date | null;
   endDate: Date | null;
   trainingType: string;
   baseModelPretty: string;
   refundInfo: RefundInfo | null;
+  costInfo: CostInfo | null;
 };
 
 const modelsLimit = 10;
@@ -133,8 +137,23 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
       }
     }
 
-    // Extract refund info (from V2 transactionData)
-    // A refund is a 'credit' transaction (buzz going back to the user)
+    // Extract cost info (from V2 transactionData - debit transactions)
+    let costInfo: CostInfo | null = null;
+    if (trainingResults?.version === 2 && trainingResults.transactionData) {
+      const costTxs = trainingResults.transactionData.filter((tx) => tx.type === 'debit');
+      if (costTxs.length > 0) {
+        const yellowTx = costTxs.find((tx) => tx.accountType === 'yellow');
+        const blueTx = costTxs.find((tx) => tx.accountType === 'blue');
+        const greenTx = costTxs.find((tx) => tx.accountType === 'green');
+        costInfo = {
+          yellowBuzz: yellowTx?.amount,
+          blueBuzz: blueTx?.amount,
+          greenBuzz: greenTx?.amount,
+        };
+      }
+    }
+
+    // Extract refund info (from V2 transactionData - credit transactions)
     let refundInfo: RefundInfo | null = null;
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const refundTxs = trainingResults.transactionData.filter((tx) => tx.type === 'credit');
@@ -172,6 +191,7 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
       trainingType,
       baseModelPretty,
       refundInfo,
+      costInfo,
     };
   });
 }
@@ -180,7 +200,9 @@ export default function UserTrainingModels() {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
-  const liveFeatureFlags = useLiveFeatureFlags();
+
+  // Fetch moderator-editable announcement
+  const { data: announcement } = trpc.training.getAnnouncement.useQuery();
 
   const [page, setPage] = useState(1);
   const [modalData, setModalData] = useState<ModalData>({});
@@ -498,6 +520,39 @@ export default function UserTrainingModels() {
         ),
       },
       {
+        id: 'cost',
+        header: 'Cost',
+        enableSorting: false,
+        size: 140,
+        Cell: ({ row }) => {
+          const mv = row.original;
+          if (!mv.costInfo) return <Text size="sm">-</Text>;
+
+          const hasCost = mv.costInfo.yellowBuzz || mv.costInfo.blueBuzz || mv.costInfo.greenBuzz;
+          if (!hasCost) return <Text size="sm">-</Text>;
+
+          return (
+            <Group gap={4} wrap="nowrap">
+              {mv.costInfo.yellowBuzz && (
+                <Badge variant="light" color="yellow" size="sm">
+                  {mv.costInfo.yellowBuzz.toLocaleString()}
+                </Badge>
+              )}
+              {mv.costInfo.blueBuzz && (
+                <Badge variant="light" color="blue" size="sm">
+                  {mv.costInfo.blueBuzz.toLocaleString()}
+                </Badge>
+              )}
+              {mv.costInfo.greenBuzz && (
+                <Badge variant="light" color="green" size="sm">
+                  {mv.costInfo.greenBuzz.toLocaleString()}
+                </Badge>
+              )}
+            </Group>
+          );
+        },
+      },
+      {
         id: 'refund',
         header: 'Refund',
         enableSorting: false,
@@ -701,14 +756,16 @@ export default function UserTrainingModels() {
   return (
     <Stack gap="md">
       <TrainStatusMessage />
-      <AlertWithIcon
-        icon={<IconExclamationCircle size={16} />}
-        iconColor="yellow"
-        color="yellow"
-        size="sm"
-      >
-        {liveFeatureFlags.trainingAnnouncement || DEFAULT_TRAINING_ANNOUNCEMENT}
-      </AlertWithIcon>
+      {announcement?.message && (
+        <AlertWithIcon
+          icon={<IconExclamationCircle size={16} />}
+          iconColor="yellow"
+          color="yellow"
+          size="sm"
+        >
+          {announcement?.message}
+        </AlertWithIcon>
+      )}
 
       {/* Filter Bar */}
       <Group gap="sm" wrap="wrap">

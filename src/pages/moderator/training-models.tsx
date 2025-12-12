@@ -3,18 +3,23 @@ import {
   Button,
   Card,
   Center,
+  Collapse,
   Group,
   Loader,
   Select,
   SimpleGrid,
   Stack,
   Text,
+  Textarea,
   TextInput,
   Title,
   ThemeIcon,
   Modal,
   ScrollArea,
+  Divider,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
+import { showNotification } from '@mantine/notifications';
 import { DateInput } from '@mantine/dates';
 import {
   IconDownload,
@@ -24,6 +29,9 @@ import {
   IconFilter,
   IconPhoto,
   IconCode,
+  IconSpeakerphone,
+  IconChevronDown,
+  IconChevronUp,
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
@@ -36,7 +44,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { showNotification } from '@mantine/notifications';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { fetchBlob } from '~/utils/file-utils';
@@ -44,6 +51,8 @@ import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import classes from './training-models.module.scss';
+
+const DEFAULT_TRAINING_ANNOUNCEMENT = `Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in processing. Not to worry though, if your LoRA training fails your Buzz will be refunded within 24 hours. If your training has been processing for more than 24 hours it will be auto failed and a refund will be issued to you. If your training fails it's recommended that you try again.`;
 
 export default function TrainingModerationFeedPage() {
   const currentUser = useCurrentUser();
@@ -55,6 +64,55 @@ export default function TrainingModerationFeedPage() {
   const [dateFromFilter, setDateFromFilter] = useState<Date | null>(null);
   const [dateToFilter, setDateToFilter] = useState<Date | null>(null);
   const [cannotPublishFilter, setCannotPublishFilter] = useState<string>('all');
+
+  // Announcement editor state
+  const [announcementExpanded, { toggle: toggleAnnouncementExpanded }] = useDisclosure(false);
+  const [announcementText, setAnnouncementText] = useState('');
+  const [announcementDirty, setAnnouncementDirty] = useState(false);
+
+  // Fetch current announcement
+  const { data: announcementData, isLoading: announcementLoading } =
+    trpc.training.getAnnouncement.useQuery();
+
+  // Set announcement mutation
+  const setAnnouncementMutation = trpc.training.setAnnouncement.useMutation({
+    onSuccess: () => {
+      showNotification({
+        title: 'Success',
+        message: 'Training announcement updated',
+        color: 'green',
+      });
+      setAnnouncementDirty(false);
+    },
+    onError: (error) => {
+      showNotification({
+        title: 'Error',
+        message: error.message,
+        color: 'red',
+      });
+    },
+  });
+
+  // Initialize announcement text when data loads
+  useEffect(() => {
+    if (announcementData?.message && !announcementDirty) {
+      setAnnouncementText(announcementData.message);
+    }
+  }, [announcementData?.message, announcementDirty]);
+
+  const handleSaveAnnouncement = () => {
+    setAnnouncementMutation.mutate({ message: announcementText });
+  };
+
+  const handleResetAnnouncement = () => {
+    setAnnouncementText(DEFAULT_TRAINING_ANNOUNCEMENT);
+    setAnnouncementDirty(true);
+  };
+
+  const handleClearAnnouncement = () => {
+    setAnnouncementText('');
+    setAnnouncementDirty(true);
+  };
 
   // Image viewer state
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -285,6 +343,86 @@ export default function TrainingModerationFeedPage() {
                 </Text>
               </div>
             </Group>
+          </Card>
+
+          {/* Training Announcement Editor */}
+          <Card p="md" radius="md" withBorder>
+            <Stack gap="sm">
+              <Group
+                gap="sm"
+                align="center"
+                style={{ cursor: 'pointer' }}
+                onClick={toggleAnnouncementExpanded}
+              >
+                <ThemeIcon size="sm" variant="light" color="yellow" radius="md">
+                  <IconSpeakerphone size={16} />
+                </ThemeIcon>
+                <Text fw={600} size="sm" style={{ flex: 1 }}>
+                  Training Page Announcement
+                </Text>
+                {announcementExpanded ? (
+                  <IconChevronUp size={16} />
+                ) : (
+                  <IconChevronDown size={16} />
+                )}
+              </Group>
+
+              <Collapse in={announcementExpanded}>
+                <Stack gap="sm">
+                  <Divider />
+                  <Text size="xs" c="dimmed">
+                    This message is displayed in the yellow alert box on the training page. Edit the
+                    text below to update what users see.
+                  </Text>
+                  <Textarea
+                    placeholder="Enter announcement message..."
+                    value={announcementText}
+                    onChange={(e) => {
+                      setAnnouncementText(e.currentTarget.value);
+                      setAnnouncementDirty(true);
+                    }}
+                    minRows={3}
+                    maxRows={6}
+                    autosize
+                  />
+                  <Group gap="sm" justify="space-between">
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="gray"
+                        onClick={handleResetAnnouncement}
+                      >
+                        Reset to Default
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        color="red"
+                        onClick={handleClearAnnouncement}
+                      >
+                        Clear
+                      </Button>
+                    </Group>
+                    <Button
+                      size="xs"
+                      color="blue"
+                      onClick={handleSaveAnnouncement}
+                      loading={setAnnouncementMutation.isLoading}
+                      disabled={!announcementDirty}
+                    >
+                      {announcementText.trim() ? 'Save Announcement' : 'Clear Announcement'}
+                    </Button>
+                  </Group>
+                  {announcementData?.message && (
+                    <Text size="xs" c="dimmed">
+                      Current announcement: &ldquo;{announcementData.message.slice(0, 100)}
+                      {announcementData.message.length > 100 ? '...' : ''}&rdquo;
+                    </Text>
+                  )}
+                </Stack>
+              </Collapse>
+            </Stack>
           </Card>
 
           {/* Filters */}
