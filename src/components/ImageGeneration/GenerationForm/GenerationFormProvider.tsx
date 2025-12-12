@@ -164,7 +164,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 
   if (
     params.sampler === 'undefined' ||
-    (params.sampler && !(generationSamplers as string[]).includes(params.sampler))
+    (params.sampler && !(generation.samplers as string[]).includes(params.sampler))
   )
     params.sampler = defaultValues.sampler;
 
