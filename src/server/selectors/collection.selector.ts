@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 
-export const collectionSelect = Prisma.validator<Prisma.CollectionSelect>()({
+export const collectionWithoutImageSelect = Prisma.validator<Prisma.CollectionSelect>()({
   id: true,
   name: true,
   description: true,
@@ -29,4 +29,9 @@ export const collectionSelect = Prisma.validator<Prisma.CollectionSelect>()({
       filterableOnly: true,
     },
   },
+});
+
+export const collectionSelect = Prisma.validator<Prisma.CollectionSelect>()({
+  ...collectionWithoutImageSelect,
+  image: { select: imageSelect },
 });
