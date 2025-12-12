@@ -8,16 +8,16 @@ import {
   Group,
   HoverCard,
   Loader,
-  LoadingOverlay,
   Modal,
-  Pagination,
+  MultiSelect,
   ScrollArea,
+  Select,
   Stack,
-  Table,
   Text,
+  TextInput,
   Tooltip,
 } from '@mantine/core';
-import { useClipboard, useDisclosure } from '@mantine/hooks';
+import { useDebouncedValue, useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertCircle,
@@ -28,11 +28,15 @@ import {
   IconExternalLink,
   IconFileDescription,
   IconRefresh,
+  IconSearch,
   IconTrash,
   IconX,
+  IconCurrencyDollar,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
+import { MantineReactTable } from 'mantine-react-table';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -47,7 +51,6 @@ import {
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
-  // TrainingDetailsParams,
   TrainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -58,11 +61,13 @@ import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import styles from './UserModelsTable.module.scss';
-import clsx from 'clsx';
-import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trainingStatusFields } from '~/shared/constants/training.constants';
+import type { TrainingModelsSort } from '~/server/schema/model.schema';
+import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+
+const DEFAULT_TRAINING_ANNOUNCEMENT = `Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in processing. Not to worry though, if your LoRA training fails your Buzz will be refunded within 24 hours. If your training has been processing for more than 24 hours it will be auto failed and a refund will be issued to you. If your training fails it's recommended that you try again.`;
 
 type TrainingFileData = {
   type: string;
@@ -78,36 +83,153 @@ type ModalData = {
   params?: TrainingDetailsParamsUnion;
 };
 
+type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
+  startDate: Date | null;
+  endDate: Date | null;
+  trainingType: string;
+  baseModelPretty: string;
+  refundInfo: { isRefunded: boolean; amount?: number; accountType?: string } | null;
+};
+
 const modelsLimit = 10;
+
+// Helper to extract dates and other derived info from training data
+function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
+  return items.map((mv) => {
+    const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
+    const thisFile = mv.files[0];
+    const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+    const trainingResults = thisFileMetadata?.trainingResults;
+
+    // Extract start date
+    let startDate: Date | null = null;
+    if (trainingResults) {
+      const startStr =
+        trainingResults.version === 2
+          ? trainingResults.startedAt ?? trainingResults.submittedAt
+          : trainingResults.start_time ?? trainingResults.submittedAt;
+      if (startStr) {
+        startDate = new Date(startStr);
+      }
+    }
+
+    // Extract end date
+    let endDate: Date | null = null;
+    if (trainingResults) {
+      const endStr =
+        trainingResults.version === 2 ? trainingResults.completedAt : trainingResults.end_time;
+      if (endStr) {
+        endDate = new Date(endStr);
+      }
+    }
+
+    // Extract refund info (from V2 transactionData)
+    // A refund is a 'credit' transaction (buzz going back to the user)
+    let refundInfo: { isRefunded: boolean; amount?: number; accountType?: string } | null = null;
+    if (trainingResults?.version === 2 && trainingResults.transactionData) {
+      const refundTx = trainingResults.transactionData.find((tx) => tx.type === 'credit');
+      if (refundTx) {
+        refundInfo = {
+          isRefunded: true,
+          amount: refundTx.amount,
+          accountType: refundTx.accountType ?? undefined,
+        };
+      } else if (mv.trainingStatus === TrainingStatus.Failed) {
+        // Failed but no refund transaction yet
+        refundInfo = { isRefunded: false };
+      }
+    } else if (mv.trainingStatus === TrainingStatus.Failed) {
+      // V1 or no transactionData - we don't know refund status
+      refundInfo = { isRefunded: false };
+    }
+
+    // Get training type and base model
+    const trainingType = thisTrainingDetails?.type ?? '-';
+    const baseModelPretty = isDefined(thisTrainingDetails?.baseModel)
+      ? thisTrainingDetails.baseModel in trainingModelInfo
+        ? trainingModelInfo[thisTrainingDetails.baseModel as TrainingDetailsBaseModelList].pretty
+        : 'Custom'
+      : '-';
+
+    return {
+      ...mv,
+      startDate,
+      endDate,
+      trainingType,
+      baseModelPretty,
+      refundInfo,
+    };
+  });
+}
 
 export default function UserTrainingModels() {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
+  const liveFeatureFlags = useLiveFeatureFlags();
 
   const [page, setPage] = useState(1);
-  const [scrolled, setScrolled] = useState(false);
   const [modalData, setModalData] = useState<ModalData>({});
   const [opened, { open, close }] = useDisclosure(false);
 
-  const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: modelsLimit });
-  const { items, ...pagination } = data || {
+  // External filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch] = useDebouncedValue(searchQuery, 300);
+  const [statusFilter, setStatusFilter] = useState<TrainingStatus[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [baseModelFilter, setBaseModelFilter] = useState<string | null>(null);
+
+  // Sort state for table column headers
+  const [sorting, setSorting] = useState<MRT_SortingState>([{ id: 'startDate', desc: true }]);
+
+  // Convert MRT sorting to our sort format
+  const sort: TrainingModelsSort = useMemo(() => {
+    if (sorting.length === 0) return 'startDesc';
+    const { id, desc } = sorting[0];
+    switch (id) {
+      case 'startDate':
+        return desc ? 'startDesc' : 'startAsc';
+      case 'endDate':
+        return desc ? 'endDesc' : 'endAsc';
+      case 'createdAt':
+        return desc ? 'createdDesc' : 'createdAsc';
+      case 'updatedAt':
+        return desc ? 'updatedDesc' : 'updatedAsc';
+      default:
+        return 'startDesc';
+    }
+  }, [sorting]);
+
+  // Reset page when filters change
+  const handleFilterChange = () => setPage(1);
+
+  const { data, isLoading, isFetching } = trpc.model.getMyTrainingModels.useQuery({
+    page,
+    limit: modelsLimit,
+    query: debouncedSearch || undefined,
+    trainingStatus: statusFilter.length > 0 ? statusFilter : undefined,
+    type: typeFilter || undefined,
+    baseModel: baseModelFilter || undefined,
+    sort,
+  });
+  const { items: rawItems, ...pagination } = data || {
     items: [],
     totalItems: 0,
     currentPage: 1,
-    pageSize: 1,
+    pageSize: modelsLimit,
     totalPages: 1,
   };
 
+  // Enrich items with derived data
+  const items = useMemo(() => enrichTrainingData(rawItems), [rawItems]);
+
   const deleteMutation = trpc.modelVersion.delete.useMutation({
     onSuccess: async () => {
-      // TODO update instead of invalidate
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
   });
   const deleteModelMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
-      // TODO update instead of invalidate
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
   });
@@ -125,7 +247,6 @@ export default function UserTrainingModels() {
 
   const goToModel = (e: React.MouseEvent<HTMLTableRowElement>, href: string) => {
     if (opened) return false;
-    // on control click or middle click, open in new tab
     if ((e.ctrlKey && e.button === 0) || e.button === 1) {
       e.preventDefault();
       window.open(href, '_blank');
@@ -136,7 +257,7 @@ export default function UserTrainingModels() {
 
   const handleDelete = (
     e: React.MouseEvent<HTMLButtonElement>,
-    modelVersion: MyTrainingModelGetAll['items'][number]
+    modelVersion: TrainingModelRow
   ) => {
     e.preventDefault();
     e.stopPropagation();
@@ -149,7 +270,7 @@ export default function UserTrainingModels() {
     }
   };
 
-  const handleDeleteVersion = (modelVersion: MyTrainingModelGetAll['items'][number]) => {
+  const handleDeleteVersion = (modelVersion: TrainingModelRow) => {
     openConfirmModal({
       title: 'Delete version',
       children:
@@ -163,7 +284,7 @@ export default function UserTrainingModels() {
     });
   };
 
-  const handleDeleteModel = (modelVersion: MyTrainingModelGetAll['items'][number]) => {
+  const handleDeleteModel = (modelVersion: TrainingModelRow) => {
     openConfirmModal({
       title: 'Delete model',
       children:
@@ -179,7 +300,7 @@ export default function UserTrainingModels() {
 
   const handleRecheckTrainingStatus = (
     e: React.MouseEvent<HTMLButtonElement>,
-    modelVersion: MyTrainingModelGetAll['items'][number]
+    modelVersion: TrainingModelRow
   ) => {
     e.preventDefault();
     e.stopPropagation();
@@ -194,8 +315,349 @@ export default function UserTrainingModels() {
       ? modalData.file?.metadata?.trainingResults?.workflowId
       : modalData.file?.metadata?.trainingResults?.jobId;
 
+  // Define columns
+  const columns = useMemo<MRT_ColumnDef<TrainingModelRow>[]>(
+    () => [
+      {
+        accessorKey: 'model.name',
+        header: 'Name',
+        id: 'name',
+        enableSorting: false,
+        Cell: ({ row }) => (
+          <Group gap={4} wrap="nowrap">
+            <Text lineClamp={1}>{row.original.model.name}</Text>
+            {row.original.name !== row.original.model.name && (
+              <Text c="dimmed" size="sm">({row.original.name})</Text>
+            )}
+          </Group>
+        ),
+      },
+      {
+        accessorKey: 'trainingType',
+        header: 'Type',
+        id: 'trainingType',
+        enableSorting: false,
+        size: 100,
+        Cell: ({ row }) => <Badge size="sm">{splitUppercase(row.original.trainingType)}</Badge>,
+      },
+      {
+        accessorKey: 'baseModelPretty',
+        header: 'Model',
+        id: 'baseModelPretty',
+        enableSorting: false,
+        size: 120,
+        Cell: ({ row }) => <Text size="sm">{row.original.baseModelPretty}</Text>,
+      },
+      {
+        accessorKey: 'trainingStatus',
+        header: 'Status',
+        id: 'trainingStatus',
+        enableSorting: false,
+        Cell: ({ row }) => {
+          const mv = row.original;
+          const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
+          const thisFile = mv.files[0];
+          const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+
+          const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
+          const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
+          const isFailed = mv.trainingStatus === TrainingStatus.Failed;
+          const isRunning = isSubmitted || isProcessing;
+
+          const trainingParams = thisTrainingDetails?.params;
+          const numEpochs =
+            trainingParams?.engine === 'ai-toolkit'
+              ? trainingParams?.epochs ?? 0
+              : trainingParams?.maxTrainEpochs ?? 0;
+          const epochsDone =
+            (thisFileMetadata?.trainingResults?.version === 2
+              ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
+              : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
+          const hasFailedWithEpochs = isFailed && epochsDone > 0;
+
+          if (!mv.trainingStatus) return <Badge color="gray">N/A</Badge>;
+
+          return (
+            <Group gap="sm">
+              <HoverCard shadow="md" width={300} zIndex={100} withArrow withinPortal>
+                <HoverCard.Target>
+                  <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
+                    <Group gap={6} wrap="nowrap">
+                      {splitUppercase(
+                        mv.trainingStatus === TrainingStatus.InReview ? 'Ready' : mv.trainingStatus
+                      )}
+                      {isRunning && <Loader size={12} />}
+                    </Group>
+                  </Badge>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text>{trainingStatusFields[mv.trainingStatus]?.description ?? 'N/A'}</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
+              {isProcessing && (
+                <>
+                  <Divider size="sm" orientation="vertical" />
+                  <HoverCard shadow="md" width={250} zIndex={100} withArrow withinPortal>
+                    <HoverCard.Target>
+                      <Badge variant="filled" color="gray">
+                        {`Progress: ${epochsDone}/${numEpochs}`}
+                      </Badge>
+                    </HoverCard.Target>
+                    <HoverCard.Dropdown>
+                      <Text>Number of Epochs remaining</Text>
+                    </HoverCard.Dropdown>
+                  </HoverCard>
+                </>
+              )}
+              {hasFailedWithEpochs && (
+                <>
+                  <Divider size="sm" orientation="vertical" />
+                  <HoverCard shadow="md" width={250} zIndex={100} withArrow withinPortal>
+                    <HoverCard.Target>
+                      <Badge variant="filled" color="yellow">
+                        {`${epochsDone} epoch${epochsDone > 1 ? 's' : ''} available`}
+                      </Badge>
+                    </HoverCard.Target>
+                    <HoverCard.Dropdown>
+                      <Text>
+                        Training failed but {epochsDone} epoch
+                        {epochsDone > 1 ? 's were' : ' was'} completed
+                      </Text>
+                    </HoverCard.Dropdown>
+                  </HoverCard>
+                </>
+              )}
+              {isFailed && mv.refundInfo && (
+                <>
+                  <Divider size="sm" orientation="vertical" />
+                  <HoverCard shadow="md" width={250} zIndex={100} withArrow withinPortal>
+                    <HoverCard.Target>
+                      <Badge
+                        variant="filled"
+                        color={mv.refundInfo.isRefunded ? 'green' : 'orange'}
+                        leftSection={<IconCurrencyDollar size={12} />}
+                      >
+                        {mv.refundInfo.isRefunded
+                          ? `Refunded${mv.refundInfo.amount ? ` ${mv.refundInfo.amount}` : ''}`
+                          : 'Pending Refund'}
+                      </Badge>
+                    </HoverCard.Target>
+                    <HoverCard.Dropdown>
+                      <Text>
+                        {mv.refundInfo.isRefunded
+                          ? `Buzz refunded${mv.refundInfo.accountType ? ` to ${mv.refundInfo.accountType} account` : ''}`
+                          : 'Refund is being processed (within 24 hours)'}
+                      </Text>
+                    </HoverCard.Dropdown>
+                  </HoverCard>
+                </>
+              )}
+              {(mv.trainingStatus === TrainingStatus.Failed ||
+                mv.trainingStatus === TrainingStatus.Denied) && (
+                <Button
+                  size="xs"
+                  color="gray"
+                  py={0}
+                  style={{ fontSize: 12, fontWeight: 600, height: 20 }}
+                  component="a"
+                  href="/support-portal"
+                  target="_blank"
+                  onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+                >
+                  <Group wrap="nowrap" gap={6}>
+                    Open Support Ticket <IconExternalLink size={12} />
+                  </Group>
+                </Button>
+              )}
+            </Group>
+          );
+        },
+      },
+      {
+        accessorKey: 'startDate',
+        header: 'Start',
+        id: 'startDate',
+        size: 150,
+        Cell: ({ row }) => (
+          <Text size="sm">
+            {row.original.startDate
+              ? formatDate(row.original.startDate, 'MMM D, YYYY h:mm A')
+              : '-'}
+          </Text>
+        ),
+      },
+      {
+        accessorKey: 'endDate',
+        header: 'End',
+        id: 'endDate',
+        size: 150,
+        Cell: ({ row }) => (
+          <Text size="sm">
+            {row.original.endDate ? formatDate(row.original.endDate, 'MMM D, YYYY h:mm A') : '-'}
+          </Text>
+        ),
+      },
+      {
+        accessorKey: 'createdAt',
+        header: 'Created',
+        id: 'createdAt',
+        size: 130,
+        Cell: ({ row }) => <Text size="sm">{formatDate(row.original.createdAt)}</Text>,
+      },
+      {
+        accessorKey: 'updatedAt',
+        header: 'Updated',
+        id: 'updatedAt',
+        size: 130,
+        Cell: ({ row }) => <Text size="sm">{formatDate(row.original.updatedAt)}</Text>,
+      },
+      {
+        id: 'missingInfo',
+        header: 'Info',
+        enableSorting: false,
+        size: 80,
+        Cell: ({ row }) => {
+          const mv = row.original;
+          const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
+          const thisFile = mv.files[0];
+
+          const hasFiles = !!thisFile;
+          const hasTrainingParams = !!thisTrainingDetails?.params;
+          const needsInfo = !hasFiles || !hasTrainingParams;
+
+          return (
+            <Tooltip
+              label={
+                needsInfo
+                  ? `${!hasFiles ? 'Needs training files (Step 2)' : ''} ${!hasTrainingParams ? 'Needs training parameters (Step 3)' : ''}`
+                  : 'All good!'
+              }
+              withArrow
+              withinPortal
+            >
+              <Center>
+                {needsInfo ? (
+                  <IconAlertCircle color="orange" size={20} />
+                ) : (
+                  <IconCircleCheck color="green" size={20} />
+                )}
+              </Center>
+            </Tooltip>
+          );
+        },
+      },
+      {
+        id: 'actions',
+        header: '',
+        enableSorting: false,
+        size: 160,
+        Cell: ({ row }) => {
+          const mv = row.original;
+          const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
+          const thisFile = mv.files[0];
+          const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+
+          const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
+          const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
+          const isPaused = mv.trainingStatus === TrainingStatus.Paused;
+          const isFailed = mv.trainingStatus === TrainingStatus.Failed;
+          const isRunning = isSubmitted || isProcessing;
+          const isNotDeletable = isRunning || isPaused;
+
+          const epochsDone =
+            (thisFileMetadata?.trainingResults?.version === 2
+              ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
+              : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
+          const hasFailedWithEpochs = isFailed && epochsDone > 0;
+
+          return (
+            <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
+              {mv.trainingStatus === TrainingStatus.InReview && (
+                <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
+                  <Button
+                    component="a"
+                    radius="xl"
+                    onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+                    size="compact-sm"
+                  >
+                    Review
+                  </Button>
+                </Link>
+              )}
+              {hasFailedWithEpochs && (
+                <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
+                  <Button
+                    component="a"
+                    radius="xl"
+                    color="yellow"
+                    onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+                    size="compact-sm"
+                  >
+                    View Epochs
+                  </Button>
+                </Link>
+              )}
+              {mv.trainingStatus === TrainingStatus.Failed && (
+                <Tooltip label="Recheck Training Status" withArrow withinPortal>
+                  <LegacyActionIcon
+                    variant="light"
+                    size="md"
+                    radius="xl"
+                    loading={
+                      recheckTrainingStatusMutation.isLoading &&
+                      recheckTrainingStatusMutation.variables?.id === mv.id
+                    }
+                    onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                      e.stopPropagation();
+                      handleRecheckTrainingStatus(e, mv);
+                    }}
+                  >
+                    <IconRefresh size={16} />
+                  </LegacyActionIcon>
+                </Tooltip>
+              )}
+              <Tooltip label="View Details" withArrow withinPortal>
+                <LegacyActionIcon
+                  variant="filled"
+                  radius="xl"
+                  size="md"
+                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                    e.stopPropagation();
+                    setModalData({
+                      id: mv.id,
+                      file: thisFile as TrainingFileData,
+                      baseModel: thisTrainingDetails?.baseModel,
+                      params: thisTrainingDetails?.params,
+                    });
+                    open();
+                  }}
+                >
+                  <IconFileDescription size={16} />
+                </LegacyActionIcon>
+              </Tooltip>
+              <LegacyActionIcon
+                color="red"
+                variant="light"
+                size="md"
+                radius="xl"
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                  e.stopPropagation();
+                  if (!isNotDeletable) handleDelete(e, mv);
+                }}
+                disabled={isNotDeletable}
+              >
+                <IconTrash size={16} />
+              </LegacyActionIcon>
+            </Group>
+          );
+        },
+      },
+    ],
+    [recheckTrainingStatusMutation.isLoading, recheckTrainingStatusMutation.variables?.id, open]
+  );
+
   return (
-    <Stack>
+    <Stack gap="md">
       <TrainStatusMessage />
       <AlertWithIcon
         icon={<IconExclamationCircle size={16} />}
@@ -203,345 +665,118 @@ export default function UserTrainingModels() {
         color="yellow"
         size="sm"
       >
-        Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in
-        processing. Not to worry though, if your LoRA training fails your Buzz will be refunded
-        within 24 hours. If your training has been processing for more than 24 hours it will be auto
-        failed and a refund will be issued to you. If your training fails it&apos;s recommended that
-        you try again.
+        {liveFeatureFlags.trainingAnnouncement || DEFAULT_TRAINING_ANNOUNCEMENT}
       </AlertWithIcon>
-      <ScrollArea
-        // TODO [bw] this 600px here should be autocalced via a css var, to capture the top nav, user info section, and bottom bar
-        style={{ height: 'max(400px, calc(100vh - 600px))' }}
-        onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
-      >
-        {/* TODO [bw] this should probably be transitioned to a filterable/sortable table, like in reports.tsx */}
-        <Table
-          verticalSpacing="md"
-          className="text-base"
-          striped={hasTraining}
-          highlightOnHover={hasTraining}
-        >
-          <Table.Thead className={clsx(styles.header, { [styles.scrolled]: scrolled })}>
-            <Table.Tr>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Type</Table.Th>
-              <Table.Th>Model</Table.Th>
-              <Table.Th>Training Status</Table.Th>
-              <Table.Th>Created</Table.Th>
-              <Table.Th>Start</Table.Th>
-              <Table.Th>Missing Info</Table.Th>
-              <Table.Th>Actions</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {isLoading && (
-              <Table.Tr>
-                <Table.Td colSpan={7}>
-                  <LoadingOverlay visible={true} />
-                </Table.Td>
-              </Table.Tr>
-            )}
-            {hasTraining ? (
-              items.map((mv) => {
-                const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
-                const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
-                const isPaused = mv.trainingStatus === TrainingStatus.Paused;
-                const isFailed = mv.trainingStatus === TrainingStatus.Failed;
-                const isRunning = isSubmitted || isProcessing;
-                const isNotDeletable = isRunning || isPaused;
 
-                const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
-                const thisFile = mv.files[0];
-                const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+      {/* Filter Bar */}
+      <Group gap="sm">
+        <TextInput
+          placeholder="Search by name..."
+          leftSection={<IconSearch size={16} />}
+          value={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.currentTarget.value);
+            handleFilterChange();
+          }}
+          style={{ flex: 1, maxWidth: 300 }}
+        />
+        <Select
+          placeholder="Type"
+          data={['Character', 'Style', 'Concept', 'Effect'].map((t) => ({
+            label: t,
+            value: t.toLowerCase(),
+          }))}
+          value={typeFilter}
+          onChange={(value) => {
+            setTypeFilter(value);
+            handleFilterChange();
+          }}
+          clearable
+          w={130}
+        />
+        <Select
+          placeholder="Model"
+          data={Object.entries(trainingModelInfo).map(([key, info]) => ({
+            label: info.pretty,
+            value: key,
+          }))}
+          value={baseModelFilter}
+          onChange={(value) => {
+            setBaseModelFilter(value);
+            handleFilterChange();
+          }}
+          clearable
+          w={150}
+        />
+        <MultiSelect
+          placeholder="Status"
+          data={Object.values(TrainingStatus).map((s) => ({
+            label: s === TrainingStatus.InReview ? 'Ready' : splitUppercase(s),
+            value: s,
+          }))}
+          value={statusFilter}
+          onChange={(value) => {
+            setStatusFilter(value as TrainingStatus[]);
+            handleFilterChange();
+          }}
+          clearable
+          w={200}
+        />
+      </Group>
 
-                const hasFiles = !!thisFile;
-                const trainingParams = thisTrainingDetails?.params;
-                const hasTrainingParams = !!trainingParams;
-
-                const numEpochs =
-                  trainingParams?.engine === 'ai-toolkit'
-                    ? trainingParams?.epochs ?? 0
-                    : trainingParams?.maxTrainEpochs ?? 0;
-                const epochsDone =
-                  (thisFileMetadata?.trainingResults?.version === 2
-                    ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber ?? 0
-                    : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
-                // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
-                const hasFailedWithEpochs = isFailed && epochsDone > 0;
-
-                const startDate = thisFileMetadata?.trainingResults?.submittedAt;
-                const startStr = !!startDate
-                  ? formatDate(startDate, 'MMM D, YYYY hh:mm:ss A')
-                  : '-';
-
-                return (
-                  // nb:
-                  // Cannot use <Link> here as it doesn't properly wrap rows, handle middle clicks, etc.
-                  // onClick doesn't handle middle clicks
-                  // onAuxClick should work, but for some reason doesn't handle middle clicks
-                  // onMouseUp is not perfect, but it's the closest thing we've got
-                  // which means all click events inside that need to also be mouseUp, so they can be properly de-propagated
-                  <Table.Tr
-                    key={mv.id}
-                    style={{ cursor: 'pointer' }}
-                    onMouseUp={(e) => {
-                      goToModel(e, getModelTrainingWizardUrl(mv));
-                    }}
-                    onMouseDown={(e) => {
-                      if (e.button == 1) {
-                        e.preventDefault();
-                        return false;
-                      }
-                    }}
-                  >
-                    <Table.Td>
-                      <Group gap={4}>
-                        <Text>{mv.model.name}</Text>
-                        {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge>{splitUppercase(thisTrainingDetails?.type ?? '-')}</Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text>
-                        {isDefined(thisTrainingDetails?.baseModel)
-                          ? thisTrainingDetails.baseModel in trainingModelInfo
-                            ? trainingModelInfo[
-                                thisTrainingDetails.baseModel as TrainingDetailsBaseModelList
-                              ].pretty
-                            : 'Custom'
-                          : '-'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      {mv.trainingStatus ? (
-                        <Group gap="sm">
-                          <HoverCard shadow="md" width={300} zIndex={100} withArrow>
-                            <HoverCard.Target>
-                              <Badge
-                                color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}
-                              >
-                                <Group gap={6} wrap="nowrap">
-                                  {splitUppercase(
-                                    mv.trainingStatus === TrainingStatus.InReview
-                                      ? 'Ready'
-                                      : mv.trainingStatus
-                                  )}
-                                  {isRunning && <Loader size={12} />}
-                                </Group>
-                              </Badge>
-                            </HoverCard.Target>
-                            <HoverCard.Dropdown>
-                              <Text>
-                                {trainingStatusFields[mv.trainingStatus]?.description ?? 'N/A'}
-                              </Text>
-                            </HoverCard.Dropdown>
-                          </HoverCard>
-                          {isProcessing && (
-                            <>
-                              <Divider size="sm" orientation="vertical" />
-                              <HoverCard shadow="md" width={250} zIndex={100} withArrow>
-                                <HoverCard.Target>
-                                  <Badge
-                                    variant="filled"
-                                    // color={`gray.${Math.max(Math.min(epochsPct, 9), 0)}`}
-                                    color={'gray'}
-                                  >
-                                    {`Progress: ${epochsDone}/${numEpochs}`}
-                                  </Badge>
-                                </HoverCard.Target>
-                                <HoverCard.Dropdown>
-                                  <Text>Number of Epochs remaining</Text>
-                                </HoverCard.Dropdown>
-                              </HoverCard>
-                            </>
-                          )}
-                          {hasFailedWithEpochs && (
-                            <>
-                              <Divider size="sm" orientation="vertical" />
-                              <HoverCard shadow="md" width={250} zIndex={100} withArrow>
-                                <HoverCard.Target>
-                                  <Badge variant="filled" color="yellow">
-                                    {`${epochsDone} epoch${epochsDone > 1 ? 's' : ''} available`}
-                                  </Badge>
-                                </HoverCard.Target>
-                                <HoverCard.Dropdown>
-                                  <Text>
-                                    Training failed but {epochsDone} epoch
-                                    {epochsDone > 1 ? 's were' : ' was'} completed
-                                  </Text>
-                                </HoverCard.Dropdown>
-                              </HoverCard>
-                            </>
-                          )}
-                          {(mv.trainingStatus === TrainingStatus.Failed ||
-                            mv.trainingStatus === TrainingStatus.Denied) && (
-                            <Button
-                              size="xs"
-                              color="gray"
-                              py={0}
-                              style={{ fontSize: 12, fontWeight: 600, height: 20 }}
-                              component="a"
-                              href="/support-portal"
-                              target="_blank"
-                              onMouseUp={(e: React.MouseEvent<HTMLAnchorElement>) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                              }}
-                            >
-                              <Group wrap="nowrap" gap={6}>
-                                Open Support Ticket <IconExternalLink size={12} />
-                              </Group>
-                            </Button>
-                          )}
-                        </Group>
-                      ) : (
-                        <Badge color="gray">N/A</Badge>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <HoverCard openDelay={400} shadow="md" zIndex={100} withArrow>
-                        <HoverCard.Target>
-                          <Text>{formatDate(mv.createdAt)}</Text>
-                        </HoverCard.Target>
-                        {new Date(mv.createdAt).getTime() !== new Date(mv.updatedAt).getTime() && (
-                          <HoverCard.Dropdown>
-                            <Text>Updated: {formatDate(mv.updatedAt)}</Text>
-                          </HoverCard.Dropdown>
-                        )}
-                      </HoverCard>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text>{startStr}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap={8} wrap="nowrap">
-                        {!hasFiles || !hasTrainingParams ? (
-                          <IconAlertCircle color="orange" />
-                        ) : (
-                          <IconCircleCheck color="green" />
-                        )}
-                        <Stack gap={4}>
-                          {/* technically this step 1 alert should never happen */}
-                          {/*{!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}*/}
-                          {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
-                          {!hasTrainingParams && (
-                            <Text inherit>Needs training parameters (Step 3)</Text>
-                          )}
-                          {/* TODO [bw] we should probably include the model related fields here after training is done */}
-                          {hasFiles && hasTrainingParams && <Text inherit>All good!</Text>}
-                        </Stack>
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
-                        {mv.trainingStatus === TrainingStatus.InReview && (
-                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
-                            <Button
-                              component="a"
-                              radius="xl"
-                              onClick={(e: React.MouseEvent<HTMLAnchorElement>) =>
-                                e.stopPropagation()
-                              }
-                              size="compact-sm"
-                            >
-                              Review
-                            </Button>
-                          </Link>
-                        )}
-                        {hasFailedWithEpochs && (
-                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
-                            <Button
-                              component="a"
-                              radius="xl"
-                              color="yellow"
-                              onClick={(e: React.MouseEvent<HTMLAnchorElement>) =>
-                                e.stopPropagation()
-                              }
-                              size="compact-sm"
-                            >
-                              View Epochs
-                            </Button>
-                          </Link>
-                        )}
-                        {mv.trainingStatus === TrainingStatus.Failed && (
-                          <Tooltip label="Recheck Training Status" withArrow>
-                            <LegacyActionIcon
-                              variant="light"
-                              size="md"
-                              radius="xl"
-                              loading={
-                                recheckTrainingStatusMutation.isLoading &&
-                                recheckTrainingStatusMutation.variables?.id === mv.id
-                              }
-                              onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) =>
-                                handleRecheckTrainingStatus(e, mv)
-                              }
-                            >
-                              <IconRefresh size={16} />
-                            </LegacyActionIcon>
-                          </Tooltip>
-                        )}
-                        <Tooltip label="View Details" withArrow>
-                          <LegacyActionIcon
-                            variant="filled"
-                            radius="xl"
-                            size="md"
-                            onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (e.button !== 0) return;
-                              setModalData({
-                                id: mv.id,
-                                file: thisFile as TrainingFileData,
-                                baseModel: thisTrainingDetails?.baseModel,
-                                params: thisTrainingDetails?.params,
-                              });
-                              open();
-                            }}
-                          >
-                            <IconFileDescription size={16} />
-                          </LegacyActionIcon>
-                        </Tooltip>
-                        <LegacyActionIcon
-                          color="red"
-                          variant="light"
-                          size="md"
-                          radius="xl"
-                          onMouseUp={(e: React.MouseEvent<HTMLButtonElement>) =>
-                            !isNotDeletable && handleDelete(e, mv)
-                          }
-                          disabled={isNotDeletable}
-                        >
-                          <IconTrash size={16} />
-                        </LegacyActionIcon>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                  // </Link>
-                );
-              })
-            ) : !isLoading ? (
-              <Table.Tr>
-                <Table.Td colSpan={7}>
-                  <Center py="md">
-                    <NoContent message="You have no training models" />
-                  </Center>
-                </Table.Td>
-              </Table.Tr>
-            ) : (
-              <></>
-            )}
-          </Table.Tbody>
-        </Table>
-      </ScrollArea>
-      {pagination.totalPages > 1 && (
-        <Group justify="space-between">
-          <Text>Total {pagination.totalItems} items</Text>
-          <Pagination value={page} onChange={setPage} total={pagination.totalPages} />
-        </Group>
+      {!hasTraining && !isLoading ? (
+        <Center py="md">
+          <NoContent message="You have no training models" />
+        </Center>
+      ) : (
+        <MantineReactTable
+          columns={columns}
+          data={items}
+          manualPagination
+          manualSorting
+          onPaginationChange={(updater) => {
+            const newPagination =
+              typeof updater === 'function'
+                ? updater({ pageIndex: page - 1, pageSize: modelsLimit })
+                : updater;
+            setPage(newPagination.pageIndex + 1);
+          }}
+          onSortingChange={setSorting}
+          enableMultiSort={false}
+          enableColumnFilters={false}
+          rowCount={pagination.totalItems}
+          enableStickyHeader
+          enableHiding={false}
+          enableGlobalFilter={false}
+          enableColumnActions={false}
+          enableDensityToggle={false}
+          enableFullScreenToggle={false}
+          mantineTableContainerProps={{
+            style: { maxHeight: 'calc(100vh - 400px)' },
+          }}
+          mantineTableBodyRowProps={({ row }) => ({
+            onClick: (e) => goToModel(e as any, getModelTrainingWizardUrl(row.original)),
+            style: { cursor: 'pointer' },
+          })}
+          mantineTableHeadCellProps={{
+            style: { padding: '8px 12px' },
+          }}
+          mantineTableBodyCellProps={{
+            style: { padding: '8px 12px' },
+          }}
+          initialState={{
+            density: 'xs',
+            sorting: [{ id: 'startDate', desc: true }],
+          }}
+          state={{
+            isLoading,
+            pagination: { pageIndex: page - 1, pageSize: modelsLimit },
+            showProgressBars: isFetching,
+            sorting,
+          }}
+        />
       )}
+
       <Modal
         opened={opened}
         title="Training Details"
@@ -618,7 +853,6 @@ export default function UserTrainingModels() {
               label: 'Label Type',
               value: modalData.file?.metadata?.labelType ?? 'tag',
             },
-            // TODO could get the name of the custom model
             {
               label: 'Base Model',
               value: isDefined(modalData.baseModel) ? (
@@ -693,7 +927,6 @@ export default function UserTrainingModels() {
                       padding: theme.spacing.xs,
                     },
                     item: {
-                      // overflow: 'hidden',
                       border: 'none',
                       background: 'transparent',
                     },

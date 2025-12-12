@@ -1361,10 +1361,13 @@ export const specialCosmeticRewards = {
 
 export type LiveFeatureFlags = {
   buzzGiftCards: boolean;
+  /** Custom training page announcement message. If null/empty, shows the default message. */
+  trainingAnnouncement?: string | null;
 };
 
-export const DEFAULT_LIVE_FEATURE_FLAGS = {
+export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
   buzzGiftCards: false,
+  trainingAnnouncement: null,
 };
 
 export const EARLY_ACCESS_CONFIG: {
