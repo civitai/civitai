@@ -759,11 +759,11 @@ export default function UserTrainingModels() {
       {announcement?.message && (
         <AlertWithIcon
           icon={<IconExclamationCircle size={16} />}
-          iconColor="yellow"
-          color="yellow"
+          iconColor={announcement.color || 'yellow'}
+          color={announcement.color || 'yellow'}
           size="sm"
         >
-          {announcement?.message}
+          {announcement.message}
         </AlertWithIcon>
       )}
 

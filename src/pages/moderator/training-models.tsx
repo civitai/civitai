@@ -68,7 +68,16 @@ export default function TrainingModerationFeedPage() {
   // Announcement editor state
   const [announcementExpanded, { toggle: toggleAnnouncementExpanded }] = useDisclosure(false);
   const [announcementText, setAnnouncementText] = useState('');
+  const [announcementColor, setAnnouncementColor] = useState<string>('yellow');
   const [announcementDirty, setAnnouncementDirty] = useState(false);
+
+  const announcementColorOptions = [
+    { value: 'yellow', label: 'Warning (Yellow)' },
+    { value: 'red', label: 'Error (Red)' },
+    { value: 'blue', label: 'Info (Blue)' },
+    { value: 'green', label: 'Success (Green)' },
+    { value: 'gray', label: 'Neutral (Gray)' },
+  ];
 
   // Fetch current announcement
   const { data: announcementData, isLoading: announcementLoading } =
@@ -93,15 +102,23 @@ export default function TrainingModerationFeedPage() {
     },
   });
 
-  // Initialize announcement text when data loads
+  // Initialize announcement text and color when data loads
   useEffect(() => {
-    if (announcementData?.message && !announcementDirty) {
-      setAnnouncementText(announcementData.message);
+    if (announcementData && !announcementDirty) {
+      if (announcementData.message) {
+        setAnnouncementText(announcementData.message);
+      }
+      if (announcementData.color) {
+        setAnnouncementColor(announcementData.color);
+      }
     }
-  }, [announcementData?.message, announcementDirty]);
+  }, [announcementData, announcementDirty]);
 
   const handleSaveAnnouncement = () => {
-    setAnnouncementMutation.mutate({ message: announcementText });
+    setAnnouncementMutation.mutate({
+      message: announcementText,
+      color: announcementColor as 'yellow' | 'red' | 'blue' | 'green' | 'gray',
+    });
   };
 
   const handleResetAnnouncement = () => {
@@ -371,8 +388,8 @@ export default function TrainingModerationFeedPage() {
                 <Stack gap="sm">
                   <Divider />
                   <Text size="xs" c="dimmed">
-                    This message is displayed in the yellow alert box on the training page. Edit the
-                    text below to update what users see.
+                    This message is displayed in the alert box on the training page. Edit the text
+                    and select a color to update what users see.
                   </Text>
                   <Textarea
                     placeholder="Enter announcement message..."
@@ -384,6 +401,18 @@ export default function TrainingModerationFeedPage() {
                     minRows={3}
                     maxRows={6}
                     autosize
+                  />
+                  <Select
+                    label="Alert Color"
+                    data={announcementColorOptions}
+                    value={announcementColor}
+                    onChange={(value) => {
+                      if (value) {
+                        setAnnouncementColor(value);
+                        setAnnouncementDirty(true);
+                      }
+                    }}
+                    w={200}
                   />
                   <Group gap="sm" justify="space-between">
                     <Group gap="xs">

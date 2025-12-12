@@ -30,8 +30,10 @@ import {
 } from '~/server/trpc';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
+const announcementColors = ['yellow', 'red', 'blue', 'green', 'gray'] as const;
 const trainingAnnouncementSchema = z.object({
   message: z.string().max(2000),
+  color: z.enum(announcementColors).default('yellow'),
 });
 type TrainingAnnouncement = z.infer<typeof trainingAnnouncementSchema>;
 
