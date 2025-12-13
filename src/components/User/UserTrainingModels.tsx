@@ -294,7 +294,7 @@ export default function UserTrainingModels() {
     },
   });
 
-  const goToModel = (e: React.MouseEvent<HTMLTableRowElement>, href: string) => {
+  const goToModel = (e: React.MouseEvent, href: string) => {
     if (opened) return false;
     if ((e.ctrlKey && e.button === 0) || e.button === 1) {
       e.preventDefault();
@@ -902,7 +902,7 @@ export default function UserTrainingModels() {
             style: { maxHeight: 'calc(100vh - 400px)' },
           }}
           mantineTableBodyRowProps={({ row }) => ({
-            onClick: (e) => goToModel(e as any, getModelTrainingWizardUrl(row.original)),
+            onClick: (e) => goToModel(e, getModelTrainingWizardUrl(row.original)),
             style: { cursor: 'pointer' },
           })}
           mantineTableHeadCellProps={{

@@ -2060,6 +2060,25 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
 }) => {
   const { take, skip } = getPagination(limit, page);
 
+  // Build trainingDetails filters (need AND to combine multiple JSON path filters)
+  const trainingDetailsFilters: Prisma.ModelVersionWhereInput[] = [];
+  if (baseModel) {
+    trainingDetailsFilters.push({
+      trainingDetails: {
+        path: ['baseModel'],
+        equals: baseModel,
+      },
+    });
+  }
+  if (type) {
+    trainingDetailsFilters.push({
+      trainingDetails: {
+        path: ['type'],
+        equals: type,
+      },
+    });
+  }
+
   // Build where clause with filters
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
     status: { in: [ModelStatus.Draft, ModelStatus.Training] },
@@ -2072,22 +2091,7 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
     ...(trainingStatus && trainingStatus.length > 0
       ? { trainingStatus: { in: trainingStatus } }
       : {}),
-    ...(baseModel
-      ? {
-          trainingDetails: {
-            path: ['baseModel'],
-            equals: baseModel,
-          },
-        }
-      : {}),
-    ...(type
-      ? {
-          trainingDetails: {
-            path: ['type'],
-            equals: type,
-          },
-        }
-      : {}),
+    ...(trainingDetailsFilters.length > 0 ? { AND: trainingDetailsFilters } : {}),
   };
 
   // Determine orderBy based on sort option
