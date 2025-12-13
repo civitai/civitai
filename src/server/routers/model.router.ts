@@ -52,6 +52,7 @@ import {
   getModelByIdSchema,
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
+  getMyTrainingModelsSchema,
   getSimpleModelsInfiniteSchema,
   limitOnly,
   migrateResourceToCollectionSchema,
@@ -143,7 +144,7 @@ export const modelRouter = router({
   getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   getMyTrainingModels: protectedProcedure
-    .input(getAllQuerySchema)
+    .input(getMyTrainingModelsSchema)
     .query(getMyTrainingModelsHandler),
   getMyAvailableModels: protectedProcedure.query(({ ctx }) =>
     getAvailableModelsByUserId({ userId: ctx.user.id })
