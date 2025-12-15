@@ -355,6 +355,10 @@ export const ModelSelect = ({
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
             <Stack gap="xs">
+              <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" p="xs" color="yellow">
+                Due to elevated AIToolKit and Z-Image training failure rates we&apos;ve temporarily
+                disabled these options while we investigate!
+              </AlertWithIcon>
               {mediaType === 'image' && (
                 <>
                   <ModelSelector
@@ -422,7 +426,7 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.zimageturboTraining && (
+                  {false && features.zimageturboTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="yellow"
