@@ -426,7 +426,7 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {false && features.zimageturboTraining && (
+                  {features.zimageturboTraining && (
                     <ModelSelector
                       selectedRun={selectedRun}
                       color="yellow"
