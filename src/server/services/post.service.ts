@@ -502,7 +502,7 @@ export const getPostsInfinite = async ({
               | null,
           },
           stats: postStats[post.id] ?? null,
-          images: _images.map(({ postId, ...img }) => img),
+          images: _images,
           cosmetic: cosmetics[post.id] ?? null,
         };
       })

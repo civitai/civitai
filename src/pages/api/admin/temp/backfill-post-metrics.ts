@@ -22,7 +22,6 @@ export default WebhookEndpoint(async (req, res) => {
 
 async function backfillPostMetrics(req: NextApiRequest, res: NextApiResponse) {
   const params = schema.parse(req.query);
-  console.log({ params });
 
   await dataProcessor({
     params,

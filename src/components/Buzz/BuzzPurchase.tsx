@@ -470,7 +470,6 @@ export const BuzzPurchase = ({
                           rightSectionWidth="auto"
                           currency="USD"
                           onChange={(value) => {
-                            console.log({ value });
                             setError('');
                             setCustomAmount(Number(value ?? 0));
                             setCustomBuzzAmount(Math.ceil(Number(value ?? 0) * 10));

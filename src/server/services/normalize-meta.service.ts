@@ -1,7 +1,5 @@
 import {
   wanBaseModelGroupIdMap,
-  wan21BaseModelMap,
-  getWan21ResolutionFromBaseModel,
   wanGeneralBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
 import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/base-model.constants';

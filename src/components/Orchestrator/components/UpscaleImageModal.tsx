@@ -10,7 +10,7 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
-import { generationConfig } from '~/server/common/constants';
+import { generationConfig, maxUpscaleSize } from '~/server/common/constants';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import type { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
@@ -25,7 +25,9 @@ import { GenForm } from '~/components/Generation/Form/GenForm';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 
 const schema = z.object({
-  sourceImage: sourceImageSchema,
+  sourceImage: sourceImageSchema.refine(
+    (data) => data.width < maxUpscaleSize && data.height < maxUpscaleSize
+  ),
 });
 
 export function UpscaleImageModal({
@@ -40,8 +42,10 @@ export function UpscaleImageModal({
   const dialog = useDialogContext();
 
   const defaultValues = { sourceImage };
-  const form = useForm({ defaultValues, schema });
+  const form = useForm({ defaultValues, schema, reValidateMode: 'onChange' });
   const watched = form.watch();
+
+  console.log(form.formState.isValid);
 
   const whatIf = trpc.orchestrator.whatIf.useQuery({
     $type: 'image',
@@ -79,7 +83,7 @@ export function UpscaleImageModal({
             type="submit"
             loading={whatIf.isInitialLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
-            disabled={whatIf.isError}
+            disabled={whatIf.isError || !form.formState.isValid}
             allowMatureContent={whatIf.data?.allowMatureContent}
             transactions={whatIf.data?.transactions}
           >

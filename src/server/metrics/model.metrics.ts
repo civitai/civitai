@@ -289,9 +289,10 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     ctx.jobContext.checkIfCanceled();
     log('getGenerationTasks', i + 1, 'of', tasks.length);
     const generations = await ctx.ch.$query<VersionTimeframeRow>`
-      SELECT modelVersionId,
-        count(*) all_time
-      FROM daily_user_resource
+      SELECT
+        modelVersionId,
+        SUM(count) AS all_time
+      FROM orchestration.daily_resource_generation_counts
       WHERE modelVersionId IN (${ids})
       GROUP BY modelVersionId;
     `;

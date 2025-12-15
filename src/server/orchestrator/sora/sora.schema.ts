@@ -34,11 +34,6 @@ export const soraGenerationConfig = VideoGenerationConfig2({
   processes: ['txt2vid', 'img2vid'],
   transformFn: (data) => {
     delete data.priority;
-    if (!data.images?.length) {
-      data.process = 'txt2vid';
-    } else {
-      data.process = 'img2vid';
-    }
     if (data.process === 'txt2vid') {
       delete data.images;
     } else {

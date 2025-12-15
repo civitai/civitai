@@ -99,6 +99,7 @@ export const useQueryImages = (
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
     ...((filters.username &&

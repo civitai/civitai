@@ -11,7 +11,7 @@ import {
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { ModelType, ModelHashType } from '~/shared/utils/prisma/enums';
 import { Availability, ModelUsageControl } from '~/shared/utils/prisma/enums';
@@ -153,9 +153,7 @@ export default MixedAuthEndpoint(async function handler(
     }
 
     downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
-    const jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
-    const jobId = jobFileUrl.split('/assets/')[0];
-    const fileName = jobFileUrl.split('/assets/')[1];
+    const { jobId, fileName } = getEpochJobAndFileName(downloadUrl)!;
 
     if (!jobId || !fileName) {
       return res.status(404).json({ error: 'Could not get jobId or fileName' });

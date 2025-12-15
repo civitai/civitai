@@ -169,6 +169,8 @@ import {
 import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
+import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
 
 let total = 0;
 const tips = {
@@ -539,11 +541,12 @@ export function GenerationFormContent() {
 
             if (isZImageTurbo) {
               stepsMin = 1;
-              stepsMax = 50;
+              stepsMax = 15;
             }
 
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
+            let cfgScaleStep = 0.5;
             if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
@@ -551,7 +554,8 @@ export function GenerationFormContent() {
 
             if (isZImageTurbo) {
               cfgScaleMin = 1;
-              cfgScaleMax = 10;
+              cfgScaleMax = 2;
+              cfgScaleStep = 0.1;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -576,7 +580,8 @@ export function GenerationFormContent() {
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
-              isSeedream;
+              isSeedream ||
+              isZImageTurbo;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -702,17 +707,24 @@ export function GenerationFormContent() {
                     </div>
                   )}
 
-                  <div className="-mb-1 flex items-center gap-1">
-                    <Input.Label style={{ fontWeight: 590 }} required>
-                      Model
-                    </Input.Label>
-                    <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                      <Text fw={400}>
-                        Models are the resources you&apos;re generating with. Using a different base
-                        model can drastically alter the style and composition of images, while
-                        adding additional resource can change the characters, concepts and objects
-                      </Text>
-                    </InfoPopover>
+                  <div className="-mb-1 flex items-end justify-between gap-1">
+                    <div className="flex items-center gap-1">
+                      <Input.Label style={{ fontWeight: 590 }} required>
+                        Model
+                      </Input.Label>
+                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                        <Text fw={400}>
+                          Models are the resources you&apos;re generating with. Using a different
+                          base model can drastically alter the style and composition of images,
+                          while adding additional resource can change the characters, concepts and
+                          objects
+                        </Text>
+                      </InfoPopover>
+                    </div>
+                    <BaseModelSelect
+                      value={model ? getBaseModelGroup(model.baseModel) : undefined}
+                      type="image"
+                    />
                   </div>
 
                   <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
@@ -1407,10 +1419,15 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
+                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
+                  {!disablePriority && (
+                    <InputRequestPriority name="priority" label="Request Priority" />
+                  )}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
                       variant="contained"
+                      className="mt-5"
                       classNames={{
                         item: classes.accordionItem,
                         control: classes.accordionControl,
@@ -1456,7 +1473,7 @@ export function GenerationFormContent() {
                                     }
                                     min={cfgScaleMin}
                                     max={cfgScaleMax}
-                                    step={0.5}
+                                    step={cfgScaleStep}
                                     precision={1}
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
@@ -1653,9 +1670,6 @@ export function GenerationFormContent() {
                         </Accordion.Panel>
                       </Accordion.Item>
                     </PersistentAccordion>
-                  )}
-                  {!disablePriority && (
-                    <InputRequestPriority name="priority" label="Request Priority" />
                   )}
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">

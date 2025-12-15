@@ -46,7 +46,7 @@ const aiToolkitBaseParams = z.object({
 
 // Use discriminated union to enforce modelVariant requirements per ecosystem
 const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
-  // SD1, SDXL, Chroma, and Qwen don't need modelVariant
+  // SD1, SDXL, Chroma, Qwen, and ZImageTurbo don't need modelVariant
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('sd1'),
     modelVariant: z.undefined().optional(),
@@ -61,6 +61,10 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
   }),
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('qwen'),
+    modelVariant: z.undefined().optional(),
+  }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('zimageturbo'),
     modelVariant: z.undefined().optional(),
   }),
   // SD3, Flux1, and Wan require modelVariant

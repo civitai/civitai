@@ -71,6 +71,7 @@ import {
   getAiToolkitModelVariant,
   isInvalidRapid,
   isInvalidAiToolkit,
+  isSamplePromptsRequired,
   isValidRapid,
   rapidEta,
   type TrainingBaseModelType,
@@ -82,7 +83,15 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
 
-const prefersCaptions: TrainingBaseModelType[] = ['flux', 'flux2', 'sd35', 'hunyuan', 'wan', 'chroma'];
+const prefersCaptions: TrainingBaseModelType[] = [
+  'flux',
+  'flux2',
+  'sd35',
+  'hunyuan',
+  'wan',
+  'chroma',
+  'zimageturbo',
+];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -381,14 +390,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      if (r.params.engine === 'ai-toolkit') {
+      if (isSamplePromptsRequired(r.baseType, r.params.engine)) {
         const numPromptsNeeded = 1;
         const filledPrompts = r.samplePrompts.filter((p) => p && p.trim().length > 0);
 
         if (filledPrompts.length < numPromptsNeeded) {
           showErrorNotification({
             error: new Error(
-              `AI Toolkit requires at least ${numPromptsNeeded} sample prompt (s) to train.`
+              `This model requires at least ${numPromptsNeeded} sample prompt(s) to train.`
             ),
             title: 'Sample prompts required',
             autoClose: false,
@@ -823,6 +832,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           </AlertWithIcon>
         )}
+
       {!prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
@@ -864,6 +874,24 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <Group gap="sm" justify="space-between" wrap="nowrap">
             <Text>Video training requires that all files are labeled.</Text>
             <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+          </Group>
+        </AlertWithIcon>
+      )}
+
+      {selectedRun.baseType === 'zimageturbo' && (
+        <AlertWithIcon
+          icon={<IconAlertTriangle size={16} />}
+          iconColor="yellow"
+          radius={0}
+          size="md"
+          color="yellow"
+          mt="sm"
+        >
+          <Group gap="sm" justify="space-between" wrap="nowrap">
+            <Text>
+              Z&ndash;Image Turbo training is experimental, and we’re still fine-tuning things
+              behind the scenes{' '}
+            </Text>
           </Group>
         </AlertWithIcon>
       )}

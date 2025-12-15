@@ -357,14 +357,17 @@ export default function TrainingSelectFile({
     modelVersion.trainingStatus === TrainingStatus.Paused
       ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
       : modelVersion.trainingStatus === TrainingStatus.Failed
-      ? 'The training job failed. Please recreate this model and try again, or contact us for help.'
+      ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
       : modelVersion.trainingStatus === TrainingStatus.Denied
       ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
       : undefined;
   const noEpochs = !epochs || !epochs.length;
+  // Allow access to epochs for failed trainings if epochs exist
+  const hasFailedWithEpochs = modelVersion.trainingStatus === TrainingStatus.Failed && !noEpochs;
   const resultsLoading =
     (modelVersion.trainingStatus !== TrainingStatus.InReview &&
-      modelVersion.trainingStatus !== TrainingStatus.Approved) ||
+      modelVersion.trainingStatus !== TrainingStatus.Approved &&
+      !hasFailedWithEpochs) ||
     noEpochs;
 
   const cancelDownload = () => {
@@ -512,9 +515,12 @@ export default function TrainingSelectFile({
 
   const canGenerateWithEpochBool = canGenerateWithEpoch(completeDate);
 
+  // Only show blocking error for Paused, Denied, or Failed without epochs
+  const showBlockingError = !!errorMessage && !hasFailedWithEpochs;
+
   return (
     <Stack>
-      {!!errorMessage ? (
+      {showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
           <Text>{errorMessage}</Text>
@@ -549,6 +555,20 @@ export default function TrainingSelectFile({
                 <Text>Results will stream in as they complete.</Text>
               </Stack>
             </Stack>
+          )}
+          {hasFailedWithEpochs && (
+            <DismissibleAlert
+              id={`training-failed-with-epochs-${modelVersion.id}`}
+              color="red"
+              title="Training Failed"
+            >
+              <Text size="sm">
+                The training job failed, but {epochs.length} epoch
+                {epochs.length > 1 ? 's were' : ' was'} completed before the failure. You can still
+                download or publish these completed epochs. You will receive a partial refund for
+                the failed epochs.
+              </Text>
+            </DismissibleAlert>
           )}
           {canGenerateWithEpochBool && features.privateModels && (
             <DismissibleAlert
@@ -606,8 +626,10 @@ export default function TrainingSelectFile({
             {downloadProgress && (
               <Progress.Root size="sm">
                 <Progress.Section
-                  value={(((downloadProgress.current - 1) / downloadProgress.total) * 100) +
-                    (downloadProgress.fileProgress / downloadProgress.total)}
+                  value={
+                    ((downloadProgress.current - 1) / downloadProgress.total) * 100 +
+                    downloadProgress.fileProgress / downloadProgress.total
+                  }
                   color="cyan"
                 />
               </Progress.Root>
