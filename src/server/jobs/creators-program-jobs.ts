@@ -88,7 +88,7 @@ export const creatorsProgramDistribute = createJob(
       createBuzzTransactionMany(
         allAllocations.map(([userId, amount]) => ({
           type: TransactionType.Compensation,
-          toAccountType: 'cashpending',
+          toAccountType: 'cashPending',
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount,
@@ -129,7 +129,7 @@ export const creatorsProgramInviteTipalti = createJob(
     if (participants.length === 0) return;
     const balances = await getAccountsBalances({
       accountIds: participants.map((p) => p.userId),
-      accountTypes: ['cashsettled'],
+      accountTypes: ['cashSettled'],
     });
 
     const userIdsOverThreshold = balances
@@ -196,7 +196,7 @@ export const creatorsProgramSettleCash = createJob(
     const participants = await getPoolParticipantsV2(month, true, 'yellow');
     const balances = await getAccountsBalances({
       accountIds: participants.map((p) => p.userId),
-      accountTypes: ['cashpending'],
+      accountTypes: ['cashPending'],
     });
 
     const positiveBalances = balances.filter((b) => b.balance > 0);
@@ -210,9 +210,9 @@ export const creatorsProgramSettleCash = createJob(
           positiveBalances.flatMap(({ accountId: userId, balance: amount }) => [
             {
               type: TransactionType.Compensation,
-              fromAccountType: 'cashpending',
+              fromAccountType: 'cashPending',
               fromAccountId: userId,
-              toAccountType: 'cashsettled',
+              toAccountType: 'cashSettled',
               toAccountId: 0,
               amount,
               description: `Move from pending ${monthStr}`,
@@ -220,9 +220,9 @@ export const creatorsProgramSettleCash = createJob(
             },
             {
               type: TransactionType.Compensation,
-              fromAccountType: 'cashsettled',
+              fromAccountType: 'cashSettled',
               fromAccountId: 0,
-              toAccountType: 'cashsettled',
+              toAccountType: 'cashSettled',
               toAccountId: userId,
               amount,
               description: `Cash settlement for ${monthStr}`,
@@ -283,7 +283,7 @@ const getCreatorProgramUsers = async () => {
   return users.map((u) => u.userId);
 };
 
-export const bakingPhaseEndingNotification = createJob(
+export const bankingPhaseEndingNotification = createJob(
   'creator-program-banking-phase-ending',
   `0 0 L-${EXTRACTION_PHASE_DURATION + 1} * *`,
   async () => {
@@ -338,7 +338,7 @@ export const creatorProgramJobs = [
   creatorsProgramInviteTipalti,
   creatorsProgramRollover,
   creatorsProgramSettleCash,
-  bakingPhaseEndingNotification,
+  bankingPhaseEndingNotification,
   extractionPhaseStartedNotification,
   extractionPhaseEndingNotification,
 ];

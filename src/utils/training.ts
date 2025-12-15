@@ -347,13 +347,14 @@ export function getAiToolkitModelVariant(
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
   // AI Toolkit supports these base model types (flux2 is not included - it only uses rapid)
   const supportedTypes: TrainingBaseModelType[] = [
-    'sd15',
-    'sdxl',
-    'flux',
-    'sd35',
-    'hunyuan',
-    'wan',
-    'chroma',
+    // @justin: Disable AI Toolkit for all but mandatory due to issues
+    // 'sd15',
+    // 'sdxl',
+    // 'flux',
+    // 'sd35',
+    // 'hunyuan',
+    // 'wan',
+    // 'chroma',
     'qwen',
     'zimageturbo',
   ];

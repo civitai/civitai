@@ -13,6 +13,7 @@ import { getUpscaleFactor } from '~/shared/constants/generation.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
+import { createVideoInterpolationStep } from '~/server/orchestrator/video-interpolation/video-interpolation';
 
 export async function createWorkflowStep(args: GenerationSchema) {
   const type = args.$type;
@@ -25,6 +26,8 @@ export async function createWorkflowStep(args: GenerationSchema) {
       return await createVideoEnhancementStep(args.data);
     case 'videoUpscaler':
       return await createVideoUpscalerStep(args.data);
+    case 'videoInterpolation':
+      return await createVideoInterpolationStep(args.data);
     default:
       throw new Error(`create workflow step not implemented for $type: ${type}`);
   }

@@ -85,7 +85,7 @@ const holidayButton: SupportButtonOption = {
 
 export const SupportButton = () => {
   const { seed } = useAppContext();
-  const selectedOption = isHolidaysTime() ? holidayButton : new Random(seed).fromArray(options);
+  const selectedOption = new Random(seed).fromArray(options);
 
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>

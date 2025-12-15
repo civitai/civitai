@@ -57,4 +57,14 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
       url: '/games/knights-of-new-order',
     }),
   },
+  'new-order-blessed-buzz-granted': {
+    displayName: 'Knights of New Order: Blessed Buzz Granted',
+    category: NotificationCategory.Other,
+    prepareMessage: ({ details }) => ({
+      message: `Knights of New Order: You've received ${
+        details.buzzAmount as number
+      } Buzz from your banked Gold rewards! Thank you for your continued dedication to content moderation. Sorry for the delay!`,
+      url: '/user/transactions',
+    }),
+  },
 });

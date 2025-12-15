@@ -39,11 +39,13 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
-import { collectionSelect } from '~/server/selectors/collection.selector';
+import {
+  collectionSelect,
+  collectionWithoutImageSelect,
+} from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getAllImages, ingestImage } from '~/server/services/image.service';
@@ -506,7 +508,7 @@ export const saveItemInCollections = async ({
   removeFromCollectionIds = uniq(removeFromCollectionIds);
 
   const collections = await dbRead.collection.findMany({
-    select: collectionSelect,
+    select: collectionWithoutImageSelect,
     where: {
       id: { in: upsertCollectionItems.map((c) => c.collectionId) },
     },
@@ -2007,7 +2009,7 @@ export const bulkSaveItems = async ({
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: collectionSelect,
+    select: collectionWithoutImageSelect,
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);

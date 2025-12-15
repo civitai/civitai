@@ -19,6 +19,7 @@ import {
   IconFlagQuestion,
   IconInfoHexagon,
   IconTrash,
+  IconLink,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
@@ -228,6 +229,21 @@ export function QueueItem({
             </div>
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton step={step} workflowId={request.id} />
+              {currentUser?.isModerator && (
+                <ButtonTooltip {...tooltipProps} label="Go to Workflow">
+                  <LegacyActionIcon
+                    size="md"
+                    p={4}
+                    radius={0}
+                    component="a"
+                    href={`https://orchestration-dashboard.civitai.com/job-search?workflow=${request.id}`}
+                    target="_blank"
+                    onClick={handleCopy}
+                  >
+                    <IconLink />
+                  </LegacyActionIcon>
+                </ButtonTooltip>
+              )}
               <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
                 <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}

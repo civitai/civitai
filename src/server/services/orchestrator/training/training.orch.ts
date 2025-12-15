@@ -7,6 +7,8 @@ import type {
   TrainingStepTemplate,
   ZipTrainingData,
   AiToolkitTrainingInput,
+  SdxlAiToolkitTrainingInput,
+  Sd1AiToolkitTrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -161,10 +163,10 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
   // Params are already in AI Toolkit format from the database
   const aiToolkitParams = params as AiToolkitTrainingParams;
 
-  const trainingInput: AiToolkitTrainingInput = {
+  let trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
-    model,
+
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
     trainingData: {
       type: 'zip',
@@ -184,11 +186,24 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     networkDim: aiToolkitParams.networkDim ?? undefined,
     networkAlpha: aiToolkitParams.networkAlpha ?? undefined,
     noiseOffset: aiToolkitParams.noiseOffset ?? undefined,
-    minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     flipAugmentation: aiToolkitParams.flipAugmentation,
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
   };
+
+  if (aiToolkitParams.ecosystem === 'sd1') {
+    trainingInput = {
+      ...trainingInput,
+      model,
+      minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
+    } as Sd1AiToolkitTrainingInput;
+  } else if (aiToolkitParams.ecosystem === 'sdxl') {
+    trainingInput = {
+      ...trainingInput,
+      model,
+      minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
+    } as SdxlAiToolkitTrainingInput;
+  }
 
   return {
     $type: 'training',
@@ -323,7 +338,8 @@ export const createTrainingWorkflow = async ({
 
   // Update file and version status immediately after workflow creation
   const now = new Date().toISOString();
-  const existingTrainingResults = (fileMetadata.trainingResults ?? {}) as Partial<TrainingResultsV2>;
+  const existingTrainingResults = (fileMetadata.trainingResults ??
+    {}) as Partial<TrainingResultsV2>;
   const existingHistory = existingTrainingResults.history ?? [];
 
   const newTrainingResults: TrainingResultsV2 = {

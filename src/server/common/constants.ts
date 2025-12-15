@@ -350,18 +350,19 @@ export const constants = {
   },
 } as const;
 
-export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
+export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
 export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
-export const orchestratorUrls = [
-  'https://orchestration.civitai.com',
-  'https://orchestration-dev.civitai.com',
-  'https://orchestration-stage.civitai.com',
-];
+
 export function isOrchestratorUrl(url: string) {
-  return orchestratorUrls.some((orchestratorUrl) => url.startsWith(orchestratorUrl));
+  try {
+    const { host } = new URL(url);
+    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+  } catch {
+    return false;
+  }
 }
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
@@ -1139,6 +1140,7 @@ export const generation = {
     openAIQuality: 'medium',
     vae: null,
     resources: null,
+    outputFormat: 'jpeg',
   },
   maxValues: {
     seed: 4294967295,
@@ -1359,10 +1361,13 @@ export const specialCosmeticRewards = {
 
 export type LiveFeatureFlags = {
   buzzGiftCards: boolean;
+  /** Custom training page announcement message. If null/empty, shows the default message. */
+  trainingAnnouncement?: string | null;
 };
 
-export const DEFAULT_LIVE_FEATURE_FLAGS = {
+export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
   buzzGiftCards: false,
+  trainingAnnouncement: null,
 };
 
 export const EARLY_ACCESS_CONFIG: {
