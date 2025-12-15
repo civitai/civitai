@@ -296,6 +296,7 @@ export enum BanReasonCode {
   Harassment = 'Harassment',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
+  RRDViolation = 'RRDViolation',
   Other = 'Other',
 }
 

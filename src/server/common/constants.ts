@@ -1295,6 +1295,11 @@ export const banReasonDetails: Record<
     publicBanReasonLabel: 'Abusing Buzz System',
     privateBanReasonLabel: 'Abusing Buzz System',
   },
+  [BanReasonCode.RRDViolation]: {
+    code: BanReasonCode.RRDViolation,
+    publicBanReasonLabel: 'Violated Responsible Resource Development',
+    privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
+  },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,
     publicBanReasonLabel: '',
