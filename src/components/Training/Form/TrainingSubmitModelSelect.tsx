@@ -356,8 +356,8 @@ export const ModelSelect = ({
           <Card.Section inheritPadding withBorder py="sm">
             <Stack gap="xs">
               <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" p="xs" color="yellow">
-                Due to elevated AIToolKit and Z-Image training failure rates we&apos;ve temporarily
-                disabled these options while we investigate!
+                Due to elevated AIToolKit, Z-Image, and Wan training failure rates we&apos;ve
+                temporarily disabled these options while we investigate!
               </AlertWithIcon>
               {mediaType === 'image' && (
                 <>
@@ -451,16 +451,18 @@ export const ModelSelect = ({
                     isVideo
                     isNew={new Date() < new Date('2025-04-30')}
                   />
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="green"
-                    name="Wan"
-                    value={baseModelWan}
-                    baseType="wan"
-                    makeDefaultParams={makeDefaultParams}
-                    isVideo
-                    isNew={new Date() < new Date('2025-04-30')}
-                  />
+                  {false && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="green"
+                      name="Wan"
+                      value={baseModelWan}
+                      baseType="wan"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew={new Date() < new Date('2025-04-30')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'image' && (
