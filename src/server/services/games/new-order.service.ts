@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
@@ -104,7 +105,7 @@ export async function joinGame({ userId }: { userId: number }) {
 
   if (user.playerInfo) {
     // User is already in game
-    const stats = await getPlayerStats({ playerId: userId });
+    const stats = await getPlayerStats({ playerId: userId, startAt: user.playerInfo.startAt });
     const { user: userInfo, ...playerData } = user.playerInfo;
     return { ...userInfo, ...playerData, stats };
   }
@@ -132,20 +133,52 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
   const { user, ...playerData } = player;
-  const stats = await getPlayerStats({ playerId });
+  const stats = await getPlayerStats({ playerId, startAt: playerData.startAt });
 
   return { ...playerData, ...user, stats };
 }
 
-async function getPlayerStats({ playerId }: { playerId: number }) {
-  const [exp, fervor, smites, blessedBuzz] = await Promise.all([
+async function getPendingExp({
+  playerId,
+  startAt,
+}: {
+  playerId: number;
+  startAt: Date;
+}): Promise<number> {
+  if (!clickhouse) return 0;
+
+  // Calculate what will be granted in the next cycle
+  // Next job run is tomorrow at 00:00 UTC, which grants exactly 3 days before that
+  const nextGrantDate = dayjs().add(1, 'day').startOf('day'); // Tomorrow 00:00 UTC
+  const grantingDate = nextGrantDate.subtract(3, 'days'); // 3 days before next run
+  const grantStartDate = grantingDate.startOf('day').toDate();
+  const grantEndDate = grantingDate.endOf('day').toDate();
+
+  const pendingExpResult = await clickhouse.$query<{ totalExp: number }>`
+    SELECT SUM(grantedExp * multiplier) as totalExp
+    FROM knights_new_order_image_rating FINAL
+    WHERE userId = ${playerId}
+      AND createdAt >= ${startAt}
+      AND createdAt BETWEEN ${grantStartDate} AND ${grantEndDate}
+      AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+  `;
+
+  return pendingExpResult?.[0]?.totalExp ?? 0;
+}
+
+async function getPlayerStats({ playerId, startAt }: { playerId: number; startAt: Date }) {
+  const [exp, fervor, smites, blessedBuzz, pendingBlessedBuzz] = await Promise.all([
     expCounter.getCount(playerId),
     fervorCounter.getCount(playerId),
     smitesCounter.getCount(playerId),
     blessedBuzzCounter.getCount(playerId),
+    // Query ClickHouse for exp earned in last 3 days (not yet granted)
+    // Only count judgments after player's career start date
+    getPendingExp({ playerId, startAt }),
   ]);
+  const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate(); // Next 00:00 UTC
 
-  return { exp, fervor, smites, blessedBuzz };
+  return { exp, fervor, smites, blessedBuzz, pendingBlessedBuzz, nextGrantDate };
 }
 
 export async function smitePlayer({
@@ -935,9 +968,23 @@ export async function updatePlayerStats({
     exp < 0
       ? await expCounter.decrement({ id: playerId, value: exp })
       : await expCounter.increment({ id: playerId, value: exp });
-  let stats = { exp: newExp, fervor: 0, smites: 0, blessedBuzz: 0 };
+  let stats = {
+    exp: newExp,
+    fervor: 0,
+    smites: 0,
+    blessedBuzz: 0,
+    pendingBuzz: 0,
+    nextGrantDate: new Date(),
+  };
 
   if (updateAll) {
+    // Get player's career start date to respect resets
+    const player = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: playerId },
+      select: { startAt: true },
+    });
+    const startAt = player?.startAt ?? new Date();
+
     const allJudgments = await allJudgmentsCounter.increment({ id: playerId });
     const correctJudgments =
       status === NewOrderImageRatingStatus.Correct
@@ -949,7 +996,13 @@ export async function updatePlayerStats({
     const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
     const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
 
-    stats = { ...stats, fervor: newFervor, blessedBuzz };
+    // Calculate pending buzz from last 3 days of judgments
+    // Only count judgments after player's career start date
+    const pendingExp = await getPendingExp({ playerId, startAt });
+    const pendingBuzz = Math.floor(pendingExp * newOrderConfig.blessedBuzzConversionRatio);
+    const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate();
+
+    stats = { ...stats, fervor: newFervor, blessedBuzz, pendingBuzz, nextGrantDate };
   }
 
   await signalClient
@@ -1677,7 +1730,7 @@ export async function getPlayersInfinite({
       const { playerInfo, ...user } = player;
       if (!playerInfo) return null;
 
-      const stats = await getPlayerStats({ playerId: user.id });
+      const stats = await getPlayerStats({ playerId: user.id, startAt: playerInfo.startAt });
       const activeSmites = playerSmites[player.id] ?? [];
       return {
         ...user,
@@ -1834,7 +1887,7 @@ export async function submitTestVote({
     }
 
     const { user, ...playerData } = player;
-    const stats = await getPlayerStats({ playerId: votingUserId });
+    const stats = await getPlayerStats({ playerId: votingUserId, startAt: playerData.startAt });
     const fullPlayer = { ...playerData, ...user, stats };
 
     // Get image details
