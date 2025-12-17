@@ -21,7 +21,7 @@ const schema = z.object({
 
 export function UpscaleVideoModal({
   videoUrl,
-  scaleFactor = 2,
+  scaleFactor: initialScaleFactor = 2,
   metadata,
   multipliers = [2, 3],
   maxResolution = 2048,
@@ -34,17 +34,17 @@ export function UpscaleVideoModal({
 }) {
   const dialog = useDialogContext();
 
-  const defaultValues = { scaleFactor };
-  const form = useForm({ defaultValues, schema });
+  const form = useForm({ defaultValues: { scaleFactor: initialScaleFactor }, schema });
   const watched = form.watch();
   const [video, setVideo] = useState<HTMLVideoElement>();
   const min = video ? Math.max(video.videoWidth, video.videoHeight) : undefined;
+  const scaleFactor = watched.scaleFactor ?? initialScaleFactor;
   const canUpscale = !!min && min * Math.min(...multipliers) <= maxResolution;
 
   const whatIf = trpc.orchestrator.whatIf.useQuery(
     {
       $type: 'videoUpscaler',
-      data: { videoUrl, ...defaultValues, ...watched },
+      data: { videoUrl, scaleFactor },
     },
     { enabled: canUpscale }
   );
@@ -114,8 +114,7 @@ export function UpscaleVideoModal({
               {video && (
                 <div className="rounded-md bg-gray-2 px-6 py-4 dark:bg-dark-6">
                   <span className="font-bold">Upscale Dimensions:</span>{' '}
-                  {watched.scaleFactor * video.videoWidth} x{' '}
-                  {watched.scaleFactor * video.videoHeight}
+                  {scaleFactor * video.videoWidth} x {scaleFactor * video.videoHeight}
                 </div>
               )}
               <Divider />

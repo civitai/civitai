@@ -44,6 +44,7 @@ import {
   fluxDraftAir,
   fluxUltraAir,
   fluxUltraAirId,
+  getAllowOutputFormat,
   getBaseModelFromResources,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
@@ -217,7 +218,9 @@ export async function parseGenerateImageInput({
   delete originalParams.resolution;
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
-  delete originalParams.outputFormat;
+  if (!getAllowOutputFormat(originalParams.baseModel)) {
+    delete originalParams.outputFormat;
+  }
   if (originalParams.workflow.startsWith('txt2img')) {
     originalParams.sourceImage = null;
     originalParams.images = null;
