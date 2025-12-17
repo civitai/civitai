@@ -239,8 +239,71 @@ export const smitesCounter = createCounter({
 
 export const blessedBuzzCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.BUZZ,
-  fetchCount: async () => 0,
-  ttl: CacheTTL.week,
+  fetchCount: async (id) => {
+    if (!clickhouse) return 0;
+
+    // Query player's career start date to respect resets
+    const player = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { startAt: true },
+    });
+    if (!player) return 0;
+
+    // Query ClickHouse for exp from last 3 days that hasn't been granted yet
+    // Anything older than 3 days should have been granted already
+    // Only count judgments after player's career start date
+    const startDate = dayjs().subtract(3, 'days').startOf('day').toDate();
+    const endDate = dayjs().endOf('day').toDate();
+
+    const result = await clickhouse.$query<{ totalExp: number }>`
+      SELECT SUM(grantedExp * multiplier) as totalExp
+      FROM knights_new_order_image_rating
+      WHERE userId = ${Number(id)}
+        AND createdAt >= ${player.startAt}
+        AND createdAt BETWEEN ${startDate} AND ${endDate}
+        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
+      NewOrderImageRatingStatus.Failed
+    }')
+    `.catch(handleLogError);
+
+    return result?.[0]?.totalExp ?? 0;
+  },
+  ttl: 0, // Never expire - granting jobs handle cleanup
+});
+
+export const pendingBuzzCounter = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.PENDING_BUZZ,
+  fetchCount: async (id) => {
+    if (!clickhouse) return 0;
+
+    // Query player's career start date to respect resets
+    const player = await dbRead.newOrderPlayer.findUnique({
+      where: { userId: Number(id) },
+      select: { startAt: true },
+    });
+    if (!player) return 0;
+
+    // Calculate what will be granted in the next cycle
+    // Next job run is tomorrow at 00:00 UTC, which grants exactly 3 days before that
+    const nextGrantDate = dayjs().add(1, 'day').startOf('day'); // Tomorrow 00:00 UTC
+    const grantingDate = nextGrantDate.subtract(3, 'days'); // 3 days before next run
+    const startDate = grantingDate.startOf('day').toDate();
+    const endDate = grantingDate.endOf('day').toDate();
+
+    const result = await clickhouse.$query<{ totalExp: number }>`
+      SELECT SUM(grantedExp * multiplier) as totalExp
+      FROM knights_new_order_image_rating
+      WHERE userId = ${Number(id)}
+        AND createdAt >= ${player.startAt}
+        AND createdAt BETWEEN ${startDate} AND ${endDate}
+        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
+      NewOrderImageRatingStatus.Failed
+    }')
+    `.catch(handleLogError);
+
+    return result?.[0]?.totalExp ?? 0;
+  },
+  ttl: CacheTTL.day,
 });
 
 export const expCounter = createCounter({
