@@ -879,9 +879,7 @@ export default function UserTrainingModels() {
           manualSorting
           onPaginationChange={(updater) => {
             const newPagination =
-              typeof updater === 'function'
-                ? updater({ pageIndex: page - 1, pageSize })
-                : updater;
+              typeof updater === 'function' ? updater({ pageIndex: page - 1, pageSize }) : updater;
             setPage(newPagination.pageIndex + 1);
             if (newPagination.pageSize !== pageSize) {
               setPageSize(newPagination.pageSize);

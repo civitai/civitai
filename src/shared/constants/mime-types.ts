@@ -3,7 +3,9 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 export const MIME_TYPES = {
   // Images
   png: 'image/png',
-  jpg: 'image/jpg',
+  // Note: 'image/jpg' is not a valid MIME type - the correct type is 'image/jpeg'
+  // We use 'image/jpeg' for both .jpg and .jpeg extensions
+  jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
 
@@ -23,8 +25,7 @@ export const MIME_TYPES = {
 
 export const MEDIA_TYPE: Record<string, MediaType> = {
   [MIME_TYPES.png]: MediaType.image,
-  [MIME_TYPES.jpeg]: MediaType.image,
-  [MIME_TYPES.jpg]: MediaType.image,
+  [MIME_TYPES.jpeg]: MediaType.image, // Also covers MIME_TYPES.jpg since they're both 'image/jpeg'
   [MIME_TYPES.webp]: MediaType.image,
   [MIME_TYPES.mp4]: MediaType.video,
   [MIME_TYPES.webm]: MediaType.video,
@@ -32,7 +33,8 @@ export const MEDIA_TYPE: Record<string, MediaType> = {
   [MIME_TYPES.wav]: MediaType.audio,
 } as const;
 
-export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.jpg, MIME_TYPES.webp];
+// Note: MIME_TYPES.jpg and MIME_TYPES.jpeg are both 'image/jpeg', so we only include it once
+export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.webp];
 export type IMAGE_MIME_TYPE = (typeof IMAGE_MIME_TYPE)[number];
 export const VIDEO_MIME_TYPE = [MIME_TYPES.mp4, MIME_TYPES.webm];
 export const AUDIO_MIME_TYPE = [MIME_TYPES.mp3, MIME_TYPES.wav];

@@ -55,7 +55,18 @@ export async function createImageElement(src: string | Blob | File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
-    img.addEventListener('load', () => resolve(img));
+    img.addEventListener('load', async () => {
+      try {
+        // Ensure the image is fully decoded before resolving
+        // This prevents issues where drawImage() is called before pixel data is ready,
+        // which can cause vertical stripe artifacts (alternating black/white lines)
+        await img.decode();
+        resolve(img);
+      } catch (decodeError) {
+        console.error('failed to decode image');
+        reject(decodeError);
+      }
+    });
     img.addEventListener('error', (error) => {
       console.error('failed to get image properties');
       reject(error);

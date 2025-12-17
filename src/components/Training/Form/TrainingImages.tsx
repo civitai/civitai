@@ -435,11 +435,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (!ctx) throw new Error('Error resizing image');
     ctx.drawImage(img, 0, 0, width, height);
 
+    // Normalize MIME type - 'image/jpg' is not valid, browsers expect 'image/jpeg'
+    const normalizedType = type === 'image/jpg' ? 'image/jpeg' : type;
+    // Use high quality for JPEG to prevent compression artifacts
+    const quality = normalizedType === 'image/jpeg' ? 0.92 : undefined;
+
     return new Promise((resolve, reject) => {
-      canvas.toBlob((file) => {
-        if (!file) reject();
-        else resolve(URL.createObjectURL(file));
-      }, type);
+      canvas.toBlob(
+        (file) => {
+          // Revoke the original blob URL to prevent memory leaks
+          URL.revokeObjectURL(imgUrl);
+          if (!file) {
+            reject(
+              new Error(`Failed to resize image - canvas.toBlob returned null for type ${type}`)
+            );
+          } else {
+            resolve(URL.createObjectURL(file));
+          }
+        },
+        normalizedType,
+        quality
+      );
     });
   };
 
