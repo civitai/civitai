@@ -42,6 +42,7 @@ import {
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
+import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;
@@ -311,23 +312,32 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       return false;
     }
 
-    const modelVersionData = await dbWrite.modelVersion.findMany({
-      where: { id: { in: winnerIds } },
-      select: {
-        id: true,
-        nsfwLevel: true,
-        modelId: true,
-        model: {
-          select: {
-            name: true,
-            poi: true,
-            nsfw: true,
-            userId: true,
-            type: true,
+    // TODO - exclude Qwen, ZImageTurbo baseModels from being inserted as coveredCheckpoints
+    const modelVersionData = await dbWrite.modelVersion
+      .findMany({
+        where: { id: { in: winnerIds } },
+        select: {
+          id: true,
+          nsfwLevel: true,
+          modelId: true,
+          baseModel: true,
+          model: {
+            select: {
+              name: true,
+              poi: true,
+              nsfw: true,
+              userId: true,
+              type: true,
+            },
           },
         },
-      },
-    });
+      })
+      .then((data) =>
+        data.filter((x) => {
+          const baseModelGroup = getBaseModelGroup(x.baseModel);
+          return !['Qwen', 'ZImageTurbo'].includes(baseModelGroup);
+        })
+      );
 
     // update entity names for notifications later
     modelVersionData.forEach((md) => {

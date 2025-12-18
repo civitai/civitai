@@ -27,13 +27,7 @@ export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'
   if (!ab) return [] as ResourceOptions;
 
   if (ab.ecosystem === null) {
-    // For featured-checkpoints, allow all active base models except Qwen
-    const allowedBaseModels = activeBaseModels.filter((baseModel) => {
-      const config = getBaseModelConfig(baseModel);
-      return config.group !== 'Qwen';
-    }) as BaseModel[];
-
-    return [{ type: ModelType.Checkpoint, baseModels: allowedBaseModels }] as ResourceOptions;
+    return [{ type: ModelType.Checkpoint, baseModels: activeBaseModels }] as ResourceOptions;
   }
 
   if (ab.ecosystem === miscAuctionName) {
