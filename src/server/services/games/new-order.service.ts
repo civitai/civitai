@@ -1,4 +1,4 @@
-import dayjs from 'dayjs';
+import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
@@ -123,7 +123,18 @@ export async function joinGame({ userId }: { userId: number }) {
   }).catch(() => null); // Ignore if it fails
 
   const { user: userInfo, ...playerData } = player;
-  return { ...playerData, ...userInfo, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
+  return {
+    ...playerData,
+    ...userInfo,
+    stats: {
+      exp: 0,
+      fervor: 0,
+      smites: 0,
+      blessedBuzz: 0,
+      pendingBlessedBuzz: 0,
+      nextGrantDate: dayjs().add(1, 'day').startOf('day').toDate(),
+    },
+  };
 }
 
 export async function getPlayerById({ playerId }: { playerId: number }) {
@@ -944,7 +955,7 @@ export async function updatePlayerStats({
     fervor: 0,
     smites: 0,
     blessedBuzz: 0,
-    pendingBuzz: 0,
+    pendingBlessedBuzz: 0,
     nextGrantDate: new Date(),
   };
 
@@ -961,10 +972,10 @@ export async function updatePlayerStats({
     const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
 
     // Get pending buzz from Redis counter (auto-queries ClickHouse on cache miss)
-    const pendingBuzz = await pendingBuzzCounter.getCount(playerId);
+    const pendingBlessedBuzz = await pendingBuzzCounter.getCount(playerId);
     const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate();
 
-    stats = { ...stats, fervor: newFervor, blessedBuzz, pendingBuzz, nextGrantDate };
+    stats = { ...stats, fervor: newFervor, blessedBuzz, pendingBlessedBuzz, nextGrantDate };
   }
 
   await signalClient
