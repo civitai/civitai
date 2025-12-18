@@ -458,24 +458,36 @@ export default function ModelDetailsV2({
   };
 
   const handlePublishModel = () => {
-    if (model && model.status === ModelStatus.Unpublished && isCreator)
-      openConfirmModal({
-        centered: true,
-        closeOnConfirm: false,
-        title: 'Republish model',
-        children:
-          'This model and all of its versions will be publicly available. Are you sure you want to republish this model?',
-        labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
-        onConfirm: () => {
-          publishModelMutation.mutate(
-            {
-              id: model.id,
-              versionIds: model?.modelVersions.map((v) => v.id),
-            },
-            { onSuccess: () => closeAllModals() }
-          );
-        },
-      });
+    if (!model) return;
+
+    const isUnpublished = model.status === ModelStatus.Unpublished;
+    const isUnpublishedViolation = model.status === ModelStatus.UnpublishedViolation;
+    const canRepublish =
+      (isUnpublished && (isCreator || isModerator)) || (isUnpublishedViolation && isModerator);
+
+    if (!canRepublish) return;
+
+    const isPrivate = model.availability === Availability.Private;
+    const message = isPrivate
+      ? 'This model and all of its versions will be restored to their previous state while remaining private. Are you sure you want to republish this model?'
+      : 'This model and all of its versions will be publicly available. Are you sure you want to republish this model?';
+
+    openConfirmModal({
+      centered: true,
+      closeOnConfirm: false,
+      title: 'Republish model',
+      children: message,
+      labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
+      onConfirm: () => {
+        publishModelMutation.mutate(
+          {
+            id: model.id,
+            versionIds: model?.modelVersions.map((v) => v.id),
+          },
+          { onSuccess: () => closeAllModals() }
+        );
+      },
+    });
   };
 
   const toggleCannotPromoteMutation = trpc.model.toggleCannotPromote.useMutation({
@@ -833,16 +845,19 @@ export default function ModelDetailsV2({
                             Unpublish
                           </Menu.Item>
                         )}
-                        {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
-                          <Menu.Item
-                            leftSection={<IconRepeat size={14} stroke={1.5} />}
-                            color="green"
-                            onClick={handlePublishModel}
-                            disabled={publishModelMutation.isLoading}
-                          >
-                            Republish
-                          </Menu.Item>
-                        )}
+                        {currentUser &&
+                          ((model.status === ModelStatus.Unpublished &&
+                            (isCreator || isModerator)) ||
+                            (model.status === ModelStatus.UnpublishedViolation && isModerator)) && (
+                            <Menu.Item
+                              leftSection={<IconRepeat size={14} stroke={1.5} />}
+                              color="green"
+                              onClick={handlePublishModel}
+                              disabled={publishModelMutation.isLoading}
+                            >
+                              Republish
+                            </Menu.Item>
+                          )}
                         {currentUser && isModerator && modelDeleted && (
                           <Menu.Item
                             leftSection={<IconRecycle size={14} stroke={1.5} />}
