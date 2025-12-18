@@ -963,7 +963,7 @@ const WithdrawCashCard = () => {
                   <span className="font-bold">Withdrawal fee:</span> $
                   {userCash?.withdrawalFee.type === 'fixed'
                     ? formatCurrencyForDisplay(userCash?.withdrawalFee.amount)
-                    : formatCurrencyForDisplay(toWithdraw * userCash?.withdrawalFee.amount)}
+                    : formatCurrencyForDisplay(100 * toWithdraw * userCash?.withdrawalFee.amount)}
                 </p>
                 <LegacyActionIcon onClick={openWithdrawalFeeModal}>
                   <IconInfoCircle size={14} />
