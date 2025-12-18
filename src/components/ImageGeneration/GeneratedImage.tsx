@@ -91,7 +91,7 @@ import { VideoInterpolationModal } from '~/components/Orchestrator/components/Vi
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
 };
 
 export function GeneratedImage({
@@ -102,7 +102,7 @@ export function GeneratedImage({
 }: {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
   isLightbox?: boolean;
 }) {
   const [ref, inView] = useInViewDynamic({ id: image.id });
@@ -404,8 +404,8 @@ export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedIm
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
-  const images = steps.flatMap((step) =>
-    step.images
+  const images = steps.flatMap(({ images, ...step }) =>
+    images
       .filter((x) => x.status === 'succeeded' && !x.blockedReason)
       .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
@@ -495,7 +495,7 @@ function GeneratedImageWorkflowMenuItems({
   isBlocked,
 }: {
   image: NormalizedGeneratedImage;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
   workflowId: string;
   workflowsOnly?: boolean;
   isBlocked?: boolean;
@@ -511,12 +511,14 @@ function GeneratedImageWorkflowMenuItems({
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
   const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
-  const isQwen = !isVideo && getIsQwen(step.params.baseModel);
-  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
-  const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
-  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
+  const params = step.params;
+  const baseModel = 'baseModel' in params ? params.baseModel : undefined;
+  const isQwen = !isVideo && getIsQwen(baseModel);
+  const isFlux = !isVideo && getIsFlux(baseModel);
+  const isHiDream = !isVideo && getIsHiDream(baseModel);
+  const isSD3 = !isVideo && getIsSD3(baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
-  const isZImageTurbo = !isVideo && getIsZImageTurbo(step.params.baseModel);
+  const isZImageTurbo = !isVideo && getIsZImageTurbo(baseModel);
   const canImg2Img =
     !isQwen &&
     !isFlux &&
