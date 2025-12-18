@@ -136,6 +136,7 @@ export async function createComfy(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
+      nsfwLevel: step.metadata?.isPrivateGeneration ? 'pg13' : undefined,
       allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
