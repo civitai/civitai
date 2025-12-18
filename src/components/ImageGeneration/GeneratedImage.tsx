@@ -406,7 +406,7 @@ export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedIm
 
   const images = steps.flatMap((step) =>
     step.images
-      .filter((x) => x.status === 'succeeded')
+      .filter((x) => x.status === 'succeeded' && !x.blockedReason)
       .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
   const workflows = requests?.map(({ steps, ...workflow }) => workflow) ?? [];

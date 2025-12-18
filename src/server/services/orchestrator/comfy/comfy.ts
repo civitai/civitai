@@ -100,7 +100,6 @@ export async function createComfyStep(
       resources: input.resources,
       params: removeEmpty(input.params),
       remixOfId: input.remixOfId,
-      maxNsfwLevel: isPrivateGen ? 'pG13' : undefined,
       isPrivateGeneration: isPrivateGen,
     },
   } as ComfyStepTemplate;
@@ -137,7 +136,6 @@ export async function createComfy(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: undefined,
       allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,

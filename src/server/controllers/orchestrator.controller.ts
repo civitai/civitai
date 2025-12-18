@@ -64,7 +64,6 @@ export async function generate({
       },
       experimental,
       callbacks: getOrchestratorCallbacks(userId),
-      nsfwLevel: undefined,
       allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },
