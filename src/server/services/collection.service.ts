@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
-import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
+import { CacheTTL, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -297,9 +297,7 @@ export async function getUserCollectionPermissionsById({
   userId?: number;
   isModerator?: boolean;
 }): Promise<CollectionContributorPermissionFlags> {
-  console.time('getUserCollectionPermissionsById');
   const results = await getUserCollectionPermissionsByIds({ ids: [id], userId, isModerator });
-  console.timeEnd('getUserCollectionPermissionsById');
   return results[0] ?? createEmptyPermissions(id);
 }
 
@@ -856,6 +854,16 @@ export const upsertCollection = async ({
 
       await userCollectionCountCache.bust(updated.userId);
 
+      // Bust contest collection IDs cache if mode changed to/from Contest
+      if (currentCollection.mode !== updated.mode) {
+        if (
+          updated.mode === CollectionMode.Contest ||
+          currentCollection.mode === CollectionMode.Contest
+        ) {
+          await bustContestCollectionIdsCache();
+        }
+      }
+
       return updated;
     });
 
@@ -942,6 +950,7 @@ export const upsertCollection = async ({
       read: true,
       write: true,
       userId: true,
+      mode: true,
     },
     data: {
       name,
@@ -983,6 +992,11 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.bust(userId);
+
+  // Bust contest collection IDs cache if creating a contest collection
+  if (collection.mode === CollectionMode.Contest) {
+    await bustContestCollectionIdsCache();
+  }
 
   return collection;
 };
@@ -1497,6 +1511,11 @@ export const deleteCollectionById = async ({
     },
   ]);
 
+  // Bust contest collection IDs cache if deleting a contest collection
+  if (collection.mode === CollectionMode.Contest) {
+    await bustContestCollectionIdsCache();
+  }
+
   return res;
 };
 
@@ -1763,6 +1782,30 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
+// Cache contest collection IDs for 1 hour
+export async function getContestCollectionIds(): Promise<number[]> {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.COLLECTION.CONTEST_IDS);
+  if (cached) {
+    return JSON.parse(cached);
+  }
+
+  const contestCollections = await dbRead.collection.findMany({
+    where: { mode: CollectionMode.Contest },
+    select: { id: true },
+  });
+
+  const ids = contestCollections.map((c) => c.id);
+  await sysRedis.set(REDIS_SYS_KEYS.COLLECTION.CONTEST_IDS, JSON.stringify(ids), {
+    EX: CacheTTL.hour,
+  }); // 1 hour TTL
+  return ids;
+}
+
+// Bust the contest collection IDs cache when a collection mode changes
+export async function bustContestCollectionIdsCache(): Promise<void> {
+  await sysRedis.del(REDIS_SYS_KEYS.COLLECTION.CONTEST_IDS);
+}
+
 export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
@@ -1893,38 +1936,37 @@ export const validateContestCollectionEntry = async ({
     }
   }
 
-  // Check the entry is not on a feature collection:
-  const featuredCollections = await dbRead.collection.findMany({
-    where: {
-      userId: -1, // Civit
-      mode: null, // Not contest or anything like that
-      name: {
-        contains: 'Featured',
-      },
-    },
-    select: {
-      id: true,
-    },
-  });
-
-  if (featuredCollections.length > 0) {
-    // confirm no collection items exists on those for this contest collection:
-    const existingCollectionItemsOnFeaturedCollections = await dbRead.collectionItem.findFirst({
+  // Check the entry is not on a featured collection:
+  // Only validate if there are items to check
+  if (modelIds.length > 0 || imageIds.length > 0 || articleIds.length > 0 || postIds.length > 0) {
+    const featuredCollections = await dbRead.collection.findMany({
       where: {
-        collectionId: {
-          in: featuredCollections.map((f) => f.id),
-        },
-        modelId: modelIds.length > 0 ? { in: modelIds } : undefined,
-        imageId: imageIds.length > 0 ? { in: imageIds } : undefined,
-        articleId: articleIds.length > 0 ? { in: articleIds } : undefined,
-        postId: postIds.length > 0 ? { in: postIds } : undefined,
+        userId: -1, // Civit
+        mode: null, // Not contest or anything like that
+        name: { contains: 'Featured' },
       },
+      select: { id: true },
     });
 
-    if (existingCollectionItemsOnFeaturedCollections) {
-      throw throwBadRequestError(
-        'At least one of the items provided is already featured by civitai and cannot be added to the contest.'
-      );
+    if (featuredCollections.length > 0) {
+      // confirm no collection items exists on those for this contest collection:
+      const existingCollectionItemsOnFeaturedCollections = await dbRead.collectionItem.findFirst({
+        where: {
+          collectionId: {
+            in: featuredCollections.map((f) => f.id),
+          },
+          modelId: modelIds.length > 0 ? { in: modelIds } : undefined,
+          imageId: imageIds.length > 0 ? { in: imageIds } : undefined,
+          articleId: articleIds.length > 0 ? { in: articleIds } : undefined,
+          postId: postIds.length > 0 ? { in: postIds } : undefined,
+        },
+      });
+
+      if (existingCollectionItemsOnFeaturedCollections) {
+        throw throwBadRequestError(
+          'At least one of the items provided is already featured by civitai and cannot be added to the contest.'
+        );
+      }
     }
   }
 
@@ -1959,22 +2001,27 @@ const validateFeaturedCollectionEntry = async ({
   imageIds?: number[];
   postIds?: number[];
 }) => {
-  // Check the entry is not on a feature collection:
-  const contestCollectionIds = await dbRead.collection.findMany({
-    where: {
-      mode: CollectionMode.Contest,
-    },
-    select: {
-      id: true,
-    },
-  });
+  // Check the entry is not on a contest collection
+  // Only validate if there are items to check
+  if (
+    modelIds.length === 0 &&
+    imageIds.length === 0 &&
+    articleIds.length === 0 &&
+    postIds.length === 0
+  ) {
+    return;
+  }
+
+  // Use cached contest collection IDs
+  const contestCollectionIds = await getContestCollectionIds();
 
   if (contestCollectionIds.length > 0) {
     // confirm no collection items exists on those for this contest collection:
     const existingCollectionItemsOnContestCollection = await dbRead.collectionItem.findFirst({
+      select: { id: true },
       where: {
         collectionId: {
-          in: contestCollectionIds.map((f) => f.id),
+          in: contestCollectionIds,
         },
         modelId: modelIds.length > 0 ? { in: modelIds } : undefined,
         imageId: imageIds.length > 0 ? { in: imageIds } : undefined,
@@ -2368,17 +2415,12 @@ export const removeCollectionItem = async ({
       ? 'Post'
       : null;
 
-  if (!tableKey) {
-    throw throwNotFoundError('Unable to determine collection type');
-  }
+  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
 
   const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
     SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
   `;
-
-  if (!item) {
-    throw throwNotFoundError('Item not found');
-  }
+  if (!item) throw throwNotFoundError('Item not found');
 
   isOwner = item.userId === userId;
 
@@ -2505,11 +2547,13 @@ export async function getCollectionEntryCount({
     AND "addedById" = ${userId}
     GROUP BY "status"
   `;
-  console.log(collection);
+
   const result: { [key in CollectionItemStatus]?: number } & { max: number } = {
     max: collection.total,
   };
+
   for (const { status, count } of statuses) result[status] = count;
+
   return result;
 }
 
