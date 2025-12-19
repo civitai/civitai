@@ -26,6 +26,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconCircleCheck,
+  IconClock,
   IconCopy,
   IconExclamationCircle,
   IconExternalLink,
@@ -895,6 +896,14 @@ export default function UserTrainingModels() {
             handleFilterChange();
           }}
         />
+      </Group>
+
+      <Group gap={6}>
+        <IconClock size={16} color="var(--mantine-color-dimmed)" />
+        <Text size="sm" c="dimmed">
+          Trained LoRAs are kept in the Trainer for 30 days. Download or Publish them to your
+          Profile to save them.
+        </Text>
       </Group>
 
       {!hasTraining && !isLoading ? (
