@@ -75,6 +75,7 @@ type TrainingFileData = {
   metadata: FileMetadata;
   url: string;
   sizeKB: number;
+  dataPurged?: boolean;
 };
 
 type ModalData = {
@@ -1086,7 +1087,11 @@ export default function UserTrainingModels() {
             },
             {
               label: 'Dataset',
-              value: modalData.file?.url ? (
+              value: modalData.file?.dataPurged ? (
+                <Text c="dimmed" size="sm">
+                  Files expired after 30 days
+                </Text>
+              ) : modalData.file?.url ? (
                 <DownloadButton
                   component="a"
                   canDownload
