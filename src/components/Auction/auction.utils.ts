@@ -4,6 +4,7 @@ import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.co
 import {
   activeBaseModels,
   getBaseModelConfig,
+  getCanAuctionForGeneration,
   getGenerationBaseModelResourceOptions,
 } from '~/shared/constants/base-model.constants';
 import { miscModelTypes } from '~/shared/constants/generation.constants';
@@ -27,7 +28,12 @@ export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'
   if (!ab) return [] as ResourceOptions;
 
   if (ab.ecosystem === null) {
-    return [{ type: ModelType.Checkpoint, baseModels: activeBaseModels }] as ResourceOptions;
+    // For featured-checkpoints, allow all active base models except Qwen
+    const allowedBaseModels = activeBaseModels.filter((baseModel) =>
+      getCanAuctionForGeneration(baseModel)
+    ) as BaseModel[];
+
+    return [{ type: ModelType.Checkpoint, baseModels: allowedBaseModels }] as ResourceOptions;
   }
 
   if (ab.ecosystem === miscAuctionName) {

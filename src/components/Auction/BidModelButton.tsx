@@ -4,11 +4,14 @@ import { IconGavel } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
+import { getCanAuctionForGeneration } from '~/shared/constants/base-model.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { AuctionType, Availability, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
@@ -36,6 +39,7 @@ export const BidModelButton = ({
   });
 
   const isCheckpoint = entityData.model.type === ModelType.Checkpoint;
+  const canAuctionForGeneration = getCanAuctionForGeneration(entityData.baseModel);
 
   const destAuction = useMemo(() => {
     const modelSet = isCheckpoint ? null : getBaseModelSetType(entityData.baseModel);
@@ -45,8 +49,33 @@ export const BidModelButton = ({
   }, [auctions, entityData.baseModel, isCheckpoint]);
 
   const handle = () => {
-    if (!destAuction) return;
+    if (isCheckpoint && !canAuctionForGeneration) {
+      dialogStore.trigger({
+        component: ConfirmDialog,
+        props: {
+          title: 'Please Note! ',
+          message: (
+            <div className="flex flex-col gap-2">
+              <Text>Bidding on this model will not make it active for Generation!</Text>
+              <Text>
+                {entityData.baseModel} is not currently available for Generation on the Civitai
+                Generator. You may still place a bid if you wish to promote this model to the Home
+                Page Featured Model section.
+              </Text>
+            </div>
+          ),
+          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+          onConfirm: setAuction,
+          size: 600,
+        },
+      });
+    } else {
+      setAuction();
+    }
+  };
 
+  function setAuction() {
+    if (!destAuction) return;
     setSelectedModel({
       ...entityData,
       strength: -1,
@@ -58,7 +87,7 @@ export const BidModelButton = ({
     });
 
     router.push(`/auctions/${destAuction.auctionBase.slug}`).catch();
-  };
+  }
 
   if (!features.auctions) return <></>;
   if (entityData.model.cannotPromote) return <></>;
@@ -90,7 +119,7 @@ export const BidModelButton = ({
       withinPortal
       label={
         destAuction
-          ? isCheckpoint
+          ? isCheckpoint && canAuctionForGeneration
             ? 'Bid to feature this model and enable it for generation'
             : 'Bid to feature this model'
           : 'No auction available for this model'

@@ -966,3 +966,9 @@ export const DEPRECATED_BASE_MODELS = [
   'SVD',
   'SVD XT',
 ] as const satisfies BaseModel[];
+
+export function getCanAuctionForGeneration(baseModel?: string) {
+  if (!baseModel) return false;
+  const group = getGenerationBaseModelGroup(baseModel);
+  return group ? !['Qwen', 'ZImageTurbo', 'Other'].includes(group.group) : false;
+}

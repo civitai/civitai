@@ -42,7 +42,10 @@ import {
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
-import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
+import {
+  getBaseModelGroup,
+  getCanAuctionForGeneration,
+} from '~/shared/constants/base-model.constants';
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;
@@ -332,12 +335,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
           },
         },
       })
-      .then((data) =>
-        data.filter((x) => {
-          const baseModelGroup = getBaseModelGroup(x.baseModel);
-          return !['Qwen', 'ZImageTurbo'].includes(baseModelGroup);
-        })
-      );
+      .then((data) => data.filter((x) => getCanAuctionForGeneration(x.baseModel)));
 
     // update entity names for notifications later
     modelVersionData.forEach((md) => {
