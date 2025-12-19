@@ -13,10 +13,11 @@ const openAISizes = [
 ];
 
 type OpenaiModel = (typeof openaiModels)[number];
-export const openaiModels = ['gpt-image-1'] as const;
+export const openaiModels = ['gpt-image-1', 'gpt-image-1.5'] as const;
 
-export const openaiModelVersionToModelMap = new Map<number, OpenaiModel>([
-  [1733399, 'gpt-image-1'],
+export const openaiModelVersionToModelMap = new Map<number, { model: OpenaiModel; name: string }>([
+  [1733399, { model: 'gpt-image-1', name: 'v1' }],
+  [2512167, { model: 'gpt-image-1.5', name: 'v1.5' }],
 ]);
 
 export const openaiConfig = ImageGenConfig({
@@ -37,10 +38,12 @@ export const openaiConfig = ImageGenConfig({
       height,
     };
   },
-  inputFn: ({ params }): OpenAiGpt1CreateImageInput | OpenAiGpt1EditImageInput => {
+  inputFn: ({ params, resources }): OpenAiGpt1CreateImageInput | OpenAiGpt1EditImageInput => {
+    const checkpoint = resources.find((resource) => openaiModelVersionToModelMap.get(resource.id));
+    const model = checkpoint ? openaiModelVersionToModelMap.get(checkpoint.id)?.model : undefined;
     const baseData = {
       engine: params.engine,
-      model: 'gpt-image-1',
+      model: model ?? 'gpt-image-1',
       prompt: params.prompt,
       background: params.background,
       quantity: params.quantity,

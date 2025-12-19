@@ -897,8 +897,8 @@ export const generationConfig = {
   Seedream: {
     aspectRatios: seedreamSizes,
     checkpoint: {
-      id: 2208278,
-      name: 'v4.0',
+      id: 2470991,
+      name: 'v4.5',
       trainedWords: [],
       baseModel: 'Seedream',
       strength: 1,

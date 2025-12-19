@@ -161,11 +161,15 @@ import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
-import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  getIsSeedream,
+  seedreamModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
 import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
 
 let total = 0;
 const tips = {
@@ -941,6 +945,19 @@ export function GenerationFormContent() {
                     }}
                   </Watch>
 
+                  {isOpenAI && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...openaiModelVersionToModelMap.entries()].map(([key, { name }]) => ({
+                        value: String(key),
+                        label: name,
+                      }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
                   {isNanoBanana && (
                     <SegmentedControl
                       value={model.id ? String(model.id) : undefined}
@@ -948,6 +965,21 @@ export function GenerationFormContent() {
                         value: String(key),
                         label: name,
                       }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isSeedream && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...seedreamModelVersionToModelMap.entries()].map(
+                        ([key, { name }]) => ({
+                          value: String(key),
+                          label: name,
+                        })
+                      )}
                       onChange={(stringModelId) => {
                         form.setValue('model', { ...model, id: Number(stringModelId) });
                       }}
