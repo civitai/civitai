@@ -113,8 +113,18 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index, collection } =
-    useImageDetailContext();
+  const {
+    images,
+    active,
+    close,
+    toggleInfo,
+    shareUrl,
+    connect,
+    navigate,
+    index,
+    collection,
+    hideReactions,
+  } = useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
@@ -341,9 +351,11 @@ export function ImageDetail2() {
                             <ReactionSettingsProvider
                               settings={{
                                 hideReactionCount: false,
-                                hideReactions: collectionItems.some((ci) =>
-                                  contestCollectionReactionsHidden(ci.collection)
-                                ),
+                                hideReactions:
+                                  hideReactions ||
+                                  collectionItems.some((ci) =>
+                                    contestCollectionReactionsHidden(ci.collection)
+                                  ),
                                 buttonStyling: (reaction, hasReacted) => ({
                                   radius: 'xl',
                                   variant: 'light',

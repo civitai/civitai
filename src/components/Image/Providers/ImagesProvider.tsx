@@ -4,12 +4,14 @@ import type { ImageGetInfinite } from '~/types/router';
 type ImagesContextProps = {
   images?: ImageGetInfinite;
   hideReactionCount?: boolean;
+  hideReactions?: boolean;
   collectionId?: number;
 };
 
 export type ImagesContextState = {
   getImages: () => ImageGetInfinite | undefined;
   hideReactionCount?: boolean;
+  hideReactions?: boolean;
   collectionId?: number;
 };
 
@@ -24,6 +26,7 @@ export function ImagesProvider({
   children,
   images,
   hideReactionCount,
+  hideReactions,
   collectionId,
 }: {
   children: React.ReactNode;
@@ -31,8 +34,8 @@ export function ImagesProvider({
   const imagesRef = useRef<ImageGetInfinite | undefined>();
   imagesRef.current = images;
   const state = useMemo(
-    () => ({ hideReactionCount, collectionId, getImages: () => imagesRef.current }),
-    [hideReactionCount, collectionId]
+    () => ({ hideReactionCount, hideReactions, collectionId, getImages: () => imagesRef.current }),
+    [hideReactionCount, hideReactions, collectionId]
   );
 
   return <ImagesContext.Provider value={state}>{children}</ImagesContext.Provider>;
