@@ -770,9 +770,7 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={
-                              isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
-                            }
+                            hideVersion={isFluxStandard || isFlux2 || isHiDream || isImageGen}
                             isPreview={isZImageTurbo || isFlux2}
                             pb={
                               unstableResources.length ||
