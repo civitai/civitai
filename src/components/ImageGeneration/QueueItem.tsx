@@ -236,7 +236,7 @@ export function QueueItem({
                     p={4}
                     radius={0}
                     component="a"
-                    href={`https://orchestration-dashboard.civitai.com/job-search?workflow=${request.id}`}
+                    href={`https://orchestration-dashboard-new.civitai.com/job-search?workflow=${request.id}`}
                     target="_blank"
                     onClick={handleCopy}
                   >
