@@ -1038,6 +1038,7 @@ export const getMyTrainingModelsHandler = async ({
             type: true,
             metadata: true,
             sizeKB: true,
+            dataPurged: true,
           },
           where: { type: { equals: 'Training Data' } },
         },

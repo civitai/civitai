@@ -406,6 +406,7 @@ export default function UserTrainingModels() {
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
           const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+          const isDataPurged = thisFile?.dataPurged === true;
 
           const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
           const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
@@ -424,6 +425,23 @@ export default function UserTrainingModels() {
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
           if (!mv.trainingStatus) return <Badge color="gray">N/A</Badge>;
+
+          if (isDataPurged) {
+            return (
+              <HoverCard shadow="md" width={300} zIndex={100} withArrow withinPortal>
+                <HoverCard.Target>
+                  <Badge color="orange">Files Expired</Badge>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">
+                    Training files have been automatically removed after 30 days. Epoch files and
+                    sample images are no longer available. To train a new model, please start a new
+                    training run.
+                  </Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            );
+          }
 
           return (
             <Group gap="sm">
@@ -605,11 +623,22 @@ export default function UserTrainingModels() {
           const mv = row.original;
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
+          const isDataPurged = thisFile?.dataPurged === true;
 
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const hasFiles = !!thisFile;
           const hasTrainingParams = !!thisTrainingDetails?.params;
           const needsInfo = !hasFiles || !hasTrainingParams;
+
+          if (isDataPurged) {
+            return (
+              <Tooltip label="Files expired after 30 days" withArrow withinPortal>
+                <Center>
+                  <IconX color="orange" size={20} />
+                </Center>
+              </Tooltip>
+            );
+          }
 
           if (isFailed) {
             return (
@@ -654,6 +683,7 @@ export default function UserTrainingModels() {
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
           const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+          const isDataPurged = thisFile?.dataPurged === true;
 
           const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
           const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
@@ -670,7 +700,7 @@ export default function UserTrainingModels() {
 
           return (
             <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
-              {mv.trainingStatus === TrainingStatus.InReview && (
+              {mv.trainingStatus === TrainingStatus.InReview && !isDataPurged && (
                 <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                   <Button
                     component="a"
@@ -682,7 +712,7 @@ export default function UserTrainingModels() {
                   </Button>
                 </Link>
               )}
-              {hasFailedWithEpochs && (
+              {hasFailedWithEpochs && !isDataPurged && (
                 <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                   <Button
                     component="a"
