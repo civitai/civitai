@@ -1103,14 +1103,11 @@ export const getCollectionItemsByCollectionId = async ({
     statuses = [CollectionItemStatus.ACCEPTED],
     limit = 50,
     collectionId,
-    page,
     cursor,
     forReview,
     reviewSort,
     collectionTagId,
   } = input;
-
-  const skip = page && limit ? (page - 1) * limit : undefined;
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
@@ -1215,57 +1212,110 @@ export const getCollectionItemsByCollectionId = async ({
 
     collectionItems = rawItems;
   } else {
-    // For non-contest mode, use Prisma with standard ordering
-    const where: Prisma.CollectionItemWhereInput = {
-      collectionId,
-      status: { in: statuses },
-      image:
-        collection.type === CollectionType.Image && !forReview
-          ? { ingestion: ImageIngestionStatus.Scanned }
-          : undefined,
-      tagId: collectionTagId,
-    };
-
-    const orderBy: Prisma.CollectionItemFindManyArgs['orderBy'] = [];
-    if (forReview && reviewSort === CollectionReviewSort.Newest) {
-      orderBy.push({ createdAt: 'desc' });
-    } else if (forReview && reviewSort === CollectionReviewSort.Oldest) {
-      orderBy.push({ createdAt: 'asc' });
-    } else {
-      orderBy.push({ createdAt: 'desc' });
+    // Determine sort direction
+    let sortDirection: 'ASC' | 'DESC' = 'DESC';
+    if (forReview && reviewSort === CollectionReviewSort.Oldest) {
+      sortDirection = 'ASC';
     }
-    orderBy.push({ id: 'desc' }); // Tie-breaker
 
     // Parse simple cursor for non-random sort
     const parsedCursor = parseCollectionCursor(cursor);
 
-    collectionItems = await dbRead.collectionItem.findMany({
-      take: limit + 1, // Fetch one extra to determine if there's a next page
-      skip,
-      cursor: parsedCursor.id ? { id: parsedCursor.id } : undefined,
-      select: {
-        id: true,
-        modelId: true,
-        postId: true,
-        imageId: true,
-        articleId: true,
-        status: input.forReview,
-        createdAt: true,
-        scores: input.forReview
-          ? {
-              select: {
-                userId: true,
-                score: true,
-              },
-              where: {
-                userId: user?.id,
-              },
-            }
-          : undefined,
-      },
-      where,
-      orderBy,
-    });
+    // Build SQL conditions
+    const statusArray = statuses.map((s) => `'${s}'`).join(', ');
+    const tagCondition = collectionTagId
+      ? Prisma.sql`AND ci."tagId" = ${collectionTagId}`
+      : Prisma.sql``;
+    const imageIngestionCondition =
+      collection.type === CollectionType.Image && !forReview
+        ? Prisma.sql`AND i."ingestion" = 'Scanned'`
+        : Prisma.sql``;
+
+    // Cursor condition for compound ordering (createdAt, id)
+    const cursorCondition = parsedCursor.id
+      ? sortDirection === 'DESC'
+        ? Prisma.sql`AND (
+            ci."createdAt" < (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            OR (
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              AND ci.id < ${parsedCursor.id}
+            )
+            OR ci."createdAt" IS NULL
+          )`
+        : Prisma.sql`AND (
+            ci."createdAt" > (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+            OR (
+              ci."createdAt" = (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id})
+              AND ci.id < ${parsedCursor.id}
+            )
+            OR (SELECT "createdAt" FROM "CollectionItem" WHERE id = ${parsedCursor.id}) IS NULL
+          )`
+      : Prisma.sql``;
+
+    // Execute raw SQL query
+    const rawItems = await dbRead.$queryRaw<
+      {
+        id: number;
+        modelId: number | null;
+        postId: number | null;
+        imageId: number | null;
+        articleId: number | null;
+        status: CollectionItemStatus | null;
+        createdAt: Date | null;
+      }[]
+    >`
+      SELECT
+        ci.id,
+        ci."modelId",
+        ci."postId",
+        ci."imageId",
+        ci."articleId",
+        ${forReview ? Prisma.sql`ci."status"::text as status,` : Prisma.sql``}
+        ci."createdAt"
+      FROM "CollectionItem" ci
+      ${
+        collection.type === CollectionType.Image
+          ? Prisma.sql`LEFT JOIN "Image" i ON ci."imageId" = i.id`
+          : Prisma.sql``
+      }
+      WHERE ci."collectionId" = ${collectionId}
+        AND ci."status" IN (${Prisma.raw(statusArray)})
+        ${tagCondition}
+        ${imageIngestionCondition}
+        ${cursorCondition}
+      ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
+      LIMIT ${limit + 1}
+    `;
+
+    // Handle scores separately if needed (forReview)
+    if (forReview && user?.id) {
+      const itemIds = rawItems.map((item) => item.id);
+      const scores = await dbRead.collectionItemScore.findMany({
+        where: {
+          collectionItemId: { in: itemIds },
+          userId: user.id,
+        },
+        select: {
+          collectionItemId: true,
+          userId: true,
+          score: true,
+        },
+      });
+
+      // Map scores to items
+      collectionItems = rawItems.map((item) => ({
+        ...item,
+        status: item.status as CollectionItemStatus | undefined,
+        scores: scores
+          .filter((s) => s.collectionItemId === item.id)
+          .map((s) => ({ userId: s.userId, score: s.score })),
+      }));
+    } else {
+      collectionItems = rawItems.map((item) => ({
+        ...item,
+        status: item.status as CollectionItemStatus | undefined,
+      }));
+    }
   }
 
   // Determine next cursor
