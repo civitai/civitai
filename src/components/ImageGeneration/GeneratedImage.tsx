@@ -509,10 +509,10 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
+  const baseModel = 'baseModel' in step.params ? step.params.baseModel : undefined;
   const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isNanoBanana = baseModel === 'NanoBanana';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
-  const params = step.params;
-  const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const isQwen = !isVideo && getIsQwen(baseModel);
   const isFlux = !isVideo && getIsFlux(baseModel);
   const isHiDream = !isVideo && getIsHiDream(baseModel);
@@ -529,7 +529,7 @@ function GeneratedImageWorkflowMenuItems({
     !isPonyV7 &&
     !isZImageTurbo;
 
-  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
+  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana;
   const img2imgWorkflows =
     !isVideo && !isBlocked
       ? workflowDefinitions.filter(
@@ -774,7 +774,7 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
-      {/* {!isBlocked && step.$type === 'videoGen' && (
+      {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
           <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
@@ -790,7 +790,7 @@ function GeneratedImageWorkflowMenuItems({
             </Badge>
           </Menu.Item>
         </>
-      )} */}
+      )}
       {!workflowsOnly && (
         <>
           <Menu.Divider />

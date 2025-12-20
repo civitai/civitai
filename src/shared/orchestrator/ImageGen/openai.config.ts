@@ -22,18 +22,23 @@ export const openaiModelVersionToModelMap = new Map<number, { model: OpenaiModel
 
 export const openaiConfig = ImageGenConfig({
   metadataFn: (params) => {
-    const { width, height } = findClosestAspectRatio(params.sourceImage ?? params, openAISizes);
+    const { width, height } = findClosestAspectRatio(params, openAISizes);
+    const images = !!params.images?.length
+      ? params.images
+      : params.sourceImage
+      ? [params.sourceImage]
+      : undefined;
 
     return {
       engine: 'openai',
       baseModel: params.baseModel,
-      process: !params.sourceImage ? 'txt2img' : 'img2img',
+      process: !images?.length ? 'txt2img' : 'img2img',
       prompt: params.prompt,
       // quality: params.openAIQuality,
       background: params.openAITransparentBackground ? 'transparent' : 'opaque',
       quality: params.openAIQuality,
       quantity: Math.min(params.quantity, 10),
-      sourceImage: params.sourceImage,
+      images,
       width,
       height,
     };
@@ -50,7 +55,7 @@ export const openaiConfig = ImageGenConfig({
       quality: params.quality,
       size: `${params.width}x${params.height}`,
     } as Omit<OpenAiGpt1ImageGenInput, 'operation'>;
-    if (!params.sourceImage) {
+    if (!params.images?.length) {
       return {
         ...baseData,
         operation: 'createImage',
@@ -59,7 +64,7 @@ export const openaiConfig = ImageGenConfig({
       return {
         ...baseData,
         operation: 'editImage',
-        images: [params.sourceImage.url],
+        images: params.images.map((x) => x.url),
       } satisfies OpenAiGpt1EditImageInput;
     }
   },

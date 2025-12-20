@@ -185,6 +185,8 @@ export function QueueItem({
       ? (step.metadata.params.version as string)
       : undefined;
 
+  const transformations = step.metadata.transformations ?? [];
+
   const queuePosition = request.steps?.[0]?.queuePosition;
 
   const displayImages = images.filter((x) =>
@@ -307,7 +309,25 @@ export function QueueItem({
                 </Badge>
               )}
             </div>
-            <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+            <div className="5 flex flex-col gap-0">
+              {transformations.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <Text size="sm">Transformations:</Text>
+                  {transformations.map((transformation, i) => (
+                    <Badge key={i} size="sm">
+                      {transformation.type}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              {resources.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <Text size="sm">Resources:</Text>
+                  <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+                </div>
+              )}
+            </div>
+
             {failureReason && <Alert color="red">{failureReason}</Alert>}
 
             <div
