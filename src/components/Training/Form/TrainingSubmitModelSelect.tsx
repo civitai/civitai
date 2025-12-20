@@ -17,6 +17,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import { trpc } from '~/utils/trpc';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -215,6 +216,9 @@ export const ModelSelect = ({
   const status = useTrainingServiceStatus();
   const features = useFeatureFlags();
 
+  // Fetch moderator-editable announcement
+  const { data: announcement } = trpc.training.getAnnouncement.useQuery();
+
   const { updateRun } = trainingStore;
   const blockedModels = status.blockedModels ?? [blockedCustomModels];
 
@@ -355,10 +359,16 @@ export const ModelSelect = ({
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
             <Stack gap="xs">
-              <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" p="xs" color="yellow">
-                Due to elevated AIToolKit, Z-Image, Hunyuan, and Wan training failure rates
-                we&apos;ve temporarily disabled these options while we investigate!
-              </AlertWithIcon>
+              {announcement?.message && (
+                <AlertWithIcon
+                  icon={<IconExclamationCircle size={16} />}
+                  iconColor={announcement.color || 'yellow'}
+                  color={announcement.color || 'yellow'}
+                  size="sm"
+                >
+                  {announcement.message}
+                </AlertWithIcon>
+              )}
               {mediaType === 'image' && (
                 <>
                   <ModelSelector

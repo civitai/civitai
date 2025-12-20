@@ -727,25 +727,23 @@ export default function UserTrainingModels() {
                   </Button>
                 </Link>
               )}
-              {mv.trainingStatus === TrainingStatus.Failed && (
-                <Tooltip label="Recheck Training Status" withArrow withinPortal>
-                  <LegacyActionIcon
-                    variant="light"
-                    size="md"
-                    radius="xl"
-                    loading={
-                      recheckTrainingStatusMutation.isLoading &&
-                      recheckTrainingStatusMutation.variables?.id === mv.id
-                    }
-                    onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                      e.stopPropagation();
-                      handleRecheckTrainingStatus(e, mv);
-                    }}
-                  >
-                    <IconRefresh size={16} />
-                  </LegacyActionIcon>
-                </Tooltip>
-              )}
+              <Tooltip label="Recheck Training Status" withArrow withinPortal>
+                <LegacyActionIcon
+                  variant="light"
+                  size="md"
+                  radius="xl"
+                  loading={
+                    recheckTrainingStatusMutation.isLoading &&
+                    recheckTrainingStatusMutation.variables?.id === mv.id
+                  }
+                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                    e.stopPropagation();
+                    handleRecheckTrainingStatus(e, mv);
+                  }}
+                >
+                  <IconRefresh size={16} />
+                </LegacyActionIcon>
+              </Tooltip>
               <Tooltip label="View Details" withArrow withinPortal>
                 <LegacyActionIcon
                   variant="filled"
