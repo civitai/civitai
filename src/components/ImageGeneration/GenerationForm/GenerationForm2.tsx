@@ -498,8 +498,8 @@ export function GenerationFormContent() {
         onSubmit={handleSubmit}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
-        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
-          {({ fluxMode, draft, workflow, sourceImage }) => {
+        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'images']}>
+          {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
@@ -649,9 +649,11 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra ||
-              isImg2Img ||
-              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2 && !isOpenAI);
+              (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
+              !isSeedream &&
+              !isNanoBananaPro &&
+              !isFlux2 &&
+              !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)

@@ -512,6 +512,7 @@ function GeneratedImageWorkflowMenuItems({
   const baseModel = 'baseModel' in step.params ? step.params.baseModel : undefined;
   const isOpenAI = !isVideo && step.params.engine === 'openai';
   const isNanoBanana = baseModel === 'NanoBanana';
+  const isSeedream = baseModel === 'Seedream';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
   const isQwen = !isVideo && getIsQwen(baseModel);
   const isFlux = !isVideo && getIsFlux(baseModel);
@@ -529,7 +530,7 @@ function GeneratedImageWorkflowMenuItems({
     !isPonyV7 &&
     !isZImageTurbo;
 
-  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana;
+  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream;
   const img2imgWorkflows =
     !isVideo && !isBlocked
       ? workflowDefinitions.filter(
