@@ -6,6 +6,7 @@ import {
   generation,
   generationConfig,
   getGenerationConfig,
+  getSeedreamSizes,
   maxUpscaleSize,
   minDownscaleSize,
 } from '~/server/common/constants';
@@ -315,8 +316,19 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: string, baseModel?: string) {
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+export function getSizeFromAspectRatio(
+  aspectRatio: string,
+  baseModel?: string,
+  modelVersionId?: number
+) {
+  // For Seedream, use version-specific sizes if modelVersionId is provided
+  let aspectRatios;
+  if (baseModel === 'Seedream' && modelVersionId) {
+    aspectRatios = getSeedreamSizes(modelVersionId);
+  } else {
+    aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  }
+
   return (
     aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
     generationConfig.SD1.aspectRatios[0]

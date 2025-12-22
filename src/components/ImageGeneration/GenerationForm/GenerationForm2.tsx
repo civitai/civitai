@@ -85,6 +85,7 @@ import {
   generationConfig,
   getGenerationConfig,
   samplerOffsets,
+  getSeedreamSizes,
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
@@ -1362,15 +1363,28 @@ export function GenerationFormContent() {
                     </div>
                   )}
 
-                  {!disableAspectRatio && (
-                    <div className="flex flex-col gap-0.5">
-                      <Input.Label>Aspect Ratio</Input.Label>
-                      <InputSegmentedControl
-                        name="aspectRatio"
-                        data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
-                      />
-                    </div>
-                  )}
+                  {!disableAspectRatio &&
+                    (isSeedream ? (
+                      <Watch {...form} fields={['model']}>
+                        {({ model }) => (
+                          <div className="flex flex-col gap-0.5">
+                            <Input.Label>Aspect Ratio</Input.Label>
+                            <InputSegmentedControl
+                              name="aspectRatio"
+                              data={getAspectRatioControls(getSeedreamSizes(model.id))}
+                            />
+                          </div>
+                        )}
+                      </Watch>
+                    ) : (
+                      <div className="flex flex-col gap-0.5">
+                        <Input.Label>Aspect Ratio</Input.Label>
+                        <InputSegmentedControl
+                          name="aspectRatio"
+                          data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
+                        />
+                      </div>
+                    ))}
 
                   {isFluxUltra && (
                     <InputSelect

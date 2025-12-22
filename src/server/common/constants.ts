@@ -649,6 +649,23 @@ export const seedreamSizes = [
   { label: '9:16', width: 1440, height: 2560 },
 ];
 
+export const seedreamSizes4K = [
+  { label: '16:9', width: 4096, height: 2304 },
+  { label: '4:3', width: 4096, height: 3072 },
+  { label: '1:1', width: 4096, height: 4096 },
+  { label: '3:4', width: 3072, height: 4096 },
+  { label: '9:16', width: 2304, height: 4096 },
+];
+
+export function getSeedreamSizes(modelVersionId: number) {
+  // v4.5 uses 4K resolutions
+  if (modelVersionId === 2470991) {
+    return seedreamSizes4K;
+  }
+  // v3 and v4 use standard resolutions
+  return seedreamSizes;
+}
+
 export const qwenSizes = [
   { label: '16:9', width: 1664, height: 928 },
   { label: '4:3', width: 1472, height: 1104 },

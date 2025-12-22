@@ -74,7 +74,7 @@ function createFormSchema(domainColor: string) {
       const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
       const { height, width } = isFluxUltra
         ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
-        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel, data.model.id);
 
       return removeEmpty({
         ...data,
