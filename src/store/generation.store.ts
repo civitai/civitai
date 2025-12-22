@@ -109,6 +109,7 @@ export const useGenerationStore = create<GenerationState>()(
         } else if (type === 'image' && !params.process) {
           params.process = params.sourceImage ? 'img2img' : 'txt2img';
         }
+        if (params.sourceImage) params.images = [params.sourceImage];
 
         set((state) => {
           if (isMobileDevice()) {

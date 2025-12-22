@@ -132,6 +132,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         customerId: response.customerId ?? undefined,
         paddleCustomerId: response.paddleCustomerId ?? undefined,
         mutedAt: response.mutedAt ?? undefined,
+        muted: response.muted ?? undefined,
         bannedAt: response.bannedAt ?? undefined,
         autoplayGifs: response.autoplayGifs ?? undefined,
         leaderboardShowcase: response.leaderboardShowcase ?? undefined,

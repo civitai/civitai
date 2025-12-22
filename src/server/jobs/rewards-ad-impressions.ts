@@ -73,7 +73,7 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
             toAccountType: 'blue',
             amount,
             type: TransactionType.Reward,
-            externalTransactionId: `${userId}:${type}:${hour.getTime()}`,
+            externalTransactionId: `${userId}:${type}:${new Date(hour).getTime()}`,
           });
         }
       }

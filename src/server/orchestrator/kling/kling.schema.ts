@@ -51,6 +51,13 @@ export const klingGenerationConfig = VideoGenerationConfig2({
     return data;
   },
   superRefine: (data, ctx) => {
+    if (data.process === 'img2vid' && !data.sourceImage) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Image is required',
+        path: ['sourceImage'],
+      });
+    }
     if (!data.sourceImage && !data.prompt?.length) {
       ctx.addIssue({
         code: 'custom',

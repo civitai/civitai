@@ -1,4 +1,4 @@
-import { Divider, Input, Modal, Notification, Alert } from '@mantine/core';
+import { Divider, Input, Modal, Notification, Alert, Loader } from '@mantine/core';
 import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
@@ -24,7 +24,7 @@ export function UpscaleVideoModal({
   scaleFactor = 2,
   metadata,
   multipliers = [2, 3],
-  maxResolution = 2048,
+  maxResolution = 2560,
 }: {
   videoUrl: string;
   scaleFactor?: number;
@@ -92,7 +92,11 @@ export function UpscaleVideoModal({
               </div>
             )}
           </div>
-          {!canUpscale ? (
+          {!video ? (
+            <div className="flex justify-center">
+              <Loader />
+            </div>
+          ) : !canUpscale ? (
             <Alert color="yellow">This video cannot be upscaled any further.</Alert>
           ) : (
             <>
