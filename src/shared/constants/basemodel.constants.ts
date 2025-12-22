@@ -36,11 +36,15 @@ export type BaseModelGroupRecord = {
   id: number;
   key: string;
   name: string;
-  description: string;
   familyId?: number;
   sortOrder: number;
   settings?: Record<string, any>;
   modelVersionId?: number; // Default ModelVersion ID for generation
+};
+
+export type EcosystemRecord = {
+  id: number;
+  name: string;
 };
 
 export type BaseModelRecord = {
@@ -53,6 +57,7 @@ export type BaseModelRecord = {
   canTrain?: boolean;
   canAuction?: boolean;
   ecosystem?: string;
+  ecosystemId?: number;
   engine?: string;
   groupId: number;
   licenseId?: number;
@@ -214,6 +219,60 @@ export const licenses: LicenseRecord[] = [
 
 // Helper to get license by ID
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
+
+// =============================================================================
+// Ecosystems
+// =============================================================================
+
+export const ecosystems: EcosystemRecord[] = [
+  { id: 1, name: 'auraflow' },
+  { id: 2, name: 'chroma' },
+  { id: 3, name: 'cogvideox' },
+  { id: 4, name: 'flux1' },
+  { id: 5, name: 'flux1kontext' },
+  { id: 6, name: 'flux2' },
+  { id: 7, name: 'fluxkrea' },
+  { id: 8, name: 'hidream' },
+  { id: 9, name: 'hydit1' },
+  { id: 10, name: 'hyv1' },
+  { id: 11, name: 'imagen4' },
+  { id: 12, name: 'kolors' },
+  { id: 13, name: 'ltxv' },
+  { id: 14, name: 'lumina' },
+  { id: 15, name: 'mochi' },
+  { id: 16, name: 'nanobanana' },
+  { id: 17, name: 'odor' },
+  { id: 18, name: 'openai' },
+  { id: 19, name: 'other' },
+  { id: 20, name: 'pixarta' },
+  { id: 21, name: 'pixarte' },
+  { id: 22, name: 'playgroundv2' },
+  { id: 23, name: 'qwen' },
+  { id: 24, name: 'scascade' },
+  { id: 25, name: 'sd1' },
+  { id: 26, name: 'sd2' },
+  { id: 27, name: 'sd3' },
+  { id: 28, name: 'sdxl' },
+  { id: 29, name: 'sdxldistilled' },
+  { id: 30, name: 'seedream' },
+  { id: 31, name: 'sora2' },
+  { id: 32, name: 'svd' },
+  { id: 33, name: 'veo3' },
+  { id: 34, name: 'wanvideo' },
+  { id: 35, name: 'wanvideo-22-i2v-a14b' },
+  { id: 36, name: 'wanvideo-22-t2v-a14b' },
+  { id: 37, name: 'wanvideo-22-ti2v-5b' },
+  { id: 38, name: 'wanvideo-25-i2v' },
+  { id: 39, name: 'wanvideo-25-t2v' },
+  { id: 40, name: 'wanvideo1_3b_t2v' },
+  { id: 41, name: 'wanvideo14b_i2v_480p' },
+  { id: 42, name: 'wanvideo14b_i2v_720p' },
+  { id: 43, name: 'wanvideo14b_t2v' },
+  { id: 44, name: 'zimageturbo' },
+];
+
+export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
+export const ecosystemByName = new Map(ecosystems.map((e) => [e.name, e]));
 
 // =============================================================================
 // Base Model Families
@@ -380,7 +439,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 1,
     key: 'Flux1',
     name: 'Flux.1',
-    description: 'First generation Flux with schnell and dev variants',
     familyId: 1,
     sortOrder: 0,
     settings: { aspectRatios: commonAspectRatios },
@@ -390,7 +448,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 2,
     key: 'FluxKrea',
     name: 'Flux.1 Krea',
-    description: 'Krea-trained variant of Flux optimized for creative generation',
     familyId: 1,
     sortOrder: 1,
     settings: { aspectRatios: commonAspectRatios },
@@ -400,7 +457,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 3,
     key: 'Flux1Kontext',
     name: 'Flux.1 Kontext',
-    description: 'Flux variant specialized for context-aware image editing and generation',
     familyId: 1,
     sortOrder: 2,
     settings: { aspectRatios: kontextAspectRatios },
@@ -410,7 +466,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 4,
     key: 'Flux2',
     name: 'Flux.2',
-    description: 'Next-generation Flux with enhanced capabilities',
     familyId: 1,
     sortOrder: 3,
     settings: { aspectRatios: commonAspectRatios },
@@ -422,7 +477,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 5,
     key: 'SD1',
     name: 'Stable Diffusion 1.x',
-    description: 'The original Stable Diffusion with broad community support',
     familyId: 2,
     sortOrder: 10,
     settings: { aspectRatios: sd1AspectRatios },
@@ -432,7 +486,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 6,
     key: 'SD2',
     name: 'Stable Diffusion 2.x',
-    description: 'Second generation SD with improved architecture and 768px support',
     familyId: 2,
     sortOrder: 11,
   },
@@ -440,7 +493,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 7,
     key: 'SD3',
     name: 'Stable Diffusion 3',
-    description: 'Multimodal diffusion transformer architecture',
     familyId: 2,
     sortOrder: 12,
     settings: { aspectRatios: commonAspectRatios },
@@ -449,7 +501,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 8,
     key: 'SD3_5M',
     name: 'Stable Diffusion 3.5 Medium',
-    description: 'Balanced SD3.5 variant optimized for quality and speed',
     familyId: 2,
     sortOrder: 13,
     settings: { aspectRatios: commonAspectRatios },
@@ -458,7 +509,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 9,
     key: 'SDXL',
     name: 'Stable Diffusion XL',
-    description: 'High-resolution SD with improved prompt understanding and detail',
     familyId: 2,
     sortOrder: 14,
     settings: { aspectRatios: commonAspectRatios },
@@ -468,7 +518,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 10,
     key: 'SDXLDistilled',
     name: 'SDXL Distilled',
-    description: 'Faster SDXL variants with reduced inference steps',
     familyId: 2,
     sortOrder: 15,
   },
@@ -476,7 +525,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 11,
     key: 'SCascade',
     name: 'Stable Cascade',
-    description: 'Cascaded latent diffusion model for high-resolution output',
     familyId: 2,
     sortOrder: 16,
   },
@@ -484,7 +532,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 12,
     key: 'SVD',
     name: 'Stable Video Diffusion',
-    description: 'Image-to-video diffusion model',
     familyId: 2,
     sortOrder: 17,
   },
@@ -494,7 +541,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 13,
     key: 'Illustrious',
     name: 'Illustrious',
-    description: 'SDXL-based model specialized for anime and illustration styles',
     familyId: 3,
     sortOrder: 20,
     settings: { aspectRatios: commonAspectRatios },
@@ -504,7 +550,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 14,
     key: 'NoobAI',
     name: 'NoobAI',
-    description: 'SDXL-based model trained for anime and stylized content',
     familyId: 3,
     sortOrder: 21,
     settings: { aspectRatios: commonAspectRatios },
@@ -516,7 +561,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 15,
     key: 'Pony',
     name: 'Pony Diffusion',
-    description: 'SDXL-based model with extensive tag-based prompt support',
     familyId: 9,
     sortOrder: 30,
     settings: { aspectRatios: commonAspectRatios },
@@ -526,7 +570,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 16,
     key: 'PonyV7',
     name: 'Pony Diffusion V7',
-    description: 'Latest Pony Diffusion built on AuraFlow architecture',
     familyId: 9,
     sortOrder: 31,
     settings: { aspectRatios: ponyV7AspectRatios },
@@ -538,7 +581,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 17,
     key: 'HyDit1',
     name: 'Hunyuan DiT',
-    description: 'Diffusion transformer for bilingual Chinese-English image generation',
     familyId: 4,
     sortOrder: 40,
   },
@@ -546,7 +588,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 18,
     key: 'HyV1',
     name: 'Hunyuan Video',
-    description: 'Video generation model with strong motion coherence',
     familyId: 4,
     sortOrder: 41,
   },
@@ -556,7 +597,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 19,
     key: 'WanVideo',
     name: 'Wan Video',
-    description: 'Base video generation model',
     familyId: 5,
     sortOrder: 50,
   },
@@ -564,7 +604,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 20,
     key: 'WanVideo1_3B_T2V',
     name: 'Wan Video 1.3B T2V',
-    description: 'Lightweight text-to-video model',
     familyId: 5,
     sortOrder: 51,
   },
@@ -572,7 +611,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 21,
     key: 'WanVideo14B_T2V',
     name: 'Wan Video 14B T2V',
-    description: 'Full-scale text-to-video model',
     familyId: 5,
     sortOrder: 52,
   },
@@ -580,7 +618,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 22,
     key: 'WanVideo14B_I2V_480p',
     name: 'Wan Video 14B I2V 480p',
-    description: 'Image-to-video at 480p resolution',
     familyId: 5,
     sortOrder: 53,
   },
@@ -588,7 +625,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 23,
     key: 'WanVideo14B_I2V_720p',
     name: 'Wan Video 14B I2V 720p',
-    description: 'Image-to-video at 720p resolution',
     familyId: 5,
     sortOrder: 54,
   },
@@ -596,7 +632,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 24,
     key: 'WanVideo-22-TI2V-5B',
     name: 'Wan Video 2.2 TI2V 5B',
-    description: 'Text/image-to-video 5B parameter model',
     familyId: 5,
     sortOrder: 55,
   },
@@ -604,7 +639,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 25,
     key: 'WanVideo-22-I2V-A14B',
     name: 'Wan Video 2.2 I2V A14B',
-    description: 'Image-to-video 14B parameter model',
     familyId: 5,
     sortOrder: 56,
   },
@@ -612,7 +646,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 26,
     key: 'WanVideo-22-T2V-A14B',
     name: 'Wan Video 2.2 T2V A14B',
-    description: 'Text-to-video 14B parameter model',
     familyId: 5,
     sortOrder: 57,
   },
@@ -620,7 +653,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 27,
     key: 'WanVideo-25-T2V',
     name: 'Wan Video 2.5 T2V',
-    description: 'Latest text-to-video generation',
     familyId: 5,
     sortOrder: 58,
   },
@@ -628,7 +660,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 28,
     key: 'WanVideo-25-I2V',
     name: 'Wan Video 2.5 I2V',
-    description: 'Latest image-to-video generation',
     familyId: 5,
     sortOrder: 59,
   },
@@ -638,7 +669,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 29,
     key: 'PixArtA',
     name: 'PixArt Alpha',
-    description: 'Efficient transformer-based model with fast training and strong quality',
     familyId: 6,
     sortOrder: 60,
   },
@@ -646,7 +676,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 30,
     key: 'PixArtE',
     name: 'PixArt Sigma',
-    description: 'Enhanced PixArt with 4K resolution support and improved detail',
     familyId: 6,
     sortOrder: 61,
   },
@@ -656,7 +685,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 31,
     key: 'Imagen4',
     name: 'Imagen 4',
-    description: 'Text-to-image model with photorealistic capabilities',
     familyId: 7,
     sortOrder: 70,
     settings: { aspectRatios: imagen4AspectRatios },
@@ -666,7 +694,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 32,
     key: 'NanoBanana',
     name: 'Nano Banana',
-    description: 'Experimental image generation model',
     familyId: 7,
     sortOrder: 71,
     settings: { aspectRatios: nanoBananaAspectRatios },
@@ -676,7 +703,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 33,
     key: 'Veo3',
     name: 'Veo 3',
-    description: 'Latest video generation model from DeepMind',
     familyId: 7,
     sortOrder: 72,
   },
@@ -686,7 +712,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 34,
     key: 'OpenAI',
     name: 'OpenAI',
-    description: 'Image generation models including DALL-E',
     familyId: 8,
     sortOrder: 80,
     settings: { aspectRatios: openAIAspectRatios },
@@ -696,7 +721,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 35,
     key: 'Sora2',
     name: 'Sora 2',
-    description: 'Advanced video generation model',
     familyId: 8,
     sortOrder: 81,
   },
@@ -706,7 +730,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 36,
     key: 'Qwen',
     name: 'Qwen',
-    description: 'Multimodal model with image generation capabilities',
     familyId: 10,
     sortOrder: 90,
     settings: { aspectRatios: qwenAspectRatios },
@@ -718,7 +741,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 37,
     key: 'ZImageTurbo',
     name: 'ZImageTurbo',
-    description: 'Fast turbo-optimized image generation model',
     familyId: 11,
     sortOrder: 100,
     settings: { aspectRatios: commonAspectRatios },
@@ -730,7 +752,6 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 38,
     key: 'Seedream',
     name: 'Seedream',
-    description: "ByteDance's image generation model",
     familyId: 12,
     sortOrder: 110,
     settings: { aspectRatios: seedreamAspectRatios },
@@ -742,14 +763,12 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 39,
     key: 'AuraFlow',
     name: 'AuraFlow',
-    description: 'Open-source text-to-image model from Fal.ai with strong prompt adherence',
     sortOrder: 200,
   },
   {
     id: 40,
     key: 'Chroma',
     name: 'Chroma',
-    description: 'Open-source model based on Flux architecture with improved color and composition',
     sortOrder: 201,
     settings: { aspectRatios: commonAspectRatios },
     modelVersionId: 2164239,
@@ -758,14 +777,12 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 41,
     key: 'CogVideoX',
     name: 'CogVideoX',
-    description: 'Text-to-video diffusion model from Tsinghua University and ZhipuAI',
     sortOrder: 202,
   },
   {
     id: 42,
     key: 'HiDream',
     name: 'HiDream',
-    description: 'High-resolution image generation model optimized for detailed outputs',
     sortOrder: 203,
     settings: { aspectRatios: commonAspectRatios },
     modelVersionId: 1771369,
@@ -774,49 +791,42 @@ export const baseModelGroups: BaseModelGroupRecord[] = [
     id: 43,
     key: 'Kolors',
     name: 'Kolors',
-    description: "Kuaishou's bilingual image generation model with vibrant color output",
     sortOrder: 204,
   },
   {
     id: 44,
     key: 'LTXV',
     name: 'LTX Video',
-    description: "Lightricks' efficient video generation model for fast rendering",
     sortOrder: 205,
   },
   {
     id: 45,
     key: 'Lumina',
     name: 'Lumina',
-    description: 'Open-source model with strong foundations',
     sortOrder: 206,
   },
   {
     id: 46,
     key: 'Mochi',
     name: 'Mochi',
-    description: "Genmo's video generation model with realistic motion synthesis",
     sortOrder: 207,
   },
   {
     id: 47,
     key: 'ODOR',
     name: 'ODOR',
-    description: 'Experimental diffusion model architecture',
     sortOrder: 208,
   },
   {
     id: 48,
     key: 'PlaygroundV2',
     name: 'Playground v2',
-    description: "Playground AI's model optimized for aesthetic image generation",
     sortOrder: 209,
   },
   {
     id: 49,
     key: 'Other',
     name: 'Other',
-    description: "Models that don't fit into standard categories",
     sortOrder: 999,
     settings: { aspectRatios: commonAspectRatios },
     modelVersionId: 164821,
@@ -832,7 +842,7 @@ export const groupByKey = new Map(baseModelGroups.map((g) => [g.key, g]));
 
 export const baseModels: BaseModelRecord[] = [
   // AuraFlow
-  { id: 1, name: 'AuraFlow', type: 'image', groupId: 39, licenseId: 13 },
+  { id: 1, name: 'AuraFlow', type: 'image', ecosystemId: 1, groupId: 39, licenseId: 13 },
 
   // Chroma
   {
@@ -841,12 +851,13 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 2,
     groupId: 40,
     licenseId: 13,
   },
 
   // CogVideoX
-  { id: 3, name: 'CogVideoX', type: 'image', groupId: 41, licenseId: 17 },
+  { id: 3, name: 'CogVideoX', type: 'image', ecosystemId: 3, groupId: 41, licenseId: 17 },
 
   // Flux.1
   {
@@ -855,6 +866,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 4,
     groupId: 1,
     licenseId: 13,
   },
@@ -864,6 +876,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 4,
     groupId: 1,
     licenseId: 14,
   },
@@ -873,6 +886,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 7,
     groupId: 2,
     licenseId: 14,
   },
@@ -882,6 +896,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 5,
     groupId: 3,
     licenseId: 14,
   },
@@ -891,6 +906,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 6,
     groupId: 4,
     licenseId: 14,
   },
@@ -902,6 +918,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 8,
     groupId: 42,
     licenseId: 19,
   },
@@ -911,6 +928,7 @@ export const baseModels: BaseModelRecord[] = [
     id: 10,
     name: 'Hunyuan 1',
     type: 'image',
+    ecosystemId: 9,
     groupId: 17,
     licenseId: 10,
   },
@@ -919,6 +937,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Hunyuan Video',
     type: 'video',
     engine: 'hunyuan',
+    ecosystemId: 10,
     groupId: 18,
     licenseId: 11,
   },
@@ -931,6 +950,7 @@ export const baseModels: BaseModelRecord[] = [
     canGenerate: true,
     canTrain: true,
     ecosystem: 'sdxl',
+    ecosystemId: 28,
     groupId: 13,
     licenseId: 15,
   },
@@ -943,12 +963,13 @@ export const baseModels: BaseModelRecord[] = [
     hidden: true,
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 11,
     groupId: 31,
     licenseId: 21,
   },
 
   // Kolors
-  { id: 14, name: 'Kolors', type: 'image', groupId: 43, licenseId: 12 },
+  { id: 14, name: 'Kolors', type: 'image', ecosystemId: 12, groupId: 43, licenseId: 12 },
 
   // LTXV
   {
@@ -956,15 +977,16 @@ export const baseModels: BaseModelRecord[] = [
     name: 'LTXV',
     type: 'video',
     engine: 'lightricks',
+    ecosystemId: 13,
     groupId: 44,
     licenseId: 16,
   },
 
   // Lumina
-  { id: 16, name: 'Lumina', type: 'image', groupId: 45, licenseId: 13 },
+  { id: 16, name: 'Lumina', type: 'image', ecosystemId: 14, groupId: 45, licenseId: 13 },
 
   // Mochi
-  { id: 17, name: 'Mochi', type: 'image', groupId: 46, licenseId: 13 },
+  { id: 17, name: 'Mochi', type: 'image', ecosystemId: 15, groupId: 46, licenseId: 13 },
 
   // Nano Banana
   {
@@ -974,6 +996,7 @@ export const baseModels: BaseModelRecord[] = [
     hidden: true,
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 16,
     groupId: 32,
     licenseId: 21,
   },
@@ -986,12 +1009,13 @@ export const baseModels: BaseModelRecord[] = [
     canGenerate: true,
     canTrain: true,
     ecosystem: 'sdxl',
+    ecosystemId: 28,
     groupId: 14,
     licenseId: 18,
   },
 
   // ODOR
-  { id: 20, name: 'ODOR', type: 'image', hidden: true, groupId: 47 },
+  { id: 20, name: 'ODOR', type: 'image', hidden: true, ecosystemId: 17, groupId: 47 },
 
   // OpenAI
   {
@@ -1001,6 +1025,7 @@ export const baseModels: BaseModelRecord[] = [
     hidden: true,
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 18,
     groupId: 34,
     licenseId: 20,
   },
@@ -1012,6 +1037,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 19,
     groupId: 49,
   },
 
@@ -1020,6 +1046,7 @@ export const baseModels: BaseModelRecord[] = [
     id: 23,
     name: 'PixArt a',
     type: 'image',
+    ecosystemId: 20,
     groupId: 29,
     licenseId: 3,
   },
@@ -1027,6 +1054,7 @@ export const baseModels: BaseModelRecord[] = [
     id: 24,
     name: 'PixArt E',
     type: 'image',
+    ecosystemId: 21,
     groupId: 30,
     licenseId: 3,
   },
@@ -1037,6 +1065,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Playground v2',
     type: 'image',
     hidden: true,
+    ecosystemId: 22,
     groupId: 48,
     licenseId: 6,
   },
@@ -1049,6 +1078,7 @@ export const baseModels: BaseModelRecord[] = [
     canGenerate: true,
     canTrain: true,
     ecosystem: 'sdxl',
+    ecosystemId: 28,
     groupId: 15,
     licenseId: 3,
   },
@@ -1059,6 +1089,7 @@ export const baseModels: BaseModelRecord[] = [
     canGenerate: true,
     canTrain: true,
     ecosystem: 'auraflow',
+    ecosystemId: 1,
     groupId: 16,
     licenseId: 24,
   },
@@ -1071,6 +1102,7 @@ export const baseModels: BaseModelRecord[] = [
     canGenerate: true,
     canTrain: true,
     ecosystem: 'qwen',
+    ecosystemId: 23,
     groupId: 36,
     licenseId: 13,
   },
@@ -1081,6 +1113,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Stable Cascade',
     type: 'image',
     hidden: true,
+    ecosystemId: 24,
     groupId: 11,
     licenseId: 8,
   },
@@ -1092,6 +1125,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 25,
     groupId: 5,
     licenseId: 1,
   },
@@ -1101,6 +1135,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 25,
     groupId: 5,
     licenseId: 1,
   },
@@ -1110,6 +1145,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 25,
     groupId: 5,
     licenseId: 3,
   },
@@ -1119,26 +1155,29 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 25,
     groupId: 5,
     licenseId: 3,
   },
 
   // SD 2.x
-  { id: 34, name: 'SD 2.0', type: 'image', groupId: 6, licenseId: 1 },
+  { id: 34, name: 'SD 2.0', type: 'image', ecosystemId: 26, groupId: 6, licenseId: 1 },
   {
     id: 35,
     name: 'SD 2.0 768',
     type: 'image',
     hidden: true,
+    ecosystemId: 26,
     groupId: 6,
     licenseId: 1,
   },
-  { id: 36, name: 'SD 2.1', type: 'image', groupId: 6, licenseId: 1 },
+  { id: 36, name: 'SD 2.1', type: 'image', ecosystemId: 26, groupId: 6, licenseId: 1 },
   {
     id: 37,
     name: 'SD 2.1 768',
     type: 'image',
     hidden: true,
+    ecosystemId: 26,
     groupId: 6,
     licenseId: 1,
   },
@@ -1147,6 +1186,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'SD 2.1 Unclip',
     type: 'image',
     hidden: true,
+    ecosystemId: 26,
     groupId: 6,
     licenseId: 1,
   },
@@ -1158,6 +1198,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 27,
     groupId: 7,
     licenseId: 9,
   },
@@ -1167,6 +1208,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 27,
     groupId: 7,
     licenseId: 9,
   },
@@ -1176,6 +1218,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 27,
     groupId: 7,
     licenseId: 9,
   },
@@ -1185,6 +1228,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 27,
     groupId: 7,
     licenseId: 9,
   },
@@ -1195,6 +1239,7 @@ export const baseModels: BaseModelRecord[] = [
     hidden: true,
     deprecated: true,
     ecosystem: 'sd3',
+    ecosystemId: 27,
     groupId: 8,
     licenseId: 9,
   },
@@ -1205,6 +1250,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'SDXL 0.9',
     type: 'image',
     hidden: true,
+    ecosystemId: 28,
     groupId: 9,
     licenseId: 2,
   },
@@ -1214,6 +1260,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 28,
     groupId: 9,
     licenseId: 3,
   },
@@ -1224,6 +1271,7 @@ export const baseModels: BaseModelRecord[] = [
     hidden: true,
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 28,
     groupId: 9,
     licenseId: 3,
   },
@@ -1233,6 +1281,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 28,
     groupId: 9,
     licenseId: 3,
   },
@@ -1242,6 +1291,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 28,
     groupId: 9,
     licenseId: 3,
   },
@@ -1251,6 +1301,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 28,
     groupId: 9,
     licenseId: 4,
   },
@@ -1259,6 +1310,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'SDXL Distilled',
     type: 'image',
     hidden: true,
+    ecosystemId: 29,
     groupId: 10,
     licenseId: 3,
   },
@@ -1271,6 +1323,7 @@ export const baseModels: BaseModelRecord[] = [
     hidden: true,
     canGenerate: true,
     canTrain: true,
+    ecosystemId: 30,
     groupId: 38,
     licenseId: 23,
   },
@@ -1282,6 +1335,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 32,
     groupId: 12,
     licenseId: 5,
   },
@@ -1291,6 +1345,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'image',
     hidden: true,
     deprecated: true,
+    ecosystemId: 32,
     groupId: 12,
     licenseId: 5,
   },
@@ -1301,6 +1356,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Sora 2',
     type: 'video',
     hidden: true,
+    ecosystemId: 31,
     groupId: 35,
     licenseId: 20,
   },
@@ -1312,6 +1368,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'video',
     hidden: true,
     engine: 'veo3',
+    ecosystemId: 33,
     groupId: 33,
     licenseId: 22,
   },
@@ -1323,6 +1380,7 @@ export const baseModels: BaseModelRecord[] = [
     type: 'video',
     hidden: true,
     engine: 'wan',
+    ecosystemId: 34,
     groupId: 19,
     licenseId: 13,
   },
@@ -1331,6 +1389,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 1.3B t2v',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 40,
     groupId: 20,
     licenseId: 13,
   },
@@ -1339,6 +1398,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 14B t2v',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 43,
     groupId: 21,
     licenseId: 13,
   },
@@ -1347,6 +1407,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 14B i2v 480p',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 41,
     groupId: 22,
     licenseId: 13,
   },
@@ -1355,6 +1416,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 14B i2v 720p',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 42,
     groupId: 23,
     licenseId: 13,
   },
@@ -1363,6 +1425,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 2.2 TI2V-5B',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 37,
     groupId: 24,
     licenseId: 13,
   },
@@ -1371,6 +1434,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 2.2 I2V-A14B',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 35,
     groupId: 25,
     licenseId: 13,
   },
@@ -1379,6 +1443,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 2.2 T2V-A14B',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 36,
     groupId: 26,
     licenseId: 13,
   },
@@ -1387,6 +1452,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 2.5 T2V',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 39,
     groupId: 27,
     licenseId: 13,
   },
@@ -1395,6 +1461,7 @@ export const baseModels: BaseModelRecord[] = [
     name: 'Wan Video 2.5 I2V',
     type: 'video',
     engine: 'wan',
+    ecosystemId: 38,
     groupId: 28,
     licenseId: 13,
   },
@@ -1407,6 +1474,7 @@ export const baseModels: BaseModelRecord[] = [
     canGenerate: true,
     canTrain: true,
     ecosystem: 'zimageturbo',
+    ecosystemId: 44,
     groupId: 37,
     licenseId: 13,
   },
@@ -1897,6 +1965,37 @@ export function getGroupDefaultModelVersionId(groupKey: string): number | undefi
  */
 export function getBaseModelGroupByKey(groupKey: string): BaseModelGroupRecord | undefined {
   return groupByKey.get(groupKey);
+}
+
+/**
+ * Get the ecosystem for a base model.
+ * @param baseModelId The ID of the base model
+ * @returns The ecosystem record or undefined if not found
+ */
+export function getBaseModelEcosystem(baseModelId: number): EcosystemRecord | undefined {
+  const model = baseModelById.get(baseModelId);
+  if (!model?.ecosystemId) return undefined;
+  return ecosystemById.get(model.ecosystemId);
+}
+
+/**
+ * Get all base models belonging to a specific ecosystem.
+ * @param ecosystemId The ID of the ecosystem
+ * @returns Array of base models in that ecosystem
+ */
+export function getBaseModelsByEcosystemId(ecosystemId: number): BaseModelRecord[] {
+  return baseModels.filter((m) => m.ecosystemId === ecosystemId);
+}
+
+/**
+ * Get all base models belonging to a specific ecosystem by name.
+ * @param ecosystemName The name of the ecosystem (e.g., 'sdxl', 'flux1')
+ * @returns Array of base models in that ecosystem
+ */
+export function getBaseModelsByEcosystemName(ecosystemName: string): BaseModelRecord[] {
+  const ecosystem = ecosystemByName.get(ecosystemName);
+  if (!ecosystem) return [];
+  return getBaseModelsByEcosystemId(ecosystem.id);
 }
 
 /**
