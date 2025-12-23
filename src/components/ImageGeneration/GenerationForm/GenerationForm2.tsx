@@ -607,7 +607,8 @@ export function GenerationFormContent() {
                 !isZImageTurbo &&
                 !isOpenAI &&
                 !isPonyV7 &&
-                !isNanoBanana) ||
+                !isNanoBanana &&
+                !isSeedream) ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
