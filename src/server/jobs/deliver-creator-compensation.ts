@@ -17,7 +17,7 @@ const log = createLogger('creator-compensation', 'green');
 
 export const updateCreatorResourceCompensation = createJob(
   'deliver-creator-compensation',
-  '15 0 * * *', // Run 15 minutes after the hour to ensure jobs from the prior hour are completed
+  '0 2 * * *', // Run 2:00 AM UTC daily
   async () => {
     if (!clickhouse) {
       log('ClickHouse not available, skipping job');
