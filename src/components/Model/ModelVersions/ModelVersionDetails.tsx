@@ -686,8 +686,14 @@ export function ModelVersionDetails({
       version.status === ModelStatus.UnpublishedViolation)
       ? user?.isModerator
       : isOwnerOrMod);
+  // Show request review for owners (non-mods) when model/version is unpublished due to violation
+  const showRequestReview =
+    isOwner &&
+    !user?.isModerator &&
+    (model.status === ModelStatus.UnpublishedViolation ||
+      version.status === ModelStatus.UnpublishedViolation);
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
-  const showEditButton = isOwnerOrMod && !deleted;
+  const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
   const unpublishedReason = version.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
@@ -718,7 +724,17 @@ export function ModelVersionDetails({
               limit={CAROUSEL_LIMIT}
             />
           )}
-          {showPublishButton ? (
+          {showRequestReview ? (
+            <Button
+              color="yellow"
+              onClick={handleRequestReviewClick}
+              loading={requestReviewMutation.isLoading || requestVersionReviewMutation.isLoading}
+              disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
+              fullWidth
+            >
+              Request a Review
+            </Button>
+          ) : showPublishButton ? (
             <Stack gap={4}>
               {couldGenerate && isOwnerOrMod && (
                 <GenerateButton
