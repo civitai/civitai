@@ -36,7 +36,12 @@ import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
-  allowCommercialUse: z.enum(CommercialUse).array().optional(),
+  allowCommercialUse: z
+    .preprocess((val) => {
+      if (!val) return undefined;
+      return Array.isArray(val) ? val : [val];
+    }, z.enum(CommercialUse).array().optional())
+    .optional(),
   allowDerivatives: z.boolean().optional(),
   allowDifferentLicense: z.boolean().optional(),
 });
@@ -181,7 +186,8 @@ export const modelGallerySettingsInput = z.object({
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
-export const modelUpsertSchema = licensingSchema.extend({
+export const modelUpsertSchema = z.object({
+  ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
