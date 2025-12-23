@@ -110,15 +110,15 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
           ?.checkpoint ?? model;
 
+      let modelVersionId = model?.id ?? defaultModel.id;
+
       if (params.aspectRatio) {
-        const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
+        const size = getSizeFromAspectRatio(params.aspectRatio, params.baseModel, modelVersionId);
         if (size) {
           (params as Record<string, any>).width = size.width;
           (params as Record<string, any>).height = size.height;
         }
       }
-
-      let modelVersionId = model?.id ?? defaultModel.id;
       const isFlux = getIsFlux(params.baseModel);
       const isFluxStandard = getIsFluxStandard(model?.model?.id ?? defaultModel.model.id);
       if (isFlux && params.fluxMode && isFluxStandard) {

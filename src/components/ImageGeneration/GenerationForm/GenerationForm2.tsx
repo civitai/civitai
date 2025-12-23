@@ -80,12 +80,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -612,7 +607,8 @@ export function GenerationFormContent() {
                 !isZImageTurbo &&
                 !isOpenAI &&
                 !isPonyV7 &&
-                !isNanoBanana) ||
+                !isNanoBanana &&
+                !isSeedream) ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
@@ -1369,7 +1365,9 @@ export function GenerationFormContent() {
                       <Input.Label>Aspect Ratio</Input.Label>
                       <InputSegmentedControl
                         name="aspectRatio"
-                        data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
+                        data={getAspectRatioControls(
+                          getGenerationConfig(baseModel, model.id).aspectRatios
+                        )}
                       />
                     </div>
                   )}

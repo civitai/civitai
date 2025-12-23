@@ -315,8 +315,13 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: string, baseModel?: string) {
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+export function getSizeFromAspectRatio(
+  aspectRatio: string,
+  baseModel?: string,
+  modelVersionId?: number
+) {
+  const aspectRatios = getGenerationConfig(baseModel, modelVersionId).aspectRatios;
+
   return (
     aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
     generationConfig.SD1.aspectRatios[0]
