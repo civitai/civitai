@@ -451,30 +451,26 @@ export const ModelSelect = ({
               )}
               {mediaType === 'video' && (
                 <>
-                  {false && (
-                    <ModelSelector
-                      selectedRun={selectedRun}
-                      color="teal"
-                      name="Hunyuan"
-                      value={baseModelHunyuan}
-                      baseType="hunyuan"
-                      makeDefaultParams={makeDefaultParams}
-                      isVideo
-                      isNew={new Date() < new Date('2025-04-30')}
-                    />
-                  )}
-                  {false && (
-                    <ModelSelector
-                      selectedRun={selectedRun}
-                      color="green"
-                      name="Wan"
-                      value={baseModelWan}
-                      baseType="wan"
-                      makeDefaultParams={makeDefaultParams}
-                      isVideo
-                      isNew={new Date() < new Date('2025-04-30')}
-                    />
-                  )}
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="teal"
+                    name="Hunyuan"
+                    value={baseModelHunyuan}
+                    baseType="hunyuan"
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew={new Date() < new Date('2025-04-30')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="green"
+                    name="Wan"
+                    value={baseModelWan}
+                    baseType="wan"
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew={new Date() < new Date('2025-04-30')}
+                  />
                 </>
               )}
               {mediaType === 'image' && (
