@@ -14,6 +14,7 @@ import {
 import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
@@ -366,7 +367,7 @@ export const ModelSelect = ({
                   color={announcement.color || 'yellow'}
                   size="sm"
                 >
-                  {announcement.message}
+                  <CustomMarkdown>{announcement.message}</CustomMarkdown>
                 </AlertWithIcon>
               )}
               {mediaType === 'image' && (

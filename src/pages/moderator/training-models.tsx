@@ -392,7 +392,8 @@ export default function TrainingModerationFeedPage() {
                   <Divider />
                   <Text size="xs" c="dimmed">
                     This message is displayed in the alert box on the training page. Edit the text
-                    and select a color to update what users see.
+                    and select a color to update what users see. Markdown is supported (e.g.,
+                    **bold**, *italic*, [links](https://example.com)).
                   </Text>
                   <Textarea
                     placeholder="Enter announcement message..."
