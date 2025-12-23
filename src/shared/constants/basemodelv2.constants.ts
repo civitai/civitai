@@ -2220,7 +2220,9 @@ export function checkGenerationCompatibility(
   if (incompatible.length > 0) {
     // Get all ecosystems that have generation support
     const ecosystemsWithSupport = new Set(
-      ecosystemSupport.filter((s) => s.supportType === 'generation' && !s.disabled).map((s) => s.ecosystemId)
+      ecosystemSupport
+        .filter((s) => s.supportType === 'generation' && !s.disabled)
+        .map((s) => s.ecosystemId)
     );
 
     for (const ecoId of ecosystemsWithSupport) {
