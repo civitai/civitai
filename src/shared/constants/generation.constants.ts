@@ -6,7 +6,6 @@ import {
   generation,
   generationConfig,
   getGenerationConfig,
-  getSeedreamSizes,
   maxUpscaleSize,
   minDownscaleSize,
 } from '~/server/common/constants';
