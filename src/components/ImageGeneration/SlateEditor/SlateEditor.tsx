@@ -52,8 +52,6 @@ const MentionExample = ({ value: initialValue = '' }: { value?: string }) => {
     return content;
   });
 
-  console.log({ value });
-
   const onKeyDown: KeyboardEventHandler<HTMLDivElement> = useCallback(
     (event) => {
       if (target && chars.length > 0) {
@@ -262,7 +260,6 @@ const Mention = (props: RenderElementProps) => {
   if (element.children[0].italic) {
     style.fontStyle = 'italic';
   }
-  console.log({ element });
   return (
     <span
       {...attributes}

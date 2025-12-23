@@ -31,6 +31,7 @@ import {
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
+  IconRepeat,
   IconShare3,
 } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
@@ -212,6 +213,32 @@ export function ModelVersionDetails({
       component: ModelAvailabilityUpdate,
       props: { modelId: model.id },
     });
+  };
+
+  // Handler for republishing a private model while keeping it private
+  const handleRepublishPrivateModel = async () => {
+    try {
+      if (model.status !== ModelStatus.Published) {
+        // Republish model, version and all of its posts (keeping it private)
+        const versionIds =
+          (model.status === ModelStatus.UnpublishedViolation ||
+            model.status === ModelStatus.Unpublished) &&
+          user?.isModerator
+            ? model.modelVersions.map(({ id }) => id)
+            : [version.id];
+        await publishModelMutation.mutateAsync({
+          id: model.id,
+          versionIds,
+        });
+      } else {
+        // Just republish the version and its posts
+        await publishVersionMutation.mutateAsync({ id: version.id });
+      }
+      await queryUtils.model.getById.invalidate({ id: model.id });
+    } catch (e) {
+      const error = e as Error;
+      showErrorNotification({ error, title: 'Failed to republish model' });
+    }
   };
 
   const onPurchase = (reason?: 'generation' | 'download') => {
@@ -639,16 +666,28 @@ export function ModelVersionDetails({
     hasFiles &&
     hasPosts &&
     !isPrivateModel;
+
+  // Show republish button for private models that are unpublished
+  const isModelUnpublished =
+    model.status === ModelStatus.Unpublished || model.status === ModelStatus.UnpublishedViolation;
+  const isVersionUnpublished =
+    version.status === ModelStatus.Unpublished || version.status === ModelStatus.UnpublishedViolation;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
-  const showRequestReview =
-    isOwner &&
-    !user?.isModerator &&
-    (model.status === ModelStatus.UnpublishedViolation ||
-      version.status === ModelStatus.UnpublishedViolation);
+  // Show republish button for private models that are unpublished
+  const showRepublishPrivateButton =
+    isPrivateModel &&
+    (isModelUnpublished || isVersionUnpublished) &&
+    hasFiles &&
+    hasPosts &&
+    // Only moderators can republish UnpublishedViolation, owners can republish Unpublished
+    ((model.status === ModelStatus.UnpublishedViolation ||
+      version.status === ModelStatus.UnpublishedViolation)
+      ? user?.isModerator
+      : isOwnerOrMod);
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
-  const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
+  const showEditButton = isOwnerOrMod && !deleted;
   const unpublishedReason = version.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
@@ -679,17 +718,7 @@ export function ModelVersionDetails({
               limit={CAROUSEL_LIMIT}
             />
           )}
-          {showRequestReview ? (
-            <Button
-              color="yellow"
-              onClick={handleRequestReviewClick}
-              loading={requestReviewMutation.isLoading || requestVersionReviewMutation.isLoading}
-              disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
-              fullWidth
-            >
-              Request a Review
-            </Button>
-          ) : showPublishButton ? (
+          {showPublishButton ? (
             <Stack gap={4}>
               {couldGenerate && isOwnerOrMod && (
                 <GenerateButton
@@ -748,6 +777,17 @@ export function ModelVersionDetails({
             </Stack>
           ) : (
             <Stack gap={4}>
+              {showRepublishPrivateButton && (
+                <Button
+                  color="green"
+                  onClick={handleRepublishPrivateModel}
+                  loading={publishing}
+                  fullWidth
+                  leftSection={<IconRepeat size={16} />}
+                >
+                  Republish (keep private)
+                </Button>
+              )}
               <Group gap="xs" className={classes.ctaContainer}>
                 <Group gap="xs" className="flex-1" wrap="nowrap">
                   {couldGenerate && (
@@ -973,10 +1013,15 @@ export function ModelVersionDetails({
               icon={<IconLock />}
               title="Private Model"
             >
-              <Text>
-                Want to start earning Buzz?{' '}
-                <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
-              </Text>
+              {model.status !== ModelStatus.UnpublishedViolation &&
+              version.status !== ModelStatus.UnpublishedViolation ? (
+                <Text>
+                  Want to start earning Buzz?{' '}
+                  <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+                </Text>
+              ) : (
+                <Text>This model is private and has been unpublished due to a violation.</Text>
+              )}
             </AlertWithIcon>
           )}
           {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (

@@ -91,7 +91,7 @@ import { VideoInterpolationModal } from '~/components/Orchestrator/components/Vi
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
 };
 
 export function GeneratedImage({
@@ -102,7 +102,7 @@ export function GeneratedImage({
 }: {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
   isLightbox?: boolean;
 }) {
   const [ref, inView] = useInViewDynamic({ id: image.id });
@@ -404,9 +404,9 @@ export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedIm
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
-  const images = steps.flatMap((step) =>
-    step.images
-      .filter((x) => x.status === 'succeeded')
+  const images = steps.flatMap(({ images, ...step }) =>
+    images
+      .filter((x) => x.status === 'succeeded' && !x.blockedReason)
       .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
   const workflows = requests?.map(({ steps, ...workflow }) => workflow) ?? [];
@@ -495,7 +495,7 @@ function GeneratedImageWorkflowMenuItems({
   isBlocked,
 }: {
   image: NormalizedGeneratedImage;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
   workflowId: string;
   workflowsOnly?: boolean;
   isBlocked?: boolean;
@@ -509,14 +509,17 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
+  const baseModel = 'baseModel' in step.params ? step.params.baseModel : undefined;
   const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isNanoBanana = baseModel === 'NanoBanana';
+  const isSeedream = baseModel === 'Seedream';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
-  const isQwen = !isVideo && getIsQwen(step.params.baseModel);
-  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
-  const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
-  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
+  const isQwen = !isVideo && getIsQwen(baseModel);
+  const isFlux = !isVideo && getIsFlux(baseModel);
+  const isHiDream = !isVideo && getIsHiDream(baseModel);
+  const isSD3 = !isVideo && getIsSD3(baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
-  const isZImageTurbo = !isVideo && getIsZImageTurbo(step.params.baseModel);
+  const isZImageTurbo = !isVideo && getIsZImageTurbo(baseModel);
   const canImg2Img =
     !isQwen &&
     !isFlux &&
@@ -527,7 +530,7 @@ function GeneratedImageWorkflowMenuItems({
     !isPonyV7 &&
     !isZImageTurbo;
 
-  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
+  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream;
   const img2imgWorkflows =
     !isVideo && !isBlocked
       ? workflowDefinitions.filter(
@@ -772,7 +775,7 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
-      {/* {!isBlocked && step.$type === 'videoGen' && (
+      {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
           <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
@@ -788,7 +791,7 @@ function GeneratedImageWorkflowMenuItems({
             </Badge>
           </Menu.Item>
         </>
-      )} */}
+      )}
       {!workflowsOnly && (
         <>
           <Menu.Divider />

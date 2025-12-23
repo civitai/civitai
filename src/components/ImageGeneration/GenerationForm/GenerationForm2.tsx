@@ -161,11 +161,15 @@ import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
-import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  getIsSeedream,
+  seedreamModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
 import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
 
 let total = 0;
 const tips = {
@@ -468,7 +472,7 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2;
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -494,8 +498,8 @@ export function GenerationFormContent() {
         onSubmit={handleSubmit}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
-        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
-          {({ fluxMode, draft, workflow, sourceImage }) => {
+        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'images']}>
+          {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
@@ -606,8 +610,9 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
-                !isPonyV7) ||
-              isOpenAI ||
+                !isOpenAI &&
+                !isPonyV7 &&
+                !isNanoBanana) ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
@@ -644,9 +649,11 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra ||
-              isImg2Img ||
-              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2);
+              (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
+              !isSeedream &&
+              !isNanoBananaPro &&
+              !isFlux2 &&
+              !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -766,9 +773,7 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={
-                              isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
-                            }
+                            hideVersion={isFluxStandard || isFlux2 || isHiDream || isImageGen}
                             isPreview={isZImageTurbo || isFlux2}
                             pb={
                               unstableResources.length ||
@@ -941,6 +946,19 @@ export function GenerationFormContent() {
                     }}
                   </Watch>
 
+                  {isOpenAI && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...openaiModelVersionToModelMap.entries()].map(([key, { name }]) => ({
+                        value: String(key),
+                        label: name,
+                      }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
                   {isNanoBanana && (
                     <SegmentedControl
                       value={model.id ? String(model.id) : undefined}
@@ -948,6 +966,21 @@ export function GenerationFormContent() {
                         value: String(key),
                         label: name,
                       }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isSeedream && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...seedreamModelVersionToModelMap.entries()].map(
+                        ([key, { name }]) => ({
+                          value: String(key),
+                          label: name,
+                        })
+                      )}
                       onChange={(stringModelId) => {
                         form.setValue('model', { ...model, id: Number(stringModelId) });
                       }}

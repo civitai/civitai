@@ -14,6 +14,10 @@ export function Feed() {
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequestsImages();
 
+  const images = steps
+    .flatMap(({ images, ...step }) => images.map((image) => ({ ...image, step })))
+    .filter((image) => !image.blockedReason && image.status === 'succeeded');
+
   if (isError)
     return (
       <Alert color="red">
@@ -28,7 +32,7 @@ export function Feed() {
       </Center>
     );
 
-  if (!steps.flatMap((x) => x.images).length)
+  if (!images.length)
     return (
       <Center h="100%">
         <Stack gap="xs" align="center" py="16">
@@ -72,24 +76,19 @@ export function Feed() {
     <div className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid} data-testid="generation-feed-list">
-        {steps.map((step) =>
-          step.images
-            .filter((x) => x.status === 'succeeded')
-            .map((image) => {
-              const request = requests.find((request) => request.id === image.workflowId);
-              if (!request) return null;
+        {images.map((image) => {
+          const request = requests.find((request) => request.id === image.workflowId);
+          if (!request) return null;
 
-              return (
-                <GeneratedImage
-                  key={`${image.workflowId}_${image.id}`}
-                  request={request}
-                  step={step}
-                  image={image}
-                />
-              );
-            })
-            .filter(isDefined)
-        )}
+          return (
+            <GeneratedImage
+              key={`${image.workflowId}_${image.id}`}
+              request={request}
+              step={image.step}
+              image={image}
+            />
+          );
+        })}
       </div>
 
       {hasNextPage && (

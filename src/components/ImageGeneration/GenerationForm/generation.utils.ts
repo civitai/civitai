@@ -264,7 +264,7 @@ export const isMadeOnSite = (meta: ImageMetaProps | null) => {
   return false;
 };
 
-export function getStepMeta(step?: WorkflowStepFormatted): any {
+export function getStepMeta(step?: Omit<WorkflowStepFormatted, 'images'>): any {
   if (!step) return;
   const civitaiResources = step?.resources?.map((args): CivitaiResource => {
     if ('air' in args && typeof args.air === 'string') {
@@ -277,7 +277,11 @@ export function getStepMeta(step?: WorkflowStepFormatted): any {
   // remove 'resources' due to property being set on video gen
   const { resources, ...params } = step.params as typeof step.params & { resources: any };
 
-  return removeEmpty({ ...params, civitaiResources });
+  return removeEmpty({
+    ...params,
+    civitaiResources,
+    transformations: step.metadata.transformations,
+  });
 }
 
 export function ResourceSelectHandler(options?: ResourceSelectOptions) {

@@ -439,7 +439,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
             </Group>
             <Stack gap="md" align="center" maw={600}>
               <Title order={2} c="white" ta="center">
-                <span className="text-buzz">Green</span> Creator Program Returns in November!
+                <span className="text-buzz">Green</span> Creator Program Returns at a later date!
               </Title>
               <Text size="lg" c="white" ta="center">
                 We&apos;re excited to start the <span className="text-buzz">Green</span> Creator
@@ -448,11 +448,11 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
               </Text>
               <Text size="md" c="white" ta="center" fw={500}>
                 In the meantime, you can still earn and use <span className="text-buzz">Green</span>{' '}
-                Buzz for other activities on the platform. Stay tuned for the November launch!
+                Buzz for other activities on the platform. Stay tuned for updates!
               </Text>
             </Stack>
             <Button size="xl" variant="white" disabled>
-              Launching in November
+              Launching at a later date
             </Button>
           </Stack>
         </Paper>

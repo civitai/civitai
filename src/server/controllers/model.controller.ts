@@ -31,6 +31,7 @@ import type {
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
+  GetMyTrainingModelsSchema,
   GetSimpleModelsInfiniteSchema,
   LimitOnly,
   ModelByHashesInput,
@@ -1000,7 +1001,7 @@ export const getMyTrainingModelsHandler = async ({
   input,
   ctx,
 }: {
-  input: GetAllSchema;
+  input: GetMyTrainingModelsSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
@@ -1037,6 +1038,7 @@ export const getMyTrainingModelsHandler = async ({
             type: true,
             metadata: true,
             sizeKB: true,
+            dataPurged: true,
           },
           where: { type: { equals: 'Training Data' } },
         },

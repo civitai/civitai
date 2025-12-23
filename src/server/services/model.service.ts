@@ -37,6 +37,7 @@ import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  GetMyTrainingModelsSchema,
   GetTrainingModerationFeedSchema,
   IngestModelInput,
   LimitOnly,
@@ -2048,26 +2049,85 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
   select,
   page,
   limit = DEFAULT_PAGE_SIZE,
-}: GetAllSchema & {
+  query,
+  trainingStatus,
+  baseModel,
+  type,
+  sort = 'startDesc',
+}: GetMyTrainingModelsSchema & {
   userId: number;
   select: TSelect;
 }) => {
   const { take, skip } = getPagination(limit, page);
+
+  // Build trainingDetails filters (need AND to combine multiple JSON path filters)
+  const trainingDetailsFilters: Prisma.ModelVersionWhereInput[] = [];
+  if (baseModel) {
+    trainingDetailsFilters.push({
+      trainingDetails: {
+        path: ['baseModel'],
+        equals: baseModel,
+      },
+    });
+  }
+  if (type) {
+    trainingDetailsFilters.push({
+      trainingDetails: {
+        path: ['type'],
+        equals: type,
+      },
+    });
+  }
+
+  // Build where clause with filters
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
     status: { in: [ModelStatus.Draft, ModelStatus.Training] },
     uploadType: ModelUploadType.Trained,
     model: {
       userId,
       status: { notIn: [ModelStatus.Deleted] },
+      ...(query ? { name: { contains: query, mode: 'insensitive' } } : {}),
     },
+    ...(trainingStatus && trainingStatus.length > 0
+      ? { trainingStatus: { in: trainingStatus } }
+      : {}),
+    ...(trainingDetailsFilters.length > 0 ? { AND: trainingDetailsFilters } : {}),
   };
+
+  // Determine orderBy based on sort option
+  // Note: start/end dates are in file metadata, so we fall back to createdAt/updatedAt for DB sorting
+  // The frontend will handle more granular sorting if needed
+  let orderBy: Prisma.ModelVersionFindManyArgs['orderBy'];
+  switch (sort) {
+    case 'startAsc':
+    case 'endAsc':
+      orderBy = { createdAt: 'asc' };
+      break;
+    case 'createdAsc':
+      orderBy = { createdAt: 'asc' };
+      break;
+    case 'createdDesc':
+      orderBy = { createdAt: 'desc' };
+      break;
+    case 'updatedAsc':
+      orderBy = { updatedAt: 'asc' };
+      break;
+    case 'updatedDesc':
+      orderBy = { updatedAt: 'desc' };
+      break;
+    case 'startDesc':
+    case 'endDesc':
+    default:
+      orderBy = { createdAt: 'desc' };
+      break;
+  }
 
   const items = await dbWrite.modelVersion.findMany({
     select,
     skip,
     take,
     where,
-    orderBy: { updatedAt: 'desc' },
+    orderBy,
   });
   const count = await dbWrite.modelVersion.count({ where });
 

@@ -17,6 +17,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import { trpc } from '~/utils/trpc';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -215,6 +216,9 @@ export const ModelSelect = ({
   const status = useTrainingServiceStatus();
   const features = useFeatureFlags();
 
+  // Fetch moderator-editable announcement
+  const { data: announcement } = trpc.training.getAnnouncement.useQuery();
+
   const { updateRun } = trainingStore;
   const blockedModels = status.blockedModels ?? [blockedCustomModels];
 
@@ -355,6 +359,16 @@ export const ModelSelect = ({
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
             <Stack gap="xs">
+              {announcement?.message && (
+                <AlertWithIcon
+                  icon={<IconExclamationCircle size={16} />}
+                  iconColor={announcement.color || 'yellow'}
+                  color={announcement.color || 'yellow'}
+                  size="sm"
+                >
+                  {announcement.message}
+                </AlertWithIcon>
+              )}
               {mediaType === 'image' && (
                 <>
                   <ModelSelector
@@ -437,26 +451,30 @@ export const ModelSelect = ({
               )}
               {mediaType === 'video' && (
                 <>
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="teal"
-                    name="Hunyuan"
-                    value={baseModelHunyuan}
-                    baseType="hunyuan"
-                    makeDefaultParams={makeDefaultParams}
-                    isVideo
-                    isNew={new Date() < new Date('2025-04-30')}
-                  />
-                  <ModelSelector
-                    selectedRun={selectedRun}
-                    color="green"
-                    name="Wan"
-                    value={baseModelWan}
-                    baseType="wan"
-                    makeDefaultParams={makeDefaultParams}
-                    isVideo
-                    isNew={new Date() < new Date('2025-04-30')}
-                  />
+                  {false && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="teal"
+                      name="Hunyuan"
+                      value={baseModelHunyuan}
+                      baseType="hunyuan"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew={new Date() < new Date('2025-04-30')}
+                    />
+                  )}
+                  {false && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="green"
+                      name="Wan"
+                      value={baseModelWan}
+                      baseType="wan"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew={new Date() < new Date('2025-04-30')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'image' && (

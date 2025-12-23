@@ -897,8 +897,8 @@ export const generationConfig = {
   Seedream: {
     aspectRatios: seedreamSizes,
     checkpoint: {
-      id: 2208278,
-      name: 'v4.0',
+      id: 2470991,
+      name: 'v4.5',
       trainedWords: [],
       baseModel: 'Seedream',
       strength: 1,
@@ -1295,6 +1295,11 @@ export const banReasonDetails: Record<
     publicBanReasonLabel: 'Abusing Buzz System',
     privateBanReasonLabel: 'Abusing Buzz System',
   },
+  [BanReasonCode.RRDViolation]: {
+    code: BanReasonCode.RRDViolation,
+    publicBanReasonLabel: 'Violated Responsible Resource Development',
+    privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
+  },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,
     publicBanReasonLabel: '',
@@ -1361,10 +1366,13 @@ export const specialCosmeticRewards = {
 
 export type LiveFeatureFlags = {
   buzzGiftCards: boolean;
+  /** Custom training page announcement message. If null/empty, shows the default message. */
+  trainingAnnouncement?: string | null;
 };
 
-export const DEFAULT_LIVE_FEATURE_FLAGS = {
+export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
   buzzGiftCards: false,
+  trainingAnnouncement: null,
 };
 
 export const EARLY_ACCESS_CONFIG: {

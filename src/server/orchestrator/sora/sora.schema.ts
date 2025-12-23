@@ -46,6 +46,13 @@ export const soraGenerationConfig = VideoGenerationConfig2({
     };
   },
   superRefine: ({ resources, ...data }, ctx) => {
+    if (data.process === 'img2vid' && !data.images?.length) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Image is required',
+        path: ['images'],
+      });
+    }
     if (!data.images?.length && !data.prompt?.length) {
       ctx.addIssue({
         code: 'custom',

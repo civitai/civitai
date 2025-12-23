@@ -27,7 +27,7 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
       onClose={handleClose}
       radius="md"
       size="lg"
-      classNames={{ content: 'p-0 overflow-hidden' }}
+      classNames={{ content: 'p-0' }}
       withCloseButton={false}
     >
       <CloseButton

@@ -17,7 +17,8 @@ export async function preprocessFile(
   file: File,
   options?: { allowAnimatedWebP?: boolean }
 ): Promise<PreprocessFileReturnType> {
-  const fileType = file.type;
+  let fileType = file.type;
+  if (fileType === 'application/octet-stream') fileType = 'video/mp4';
   const type = MEDIA_TYPE[fileType];
   const data = {
     name: file.name,

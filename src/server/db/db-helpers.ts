@@ -398,7 +398,7 @@ export const dbKV = {
     return stored ? (stored.value as T) : defaultValue;
   },
   set: async function <T>(key: string, value: T) {
-    const json = JSON.stringify(value);
+    const json = JSON.stringify(value).replace(/'/g, "''");
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "KeyValue" ("key", "value")
       VALUES ('${key}', '${json}'::jsonb)
