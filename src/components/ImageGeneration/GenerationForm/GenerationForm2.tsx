@@ -80,13 +80,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-  getSeedreamSizes,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -1363,28 +1357,21 @@ export function GenerationFormContent() {
                     </div>
                   )}
 
-                  {!disableAspectRatio &&
-                    (isSeedream ? (
-                      <Watch {...form} fields={['model']}>
-                        {({ model }) => (
-                          <div className="flex flex-col gap-0.5">
-                            <Input.Label>Aspect Ratio</Input.Label>
-                            <InputSegmentedControl
-                              name="aspectRatio"
-                              data={getAspectRatioControls(getSeedreamSizes(model.id))}
-                            />
-                          </div>
-                        )}
-                      </Watch>
-                    ) : (
-                      <div className="flex flex-col gap-0.5">
-                        <Input.Label>Aspect Ratio</Input.Label>
-                        <InputSegmentedControl
-                          name="aspectRatio"
-                          data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
-                        />
-                      </div>
-                    ))}
+                  {!disableAspectRatio && (
+                    <Watch {...form} fields={['model']}>
+                      {({ model }) => (
+                        <div className="flex flex-col gap-0.5">
+                          <Input.Label>Aspect Ratio</Input.Label>
+                          <InputSegmentedControl
+                            name="aspectRatio"
+                            data={getAspectRatioControls(
+                              getGenerationConfig(baseModel, model.id).aspectRatios
+                            )}
+                          />
+                        </div>
+                      )}
+                    </Watch>
+                  )}
 
                   {isFluxUltra && (
                     <InputSelect

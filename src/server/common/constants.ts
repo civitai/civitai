@@ -641,7 +641,7 @@ const commonAspectRatios = [
   { label: 'Portrait', width: 832, height: 1216 },
 ];
 
-export const seedreamSizes = [
+const seedreamSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
@@ -649,22 +649,13 @@ export const seedreamSizes = [
   { label: '9:16', width: 1440, height: 2560 },
 ];
 
-export const seedreamSizes4K = [
+const seedreamSizes4K = [
   { label: '16:9', width: 4096, height: 2304 },
   { label: '4:3', width: 4096, height: 3072 },
   { label: '1:1', width: 4096, height: 4096 },
   { label: '3:4', width: 3072, height: 4096 },
   { label: '9:16', width: 2304, height: 4096 },
 ];
-
-export function getSeedreamSizes(modelVersionId: number) {
-  // v4.5 uses 4K resolutions
-  if (modelVersionId === 2470991) {
-    return seedreamSizes4K;
-  }
-  // v3 and v4 use standard resolutions
-  return seedreamSizes;
-}
 
 export const qwenSizes = [
   { label: '16:9', width: 1664, height: 928 },
@@ -689,6 +680,12 @@ const nanoBananaProSizes = [
   { label: '3:4', width: 1728, height: 2304 },
   { label: '9:16', width: 1440, height: 2560 },
 ];
+
+export const generationResourceConfig: Record<number, MixedObject> = {
+  2470991: {
+    aspectRatios: seedreamSizes4K,
+  },
+};
 
 export type GenerationConfigKey = keyof typeof generationConfig;
 export const generationConfig = {
@@ -1171,11 +1168,22 @@ export const minUploadSize = 300;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
-export function getGenerationConfig(baseModel = 'SD1') {
+export function getGenerationConfig(baseModel = 'SD1', modelVersionId?: number) {
   if (!(baseModel in generationConfig)) {
     return getGenerationConfig(); // fallback to default config
     // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
   }
+
+  if (baseModel === 'Seedream' && modelVersionId) {
+    const resourceConfig = generationResourceConfig[modelVersionId];
+    if (resourceConfig) {
+      return {
+        ...generationConfig[baseModel as keyof typeof generationConfig],
+        ...resourceConfig,
+      };
+    }
+  }
+
   return generationConfig[baseModel as keyof typeof generationConfig];
 }
 

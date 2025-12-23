@@ -321,13 +321,7 @@ export function getSizeFromAspectRatio(
   baseModel?: string,
   modelVersionId?: number
 ) {
-  // For Seedream, use version-specific sizes if modelVersionId is provided
-  let aspectRatios;
-  if (baseModel === 'Seedream' && modelVersionId) {
-    aspectRatios = getSeedreamSizes(modelVersionId);
-  } else {
-    aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  }
+  const aspectRatios = getGenerationConfig(baseModel, modelVersionId).aspectRatios;
 
   return (
     aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
