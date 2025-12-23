@@ -1174,17 +1174,9 @@ export function getGenerationConfig(baseModel = 'SD1', modelVersionId?: number) 
     // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
   }
 
-  if (baseModel === 'Seedream' && modelVersionId) {
-    const resourceConfig = generationResourceConfig[modelVersionId];
-    if (resourceConfig) {
-      return {
-        ...generationConfig[baseModel as keyof typeof generationConfig],
-        ...resourceConfig,
-      };
-    }
-  }
-
-  return generationConfig[baseModel as keyof typeof generationConfig];
+  const modelConfig = modelVersionId ? generationResourceConfig[modelVersionId] : undefined;
+  const baseModelConfig = generationConfig[baseModel as keyof typeof generationConfig];
+  return { ...baseModelConfig, ...modelConfig };
 }
 
 export const MODELS_SEARCH_INDEX = 'models_v9';

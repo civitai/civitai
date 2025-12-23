@@ -1358,19 +1358,15 @@ export function GenerationFormContent() {
                   )}
 
                   {!disableAspectRatio && (
-                    <Watch {...form} fields={['model']}>
-                      {({ model }) => (
-                        <div className="flex flex-col gap-0.5">
-                          <Input.Label>Aspect Ratio</Input.Label>
-                          <InputSegmentedControl
-                            name="aspectRatio"
-                            data={getAspectRatioControls(
-                              getGenerationConfig(baseModel, model.id).aspectRatios
-                            )}
-                          />
-                        </div>
-                      )}
-                    </Watch>
+                    <div className="flex flex-col gap-0.5">
+                      <Input.Label>Aspect Ratio</Input.Label>
+                      <InputSegmentedControl
+                        name="aspectRatio"
+                        data={getAspectRatioControls(
+                          getGenerationConfig(baseModel, model.id).aspectRatios
+                        )}
+                      />
+                    </div>
                   )}
 
                   {isFluxUltra && (
