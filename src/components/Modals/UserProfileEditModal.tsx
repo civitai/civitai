@@ -30,7 +30,10 @@ import {
   InputCosmeticSelect,
   InputChipGroup,
 } from '~/libs/form';
-import type { ProfileSectionSchema, PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
+import type {
+  ProfileSectionSchema,
+  PrivacySettingsSchema,
+} from '~/server/schema/user-profile.schema';
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -67,20 +70,18 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InputProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { InputShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 
-const schema = userProfileUpdateSchema.merge(
-  userUpdateSchema
-    .pick({
-      profilePicture: true,
-      nameplateId: true,
-      leaderboardShowcase: true,
-    })
-    .extend({
-      badge: cosmeticInputSchema.nullish(),
-      profileImage: z.string().nullish(),
-      profileDecoration: cosmeticInputSchema.nullish(),
-      profileBackground: cosmeticInputSchema.nullish(),
-    })
-);
+const schema = z.object({
+  ...userProfileUpdateSchema.shape,
+  ...userUpdateSchema.pick({
+    profilePicture: true,
+    nameplateId: true,
+    leaderboardShowcase: true,
+  }).shape,
+  badge: cosmeticInputSchema.nullish(),
+  profileImage: z.string().nullish(),
+  profileDecoration: cosmeticInputSchema.nullish(),
+  profileBackground: cosmeticInputSchema.nullish(),
+});
 
 const chipProps: Partial<ChipProps> = {
   size: 'sm',
@@ -222,10 +223,7 @@ export default function UserProfileEditModal() {
     [leaderboards]
   );
 
-  const form = useForm({
-    schema,
-    shouldUnregister: false,
-  });
+  const form = useForm({ schema, shouldUnregister: false });
 
   const [
     badge,
