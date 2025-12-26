@@ -408,16 +408,7 @@ export default function UserProfileEditModal() {
 
   return (
     <Modal {...dialog} withCloseButton={false} closeOnEscape={false} withinPortal={false} size="xl">
-      <Form
-        form={form}
-        onSubmit={handleSubmit}
-        onError={(error) => {
-          const values = form.getValues();
-
-          console.log({ values, previousData: previousData.current });
-          console.error(error);
-        }}
-      >
+      <Form form={form} onSubmit={handleSubmit}>
         <Stack>
           <Group justify="space-between">
             <Text fz={24} fw={590}>
