@@ -786,6 +786,8 @@ export interface NormalizedWorkflowStepOutput {
   jobId?: string | null;
   nsfwLevel?: NsfwLevel;
   blockedReason?: string | null;
+  previewUrl?: string | null;
+  previewUrlExpiresAt?: string | null;
 }
 
 function formatWorkflowStepOutput({

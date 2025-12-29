@@ -236,7 +236,8 @@ export function GeneratedImage({
         <>
           {
             <EdgeMedia2
-              src={image.url}
+              // Use previewUrl for rendering in queue (smaller/faster), but full url for lightbox
+              src={isLightbox ? image.url : (image.previewUrl ?? image.url)}
               type={image.type}
               alt=""
               className={clsx('max-h-full min-h-0 w-auto max-w-full', {
@@ -245,11 +246,13 @@ export function GeneratedImage({
               })}
               onClick={handleImageClick}
               onMouseDown={(e) => {
+                // Always use full url when opening in new tab
                 if (e.button === 1) return handleAuxClick(image.url);
               }}
               wrapperProps={{
                 onClick: handleImageClick,
                 onMouseDown: (e) => {
+                  // Always use full url when opening in new tab
                   if (e.button === 1) return handleAuxClick(image.url);
                 },
               }}
