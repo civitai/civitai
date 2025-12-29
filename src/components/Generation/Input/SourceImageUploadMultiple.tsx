@@ -39,6 +39,14 @@ import { isAndroidDevice } from '~/utils/device-helpers';
 
 type AspectRatio = `${number}:${number}`;
 
+/** Tracks original image info for images that have been annotated (drawn on) */
+export type ImageAnnotation = {
+  originalUrl: string;
+  originalWidth: number;
+  originalHeight: number;
+  compositeUrl: string;
+};
+
 type SourceImageUploadProps = {
   value?: SourceImageProps[] | null;
   onChange?: (value: SourceImageProps[] | null) => void;
@@ -54,6 +62,10 @@ type SourceImageUploadProps = {
   enableDrawing?: boolean;
   /** Called when user completes a drawing overlay */
   onDrawingComplete?: (value: SourceImageProps, index: number) => void;
+  /** Annotations tracking original images for composites (used for re-editing) */
+  annotations?: ImageAnnotation[] | null;
+  /** Called when an image is removed (for annotation cleanup) */
+  onRemove?: (removedImage: SourceImageProps, index: number) => void;
 };
 
 type ImageComplete = {
@@ -86,6 +98,7 @@ type SourceImageUploadContext = {
   onChange: (value: (string | File)[]) => Promise<void>;
   enableDrawing?: boolean;
   handleDrawingUpload: (index: number, drawingBlob: Blob) => Promise<void>;
+  annotations?: ImageAnnotation[] | null;
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -107,6 +120,8 @@ export function SourceImageUploadMultiple({
   id,
   enableDrawing = false,
   onDrawingComplete,
+  annotations,
+  onRemove,
 }: SourceImageUploadProps) {
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +179,11 @@ export function SourceImageUploadMultiple({
 
   function removeItem(index: number) {
     const item = previewItems[index];
+
+    // Call onRemove callback if this is a complete image (for annotation cleanup)
+    if (item.status === 'complete') {
+      onRemove?.({ url: item.url, width: item.width, height: item.height }, index);
+    }
 
     if (item.id) {
       setImageUploading(item.id, false);
@@ -332,6 +352,7 @@ export function SourceImageUploadMultiple({
         onChange: handleChange,
         enableDrawing,
         handleDrawingUpload,
+        annotations,
       }}
     >
       <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
@@ -428,9 +449,20 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   index,
   ...previewItem
 }: ImagePreview & { className?: string; index: number }) {
-  const { missingAiMetadata, removeItem, aspect, setError, enableDrawing, handleDrawingUpload } =
-    useContext();
+  const {
+    missingAiMetadata,
+    removeItem,
+    aspect,
+    setError,
+    enableDrawing,
+    handleDrawingUpload,
+    annotations,
+  } = useContext();
   const [drawingLines, setDrawingLines] = useState<DrawingLine[]>([]);
+
+  // Check if this image is a composite (has been annotated)
+  const annotation = annotations?.find((a) => a.compositeUrl === previewItem.url);
+  const isAnnotated = !!annotation;
 
   function handleRemoveItem() {
     removeItem(index);
@@ -449,15 +481,24 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   function handleOpenDrawingEditor() {
     if (previewItem.status !== 'complete') return;
 
+    // If this is a composite, use the original image for the drawing editor
+    const sourceImage = isAnnotated
+      ? {
+          url: annotation.originalUrl,
+          width: annotation.originalWidth,
+          height: annotation.originalHeight,
+        }
+      : {
+          url: previewItem.url,
+          width: previewItem.width,
+          height: previewItem.height,
+        };
+
     dialogStore.trigger({
       id: `drawing-editor-modal-${index}`,
       component: DrawingEditorModal,
       props: {
-        sourceImage: {
-          url: previewItem.url,
-          width: previewItem.width,
-          height: previewItem.height,
-        },
+        sourceImage,
         onConfirm: handleDrawingComplete,
         initialLines: drawingLines,
       },
@@ -499,7 +540,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                 {previewItem.width} x {previewItem.height}
               </div>
               {enableDrawing && (
-                <Tooltip label="Draw on image" withArrow>
+                <Tooltip label={isAnnotated ? 'Edit drawing' : 'Draw on image'} withArrow>
                   <ActionIcon
                     variant="filled"
                     size="sm"

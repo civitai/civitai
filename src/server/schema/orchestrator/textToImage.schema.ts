@@ -51,6 +51,19 @@ export const textToImageParamsSchema = z.object({
   priority: z.enum(Priority).default('low'),
   sourceImage: defaultCatch(sourceImageSchema.nullable(), null),
   images: defaultCatch(sourceImageSchema.array().nullable(), null),
+  imageAnnotations: defaultCatch(
+    z
+      .array(
+        z.object({
+          originalUrl: z.string(),
+          originalWidth: z.number(),
+          originalHeight: z.number(),
+          compositeUrl: z.string(),
+        })
+      )
+      .nullable(),
+    null
+  ),
   disablePoi: z.boolean().default(false),
   openAIQuality: z.enum(['auto', 'high', 'medium', 'low']).optional(),
   openAITransparentBackground: z.boolean().optional(),

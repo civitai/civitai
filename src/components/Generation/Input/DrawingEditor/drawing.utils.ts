@@ -16,31 +16,36 @@ export const MAX_BRUSH_SIZE = 50;
 export const DEFAULT_BRUSH_COLOR = DRAWING_COLORS[0].color;
 
 /**
- * Export the drawing layer from Konva stage to a PNG blob
- * Only exports the drawing layer, not the background image
+ * Export the entire stage (background + drawing) as a composite PNG blob
+ * This creates a complete image with the original and all drawings merged
+ *
+ * @param stage - The Konva stage to export
+ * @param canvasWidth - The display canvas width
+ * @param canvasHeight - The display canvas height
+ * @param originalWidth - The original image width (for full resolution export)
+ * @param originalHeight - The original image height (for full resolution export)
  */
 export async function exportDrawingToBlob(
   stage: Konva.Stage | null,
-  width: number,
-  height: number
+  canvasWidth: number,
+  canvasHeight: number,
+  originalWidth?: number,
+  originalHeight?: number
 ): Promise<Blob> {
   if (!stage) {
     throw new Error('Stage is not available');
   }
 
-  // Get the drawing layer (second layer, index 1)
-  const layers = stage.getLayers();
-  const drawingLayer = layers[1];
-  if (!drawingLayer) {
-    throw new Error('Drawing layer not found');
-  }
+  // Calculate pixelRatio to export at original image resolution
+  // If original dimensions provided, scale up from canvas size to original size
+  const pixelRatio = originalWidth && originalHeight ? originalWidth / canvasWidth : 1;
 
-  // Export only the drawing layer as PNG with transparency
-  const dataUrl = drawingLayer.toDataURL({
-    pixelRatio: 1,
+  // Export entire stage (all layers) as PNG - creates composite image
+  const dataUrl = stage.toDataURL({
+    pixelRatio,
     mimeType: 'image/png',
-    width,
-    height,
+    width: canvasWidth,
+    height: canvasHeight,
   });
 
   // Convert data URL to blob

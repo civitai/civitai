@@ -64,7 +64,9 @@ export function DrawingEditorModal({
       const blob = await exportDrawingToBlob(
         stageRef.current,
         canvasDimensions.width,
-        canvasDimensions.height
+        canvasDimensions.height,
+        sourceImage.width,
+        sourceImage.height
       );
       onConfirm(blob, lines);
       dialog.onClose();
@@ -108,7 +110,7 @@ export function DrawingEditorModal({
               size="sm"
               onClick={handleConfirm}
               loading={loading}
-              disabled={lines.length === 0}
+              disabled={lines.length === initialLines.length}
             >
               Apply
             </Button>

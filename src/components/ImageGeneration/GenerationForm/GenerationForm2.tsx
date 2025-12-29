@@ -155,6 +155,7 @@ import {
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
+  type ImageAnnotation,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import {
   getIsSeedream,
@@ -212,6 +213,7 @@ export function GenerationFormContent() {
   const baseModel = form.watch('baseModel');
   const model = form.watch('model');
   const [sourceImage] = form.watch(['sourceImage']);
+  const [images, imageAnnotations] = form.watch(['images', 'imageAnnotations']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -988,8 +990,6 @@ export function GenerationFormContent() {
                       name="sourceImage"
                       label={isOpenAI ? 'Image (optional)' : undefined}
                       warnOnMissingAiMetadata={isFluxKontext}
-                      onDrawingComplete={(value) => console.log(value)}
-                      enableDrawing
                     />
                   )}
 
@@ -1000,8 +1000,58 @@ export function GenerationFormContent() {
                         aspect="video"
                         max={7}
                         warnOnMissingAiMetadata
-                        onDrawingComplete={(value, index) => console.log({ index, value })}
-                        enableDrawing
+                        enableDrawing={isNanoBanana || isNanoBananaPro}
+                        annotations={imageAnnotations}
+                        onDrawingComplete={(compositeImage, index) => {
+                          const currentImages = form.getValues('images') ?? [];
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+
+                          const currentImage = currentImages[index];
+                          if (!currentImage) return;
+
+                          // Check if this image is already annotated (re-editing)
+                          const existingAnnotation = currentAnnotations.find(
+                            (a: ImageAnnotation) => a.compositeUrl === currentImage.url
+                          );
+
+                          // The original is either from existing annotation or the current image
+                          const originalImage = existingAnnotation
+                            ? {
+                                url: existingAnnotation.originalUrl,
+                                width: existingAnnotation.originalWidth,
+                                height: existingAnnotation.originalHeight,
+                              }
+                            : currentImage;
+
+                          // 1. Replace image in array with composite
+                          const updatedImages = [...currentImages];
+                          updatedImages[index] = compositeImage;
+                          form.setValue('images', updatedImages);
+
+                          // 2. Update annotations - remove old if re-editing, add new
+                          const filteredAnnotations = currentAnnotations.filter(
+                            (a: ImageAnnotation) =>
+                              a.compositeUrl !== currentImage.url &&
+                              a.originalUrl !== originalImage.url
+                          );
+                          form.setValue('imageAnnotations', [
+                            ...filteredAnnotations,
+                            {
+                              originalUrl: originalImage.url,
+                              originalWidth: originalImage.width,
+                              originalHeight: originalImage.height,
+                              compositeUrl: compositeImage.url,
+                            },
+                          ]);
+                        }}
+                        onRemove={(removedImage) => {
+                          // Remove annotation if this was a composite
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+                          const filtered = currentAnnotations.filter(
+                            (a: ImageAnnotation) => a.compositeUrl !== removedImage.url
+                          );
+                          form.setValue('imageAnnotations', filtered);
+                        }}
                       >
                         {(previewItems) => (
                           <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
