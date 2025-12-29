@@ -988,6 +988,8 @@ export function GenerationFormContent() {
                       name="sourceImage"
                       label={isOpenAI ? 'Image (optional)' : undefined}
                       warnOnMissingAiMetadata={isFluxKontext}
+                      onDrawingComplete={(value) => console.log(value)}
+                      enableDrawing
                     />
                   )}
 
@@ -995,9 +997,11 @@ export function GenerationFormContent() {
                     <div className="-mx-2">
                       <InputSourceImageUploadMultiple
                         name="images"
+                        aspect="video"
                         max={7}
                         warnOnMissingAiMetadata
-                        aspect="video"
+                        onDrawingComplete={(value, index) => console.log({ index, value })}
+                        enableDrawing
                       >
                         {(previewItems) => (
                           <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
