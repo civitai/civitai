@@ -29,7 +29,7 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { DragEvent } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -222,6 +222,30 @@ export function GeneratedImage({
     handleDataTransfer(e);
   }
 
+  function handleContextMenu(e: MouseEvent<HTMLImageElement | HTMLVideoElement>) {
+    // Swap to full quality URL before context menu shows
+    // so "Save Image As" saves the full quality version
+    const element = e.currentTarget;
+    const previewUrl = image.previewUrl ?? image.url;
+
+    if (image.previewUrl && 'src' in element) {
+      element.src = image.url;
+
+      // Restore preview after context menu closes
+      const restore = () => {
+        element.src = previewUrl;
+        document.removeEventListener('click', restore);
+        document.removeEventListener('keydown', restore);
+      };
+
+      // Delay listener attachment to allow context menu to process
+      setTimeout(() => {
+        document.addEventListener('click', restore, { once: true });
+        document.addEventListener('keydown', restore, { once: true });
+      }, 0);
+    }
+  }
+
   function handleToggleSelect(value = !selected) {
     toggleSelect(value);
     if (running && value) helpers?.next();
@@ -263,9 +287,11 @@ export function GeneratedImage({
               disablePoster
               imageProps={{
                 onDragStart: handleDragImage,
+                onContextMenu: handleContextMenu,
               }}
               videoProps={{
                 onDragStart: handleDragVideo,
+                onContextMenu: handleContextMenu,
                 draggable: true,
                 autoPlay: true,
               }}
