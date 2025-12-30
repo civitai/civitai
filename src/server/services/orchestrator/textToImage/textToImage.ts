@@ -102,7 +102,6 @@ export async function createTextToImageStep(
           resources: input.resources,
           params: removeEmpty(inputParams),
           remixOfId: input.remixOfId,
-          maxNsfwLevel: isPrivateGeneration ? 'pG13' : undefined,
           isPrivateGeneration,
         }
       : undefined,
@@ -140,8 +139,8 @@ export async function createTextToImage(
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
       // Ensures private generation does not allow mature content
-      nsfwLevel: step.metadata?.isPrivateGeneration ? NsfwLevel.PG13 : undefined,
-      allowMatureContent: allowMatureContent,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? 'pg13' : undefined,
+      allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },

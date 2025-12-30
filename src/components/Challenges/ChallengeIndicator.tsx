@@ -1,4 +1,4 @@
-import { ActionIcon, Indicator } from '@mantine/core';
+import { Indicator } from '@mantine/core';
 import { IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useGetActiveChallenges, dismissChallenges } from '~/components/Challenges/challenge.utils';

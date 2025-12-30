@@ -11,6 +11,7 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  pendingBuzzCounter,
   poolCounters,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
@@ -48,7 +49,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       SUM(grantedExp * multiplier) as totalExp
     FROM knights_new_order_image_rating FINAL
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-      AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
+      AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
   `;
 
@@ -95,9 +96,13 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
 
     // Deduct the actual EXP from the blessed buzz counter
     // Counter stores EXP values, not converted buzz, so we deduct totalExp
+    // Reset pending buzz counter so it recalculates the new day on next fetch
     await Promise.all(
       batch.map((player) => {
-        return blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp });
+        return Promise.all([
+          blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
+          pendingBuzzCounter.reset({ id: player.userId }),
+        ]);
       })
     );
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);

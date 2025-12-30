@@ -17,7 +17,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   try {
     const { transactionId } = await createBuzzTransaction({
       fromAccountId: monthAccount,
-      fromAccountType: 'creatorprogrambank',
+      fromAccountType: 'creatorProgramBank',
       toAccountId: userId ?? -1,
       toAccountType: 'yellow',
       amount,

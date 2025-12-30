@@ -86,7 +86,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
 
   // Creator Program V2:
   'creator-program-banking-phase-ending': {
-    displayName: 'Baking phase ending',
+    displayName: 'Banking phase ending',
     category: NotificationCategory.Creator,
     toggleable: false,
     showCategory: true,

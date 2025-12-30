@@ -108,6 +108,7 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { clickhouse } from '~/server/clickhouse/client';
+import { cancelSubscription } from '~/server/services/stripe.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -731,6 +732,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   await deleteBasicDataForUser(id);
 
   // Cancel their subscription
+  await cancelSubscription({ userId: user.id }).catch((error) =>
+    logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+  );
   await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
     logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
   );

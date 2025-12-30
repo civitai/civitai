@@ -95,7 +95,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
           toAccountId: d.userId,
           toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
           type: TransactionType.Purchase,
-          externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}:v2`,
+          externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}:v3`,
           amount: amount,
           description: `Membership Bonus`,
           details: {
@@ -104,6 +104,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
             productId: d.productId,
             interval: d.interval,
             tier: d.tier,
+            subscriptionId: d.id, // Include subscription ID for prepaid decrement
           },
         };
       })
@@ -116,7 +117,7 @@ export const deliverPrepaidMembershipBuzz = createJob(
         async () => {
           await createBuzzTransactionMany(batch);
           const userData = batch.map((b) => ({
-            id: b.toAccountId,
+            id: (b.details as any).subscriptionId, // Use subscription ID, not user ID
             tier: (b.details as any).tier,
             externalTransactionId: b.externalTransactionId,
           }));

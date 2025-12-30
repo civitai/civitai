@@ -11,3 +11,11 @@ export function createOrchestratorClient(token: string) {
 
 /** Used to perform orchestrator operations with the system user account */
 export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
+
+export function createOrchestratorClientNew(token: string) {
+  return createCivitaiClient({
+    baseUrl: 'https://orchestration-new.civitai.com',
+    env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
+    auth: token,
+  });
+}

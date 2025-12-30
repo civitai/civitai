@@ -281,49 +281,43 @@ export const AdvancedSettings = ({
 
       {/* AI Toolkit Training Toggle or Required Badge */}
       {/* AI Toolkit is public for SD1.5 and SDXL, mod-only for other supported models */}
-      {(features.aiToolkitTraining || ['sd15', 'sdxl'].includes(selectedRun.baseType)) &&
-        isAiToolkitSupported(selectedRun.baseType) && (
-          <Group mt="md">
-            {!isAiToolkitMandatory(selectedRun.baseType) && (
-              // Show toggle for optional AI Toolkit
-              <Switch
-                label={
-                  <Group gap={4} wrap="nowrap">
-                    <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
-                      <Text>
-                        Train using the AI Toolkit engine, offering improved quality and
-                        flexibility.
-                        {selectedRun.baseType === 'flux' &&
-                          selectedRun.params.engine === 'rapid' && (
-                            <>
-                              {' '}
-                              Note: Rapid Training is currently enabled and must be disabled first.
-                            </>
-                          )}
-                      </Text>
-                    </InfoPopover>
-                    <Text>AI Toolkit Training</Text>
-                    <Badge color="blue" size="xs">
-                      Beta
-                    </Badge>
-                  </Group>
-                }
-                labelPosition="left"
-                checked={selectedRun.params.engine === 'ai-toolkit'}
-                disabled={selectedRun.params.engine === 'rapid'}
-                onChange={(event) => {
-                  const newEngine = event.currentTarget.checked
-                    ? 'ai-toolkit'
-                    : getDefaultEngine(selectedRun.baseType, selectedRun.base);
+      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
+        <Group mt="md">
+          {!isAiToolkitMandatory(selectedRun.baseType) && (
+            // Show toggle for optional AI Toolkit
+            <Switch
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                    <Text>
+                      Train using the AI Toolkit engine, offering improved quality and flexibility.
+                      {selectedRun.baseType === 'flux' && selectedRun.params.engine === 'rapid' && (
+                        <> Note: Rapid Training is currently enabled and must be disabled first.</>
+                      )}
+                    </Text>
+                  </InfoPopover>
+                  <Text>AI Toolkit Training</Text>
+                  <Badge color="blue" size="xs">
+                    Beta
+                  </Badge>
+                </Group>
+              }
+              labelPosition="left"
+              checked={selectedRun.params.engine === 'ai-toolkit'}
+              disabled={selectedRun.params.engine === 'rapid'}
+              onChange={(event) => {
+                const newEngine = event.currentTarget.checked
+                  ? 'ai-toolkit'
+                  : getDefaultEngine(selectedRun.baseType, selectedRun.base);
 
-                  updateRun(modelId, mediaType, selectedRun.id, {
-                    params: { ...selectedRun.params, engine: newEngine },
-                  });
-                }}
-              />
-            )}
-          </Group>
-        )}
+                updateRun(modelId, mediaType, selectedRun.id, {
+                  params: { ...selectedRun.params, engine: newEngine },
+                });
+              }}
+            />
+          )}
+        </Group>
+      )}
 
       <Title mt="md" order={5}>
         Advanced Settings
@@ -423,7 +417,10 @@ export const AdvancedSettings = ({
                       : 'Automatically set'
                   }
                   value={selectedRun.samplePrompts[2]}
-                  required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
+                  required={isSamplePromptsRequired(
+                    selectedRun.baseType,
+                    selectedRun.params.engine
+                  )}
                   error={
                     isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
                     !selectedRun.samplePrompts[2]?.trim()

@@ -295,7 +295,7 @@ export async function createBuzzTransaction({
   // 0 is the bank so technically, it always has funding.
   if (
     payload.fromAccountId !== 0 &&
-    payload.fromAccountType !== 'creatorprogrambank' &&
+    payload.fromAccountType !== 'creatorProgramBank' &&
     (account?.balance ?? 0) < amount
   ) {
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
@@ -419,7 +419,7 @@ export async function createBuzzTransactionMany(
     .filter(
       (t) =>
         t.toAccountId !== undefined &&
-        (t.fromAccountId !== t.toAccountId || t.fromAccountType === 'cashpending') &&
+        (t.fromAccountId !== t.toAccountId || t.fromAccountType === 'cashPending') &&
         t.amount > 0
     );
   const body = JSON.stringify(validTransactions);
@@ -655,7 +655,7 @@ export async function getTopContributors({
   all = false,
 }: {
   accountIds: number | number[];
-  accountType?: BuzzSpendType | 'creatorprogrambank' | 'creatorprogrambankgreen';
+  accountType?: BuzzSpendType | 'creatorProgramBank' | 'creatorProgramBankGreen';
   start?: Date;
   end?: Date;
   limit?: number;
@@ -925,7 +925,7 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType = 'user'
+      AND toAccountType = 'yellow'
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
       GROUP BY toAccountId;
@@ -953,7 +953,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
           SUM(amount) AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'user'
+        WHERE toAccountType = 'yellow'
         AND (
           (type IN ('compensation')) -- Generation
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -974,7 +974,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
             SUM(amount) / 1000 AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'user'
+        WHERE toAccountType = 'yellow'
         AND type = 'purchase'
         AND fromAccountId = 0
         AND externalTransactionId NOT LIKE 'renewalBonus:%'
@@ -1032,7 +1032,7 @@ export const getDailyCompensationRewardByUser = async ({
     )
     SELECT
       date,
-      modelVersionId, 
+      modelVersionId,
 	    MAX(FLOOR(amount))::int AS total
     FROM orchestration.resourceCompensations
     WHERE date BETWEEN ${minDate} AND ${maxDate}

@@ -13,6 +13,7 @@ import { getUpscaleFactor } from '~/shared/constants/generation.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
+import { createVideoInterpolationStep } from '~/server/orchestrator/video-interpolation/video-interpolation';
 
 export async function createWorkflowStep(args: GenerationSchema) {
   const type = args.$type;
@@ -25,6 +26,8 @@ export async function createWorkflowStep(args: GenerationSchema) {
       return await createVideoEnhancementStep(args.data);
     case 'videoUpscaler':
       return await createVideoUpscalerStep(args.data);
+    case 'videoInterpolation':
+      return await createVideoInterpolationStep(args.data);
     default:
       throw new Error(`create workflow step not implemented for $type: ${type}`);
   }
@@ -67,12 +70,17 @@ async function createBackgroundRemovalStep(args: any) {
   }
 
   const comfyWorkflow = await populateWorkflowDefinition(args.workflow, data);
+  const transformations = [
+    ...(args.metadata?.transformations ?? []),
+    { type: 'background-removal', ...data },
+  ];
   const imageMetadata = JSON.stringify({
     ...args.metadata?.params,
     resources: args.metadata?.resources.map(({ id, strength }: any) => ({
       modelVersionId: id,
       strength: strength,
     })),
+    transformations,
   });
 
   const timeSpan = new TimeSpan(0, 10, 0);
@@ -86,7 +94,7 @@ async function createBackgroundRemovalStep(args: any) {
       imageMetadata,
     },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
-    metadata: args.metadata,
+    metadata: { ...args.metadata, transformations },
   };
 }
 
@@ -104,12 +112,14 @@ async function createUpscaleImageStep(args: any) {
   }
 
   const comfyWorkflow = await populateWorkflowDefinition(args.workflow, data);
+  const transformations = [...(args.metadata?.transformations ?? []), { type: 'upscale', ...data }];
   const imageMetadata = JSON.stringify({
     ...args.metadata?.params,
     resources: args.metadata?.resources.map(({ id, strength }: any) => ({
       modelVersionId: id,
       strength: strength,
     })),
+    transformations,
   });
 
   const timeSpan = new TimeSpan(0, 10, 0);
@@ -123,7 +133,7 @@ async function createUpscaleImageStep(args: any) {
       imageMetadata,
     },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
-    metadata: args.metadata,
+    metadata: { ...args.metadata, transformations },
   };
 }
 
@@ -139,12 +149,17 @@ async function createUpscaleEnhancementStep(args: any) {
   }
 
   const comfyWorkflow = await populateWorkflowDefinition(args.workflow, data);
+  const transformations = [
+    ...(args.metadata?.transformations ?? []),
+    { type: 'upscale-enhancement', ...data },
+  ];
   const imageMetadata = JSON.stringify({
     ...args.metadata?.params,
     resources: args.metadata?.resources.map(({ id, strength }: any) => ({
       modelVersionId: id,
       strength: strength,
     })),
+    transformations,
   });
 
   const timeSpan = new TimeSpan(0, 10, 0);
@@ -158,7 +173,7 @@ async function createUpscaleEnhancementStep(args: any) {
       imageMetadata,
     },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
-    metadata: args.metadata,
+    metadata: { ...args.metadata, transformations },
   };
 }
 

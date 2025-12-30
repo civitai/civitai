@@ -69,7 +69,6 @@ const insertClick = async (data: QueryRes[], start: number, end: number) => {
 
 async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
   const params = schema.parse(req.query);
-  console.log({ params });
   await dataProcessor({
     params,
     runContext: res,

@@ -43,7 +43,6 @@ import {
   toggleNotifyModelVersion,
   unpublishModelVersionById,
   updateModelVersionById,
-  updateModelVersionTrainingStatus,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
@@ -73,7 +72,7 @@ import { createFile } from '../services/model-file.service';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
-import { WorkflowStatus } from '@civitai/client';
+import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -847,23 +846,19 @@ export async function recheckModelVersionTrainingStatusHandler({
     path: { workflowId },
   });
 
-  // Check last job step status
-  const [latestStep] = workflow.steps ?? [];
-  if (!latestStep) throw throwBadRequestError('No steps found for this workflow');
+  if (!workflow.status) throw throwBadRequestError('No workflow status found');
 
-  const [lastJob] = (latestStep.jobs ?? []).slice(-1);
-  if (!lastJob) throw throwBadRequestError('No jobs found for last step of this workflow');
-  if (lastJob.status !== WorkflowStatus.SUCCEEDED)
-    throw throwBadRequestError('Last job not completed');
+  // Use the same update logic as the webhook to ensure consistency
+  const result = await updateTrainingWorkflowRecords(workflow, workflow.status);
 
-  // update training history
-  const { modelFileId } = latestStep.metadata as { modelFileId?: number };
-  if (!modelFileId) throw throwBadRequestError('No modelFileId found');
-
-  const updatedVersion = await updateModelVersionTrainingStatus({
-    id: version.id,
-    trainingStatus: TrainingStatus.InReview,
-    modelFileId,
+  // Return the updated model version
+  const updatedVersion = await getVersionById({
+    id: result.modelVersionId,
+    select: {
+      id: true,
+      name: true,
+      trainingStatus: true,
+    },
   });
 
   return updatedVersion;

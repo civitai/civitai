@@ -80,12 +80,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -161,10 +156,15 @@ import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
-import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  getIsSeedream,
+  seedreamModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
+import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
 
 let total = 0;
 const tips = {
@@ -467,7 +467,7 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2;
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -493,8 +493,8 @@ export function GenerationFormContent() {
         onSubmit={handleSubmit}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
-        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
-          {({ fluxMode, draft, workflow, sourceImage }) => {
+        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'images']}>
+          {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
@@ -535,6 +535,7 @@ export function GenerationFormContent() {
 
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
+            let cfgScaleStep = 0.5;
             if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
@@ -543,6 +544,7 @@ export function GenerationFormContent() {
             if (isZImageTurbo) {
               cfgScaleMin = 1;
               cfgScaleMax = 2;
+              cfgScaleStep = 0.1;
             }
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
@@ -566,7 +568,8 @@ export function GenerationFormContent() {
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
               (isNanoBanana && !isNanoBananaPro) ||
-              isSeedream;
+              isSeedream ||
+              isZImageTurbo;
             const disableWorkflowSelect =
               isFlux ||
               isSD3 ||
@@ -602,8 +605,10 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
-                !isPonyV7) ||
-              isOpenAI ||
+                !isOpenAI &&
+                !isPonyV7 &&
+                !isNanoBanana &&
+                !isSeedream) ||
               isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
@@ -640,9 +645,11 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra ||
-              isImg2Img ||
-              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2);
+              (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
+              !isSeedream &&
+              !isNanoBananaPro &&
+              !isFlux2 &&
+              !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -762,9 +769,7 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={
-                              isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
-                            }
+                            hideVersion={isFluxStandard || isFlux2 || isHiDream || isImageGen}
                             isPreview={isZImageTurbo || isFlux2}
                             pb={
                               unstableResources.length ||
@@ -937,6 +942,19 @@ export function GenerationFormContent() {
                     }}
                   </Watch>
 
+                  {isOpenAI && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...openaiModelVersionToModelMap.entries()].map(([key, { name }]) => ({
+                        value: String(key),
+                        label: name,
+                      }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
                   {isNanoBanana && (
                     <SegmentedControl
                       value={model.id ? String(model.id) : undefined}
@@ -944,6 +962,21 @@ export function GenerationFormContent() {
                         value: String(key),
                         label: name,
                       }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isSeedream && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...seedreamModelVersionToModelMap.entries()].map(
+                        ([key, { name }]) => ({
+                          value: String(key),
+                          label: name,
+                        })
+                      )}
                       onChange={(stringModelId) => {
                         form.setValue('model', { ...model, id: Number(stringModelId) });
                       }}
@@ -1332,7 +1365,9 @@ export function GenerationFormContent() {
                       <Input.Label>Aspect Ratio</Input.Label>
                       <InputSegmentedControl
                         name="aspectRatio"
-                        data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
+                        data={getAspectRatioControls(
+                          getGenerationConfig(baseModel, model.id).aspectRatios
+                        )}
                       />
                     </div>
                   )}
@@ -1385,10 +1420,15 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
+                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
+                  {!disablePriority && (
+                    <InputRequestPriority name="priority" label="Request Priority" />
+                  )}
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
                       variant="contained"
+                      className="mt-5"
                       classNames={{
                         item: classes.accordionItem,
                         control: classes.accordionControl,
@@ -1434,7 +1474,7 @@ export function GenerationFormContent() {
                                     }
                                     min={cfgScaleMin}
                                     max={cfgScaleMax}
-                                    step={0.5}
+                                    step={cfgScaleStep}
                                     precision={1}
                                     sliderProps={sharedSliderProps}
                                     numberProps={sharedNumberProps}
@@ -1631,9 +1671,6 @@ export function GenerationFormContent() {
                         </Accordion.Panel>
                       </Accordion.Item>
                     </PersistentAccordion>
-                  )}
-                  {!disablePriority && (
-                    <InputRequestPriority name="priority" label="Request Priority" />
                   )}
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">

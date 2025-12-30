@@ -49,8 +49,8 @@ export const buzzApiAccountTypes = [
 ] as const;
 
 export type BuzzSpendType = 'blue' | 'green' | 'yellow' | 'red';
-export type BuzzCreatorProgramType = 'creatorprogrambank' | 'creatorprogrambankgreen';
-export type BuzzCashType = 'cashpending' | 'cashsettled';
+export type BuzzCreatorProgramType = 'creatorProgramBank' | 'creatorProgramBankGreen';
+export type BuzzCashType = 'cashPending' | 'cashSettled';
 export type LegacyBuzzType = 'club';
 export type BuzzAccountType =
   | BuzzSpendType
@@ -91,10 +91,10 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
   green: { type: 'spend', value: 'Green', bankable: true, purchasable: true },
   yellow: { type: 'spend', value: 'User', nsfw: true, bankable: true, purchasable: true },
   red: { type: 'spend', value: 'FakeRed', nsfw: true, purchasable: true, disabled: true },
-  creatorprogrambank: { type: 'bank', value: 'CreatorProgramBank' },
-  creatorprogrambankgreen: { type: 'bank', value: 'CreatorProgramBankGreen' },
-  cashpending: { type: 'cash', value: 'CashPending' },
-  cashsettled: { type: 'cash', value: 'CashSettled' },
+  creatorProgramBank: { type: 'bank', value: 'CreatorProgramBank' },
+  creatorProgramBankGreen: { type: 'bank', value: 'CreatorProgramBankGreen' },
+  cashPending: { type: 'cash', value: 'CashPending' },
+  cashSettled: { type: 'cash', value: 'CashSettled' },
   club: { type: 'legacy', value: 'Club' },
 };
 
@@ -169,7 +169,7 @@ export class BuzzTypes {
 }
 
 export const buzzConstants = {
-  minChargeAmount: 500, // $5.00
+  minChargeAmount: 100, // $1.00
   maxChargeAmount: 99999999, // $999,999.99
   cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
   referralBonusAmount: 500,

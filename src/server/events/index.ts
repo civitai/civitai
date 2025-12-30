@@ -364,7 +364,7 @@ export const eventEngine = {
         WHERE toAccountId = ${userId}
         AND fromAccountId = 0
         AND type = 'purchase'
-        AND toAccountType = 'user'
+        AND toAccountType = 'yellow'
         AND date BETWEEN ${startDate} AND ${endDate};
       `) ?? [{ purchased: 0 }];
       userCosmeticData.purchased = purchased;

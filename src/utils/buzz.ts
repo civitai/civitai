@@ -1,13 +1,18 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import type { BuzzTransactionDetails } from '~/server/schema/buzz.schema';
-import { buzzConstants, type BuzzSpendType } from '~/shared/constants/buzz.constants';
+import {
+  buzzConstants,
+  TransactionType,
+  type BuzzSpendType,
+} from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { capitalize } from '~/utils/string-helpers';
 import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 export const parseBuzzTransactionDetails = (
-  details?: BuzzTransactionDetails
+  details?: BuzzTransactionDetails,
+  transactionType?: TransactionType
 ): { url?: string; notification?: string; label?: string } => {
   if (!details) {
     return {
@@ -22,21 +27,35 @@ export const parseBuzzTransactionDetails = (
     details.toAccountType ?? 'Yellow'
   )} Buzz from ${details.user ? `@${details.user}` : 'a user'}`;
 
-  if (!details.entityId || !details.entityType) {
+  // Handle training transactions with workflowId (only for Training type, not Generation)
+  const workflowId = (details as Record<string, unknown>).workflowId;
+  if (
+    transactionType === TransactionType.Training &&
+    typeof workflowId === 'string' &&
+    workflowId
+  ) {
     return {
-      url: fallbackUrl,
-      notification: `${baseNotification}!`,
-      label: 'User',
+      url: `/training/${workflowId}`,
+      notification: '',
+      label: 'Training',
     };
   }
 
-  const { entityId, entityType } = details;
+  if (!details.entityId || !details.entityType) {
+    return {
+      url: details.url || fallbackUrl,
+      notification: `${baseNotification}!`,
+      label: details.url ? 'Details' : 'User',
+    };
+  }
+
+  const { entityId, entityType, url: detailsUrl } = details;
 
   const map: Record<string, { url: string; notification: string; label: string }> = {
     default: {
-      url: fallbackUrl,
+      url: detailsUrl || fallbackUrl,
       notification: `${baseNotification}!`,
-      label: 'User',
+      label: detailsUrl ? 'Details' : 'User',
     },
     Model: {
       url: `/models/${entityId}`,
@@ -67,6 +86,16 @@ export const parseBuzzTransactionDetails = (
       url: `/bounties/${entityId}`,
       label: 'Bounty',
       notification: '', // Bounties won't be used for notifications thus far.
+    },
+    Training: {
+      url: `/model-versions/${entityId}`,
+      label: 'Training',
+      notification: '', // Training transactions don't trigger notifications.
+    },
+    ModelVersion: {
+      url: `/model-versions/${entityId}`,
+      label: 'Model Version',
+      notification: '',
     },
   };
 

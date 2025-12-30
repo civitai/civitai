@@ -166,7 +166,6 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
         }
       }
     } catch (error: any) {
-      console.log({ error });
       setError(error);
     }
     setLoading(false);

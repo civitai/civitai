@@ -88,6 +88,7 @@ import { QS } from '~/utils/qs';
 import { PromoBanner } from '~/components/Buzz/PromoBanner';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
+import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -141,11 +142,7 @@ const BuzzPurchasePaymentButton = ({
     },
   });
 
-  const handleStripeSubmit = async () => {
-    if (!onValidate()) {
-      return;
-    }
-
+  const proceedWithStripePayment = () => {
     if (!currentUser) {
       return;
     }
@@ -171,6 +168,11 @@ const BuzzPurchasePaymentButton = ({
               You are about to purchase{' '}
               <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} type={buzzType} />.
             </Text>
+            {buzzType === 'green' && (
+              <Text size="sm" c="green" fw={500}>
+                Green Buzz can only be used on Civitai.green for Safe-For-Work content.
+              </Text>
+            )}
             <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
@@ -187,6 +189,23 @@ const BuzzPurchasePaymentButton = ({
         },
       },
     });
+  };
+
+  const handleStripeSubmit = async () => {
+    if (!onValidate()) {
+      return;
+    }
+
+    if (!currentUser) {
+      return;
+    }
+
+    // Show acknowledgement modal for green buzz purchases
+    if (buzzType === 'green') {
+      openGreenPurchaseAcknowledgement(proceedWithStripePayment, 'buzz');
+    } else {
+      proceedWithStripePayment();
+    }
   };
 
   const handlePaddleSubmit = async () => {
@@ -356,8 +375,10 @@ export const BuzzPurchaseImproved = ({
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
+  // On green site: default to green
+  // On yellow site: default to yellow (skip the selector entirely)
   const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
-    features.isGreen ? 'green' : initialBuzzType
+    features.isGreen ? 'green' : initialBuzzType ?? 'yellow'
   );
   const ctaEnabled = !!selectedPrice?.unitAmount || (!!customAmount && customAmount > 0);
 

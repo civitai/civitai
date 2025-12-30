@@ -1,6 +1,6 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { env } from 'process';
-import { updateRecords } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
+import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getWorkflowIdFromModelVersion } from '~/server/services/model-version.service';
@@ -51,7 +51,7 @@ export const checkProcessingResourceTrainingV2 = createJob(
             path: { workflowId },
           });
 
-          await updateRecords(workflow, workflow.status ?? 'preparing');
+          await updateTrainingWorkflowRecords(workflow, workflow.status ?? 'preparing');
         } catch (e: unknown) {
           const err = e as Error | undefined;
           logWebhook({

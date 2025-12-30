@@ -1,5 +1,6 @@
 import { Priority } from '@civitai/client';
 import * as z from 'zod';
+import { maxUpscaleSize } from '~/server/common/constants';
 
 export const promptSchema = z
   .string()
@@ -20,8 +21,8 @@ export const sourceImageSchema = z.object({
     .or(z.string().includes('image.civitai.com')),
   width: z.number(),
   height: z.number(),
-  upscaleWidth: z.number().optional(),
-  upscaleHeight: z.number().optional(),
+  upscaleWidth: z.number().max(maxUpscaleSize).optional(),
+  upscaleHeight: z.number().max(maxUpscaleSize).optional(),
 });
 
 export const seedSchema = z.number().nullish();

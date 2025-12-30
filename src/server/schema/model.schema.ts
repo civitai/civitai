@@ -27,6 +27,7 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -35,7 +36,12 @@ import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
-  allowCommercialUse: z.enum(CommercialUse).array().optional(),
+  allowCommercialUse: z
+    .preprocess((val) => {
+      if (!val) return undefined;
+      return Array.isArray(val) ? val : [val];
+    }, z.enum(CommercialUse).array().optional())
+    .optional(),
   allowDerivatives: z.boolean().optional(),
   allowDifferentLicense: z.boolean().optional(),
 });
@@ -180,7 +186,8 @@ export const modelGallerySettingsInput = z.object({
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
-export const modelUpsertSchema = licensingSchema.extend({
+export const modelUpsertSchema = z.object({
+  ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema().nullish(),
@@ -401,4 +408,26 @@ export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
   dateTo: z.date().optional(),
   cannotPublish: z.boolean().optional(),
   workflowId: z.string().optional(),
+});
+
+// Training models list schema with filtering and sorting
+export const trainingModelsSortOptions = [
+  'startDesc',
+  'startAsc',
+  'createdDesc',
+  'createdAsc',
+  'endDesc',
+  'endAsc',
+  'updatedDesc',
+  'updatedAsc',
+] as const;
+export type TrainingModelsSort = (typeof trainingModelsSortOptions)[number];
+
+export type GetMyTrainingModelsSchema = z.infer<typeof getMyTrainingModelsSchema>;
+export const getMyTrainingModelsSchema = paginationSchema.extend({
+  query: z.string().optional(),
+  trainingStatus: z.array(z.enum(TrainingStatus)).optional(),
+  baseModel: z.string().optional(),
+  type: z.string().optional(),
+  sort: z.enum(trainingModelsSortOptions).default('startDesc'),
 });

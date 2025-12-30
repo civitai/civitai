@@ -11,6 +11,7 @@ import { defaultCatch } from '~/utils/zod-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
+const transformationSchema = z.looseObject({ type: z.string() });
 
 export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
@@ -55,7 +56,8 @@ export const textToImageParamsSchema = z.object({
   openAITransparentBackground: z.boolean().optional(),
   process: z.string().optional(),
   enhancedCompatibility: z.boolean().optional(),
-  outputFormat: z.string().optional(),
+  outputFormat: z.enum(['png', 'jpeg']).optional(),
+  transformations: transformationSchema.array().optional(),
 });
 
 // #endregion
@@ -89,6 +91,7 @@ export const generatedImageStepMetadataSchema = z.object({
   params: textToImageParamsSchema.optional(),
   resources: workflowResourceSchema.array().optional(),
   remixOfId: z.number().optional(),
+  transformations: transformationSchema.array().optional(),
   images: z.record(z.string(), textToImageStepImageMetadataSchema).optional(),
 });
 // #endregion

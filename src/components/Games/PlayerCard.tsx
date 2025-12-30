@@ -1,6 +1,7 @@
 import type { MantineSize, PaperProps } from '@mantine/core';
-import { Paper, ThemeIcon, Tooltip } from '@mantine/core';
+import { Paper, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconFlame, IconHeart, IconMoneybag, IconSword } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -48,6 +49,8 @@ export function PlayerCard({
   exp,
   fervor,
   blessedBuzz,
+  pendingBlessedBuzz,
+  nextGrantDate,
   smites = 0,
   leaderboard,
   showStats,
@@ -90,7 +93,6 @@ export function PlayerCard({
                     size="sm"
                     color="red"
                     className="text-red-500"
-                    // @ts-ignore: this works
                     variant="transparent"
                   >
                     <IconHeart size={16} stroke={1.5} fill="currentColor" />
@@ -109,7 +111,9 @@ export function PlayerCard({
           total={exp}
           icon={<IconSword size={18} stroke={1.5} />}
         />
-        {showStats && <PlayerStats stats={{ fervor, blessedBuzz, smites }} />}
+        {showStats && (
+          <PlayerStats stats={{ fervor, blessedBuzz, smites, pendingBlessedBuzz, nextGrantDate }} />
+        )}
       </div>
     </Paper>
   );
@@ -142,7 +146,13 @@ export function PlayerStats({
   showSmiteCount?: boolean;
 }) {
   const iconSize = iconSizes[size] || iconSizes.lg;
-  const totalBuzz = Math.floor(stats.blessedBuzz * newOrderConfig.blessedBuzzConversionRatio);
+  const totalAccumulatedBuzz = Math.floor(
+    stats.blessedBuzz * newOrderConfig.blessedBuzzConversionRatio
+  );
+  const pendingBuzzAmount = Math.floor(
+    (stats.pendingBlessedBuzz ?? 0) * newOrderConfig.blessedBuzzConversionRatio
+  );
+  const futureGrantsBuzz = totalAccumulatedBuzz - pendingBuzzAmount;
 
   return (
     <div className="flex items-center gap-1">
@@ -155,12 +165,45 @@ export function PlayerStats({
         {abbreviateNumber(stats.blessedBuzz)}
       </IconBadge>
       <IconBadge
-        tooltip={`Total Buzz: ${numberWithCommas(totalBuzz)}`}
+        tooltip={
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>
+              Yellow Buzz Breakdown
+            </Text>
+            <Stack gap={2}>
+              {pendingBuzzAmount > 0 && (
+                <Text size="xs">
+                  Next Grant: <strong>{numberWithCommas(pendingBuzzAmount)}</strong> (
+                  {stats.nextGrantDate
+                    ? dayjs(stats.nextGrantDate).format('MMM D, HH:mm')
+                    : 'next cycle'}{' '}
+                  UTC)
+                </Text>
+              )}
+              {futureGrantsBuzz > 0 && (
+                <Text size="xs">
+                  Future Grants: <strong>{numberWithCommas(futureGrantsBuzz)}</strong> (after 3-day
+                  waiting period, subject to change based on vote accuracy)
+                </Text>
+              )}
+              <Text
+                size="xs"
+                c="dimmed"
+                style={{ borderTop: '1px solid var(--mantine-color-dark-4)', paddingTop: '4px' }}
+              >
+                Total Accumulated: <strong>{numberWithCommas(totalAccumulatedBuzz)}</strong>
+              </Text>
+              <Text size="xs" c="dimmed" fs="italic">
+                Buzz is granted after judgments age 3 days
+              </Text>
+            </Stack>
+          </Stack>
+        }
         size={size}
         color="yellow.7"
         icon={<CurrencyIcon currency={Currency.BUZZ} type="yellow" size={iconSize} stroke={1.5} />}
       >
-        {abbreviateNumber(totalBuzz)}
+        {abbreviateNumber(totalAccumulatedBuzz)}
       </IconBadge>
       <IconBadge
         tooltip={`Total Fervor: ${numberWithCommas(stats.fervor)}`}

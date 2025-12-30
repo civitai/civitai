@@ -29,7 +29,7 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { DragEvent } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -86,11 +86,12 @@ import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButt
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { getSourceImageFromUrl } from '~/utils/image-utils';
 import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
+import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
 };
 
 export function GeneratedImage({
@@ -101,7 +102,7 @@ export function GeneratedImage({
 }: {
   image: NormalizedGeneratedImage;
   request: Omit<NormalizedGeneratedImageResponse, 'steps'>;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
   isLightbox?: boolean;
 }) {
   const [ref, inView] = useInViewDynamic({ id: image.id });
@@ -206,7 +207,8 @@ export function GeneratedImage({
   if (image.status !== 'succeeded') return <></>;
 
   function handleDataTransfer(e: DragEvent<HTMLVideoElement> | DragEvent<HTMLImageElement>) {
-    const url = e.currentTarget.currentSrc;
+    // Always use full quality URL for drag and drop, not the preview
+    const url = image.url;
     const meta = getStepMeta(step);
     if (meta) mediaDropzoneData.setData(url, meta);
     e.dataTransfer.setData('text/uri-list', url);
@@ -218,6 +220,30 @@ export function GeneratedImage({
 
   function handleDragImage(e: DragEvent<HTMLImageElement>) {
     handleDataTransfer(e);
+  }
+
+  function handleContextMenu(e: MouseEvent<HTMLImageElement | HTMLVideoElement>) {
+    // Swap to full quality URL before context menu shows
+    // so "Save Image As" saves the full quality version
+    const element = e.currentTarget;
+    const previewUrl = image.previewUrl ?? image.url;
+
+    if (image.previewUrl && 'src' in element) {
+      element.src = image.url;
+
+      // Restore preview after context menu closes
+      const restore = () => {
+        element.src = previewUrl;
+        document.removeEventListener('click', restore);
+        document.removeEventListener('keydown', restore);
+      };
+
+      // Delay listener attachment to allow context menu to process
+      setTimeout(() => {
+        document.addEventListener('click', restore, { once: true });
+        document.addEventListener('keydown', restore, { once: true });
+      }, 0);
+    }
   }
 
   function handleToggleSelect(value = !selected) {
@@ -235,7 +261,8 @@ export function GeneratedImage({
         <>
           {
             <EdgeMedia2
-              src={image.url}
+              // Use previewUrl for rendering in queue (smaller/faster), but full url for lightbox
+              src={isLightbox ? image.url : (image.previewUrl ?? image.url)}
               type={image.type}
               alt=""
               className={clsx('max-h-full min-h-0 w-auto max-w-full', {
@@ -244,11 +271,13 @@ export function GeneratedImage({
               })}
               onClick={handleImageClick}
               onMouseDown={(e) => {
+                // Always use full url when opening in new tab
                 if (e.button === 1) return handleAuxClick(image.url);
               }}
               wrapperProps={{
                 onClick: handleImageClick,
                 onMouseDown: (e) => {
+                  // Always use full url when opening in new tab
                   if (e.button === 1) return handleAuxClick(image.url);
                 },
               }}
@@ -258,9 +287,11 @@ export function GeneratedImage({
               disablePoster
               imageProps={{
                 onDragStart: handleDragImage,
+                onContextMenu: handleContextMenu,
               }}
               videoProps={{
                 onDragStart: handleDragVideo,
+                onContextMenu: handleContextMenu,
                 draggable: true,
                 autoPlay: true,
               }}
@@ -403,9 +434,9 @@ export function GeneratedImageLightbox({ image }: { image: NormalizedGeneratedIm
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
-  const images = steps.flatMap((step) =>
-    step.images
-      .filter((x) => x.status === 'succeeded')
+  const images = steps.flatMap(({ images, ...step }) =>
+    images
+      .filter((x) => x.status === 'succeeded' && !x.blockedReason)
       .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
   const workflows = requests?.map(({ steps, ...workflow }) => workflow) ?? [];
@@ -494,7 +525,7 @@ function GeneratedImageWorkflowMenuItems({
   isBlocked,
 }: {
   image: NormalizedGeneratedImage;
-  step: NormalizedGeneratedImageStep;
+  step: Omit<NormalizedGeneratedImageStep, 'images'>;
   workflowId: string;
   workflowsOnly?: boolean;
   isBlocked?: boolean;
@@ -508,14 +539,17 @@ function GeneratedImageWorkflowMenuItems({
 
   const isVideo = step.$type === 'videoGen';
   const isImageGen = step.resources.some((r) => getModelVersionUsesImageGen(r.id));
+  const baseModel = 'baseModel' in step.params ? step.params.baseModel : undefined;
   const isOpenAI = !isVideo && step.params.engine === 'openai';
+  const isNanoBanana = baseModel === 'NanoBanana';
+  const isSeedream = baseModel === 'Seedream';
   const isFluxKontext = getIsFluxContextFromEngine(step.params.engine);
-  const isQwen = !isVideo && getIsQwen(step.params.baseModel);
-  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
-  const isHiDream = !isVideo && getIsHiDream(step.params.baseModel);
-  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
+  const isQwen = !isVideo && getIsQwen(baseModel);
+  const isFlux = !isVideo && getIsFlux(baseModel);
+  const isHiDream = !isVideo && getIsHiDream(baseModel);
+  const isSD3 = !isVideo && getIsSD3(baseModel);
   const isPonyV7 = step.resources.some((x) => getIsPonyV7(x.id));
-  const isZImageTurbo = !isVideo && getIsZImageTurbo(step.params.baseModel);
+  const isZImageTurbo = !isVideo && getIsZImageTurbo(baseModel);
   const canImg2Img =
     !isQwen &&
     !isFlux &&
@@ -526,7 +560,7 @@ function GeneratedImageWorkflowMenuItems({
     !isPonyV7 &&
     !isZImageTurbo;
 
-  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext;
+  const canImg2ImgNoWorkflow = isOpenAI || isFluxKontext || isNanoBanana || isSeedream;
   const img2imgWorkflows =
     !isVideo && !isBlocked
       ? workflowDefinitions.filter(
@@ -678,6 +712,16 @@ function GeneratedImageWorkflowMenuItems({
     });
   }
 
+  function handleVideoInterpolation() {
+    dialogStore.trigger({
+      component: VideoInterpolationModal,
+      props: {
+        videoUrl: image.url,
+        metadata: step.metadata,
+      },
+    });
+  }
+
   function handleDeleteImage() {
     openConfirmModal({
       title: 'Delete image',
@@ -761,14 +805,23 @@ function GeneratedImageWorkflowMenuItems({
           <Menu.Item onClick={handleImg2Vid}>Image To Video</Menu.Item>
         </>
       )}
-      {/* {!isBlocked && step.$type === 'videoGen' && (
+      {!isBlocked && step.$type === 'videoGen' && (
         <>
           <Menu.Divider />
           <Menu.Item onClick={handleUpscaleVideo} className="flex items-center gap-1">
-            Upscale <Badge color="yellow">Preview</Badge>
+            Upscale{' '}
+            <Badge color="yellow" className="ml-1">
+              Preview
+            </Badge>
+          </Menu.Item>
+          <Menu.Item onClick={handleVideoInterpolation} className="flex items-center gap-1">
+            Interpolation{' '}
+            <Badge color="yellow" className="ml-1">
+              Preview
+            </Badge>
           </Menu.Item>
         </>
-      )} */}
+      )}
       {!workflowsOnly && (
         <>
           <Menu.Divider />

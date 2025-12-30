@@ -11,6 +11,7 @@ import type {
   VideoBlob,
   NsfwLevel,
   VideoUpscalerStep,
+  VideoInterpolationStep,
 } from '@civitai/client';
 import type { SessionUser } from 'next-auth';
 import type * as z from 'zod';
@@ -80,7 +81,8 @@ type WorkflowStepAggregate =
   | TextToImageStep
   | VideoGenStep
   | VideoEnhancementStep
-  | VideoUpscalerStep;
+  | VideoUpscalerStep
+  | VideoInterpolationStep;
 
 // Re-export for backward compatibility
 export { createOrchestratorClient, internalOrchestratorClient };
@@ -263,6 +265,7 @@ export async function parseGenerateImageInput({
   if (isZImageTurbo) {
     originalParams.sampler = 'undefined';
     originalParams.draft = false;
+    delete originalParams.negativePrompt;
   }
 
   const isFlux2 = getIsFlux2(originalParams.baseModel);
@@ -514,6 +517,7 @@ function formatWorkflowStep(args: {
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':
+    case 'videoInterpolation':
       return formatVideoGenStep(args);
     default:
       throw new Error(
@@ -763,6 +767,7 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':
+    case 'videoInterpolation':
       return step.output?.video ? [{ ...step.output.video, type: 'video' }] : undefined;
   }
 }
@@ -781,6 +786,8 @@ export interface NormalizedWorkflowStepOutput {
   jobId?: string | null;
   nsfwLevel?: NsfwLevel;
   blockedReason?: string | null;
+  previewUrl?: string | null;
+  previewUrlExpiresAt?: string | null;
 }
 
 function formatWorkflowStepOutput({

@@ -8,13 +8,17 @@ import { workflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.
 import { uniqBy } from 'lodash-es';
 
 export async function getWorkflowDefinitions() {
-  const workflowsJsons = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.WORKFLOWS);
-  if (!workflowsJsons) throw new Error('No workflows found');
-  const uniqueWorkflows = uniqBy(
-    [...Object.values(workflowsJsons).map((val) => JSON.parse(val)), ...workflowDefinitions],
-    'key'
-  ) as WorkflowDefinition[];
-  const workflows = uniqueWorkflows.map((workflow) => ({
+  // const workflowsJsons = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.WORKFLOWS);
+  // if (!workflowsJsons) throw new Error('No workflows found');
+  // const uniqueWorkflows = uniqBy(
+  //   [...Object.values(workflowsJsons).map((val) => JSON.parse(val)), ...workflowDefinitions],
+  //   'key'
+  // ) as WorkflowDefinition[];
+  // const workflows = uniqueWorkflows.map((workflow) => ({
+  //   ...workflow,
+  //   label: `${workflowDefinitionLabel[workflow.type]} ${workflow.name}`.trim(),
+  // }));
+  const workflows = workflowDefinitions.map((workflow) => ({
     ...workflow,
     label: `${workflowDefinitionLabel[workflow.type]} ${workflow.name}`.trim(),
   }));
@@ -30,10 +34,11 @@ export async function clearWorkflowDefinitions() {
 }
 
 export async function getWorkflowDefinition(key: string) {
-  const workflowJson = await sysRedis.hGet(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, key);
-  const workflow = workflowJson
-    ? (JSON.parse(workflowJson) as WorkflowDefinition)
-    : workflowDefinitions.find((x) => x.key === key);
+  // const workflowJson = await sysRedis.hGet(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, key);
+  // const workflow = workflowJson
+  //   ? (JSON.parse(workflowJson) as WorkflowDefinition)
+  //   : workflowDefinitions.find((x) => x.key === key);
+  const workflow = workflowDefinitions.find((x) => x.key === key);
   if (!workflow) throw new Error('Workflow not found');
   return workflow;
 }

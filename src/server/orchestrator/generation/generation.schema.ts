@@ -2,6 +2,7 @@ import * as z from 'zod';
 import type { VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { imageUpscalerSchema } from '~/server/orchestrator/image-upscaler/image-upscaler';
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
+import { videoInterpolationSchema } from '~/server/orchestrator/video-interpolation/video-interpolation';
 import { videoUpscalerSchema } from '~/server/orchestrator/video-upscaler/video-upscaler.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { isDefined } from '~/utils/type-guards';
@@ -25,6 +26,10 @@ const generationDataSchema = z.discriminatedUnion('$type', [
   z.object({
     $type: z.literal('videoUpscaler'),
     data: videoUpscalerSchema,
+  }),
+  z.object({
+    $type: z.literal('videoInterpolation'),
+    data: videoInterpolationSchema,
   }),
   // z.object({
   //   $type: 'imageUpscaler',
@@ -50,6 +55,7 @@ export function getGenerationTags(args: GenerationDataSchema) {
   switch (args.$type) {
     case 'videoUpscaler':
     case 'videoEnhancement':
+    case 'videoInterpolation':
       tags.push(WORKFLOW_TAGS.VIDEO);
       break;
     case 'videoGen':

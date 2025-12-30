@@ -472,6 +472,7 @@ const createUserContentCountCache = <T extends Record<string, any>>(
     key: `${REDIS_KEYS.CACHES.OVERVIEW_USERS}:${counterName}`,
     idKey: 'id',
     ttl: CacheTTL.day,
+    cacheNotFound: false,
     lookupFn: async (ids) => {
       const goodIds = ids.filter(isDefined);
       if (!goodIds.length) return {};

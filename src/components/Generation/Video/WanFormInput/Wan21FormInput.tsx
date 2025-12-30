@@ -60,8 +60,6 @@ export function Wan21FormInput() {
 
   const resources = baseModel ? getGenerationBaseModelResourceOptions(baseModel) : [];
 
-  console.log({ config });
-
   return (
     <>
       <InputVideoProcess name="process" />

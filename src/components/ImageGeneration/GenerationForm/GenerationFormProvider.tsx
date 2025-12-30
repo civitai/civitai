@@ -8,7 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { constants, generation, getGenerationConfig } from '~/server/common/constants';
+import { generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   GenerationData,
@@ -17,9 +17,7 @@ import type {
 import {
   fluxKreaAir,
   fluxModeOptions,
-  fluxModelId,
   fluxStandardAir,
-  generationSamplers,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getClosestAspectRatio,
@@ -74,7 +72,7 @@ function createFormSchema(domainColor: string) {
       const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
       const { height, width } = isFluxUltra
         ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
-        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel, data.model.id);
 
       return removeEmpty({
         ...data,
@@ -144,7 +142,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
-  const config = getGenerationConfig(baseModel);
+  const config = getGenerationConfig(baseModel, checkpoint?.id);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
   if (
@@ -164,7 +162,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
 
   if (
     params.sampler === 'undefined' ||
-    (params.sampler && !(generationSamplers as string[]).includes(params.sampler))
+    (params.sampler && !(generation.samplers as string[]).includes(params.sampler))
   )
     params.sampler = defaultValues.sampler;
 
@@ -283,7 +281,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     setTimeout(() => {
-      console.log('set form values');
       setValues(form.getValues());
     }, 0);
   }, []);

@@ -14,9 +14,11 @@ import {
 import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import { trpc } from '~/utils/trpc';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -215,6 +217,9 @@ export const ModelSelect = ({
   const status = useTrainingServiceStatus();
   const features = useFeatureFlags();
 
+  // Fetch moderator-editable announcement
+  const { data: announcement } = trpc.training.getAnnouncement.useQuery();
+
   const { updateRun } = trainingStore;
   const blockedModels = status.blockedModels ?? [blockedCustomModels];
 
@@ -355,6 +360,16 @@ export const ModelSelect = ({
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
             <Stack gap="xs">
+              {announcement?.message && (
+                <AlertWithIcon
+                  icon={<IconExclamationCircle size={16} />}
+                  iconColor={announcement.color || 'yellow'}
+                  color={announcement.color || 'yellow'}
+                  size="sm"
+                >
+                  <CustomMarkdown>{announcement.message}</CustomMarkdown>
+                </AlertWithIcon>
+              )}
               {mediaType === 'image' && (
                 <>
                   <ModelSelector

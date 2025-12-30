@@ -133,7 +133,10 @@ export function AddUserContentModal({ collectionId }: Props) {
   };
 
   const uploading = files.some((file) => file.status === 'uploading');
-  const loading = uploading || addSimpleImagePostCollectionMutation.isLoading;
+  const loading =
+    uploading ||
+    addSimpleImagePostCollectionMutation.isLoading ||
+    saveCollectionItemsMutation.isLoading;
   const availableTags = (collection?.tags ?? []).filter((t) => !t.filterableOnly);
 
   return (
@@ -154,7 +157,7 @@ export function AddUserContentModal({ collectionId }: Props) {
         </Button>
 
         <Divider label="or select from your library" labelPosition="center" />
-        <ScrollAreaProvider style={{ maxHeight: '500px', overflowY: 'auto' }}>
+        <ScrollAreaProvider style={{ maxHeight: '440px', overflowY: 'auto' }}>
           <MasonryProvider
             columnWidth={constants.cardSizes.image}
             maxColumnCount={4}

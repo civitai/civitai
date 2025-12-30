@@ -165,7 +165,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
-  const allowCommercialUse = form.watch('allowCommercialUse');
+  const allowCommercialUse = form.watch('allowCommercialUse') as CommercialUse[] | undefined;
   const availability = form.watch('availability');
   const isPrivate = availability === Availability.Private;
   const hasPoiInNsfw = nsfw && poi === 'true';

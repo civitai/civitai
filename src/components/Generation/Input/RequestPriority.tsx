@@ -56,7 +56,7 @@ export function RequestPriority({
   return (
     <Input.Wrapper label={label}>
       <Listbox value={value} onChange={handleChange}>
-        <div className="relative mt-2">
+        <div className="relative">
           <ListboxButton
             className={clsx(
               'grid w-full cursor-default grid-cols-1 rounded-md py-1.5 pl-3 pr-2 text-left outline outline-1 -outline-offset-1 focus:outline focus:outline-2 focus:-outline-offset-2  sm:text-sm/6',

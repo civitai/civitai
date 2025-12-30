@@ -1,12 +1,15 @@
 import type { SeedreamImageGenInput, SeedreamVersion } from '@civitai/client';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
-type SeedreamModel = (typeof seedreamModels)[number];
-export const seedreamModels: SeedreamVersion[] = ['v3', 'v4'];
+export const seedreamModels: SeedreamVersion[] = ['v3', 'v4', 'v4.5'];
 
-export const seedreamModelVersionToModelMap = new Map<number, SeedreamModel>([
-  [2208174, 'v3'],
-  [2208278, 'v4'],
+export const seedreamModelVersionToModelMap = new Map<
+  number,
+  { version: SeedreamVersion; name: string }
+>([
+  [2208174, { version: 'v3', name: 'v3' }],
+  [2208278, { version: 'v4', name: 'v4' }],
+  [2470991, { version: 'v4.5', name: 'v4.5' }],
 ]);
 
 export function getIsSeedream(modelVersionId?: number) {
@@ -29,10 +32,10 @@ export const seedreamConfig = ImageGenConfig({
     };
   },
   inputFn: ({ params, resources }): SeedreamImageGenInput => {
-    let version: SeedreamVersion = 'v4';
+    let version: SeedreamVersion = 'v4.5';
     for (const resource of resources) {
       const match = seedreamModelVersionToModelMap.get(resource.id);
-      if (match) version = match;
+      if (match) version = match.version;
     }
 
     return {

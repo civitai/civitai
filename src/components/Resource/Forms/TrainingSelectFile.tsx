@@ -320,7 +320,35 @@ export default function TrainingSelectFile({
   };
 
   // you should only be able to get to this screen after having created a model, version, and uploading a training set
-  if (!model || !modelVersion || !modelFile) {
+  if (!model || !modelVersion) {
+    return <NotFound />;
+  }
+
+  // Check if training files have been purged (completed training but no training data file)
+  const trainingCompleted =
+    modelVersion.trainingStatus === TrainingStatus.InReview ||
+    modelVersion.trainingStatus === TrainingStatus.Approved ||
+    modelVersion.trainingStatus === TrainingStatus.Failed;
+
+  if (!modelFile && trainingCompleted) {
+    return (
+      <Stack p="xl" align="center" gap="md">
+        <IconAlertCircle size={52} color="var(--mantine-color-yellow-6)" />
+        <Title order={3}>Training Files Expired</Title>
+        <Text ta="center" maw={500}>
+          Your training files have been automatically removed after 30 days. This includes all epoch
+          files and sample images. If you haven&apos;t published your model yet, you&apos;ll need to
+          start a new training run.
+        </Text>
+        <Text ta="center" c="dimmed" size="sm">
+          To avoid this in the future, make sure to publish or download your trained model within 30
+          days of completion.
+        </Text>
+      </Stack>
+    );
+  }
+
+  if (!modelFile) {
     return <NotFound />;
   }
 
