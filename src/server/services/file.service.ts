@@ -252,6 +252,7 @@ export const getFileForModelVersion = async ({
         overrideName: true,
         type: true,
         metadata: true,
+        sizeKB: true,
         hashes: { select: { hash: true }, where: { type: 'SHA256' } },
       },
     });
@@ -280,6 +281,7 @@ export const getFileForModelVersion = async ({
       inEarlyAccess,
       metadata: file.metadata as FileMetadata,
       isDownloadable,
+      sizeKB: file.sizeKB,
     };
   } catch (error) {
     return { status: 'error' };
@@ -353,6 +355,7 @@ type ModelVersionFileResult =
       inEarlyAccess: boolean;
       metadata: FileMetadata;
       isDownloadable?: boolean;
+      sizeKB?: number | null;
     };
 
 type FileResult = {
@@ -365,4 +368,5 @@ type FileResult = {
     hash: string;
   }[];
   url: string;
+  sizeKB?: number | null;
 };

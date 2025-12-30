@@ -160,6 +160,7 @@ export default PublicEndpoint(
         nsfw: fileResult.nsfw,
         earlyAccess: fileResult.inEarlyAccess,
         time: now,
+        sizeKB: fileResult.sizeKB,
       });
 
       // Increment download count for user
