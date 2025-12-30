@@ -59,6 +59,67 @@ export const textToImageParamsSchema = z.object({
           originalWidth: z.number(),
           originalHeight: z.number(),
           compositeUrl: z.string(),
+          lines: z.array(
+            z.discriminatedUnion('type', [
+              // Line element (brush/eraser)
+              z.object({
+                type: z.literal('line'),
+                id: z.string().optional(),
+                tool: z.enum(['brush', 'eraser']),
+                points: z.array(z.number()),
+                color: z.string(),
+                strokeWidth: z.number(),
+              }),
+              // Rectangle element
+              z.object({
+                type: z.literal('rectangle'),
+                id: z.string().optional(),
+                x: z.number(),
+                y: z.number(),
+                width: z.number(),
+                height: z.number(),
+                color: z.string(),
+                strokeWidth: z.number(),
+                rotation: z.number().optional(),
+              }),
+              // Circle/ellipse element
+              z.object({
+                type: z.literal('circle'),
+                id: z.string().optional(),
+                x: z.number(),
+                y: z.number(),
+                radiusX: z.number(),
+                radiusY: z.number(),
+                color: z.string(),
+                strokeWidth: z.number(),
+                rotation: z.number().optional(),
+              }),
+              // Arrow element
+              z.object({
+                type: z.literal('arrow'),
+                id: z.string().optional(),
+                points: z.array(z.number()),
+                color: z.string(),
+                strokeWidth: z.number(),
+                rotation: z.number().optional(),
+              }),
+              // Text element
+              z.object({
+                type: z.literal('text'),
+                id: z.string().optional(),
+                x: z.number(),
+                y: z.number(),
+                text: z.string(),
+                fontSize: z.number(),
+                color: z.string(),
+                strokeWidth: z.number(),
+                rotation: z.number().optional(),
+                scaleX: z.number().optional(),
+                scaleY: z.number().optional(),
+                width: z.number().optional(),
+              }),
+            ])
+          ),
         })
       )
       .nullable(),

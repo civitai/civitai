@@ -1,16 +1,78 @@
 import type Konva from 'konva';
+import type { DrawingElement, DrawingLineElement, DrawingLineInput } from './drawing.types';
 
-/** Preset colors for drawing guidance (ControlNet scribble-style) */
+// #region ID Generation
+
+let elementIdCounter = 0;
+
+/**
+ * Generate a unique ID for drawing elements
+ */
+export function generateElementId(): string {
+  elementIdCounter += 1;
+  return `element-${Date.now()}-${elementIdCounter}`;
+}
+
+// #endregion
+
+/**
+ * Check if an element type is transformable (can be moved/resized)
+ * Lines are NOT transformable as they are freehand drawings
+ */
+export function isTransformableElement(el: DrawingElement): boolean {
+  return el.type !== 'line';
+}
+
+// #region Normalization
+
+/**
+ * Normalize legacy DrawingLine (without 'type' field) to DrawingLineElement
+ * Also ensures all elements have an ID
+ */
+export function normalizeElement(input: DrawingLineInput): DrawingElement {
+  // If already has 'type', it's a new format element (DrawingElement or DrawingElementSchema)
+  if ('type' in input) {
+    // Ensure it has an ID - always spread to guarantee id is set
+    const id = input.id || generateElementId();
+    return { ...input, id } as DrawingElement;
+  }
+  // Legacy format - convert to new format with type discriminator and ID
+  return {
+    type: 'line',
+    id: generateElementId(),
+    tool: input.tool,
+    points: input.points,
+    color: input.color,
+    strokeWidth: input.strokeWidth,
+  };
+}
+
+/**
+ * Normalize array of inputs (handles both legacy and new formats)
+ */
+export function normalizeElements(inputs: DrawingLineInput[]): DrawingElement[] {
+  return inputs.map(normalizeElement);
+}
+
+// #endregion
+
+/** Preset colors for drawing guidance (Mantine default theme colors) */
 export const DRAWING_COLORS = [
-  { color: '#FF0000', label: 'Red' },
-  { color: '#00FF00', label: 'Green' },
-  { color: '#0000FF', label: 'Blue' },
-  { color: '#FFFF00', label: 'Yellow' },
+  { color: '#fa5252', label: 'Red' },
+  { color: '#40c057', label: 'Green' },
+  { color: '#228be6', label: 'Blue' },
+  { color: '#fab005', label: 'Yellow' },
   { color: '#000000', label: 'Black' },
-  { color: '#FFFFFF', label: 'White' },
+  { color: '#ffffff', label: 'White' },
 ] as const;
 
-export const DEFAULT_BRUSH_SIZE = 15;
+/** Extended color swatches for the ColorPicker dropdown (Mantine theme colors) */
+export const EXTENDED_COLOR_SWATCHES = [
+  '#fa5252', '#e64980', '#be4bdb', '#7950f2', '#4c6ef5', '#228be6',
+  '#15aabf', '#12b886', '#40c057', '#82c91e', '#fab005', '#fd7e14',
+];
+
+export const DEFAULT_BRUSH_SIZE = 10;
 export const MIN_BRUSH_SIZE = 5;
 export const MAX_BRUSH_SIZE = 50;
 export const DEFAULT_BRUSH_COLOR = DRAWING_COLORS[0].color;

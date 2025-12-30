@@ -1,8 +1,18 @@
-import { ActionIcon, Tooltip, Popover, Slider, ColorSwatch } from '@mantine/core';
-import { IconBrush, IconEraser, IconArrowBackUp, IconTrash, IconCheck } from '@tabler/icons-react';
+import { ActionIcon, Tooltip, Popover, Slider, ColorPicker, TextInput } from '@mantine/core';
+import {
+  IconBrush,
+  IconEraser,
+  IconArrowBackUp,
+  IconTrash,
+  IconSquare,
+  IconCircle,
+  IconArrowNarrowRight,
+  IconTypography,
+  IconPointer,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { DrawingToolbarProps } from './drawing.types';
-import { DRAWING_COLORS, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE } from './drawing.utils';
+import { EXTENDED_COLOR_SWATCHES, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
 
 export function DrawingToolbar({
@@ -16,17 +26,31 @@ export function DrawingToolbar({
   onUndo,
   canUndo,
 }: DrawingToolbarProps) {
+  // Show colors for all tools except eraser and select
+  const showColors = tool !== 'eraser' && tool !== 'select';
+  // Show size slider for stroke-based tools (not text or select)
+  const showSizeSlider = tool !== 'text' && tool !== 'select';
+
   return (
     <div className={styles.toolbar}>
       <div className={styles.toolbarInner}>
-        {/* Tool Selection */}
+        {/* Selection Tool */}
+        <div className={styles.toolbarSection}>
+          <ToolButton
+            icon={<IconPointer size={18} />}
+            label="Select (move/resize)"
+            active={tool === 'select'}
+            onClick={() => onToolChange('select')}
+          />
+        </div>
+
+        {/* Drawing Tools Section */}
         <div className={styles.toolbarSection}>
           <ToolButton
             icon={<IconBrush size={18} />}
             label="Brush"
             active={tool === 'brush'}
             onClick={() => onToolChange('brush')}
-            activeColor={brushColor}
           />
           <ToolButton
             icon={<IconEraser size={18} />}
@@ -36,97 +60,159 @@ export function DrawingToolbar({
           />
         </div>
 
-        {/* Brush Size with Visual Preview */}
-        <Popover
-          width={200}
-          position="top"
-          withArrow
-          shadow="md"
-          radius="md"
-          classNames={{ dropdown: styles.sizePopover }}
-        >
-          <Popover.Target>
-            <div className={styles.toolbarSectionPadded}>
-              <Tooltip label={`Size: ${brushSize}px`} withArrow>
-                <button className={styles.sizeButton}>
-                  {/* Visual size preview circle */}
-                  <div
-                    className="rounded-full"
-                    style={{
-                      width: Math.max(4, Math.min(24, brushSize * 0.6)),
-                      height: Math.max(4, Math.min(24, brushSize * 0.6)),
-                      backgroundColor:
-                        tool === 'brush' ? brushColor : 'var(--mantine-color-gray-5)',
-                    }}
-                  />
-                </button>
-              </Tooltip>
-            </div>
-          </Popover.Target>
-          <Popover.Dropdown>
-            <div className={styles.sizePopoverContent}>
-              <div className={styles.sizePopoverHeader}>
-                <span className={styles.sizePopoverLabel}>Brush Size</span>
-                <span className={styles.sizePopoverValue}>{brushSize}px</span>
-              </div>
-              <Slider
-                value={brushSize}
-                onChange={onBrushSizeChange}
-                min={MIN_BRUSH_SIZE}
-                max={MAX_BRUSH_SIZE}
-                step={1}
-                size="sm"
-                color="blue"
-              />
-              {/* Size presets */}
-              <div className={styles.sizePresets}>
-                {[5, 15, 25, 40].map((size) => (
-                  <button
-                    key={size}
-                    onClick={() => onBrushSizeChange(size)}
-                    className={clsx(
-                      styles.sizePresetButton,
-                      brushSize === size && styles.sizePresetButtonActive
-                    )}
-                  >
+        {/* Shape Tools Section */}
+        <div className={styles.toolbarSection}>
+          <ToolButton
+            icon={<IconSquare size={18} />}
+            label="Rectangle"
+            active={tool === 'rectangle'}
+            onClick={() => onToolChange('rectangle')}
+          />
+          <ToolButton
+            icon={<IconCircle size={18} />}
+            label="Circle"
+            active={tool === 'circle'}
+            onClick={() => onToolChange('circle')}
+          />
+          <ToolButton
+            icon={<IconArrowNarrowRight size={18} />}
+            label="Arrow"
+            active={tool === 'arrow'}
+            onClick={() => onToolChange('arrow')}
+          />
+          <ToolButton
+            icon={<IconTypography size={18} />}
+            label="Text"
+            active={tool === 'text'}
+            onClick={() => onToolChange('text')}
+          />
+        </div>
+
+        {/* Brush Size with Visual Preview - show for stroke-based tools */}
+        {showSizeSlider && (
+          <Popover
+            width={200}
+            position="top"
+            withArrow
+            shadow="md"
+            radius="md"
+            classNames={{ dropdown: styles.sizePopover }}
+          >
+            <Popover.Target>
+              <div className={styles.toolbarSectionPadded}>
+                <Tooltip label={`Size: ${brushSize}px`} withArrow>
+                  <button className={styles.sizeButton}>
+                    {/* Visual size preview circle */}
                     <div
-                      className="rounded-full bg-current"
+                      className="rounded-full"
                       style={{
-                        width: Math.max(3, size * 0.4),
-                        height: Math.max(3, size * 0.4),
+                        width: Math.max(4, Math.min(24, brushSize * 0.6)),
+                        height: Math.max(4, Math.min(24, brushSize * 0.6)),
+                        backgroundColor:
+                          tool === 'eraser' ? 'var(--mantine-color-gray-5)' : brushColor,
                       }}
                     />
                   </button>
-                ))}
-              </div>
-            </div>
-          </Popover.Dropdown>
-        </Popover>
-
-        {/* Color Selection */}
-        {tool === 'brush' && (
-          <div className={styles.colorSwatches}>
-            {DRAWING_COLORS.map(({ color, label }) => {
-              const isSelected = brushColor === color;
-              const isLight = color === '#FFFFFF' || color === '#FFFF00' || color === '#00FF00';
-
-              return (
-                <Tooltip key={color} label={label} withArrow>
-                  <ColorSwatch
-                    color={color}
-                    size={18}
-                    radius="xl"
-                    onClick={() => onBrushColorChange(color)}
-                    withShadow={false}
-                    className={clsx(styles.colorSwatch, isSelected && styles.colorSwatchSelected)}
-                  >
-                    {isSelected && (
-                      <IconCheck size={14} stroke={3} color={isLight ? '#000' : '#fff'} />
-                    )}
-                  </ColorSwatch>
                 </Tooltip>
-              );
-            })}
+              </div>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <div className={styles.sizePopoverContent}>
+                <div className={styles.sizePopoverHeader}>
+                  <span className={styles.sizePopoverLabel}>Stroke Size</span>
+                  <span className={styles.sizePopoverValue}>{brushSize}px</span>
+                </div>
+                <Slider
+                  value={brushSize}
+                  onChange={onBrushSizeChange}
+                  min={MIN_BRUSH_SIZE}
+                  max={MAX_BRUSH_SIZE}
+                  step={1}
+                  size="sm"
+                  color="blue"
+                />
+                {/* Size presets */}
+                <div className={styles.sizePresets}>
+                  {[5, 15, 25, 40].map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => onBrushSizeChange(size)}
+                      className={clsx(
+                        styles.sizePresetButton,
+                        brushSize === size && styles.sizePresetButtonActive
+                      )}
+                    >
+                      <div
+                        className="rounded-full bg-current"
+                        style={{
+                          width: Math.max(3, size * 0.4),
+                          height: Math.max(3, size * 0.4),
+                        }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Popover.Dropdown>
+          </Popover>
+        )}
+
+        {/* Color Selection - show for all tools except eraser */}
+        {showColors && (
+          <div className={styles.colorSection}>
+            {/* Color picker button */}
+            <Popover
+              position="top"
+              shadow="md"
+              radius="md"
+              classNames={{ dropdown: styles.colorPickerPopover }}
+              withArrow
+            >
+              <Popover.Target>
+                <Tooltip label="Pick color" withArrow>
+                  <button
+                    className={styles.customColorButton}
+                    style={{ backgroundColor: brushColor }}
+                  />
+                </Tooltip>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <div className={styles.colorPickerContent}>
+                  <div className={styles.colorPickerHeader}>
+                    <span className={styles.colorPickerLabel}>Color</span>
+                    <TextInput
+                      defaultValue={brushColor.toUpperCase()}
+                      onChange={(e) => {
+                        let value = e.target.value.toUpperCase();
+                        // Ensure it starts with #
+                        if (!value.startsWith('#')) {
+                          value = '#' + value;
+                        }
+                        // Only update if it's a valid hex color (3, 4 or 6 chars after #)
+                        if (/^#([0-9A-F]{3}|[0-9A-F]{4}|[0-9A-F]{6})$/i.test(value)) {
+                          onBrushColorChange(value);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        // On blur, reset to current valid color if invalid
+                        e.target.value = brushColor.toUpperCase();
+                      }}
+                      size="xs"
+                      maxLength={6}
+                      classNames={{ input: styles.hexInput }}
+                    />
+                  </div>
+                  <ColorPicker
+                    format="hex"
+                    value={brushColor}
+                    onChange={onBrushColorChange}
+                    swatches={EXTENDED_COLOR_SWATCHES}
+                    swatchesPerRow={6}
+                    size="sm"
+                  />
+                </div>
+              </Popover.Dropdown>
+            </Popover>
           </div>
         )}
 
@@ -161,27 +247,17 @@ function ToolButton({
   label,
   active,
   onClick,
-  activeColor,
 }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
-  activeColor?: string;
 }) {
-  const isLight =
-    activeColor === '#FFFFFF' || activeColor === '#FFFF00' || activeColor === '#00FF00';
-
   return (
     <Tooltip label={label} withArrow>
       <button
         onClick={onClick}
         className={clsx(styles.toolButton, active && styles.toolButtonActive)}
-        style={
-          active && activeColor
-            ? { backgroundColor: activeColor, color: isLight ? '#000' : '#fff' }
-            : undefined
-        }
       >
         {icon}
       </button>

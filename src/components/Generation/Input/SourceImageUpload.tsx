@@ -1,10 +1,10 @@
 import type { InputWrapperProps } from '@mantine/core';
 import { Input, CloseButton, Alert, ActionIcon, Tooltip } from '@mantine/core';
-import { IconBrush } from '@tabler/icons-react';
+import { IconPalette } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
-import type { DrawingLine } from './DrawingEditor/drawing.types';
+import type { DrawingElement } from './DrawingEditor/drawing.types';
 import { forwardRef, useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import {
@@ -61,8 +61,8 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [error, setError] = useState<string | null>(null);
     // const [warning, setWarning] = useState<string | null>(null);
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
-    // Store drawing lines for re-editing
-    const [drawingLines, setDrawingLines] = useState<DrawingLine[]>([]);
+    // Store drawing elements for re-editing
+    const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
     const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
       onSettled: () => {
         setLoading(false);
@@ -190,11 +190,11 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       if (_value) removeFromHistory(_value.url);
     }
 
-    async function handleDrawingComplete(drawingBlob: Blob, lines: DrawingLine[]) {
+    async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
       if (!onDrawingComplete) return;
 
-      // Store lines for re-editing
-      setDrawingLines(lines);
+      // Store elements for re-editing
+      setDrawingLines(elements);
 
       setLoading(true);
       try {
@@ -210,6 +210,9 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                     onDrawingComplete({ url, width, height });
                   });
                 }
+              },
+              onSettled: () => {
+                setLoading(false);
               },
             }
           );
@@ -291,14 +294,14 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                 />
               )}
               {loaded && enableDrawing && (
-                <Tooltip label="Draw on image" withArrow>
+                <Tooltip label="Sketch Edit" withArrow>
                   <ActionIcon
                     variant="filled"
                     size="sm"
                     className="absolute left-0 top-0 m-1 rounded-md"
                     onClick={handleOpenDrawingEditor}
                   >
-                    <IconBrush size={16} />
+                    <IconPalette size={16} />
                   </ActionIcon>
                 </Tooltip>
               )}

@@ -28,12 +28,12 @@ import type { Blob as ImageBlob } from '@civitai/client';
 import { almostEqual, formatBytes } from '~/utils/number-helpers';
 import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { IconBrush, IconUpload, IconX } from '@tabler/icons-react';
+import { IconPalette, IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
-import type { DrawingLine } from './DrawingEditor/drawing.types';
+import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
@@ -45,6 +45,7 @@ export type ImageAnnotation = {
   originalWidth: number;
   originalHeight: number;
   compositeUrl: string;
+  lines: DrawingElementSchema[];
 };
 
 type SourceImageUploadProps = {
@@ -61,7 +62,7 @@ type SourceImageUploadProps = {
   /** Enable drawing overlay tools */
   enableDrawing?: boolean;
   /** Called when user completes a drawing overlay */
-  onDrawingComplete?: (value: SourceImageProps, index: number) => void;
+  onDrawingComplete?: (value: SourceImageProps, index: number, elements: DrawingElement[]) => void;
   /** Annotations tracking original images for composites (used for re-editing) */
   annotations?: ImageAnnotation[] | null;
   /** Called when an image is removed (for annotation cleanup) */
@@ -97,7 +98,11 @@ type SourceImageUploadContext = {
   aspectRatios?: AspectRatio[];
   onChange: (value: (string | File)[]) => Promise<void>;
   enableDrawing?: boolean;
-  handleDrawingUpload: (index: number, drawingBlob: Blob) => Promise<void>;
+  handleDrawingUpload: (
+    index: number,
+    drawingBlob: Blob,
+    elements: DrawingElement[]
+  ) => Promise<void>;
   annotations?: ImageAnnotation[] | null;
 };
 
@@ -327,13 +332,13 @@ export function SourceImageUploadMultiple({
   }
 
   // handle drawing upload for individual images
-  async function handleDrawingUpload(index: number, drawingBlob: Blob) {
+  async function handleDrawingUpload(index: number, drawingBlob: Blob, elements: DrawingElement[]) {
     const base64 = await getBase64(drawingBlob);
     const response = await uploadOrchestratorImage(base64, getRandomId());
 
     if (response.url && response.available) {
       const newImage = { url: response.url, width: response.width, height: response.height };
-      onDrawingComplete?.(newImage, index);
+      onDrawingComplete?.(newImage, index, elements);
     }
   }
 
@@ -458,7 +463,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
     handleDrawingUpload,
     annotations,
   } = useContext();
-  const [drawingLines, setDrawingLines] = useState<DrawingLine[]>([]);
+  const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
 
   // Check if this image is a composite (has been annotated)
   const annotation = annotations?.find((a) => a.compositeUrl === previewItem.url);
@@ -473,10 +478,13 @@ SourceImageUploadMultiple.Image = function ImagePreview({
     setError('Failed to load image');
   }
 
-  async function handleDrawingComplete(drawingBlob: Blob, lines: DrawingLine[]) {
-    setDrawingLines(lines);
-    await handleDrawingUpload(index, drawingBlob);
+  async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
+    setDrawingLines(elements);
+    await handleDrawingUpload(index, drawingBlob, elements);
   }
+
+  // Get initial lines from annotation if this is an annotated image, otherwise from local state
+  const initialLines = isAnnotated ? annotation.lines : drawingLines;
 
   function handleOpenDrawingEditor() {
     if (previewItem.status !== 'complete') return;
@@ -500,7 +508,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
       props: {
         sourceImage,
         onConfirm: handleDrawingComplete,
-        initialLines: drawingLines,
+        initialLines,
       },
     });
   }
@@ -540,14 +548,14 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                 {previewItem.width} x {previewItem.height}
               </div>
               {enableDrawing && (
-                <Tooltip label={isAnnotated ? 'Edit drawing' : 'Draw on image'} withArrow>
+                <Tooltip label="Sketch Edit" withArrow>
                   <ActionIcon
                     variant="filled"
                     size="sm"
                     className="absolute left-0 top-0 m-1 rounded-md"
                     onClick={handleOpenDrawingEditor}
                   >
-                    <IconBrush size={16} />
+                    <IconPalette size={16} />
                   </ActionIcon>
                 </Tooltip>
               )}

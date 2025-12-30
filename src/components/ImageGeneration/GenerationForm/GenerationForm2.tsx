@@ -1002,7 +1002,7 @@ export function GenerationFormContent() {
                         warnOnMissingAiMetadata
                         enableDrawing={isNanoBanana || isNanoBananaPro}
                         annotations={imageAnnotations}
-                        onDrawingComplete={(compositeImage, index) => {
+                        onDrawingComplete={(compositeImage, index, lines) => {
                           const currentImages = form.getValues('images') ?? [];
                           const currentAnnotations = form.getValues('imageAnnotations') ?? [];
 
@@ -1041,6 +1041,7 @@ export function GenerationFormContent() {
                               originalWidth: originalImage.width,
                               originalHeight: originalImage.height,
                               compositeUrl: compositeImage.url,
+                              lines,
                             },
                           ]);
                         }}
@@ -1056,7 +1057,7 @@ export function GenerationFormContent() {
                         {(previewItems) => (
                           <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
                             {previewItems.map((item, i) => (
-                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                              <SourceImageUploadMultiple.Image key={item.url} index={i} {...item} />
                             ))}
                             <SourceImageUploadMultiple.Dropzone />
                           </div>
