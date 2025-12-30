@@ -207,7 +207,8 @@ export function GeneratedImage({
   if (image.status !== 'succeeded') return <></>;
 
   function handleDataTransfer(e: DragEvent<HTMLVideoElement> | DragEvent<HTMLImageElement>) {
-    const url = e.currentTarget.currentSrc;
+    // Always use full quality URL for drag and drop, not the preview
+    const url = image.url;
     const meta = getStepMeta(step);
     if (meta) mediaDropzoneData.setData(url, meta);
     e.dataTransfer.setData('text/uri-list', url);
