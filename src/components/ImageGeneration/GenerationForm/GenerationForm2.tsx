@@ -297,7 +297,7 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
-    const isFlux2Dev = getIsFlux2Dev(model.id);
+    const isFlux2NotDev = getIsFlux2(model.id) && !getIsFlux2Dev(model.id);
     if (isFlux && isFluxStandard) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
@@ -308,7 +308,7 @@ export function GenerationFormContent() {
       delete params.fluxUltraAspectRatio;
     }
 
-    if (!isFlux2Dev) additionalResources = []; // No additional resources allowed
+    if (isFlux2NotDev) additionalResources = []; // No additional resources allowed
 
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
@@ -549,7 +549,7 @@ export function GenerationFormContent() {
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
-            const isFlux2Dev = isFlux2 && getIsFlux2Dev(model.id);
+            const isFlux2NotDev = isFlux2 && !getIsFlux2Dev(model.id);
             const disableAdditionalResources =
               runsOnFalAI ||
               isOpenAI ||
@@ -557,7 +557,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isSeedream ||
-              !isFlux2Dev;
+              isFlux2NotDev;
             const disableAdvanced =
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
