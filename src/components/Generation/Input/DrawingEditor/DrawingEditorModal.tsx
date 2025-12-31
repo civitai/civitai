@@ -251,7 +251,7 @@ export function DrawingEditorModal({
         {/* Header */}
         <div className={styles.header}>
           <div className="flex items-center gap-2">
-            <h2 className={styles.headerTitle}>Draw on Image</h2>
+            <h2 className={styles.headerTitle}>Sketch Edit</h2>
             <Badge color="yellow" variant="light">
               Beta
             </Badge>

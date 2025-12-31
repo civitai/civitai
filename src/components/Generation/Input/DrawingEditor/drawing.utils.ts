@@ -1,5 +1,7 @@
 import type Konva from 'konva';
-import type { DrawingElement, DrawingLineElement, DrawingLineInput } from './drawing.types';
+import type { DrawingElement, DrawingLineInput } from './drawing.types';
+import z from 'zod';
+import { defaultCatch } from '~/utils/zod-helpers';
 
 // #region ID Generation
 
@@ -68,8 +70,18 @@ export const DRAWING_COLORS = [
 
 /** Extended color swatches for the ColorPicker dropdown (Mantine theme colors) */
 export const EXTENDED_COLOR_SWATCHES = [
-  '#fa5252', '#e64980', '#be4bdb', '#7950f2', '#4c6ef5', '#228be6',
-  '#15aabf', '#12b886', '#40c057', '#82c91e', '#fab005', '#fd7e14',
+  '#fa5252',
+  '#e64980',
+  '#be4bdb',
+  '#7950f2',
+  '#4c6ef5',
+  '#228be6',
+  '#15aabf',
+  '#12b886',
+  '#40c057',
+  '#82c91e',
+  '#fab005',
+  '#fd7e14',
 ];
 
 export const DEFAULT_BRUSH_SIZE = 10;
@@ -140,3 +152,78 @@ export function calculateCanvasDimensions(
 
   return { width, height, scale };
 }
+
+export const imageAnnotationsSchema = defaultCatch(
+  z
+    .array(
+      z.object({
+        originalUrl: z.string(),
+        originalWidth: z.number(),
+        originalHeight: z.number(),
+        compositeUrl: z.string(),
+        lines: z.array(
+          z.discriminatedUnion('type', [
+            // Line element (brush/eraser)
+            z.object({
+              type: z.literal('line'),
+              id: z.string().optional(),
+              tool: z.enum(['brush', 'eraser']),
+              points: z.array(z.number()),
+              color: z.string(),
+              strokeWidth: z.number(),
+            }),
+            // Rectangle element
+            z.object({
+              type: z.literal('rectangle'),
+              id: z.string().optional(),
+              x: z.number(),
+              y: z.number(),
+              width: z.number(),
+              height: z.number(),
+              color: z.string(),
+              strokeWidth: z.number(),
+              rotation: z.number().optional(),
+            }),
+            // Circle/ellipse element
+            z.object({
+              type: z.literal('circle'),
+              id: z.string().optional(),
+              x: z.number(),
+              y: z.number(),
+              radiusX: z.number(),
+              radiusY: z.number(),
+              color: z.string(),
+              strokeWidth: z.number(),
+              rotation: z.number().optional(),
+            }),
+            // Arrow element
+            z.object({
+              type: z.literal('arrow'),
+              id: z.string().optional(),
+              points: z.array(z.number()),
+              color: z.string(),
+              strokeWidth: z.number(),
+              rotation: z.number().optional(),
+            }),
+            // Text element
+            z.object({
+              type: z.literal('text'),
+              id: z.string().optional(),
+              x: z.number(),
+              y: z.number(),
+              text: z.string(),
+              fontSize: z.number(),
+              color: z.string(),
+              strokeWidth: z.number(),
+              rotation: z.number().optional(),
+              scaleX: z.number().optional(),
+              scaleY: z.number().optional(),
+              width: z.number().optional(),
+            }),
+          ])
+        ),
+      })
+    )
+    .nullable(),
+  null
+);
