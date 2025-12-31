@@ -113,7 +113,7 @@ import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
 import {
   flux2ModelModeOptions,
   getIsFlux2,
-  getIsFlux2ProOrFlex,
+  getIsFlux2Dev,
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   getModelVersionUsesImageGen,
@@ -297,7 +297,7 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
-    const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
+    const isFlux2Dev = getIsFlux2Dev(model.id);
     if (isFlux && isFluxStandard) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
@@ -308,7 +308,7 @@ export function GenerationFormContent() {
       delete params.fluxUltraAspectRatio;
     }
 
-    if (isFlux2ProOrFlex) additionalResources = []; // No additional resources allowed
+    if (!isFlux2Dev) additionalResources = []; // No additional resources allowed
 
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
@@ -549,7 +549,7 @@ export function GenerationFormContent() {
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
-            const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
+            const isFlux2Dev = isFlux2 && getIsFlux2Dev(model.id);
             const disableAdditionalResources =
               runsOnFalAI ||
               isOpenAI ||
@@ -557,7 +557,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isSeedream ||
-              isFlux2ProOrFlex;
+              !isFlux2Dev;
             const disableAdvanced =
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
