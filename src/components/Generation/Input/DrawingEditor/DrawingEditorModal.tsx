@@ -204,7 +204,8 @@ export function DrawingEditorModal({
         canvasDimensions.width,
         canvasDimensions.height,
         sourceImage.width,
-        sourceImage.height
+        sourceImage.height,
+        sourceImage.url
       );
       // Wait for onConfirm to complete (handles upload) before closing
       await onConfirm(blob, elements);
