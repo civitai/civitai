@@ -1002,7 +1002,7 @@ export function GenerationFormContent() {
                         aspect="video"
                         max={7}
                         warnOnMissingAiMetadata
-                        enableDrawing={isNanoBanana || isNanoBananaPro}
+                        enableDrawing
                         annotations={imageAnnotations}
                         onDrawingComplete={(compositeImage, index, lines) => {
                           const currentImages = form.getValues('images') ?? [];
