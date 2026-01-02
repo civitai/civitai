@@ -380,11 +380,7 @@ export default function TrainingModerationFeedPage() {
                 <Text fw={600} size="sm" style={{ flex: 1 }}>
                   Training Page Announcement
                 </Text>
-                {announcementExpanded ? (
-                  <IconChevronUp size={16} />
-                ) : (
-                  <IconChevronDown size={16} />
-                )}
+                {announcementExpanded ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
               </Group>
 
               <Collapse in={announcementExpanded}>

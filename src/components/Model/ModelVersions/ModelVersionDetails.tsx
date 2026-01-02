@@ -671,7 +671,8 @@ export function ModelVersionDetails({
   const isModelUnpublished =
     model.status === ModelStatus.Unpublished || model.status === ModelStatus.UnpublishedViolation;
   const isVersionUnpublished =
-    version.status === ModelStatus.Unpublished || version.status === ModelStatus.UnpublishedViolation;
+    version.status === ModelStatus.Unpublished ||
+    version.status === ModelStatus.UnpublishedViolation;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
@@ -682,8 +683,8 @@ export function ModelVersionDetails({
     hasFiles &&
     hasPosts &&
     // Only moderators can republish UnpublishedViolation, owners can republish Unpublished
-    ((model.status === ModelStatus.UnpublishedViolation ||
-      version.status === ModelStatus.UnpublishedViolation)
+    (model.status === ModelStatus.UnpublishedViolation ||
+    version.status === ModelStatus.UnpublishedViolation
       ? user?.isModerator
       : isOwnerOrMod);
   // Show request review for owners (non-mods) when model/version is unpublished due to violation
