@@ -138,7 +138,21 @@ import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
-import { pgDbRead } from '~/server/db/pgDb';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { metricsSearchClient } from '~/server/meilisearch/client';
+import { ModelsFeed } from '../../../event-engine-common/feeds/models.feed';
+import { MetricService } from '../../../event-engine-common/services/metrics';
+import { CacheService } from '../../../event-engine-common/services/cache';
+import type {
+  IClickhouseClient,
+  IDbClient,
+  IRedisClient,
+} from '../../../event-engine-common/types/package-stubs';
+import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
+import {
+  ModelSort as FeedModelSort,
+  type PopulatedModel,
+} from '../../../event-engine-common/types/model-feed-types';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1180,6 +1194,180 @@ export const getModelsWithImagesAndModelVersions = async ({
   };
 
   return result;
+};
+
+// ============================================================================
+// Model Feed Implementation
+// ============================================================================
+
+let modelsFeedInstance: InstanceType<typeof ModelsFeed> | null = null;
+
+function getModelsFeed(): InstanceType<typeof ModelsFeed> {
+  if (!modelsFeedInstance) {
+    modelsFeedInstance = new ModelsFeed(
+      () => metricsSearchClient as IMeilisearch,
+      clickhouse as IClickhouseClient,
+      pgDbWrite as IDbClient,
+      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
+      new CacheService(
+        redis as unknown as IRedisClient,
+        pgDbWrite as IDbClient,
+        clickhouse as IClickhouseClient
+      )
+    );
+  }
+  return modelsFeedInstance;
+}
+
+/**
+ * Map legacy sort values to feed sort enum
+ */
+function mapSortToFeedSort(sort: string | undefined): FeedModelSort {
+  switch (sort) {
+    case 'Newest':
+      return FeedModelSort.Newest;
+    case 'Oldest':
+      return FeedModelSort.Oldest;
+    case 'Highest Rated':
+      return FeedModelSort.HighestRated;
+    case 'Most Liked':
+      return FeedModelSort.MostLiked;
+    case 'Most Downloaded':
+      return FeedModelSort.MostDownloaded;
+    case 'Most Discussed':
+      return FeedModelSort.MostDiscussed;
+    case 'Most Collected':
+      return FeedModelSort.MostCollected;
+    case 'Most Images':
+      return FeedModelSort.ImageCount;
+    default:
+      return FeedModelSort.Newest;
+  }
+}
+
+/**
+ * Query models from the Meilisearch feed
+ * Drop-in replacement for getModelsWithImagesAndModelVersions when using index
+ */
+export const getModelsFromFeed = async ({
+  input,
+  user,
+}: {
+  input: GetAllModelsOutput;
+  user?: SessionUser;
+}): Promise<{
+  items: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'];
+  nextCursor: string | bigint | undefined;
+  isPrivate: boolean;
+}> => {
+  const feed = getModelsFeed();
+  const limit = input.limit ?? 100;
+
+  // Map input to feed format
+  const feedInput = {
+    limit,
+    cursor: input.cursor ? String(input.cursor) : undefined,
+    query: input.query,
+    sort: mapSortToFeedSort(input.sort),
+    period: input.period,
+    periodMode: input.periodMode,
+    ids: input.ids,
+    modelVersionIds: input.modelVersionIds,
+    userId: input.user ? undefined : undefined, // Will be looked up by username if needed
+    username: input.user ?? input.username,
+    followed: input.followed,
+    hidden: input.hidden,
+    excludedUserIds: input.excludedUserIds,
+    tag: input.tag,
+    tagname: input.tagname,
+    excludedTagIds: input.excludedTagIds,
+    types: input.types,
+    baseModels: input.baseModels,
+    checkpointType: input.checkpointType,
+    status: input.status,
+    archived: input.archived,
+    pending: input.pending,
+    availability: input.availability,
+    earlyAccess: input.earlyAccess,
+    allowNoCredit: input.allowNoCredit,
+    allowDifferentLicense: input.allowDifferentLicense,
+    allowDerivatives: input.allowDerivatives,
+    allowCommercialUse: input.allowCommercialUse,
+    supportsGeneration: input.supportsGeneration,
+    fromPlatform: input.fromPlatform,
+    needsReview: input.needsReview,
+    isFeatured: input.isFeatured,
+    collectionId: input.collectionId,
+    collectionTagId: input.collectionTagId,
+    clubId: input.clubId,
+    browsingLevel: input.browsingLevel,
+    disablePoi: input.disablePoi,
+    disableMinor: input.disableMinor,
+    poiOnly: input.poiOnly,
+    minorOnly: input.minorOnly,
+    fileFormats: input.fileFormats,
+    nsfwRestrictedBaseModels: nsfwRestrictedBaseModels,
+    currentUserId: user?.id,
+    isModerator: user?.isModerator,
+    includeCosmetics: true,
+  };
+
+  const result = await feed.populatedQuery(feedInput);
+
+  // Transform populated models to legacy format
+  const items = result.items
+    .map((item: PopulatedModel) => {
+      // Skip if no version (shouldn't happen but matches legacy behavior)
+      if (!item.version) return null;
+
+      return {
+        id: item.id,
+        name: item.name,
+        type: item.type as ModelType,
+        nsfw: item.nsfw,
+        nsfwLevel: item.nsfwLevel,
+        minor: item.minor,
+        poi: item.poi,
+        sfwOnly: item.sfwOnly,
+        status: item.status as ModelStatus,
+        createdAt: item.createdAt,
+        lastVersionAt: item.lastVersionAt,
+        publishedAt: item.publishedAt,
+        locked: item.locked,
+        earlyAccessDeadline: item.earlyAccessDeadline,
+        mode: item.mode as ModelModifier | null,
+        availability: item.availability as Availability,
+        userId: item.userId,
+        user: {
+          id: item.user.id,
+          username: item.user.username,
+          deletedAt: item.user.deletedAt,
+          image: item.user.image,
+          // Only include profilePicture if it has all required fields
+          profilePicture: item.user.profilePicture?.id ? item.user.profilePicture : null,
+          cosmetics: item.user.cosmetics,
+        },
+        cosmetic: item.cosmetic,
+        tags: item.tags,
+        hashes: item.hashes,
+        rank: item.rank,
+        version: {
+          ...item.version,
+          createdAt: item.version.createdAt,
+          publishedAt: item.version.publishedAt,
+        },
+        images: item.images,
+        canGenerate: item.canGenerate,
+      };
+    })
+    .filter(isDefined);
+
+  return {
+    // Cast to expected type - shapes match but nested types differ slightly
+    items: items as unknown as Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'],
+    nextCursor: result.nextCursor,
+    isPrivate: false, // Feed queries are public by nature
+  };
 };
 
 export const getModelVersionsMicro = async ({

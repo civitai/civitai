@@ -177,7 +177,7 @@ function transformDocumentForMeilisearch(doc: ModelDocument): Record<string, unk
     name: doc.name,
     type: doc.type,
     nsfw: doc.nsfw,
-    nsfwLevel: doc.nsfwLevel,
+    nsfwLevels: doc.nsfwLevels,
     minor: doc.minor,
     poi: doc.poi,
     sfwOnly: doc.sfwOnly,

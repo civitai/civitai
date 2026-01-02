@@ -70,6 +70,7 @@ import {
   getGallerySettingsByModelId,
   getModel,
   getModels,
+  getModelsFromFeed,
   getModelsRaw,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
@@ -105,6 +106,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { modelsFeedWithoutIndexCounter } from '~/server/prom/client';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
@@ -346,7 +348,22 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  const { user, features } = ctx;
+  const useIndex = features.modelIndexFeed && input.useIndex;
+
+  if (!useIndex) {
+    modelsFeedWithoutIndexCounter.inc();
+  }
+
   try {
+    // Use the feed when feature flag is enabled and useIndex is true
+    if (useIndex) {
+      const result = await getModelsFromFeed({ input, user });
+      if (result.isPrivate) ctx.cache.canCache = false;
+      return { items: result.items, nextCursor: result.nextCursor };
+    }
+
+    // Legacy implementation
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;

@@ -124,6 +124,8 @@ export const getAllModelsSchema = z.object({
   // Mod only:
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
+  // Index usage:
+  useIndex: z.boolean().nullish(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

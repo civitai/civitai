@@ -111,6 +111,12 @@ export const imagesFeedWithoutIndexCounter = registerCounter({
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
 });
 
+// Model feed metrics
+export const modelsFeedWithoutIndexCounter = registerCounter({
+  name: 'models_feed_without_index_total',
+  help: 'Number of times getModelsInfiniteHandler is called with useIndex=false or undefined',
+});
+
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
   name: 'creator_comp_creators_paid_total',

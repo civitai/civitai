@@ -108,6 +108,7 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['public'],
   imageIndexFeed: ['public'],
+  modelIndexFeed: ['public'],
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],

@@ -153,6 +153,7 @@ export const useQueryModels = (
         ? // Ensures we pass true explicitly
           true
         : undefined,
+      useIndex: true,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
