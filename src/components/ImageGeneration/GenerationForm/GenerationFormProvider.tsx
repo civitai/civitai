@@ -84,7 +84,10 @@ function createFormSchema(domainColor: string) {
     })
     .superRefine((data, ctx) => {
       if (data.workflow.startsWith('txt2img')) {
-        if (!data.prompt || data.prompt.length === 0) {
+        // Prompt is optional if imageAnnotations exists and is not empty
+        const hasAnnotations = data.imageAnnotations && data.imageAnnotations.length > 0;
+
+        if (!hasAnnotations && (!data.prompt || data.prompt.length === 0)) {
           ctx.addIssue({
             code: 'custom',
             message: 'Prompt cannot be empty',

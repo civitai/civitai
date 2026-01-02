@@ -9,6 +9,7 @@ import {
   IconArrowNarrowRight,
   IconTypography,
   IconPointer,
+  IconDownload,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { DrawingToolbarProps } from './drawing.types';
@@ -25,6 +26,7 @@ export function DrawingToolbar({
   onClear,
   onUndo,
   canUndo,
+  onDownload,
 }: DrawingToolbarProps) {
   // Show colors for all tools except eraser and select
   const showColors = tool !== 'eraser' && tool !== 'select';
@@ -230,6 +232,13 @@ export function DrawingToolbar({
               <IconArrowBackUp size={20} />
             </ActionIcon>
           </Tooltip>
+          {onDownload && (
+            <Tooltip label="Download" withArrow>
+              <ActionIcon variant="subtle" size="lg" radius="md" onClick={onDownload}>
+                <IconDownload size={18} />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Tooltip label="Clear all" withArrow>
             <ActionIcon variant="subtle" size="lg" radius="md" onClick={onClear} color="red">
               <IconTrash size={18} />

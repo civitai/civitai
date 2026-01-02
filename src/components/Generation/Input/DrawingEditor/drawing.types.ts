@@ -131,6 +131,7 @@ export interface DrawingToolbarProps {
   onClear: () => void;
   onUndo: () => void;
   canUndo: boolean;
+  onDownload?: () => void;
 }
 
 // Updated modal props - accepts legacy format, outputs new format

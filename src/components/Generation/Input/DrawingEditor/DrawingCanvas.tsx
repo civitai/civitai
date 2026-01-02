@@ -12,6 +12,8 @@ import type {
 } from './drawing.types';
 import { generateElementId, isTransformableElement } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
+import { ActionIcon } from '@mantine/core';
+import { IconTrash } from '@tabler/icons-react';
 
 // Dynamic imports for SSR compatibility
 const Stage = dynamic(() => import('react-konva').then((mod) => mod.Stage), {
@@ -327,6 +329,15 @@ export function DrawingCanvas({
     },
     [elements, onElementsChange, onCommit]
   );
+
+  // Handle element removal
+  const handleRemoveElement = useCallback(() => {
+    if (!selectedId) return;
+    const updatedElements = elements.filter((el) => el.id !== selectedId);
+    onElementsChange(updatedElements);
+    onSelectedIdChange(null);
+    onCommit?.();
+  }, [selectedId, elements, onElementsChange, onSelectedIdChange, onCommit]);
 
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.evt.preventDefault();
@@ -743,41 +754,64 @@ export function DrawingCanvas({
             }
           })}
 
-          {/* Transformer for selected element */}
-          {isSelectMode && (
-            <Transformer
-              ref={(node) => {
-                transformerRef.current = node;
-                if (node && !transformerReady) {
-                  setTransformerReady(true);
-                }
-              }}
-              flipEnabled={false}
-              rotateEnabled={true}
-              enabledAnchors={[
-                'top-left',
-                'top-right',
-                'bottom-left',
-                'bottom-right',
-                'middle-left',
-                'middle-right',
-                'top-center',
-                'bottom-center',
-              ]}
-              boundBoxFunc={(oldBox, newBox) => {
-                // Limit minimum size
-                if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
-                  return oldBox;
-                }
-                return newBox;
-              }}
-            />
-          )}
+          {/* Transformer for selected element - ALWAYS render, control via nodes */}
+          <Transformer
+            ref={(node) => {
+              transformerRef.current = node;
+              if (node && !transformerReady) {
+                setTransformerReady(true);
+              }
+            }}
+            flipEnabled={false}
+            rotateEnabled={true}
+            enabledAnchors={[
+              'top-left',
+              'top-right',
+              'bottom-left',
+              'bottom-right',
+              'middle-left',
+              'middle-right',
+              'top-center',
+              'bottom-center',
+            ]}
+            boundBoxFunc={(oldBox, newBox) => {
+              // Limit minimum size
+              if (Math.abs(newBox.width) < 5 || Math.abs(newBox.height) < 5) {
+                return oldBox;
+              }
+              return newBox;
+            }}
+          />
         </Layer>
       </Stage>
 
       {/* Custom cursor overlay */}
       {renderCursor()}
+
+      {/* Floating remove button */}
+      {selectedId && isSelectMode && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10,
+          }}
+        >
+          <ActionIcon
+            size="lg"
+            color="red"
+            variant="filled"
+            onClick={handleRemoveElement}
+            style={{
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+            }}
+          >
+            <IconTrash size={18} />
+          </ActionIcon>
+        </div>
+      )}
     </div>
   );
 }

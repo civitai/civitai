@@ -130,18 +130,6 @@ import { capitalize, getDisplayName, hashify, parseAIR } from '~/utils/string-he
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
-  getHiDreamResourceFromPrecisionAndVariant,
-  getHiDreamResourceFromVersionId,
-  hiDreamPrecisions,
-  hiDreamVariants,
-  hiDreamVariantsPrecisionMap,
-} from '~/shared/orchestrator/hidream.config';
-import classes from './GenerationForm2.module.scss';
-import { StepProvider } from '~/components/Generation/Providers/StepProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
-import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
@@ -166,6 +154,18 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
 import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
 import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
+import {
+  getHiDreamResourceFromPrecisionAndVariant,
+  getHiDreamResourceFromVersionId,
+  hiDreamPrecisions,
+  hiDreamVariants,
+  hiDreamVariantsPrecisionMap,
+} from '~/shared/orchestrator/hidream.config';
+import classes from './GenerationForm2.module.scss';
+import { StepProvider } from '~/components/Generation/Providers/StepProvider';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
 let total = 0;
 const tips = {
@@ -499,7 +499,9 @@ export function GenerationFormContent() {
           {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
-              workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
+              workflow?.startsWith('img') ||
+              (isImageGen && (sourceImage || !!images?.length)) ||
+              isFluxKontext;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir

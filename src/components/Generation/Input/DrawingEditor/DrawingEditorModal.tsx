@@ -217,6 +217,33 @@ export function DrawingEditorModal({
     }
   }
 
+  async function handleDownload() {
+    if (!stageRef.current) return;
+
+    try {
+      const blob = await exportDrawingToBlob(
+        stageRef.current,
+        canvasDimensions.width,
+        canvasDimensions.height,
+        sourceImage.width,
+        sourceImage.height,
+        sourceImage.url
+      );
+
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `annotated-image-${Date.now()}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download image:', error);
+    }
+  }
+
   function handleClear() {
     setElements([]);
     // Reset history to empty state
@@ -358,6 +385,7 @@ export function DrawingEditorModal({
             onClear={handleClear}
             onUndo={handleUndo}
             canUndo={canUndo}
+            onDownload={handleDownload}
           />
         </div>
       </div>
