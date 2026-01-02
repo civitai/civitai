@@ -86,7 +86,6 @@ export const upsertArticleInput = z.object({
   coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.number().default(0),
-  publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),

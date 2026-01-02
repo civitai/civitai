@@ -2409,6 +2409,7 @@ enum ArticleStatus {
   Published
   Unpublished
   UnpublishedViolation
+  Processing
 }
 
 model Article {
@@ -2424,6 +2425,7 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
+  contentScannedAt DateTime?     // Last time article content was scanned for embedded images
   userId           Int
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   availability     Availability  @default(Public)
