@@ -195,9 +195,9 @@ export default function UserBuzzDashboard() {
           {selectedAccountType === 'green' && (
             <Alert color="yellow" title="Green Creator Program Temporarily Disabled">
               <Text>
-                The Green Creator Program is temporarily disabled and will return in at a later date. In
-                the meantime, you can still earn and use Green Buzz for other activities on the
-                platform.
+                The Green Creator Program is temporarily disabled and will return in at a later
+                date. In the meantime, you can still earn and use Green Buzz for other activities on
+                the platform.
               </Text>
             </Alert>
           )}
