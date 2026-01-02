@@ -7,6 +7,7 @@ import {
   Card,
   ActionIcon,
   Loader,
+  Tooltip,
 } from '@mantine/core';
 import type { Dispatch, DragEvent, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -27,14 +28,25 @@ import type { Blob as ImageBlob } from '@civitai/client';
 import { almostEqual, formatBytes } from '~/utils/number-helpers';
 import { Dropzone } from '@mantine/dropzone';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { IconUpload, IconX } from '@tabler/icons-react';
+import { IconPalette, IconUpload, IconX } from '@tabler/icons-react';
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
+import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
+import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
 type AspectRatio = `${number}:${number}`;
+
+/** Tracks original image info for images that have been annotated (drawn on) */
+export type ImageAnnotation = {
+  originalUrl: string;
+  originalWidth: number;
+  originalHeight: number;
+  compositeUrl: string;
+  lines: DrawingElementSchema[];
+};
 
 type SourceImageUploadProps = {
   value?: SourceImageProps[] | null;
@@ -47,6 +59,14 @@ type SourceImageUploadProps = {
   aspectRatios?: AspectRatio[];
   error?: string;
   id?: string;
+  /** Enable drawing overlay tools */
+  enableDrawing?: boolean;
+  /** Called when user completes a drawing overlay */
+  onDrawingComplete?: (value: SourceImageProps, index: number, elements: DrawingElement[]) => void;
+  /** Annotations tracking original images for composites (used for re-editing) */
+  annotations?: ImageAnnotation[] | null;
+  /** Called when an image is removed (for annotation cleanup) */
+  onRemove?: (removedImage: SourceImageProps, index: number) => void;
 };
 
 type ImageComplete = {
@@ -77,6 +97,13 @@ type SourceImageUploadContext = {
   cropToFirstImage: boolean;
   aspectRatios?: AspectRatio[];
   onChange: (value: (string | File)[]) => Promise<void>;
+  enableDrawing?: boolean;
+  handleDrawingUpload: (
+    index: number,
+    drawingBlob: Blob,
+    elements: DrawingElement[]
+  ) => Promise<void>;
+  annotations?: ImageAnnotation[] | null;
 };
 
 const [Provider, useContext] = createSafeContext<SourceImageUploadContext>(
@@ -96,6 +123,10 @@ export function SourceImageUploadMultiple({
   aspectRatios,
   error: initialError,
   id,
+  enableDrawing = false,
+  onDrawingComplete,
+  annotations,
+  onRemove,
 }: SourceImageUploadProps) {
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -153,6 +184,11 @@ export function SourceImageUploadMultiple({
 
   function removeItem(index: number) {
     const item = previewItems[index];
+
+    // Call onRemove callback if this is a complete image (for annotation cleanup)
+    if (item.status === 'complete') {
+      onRemove?.({ url: item.url, width: item.width, height: item.height }, index);
+    }
 
     if (item.id) {
       setImageUploading(item.id, false);
@@ -295,6 +331,17 @@ export function SourceImageUploadMultiple({
     await handleCrop(value);
   }
 
+  // handle drawing upload for individual images
+  async function handleDrawingUpload(index: number, drawingBlob: Blob, elements: DrawingElement[]) {
+    const base64 = await getBase64(drawingBlob);
+    const response = await uploadOrchestratorImage(base64, getRandomId());
+
+    if (response.url && response.available) {
+      const newImage = { url: response.url, width: response.width, height: response.height };
+      onDrawingComplete?.(newImage, index, elements);
+    }
+  }
+
   return (
     <Provider
       value={{
@@ -308,6 +355,9 @@ export function SourceImageUploadMultiple({
         cropToFirstImage,
         aspectRatios,
         onChange: handleChange,
+        enableDrawing,
+        handleDrawingUpload,
+        annotations,
       }}
     >
       <div className="flex flex-col gap-3 bg-gray-2 p-3 dark:bg-dark-8" id={id}>
@@ -334,16 +384,7 @@ export function SourceImageUploadMultiple({
 SourceImageUploadMultiple.Dropzone = function ImageDropzone({ className }: { className?: string }) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const {
-    previewItems,
-    setError,
-    setUploads,
-    max,
-    aspect,
-    cropToFirstImage,
-    aspectRatios,
-    onChange,
-  } = useContext();
+  const { previewItems, setError, max, aspect, onChange } = useContext();
   const canAddFiles = previewItems.length < max;
 
   async function handleDrop(files: File[]) {
@@ -413,7 +454,20 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   index,
   ...previewItem
 }: ImagePreview & { className?: string; index: number }) {
-  const { missingAiMetadata, removeItem, aspect, setError } = useContext();
+  const {
+    missingAiMetadata,
+    removeItem,
+    aspect,
+    setError,
+    enableDrawing,
+    handleDrawingUpload,
+    annotations,
+  } = useContext();
+  const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
+
+  // Check if this image is a composite (has been annotated)
+  const annotation = annotations?.find((a) => a.compositeUrl === previewItem.url);
+  const isAnnotated = !!annotation;
 
   function handleRemoveItem() {
     removeItem(index);
@@ -422,6 +476,41 @@ SourceImageUploadMultiple.Image = function ImagePreview({
   function handleError() {
     handleRemoveItem();
     setError('Failed to load image');
+  }
+
+  async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
+    setDrawingLines(elements);
+    await handleDrawingUpload(index, drawingBlob, elements);
+  }
+
+  // Get initial lines from annotation if this is an annotated image, otherwise from local state
+  const initialLines = isAnnotated ? annotation.lines : drawingLines;
+
+  function handleOpenDrawingEditor() {
+    if (previewItem.status !== 'complete') return;
+
+    // If this is a composite, use the original image for the drawing editor
+    const sourceImage = isAnnotated
+      ? {
+          url: annotation.originalUrl,
+          width: annotation.originalWidth,
+          height: annotation.originalHeight,
+        }
+      : {
+          url: previewItem.url,
+          width: previewItem.width,
+          height: previewItem.height,
+        };
+
+    dialogStore.trigger({
+      id: `drawing-editor-modal-${index}`,
+      component: DrawingEditorModal,
+      props: {
+        sourceImage,
+        onConfirm: handleDrawingComplete,
+        initialLines,
+      },
+    });
   }
 
   return (
@@ -458,6 +547,18 @@ SourceImageUploadMultiple.Image = function ImagePreview({
               <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/50 px-2 text-white">
                 {previewItem.width} x {previewItem.height}
               </div>
+              {enableDrawing && (
+                <Tooltip label="Sketch Edit" withArrow>
+                  <ActionIcon
+                    variant="filled"
+                    size="sm"
+                    className="absolute left-0 top-0 m-1 rounded-md"
+                    onClick={handleOpenDrawingEditor}
+                  >
+                    <IconPalette size={16} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
             </>
           )}
           {previewItem.status === 'error' && (
@@ -509,13 +610,15 @@ export async function uploadOrchestratorImage(src: string | Blob | File, id: str
     const blob: ImageBlob = await response.json();
     const size = await getImageDimensions(src);
     return { ...blob, ...size };
-  } catch (e: any) {
+  } catch (e) {
+    const error = e as Error;
     const size = await getImageDimensions(src);
+
     return {
       url: body,
       ...size,
       available: false,
-      blockedReason: e.message,
+      blockedReason: error.message,
     };
   }
 }
@@ -528,7 +631,7 @@ function setImageUploading(id: string, uploading: boolean) {
     useImagesUploadingStore.setState((state) => ({ uploading: [...state.uploading, id] }));
   } else {
     useImagesUploadingStore.setState((state) => ({
-      uploading: state.uploading.filter((id) => id !== id),
+      uploading: state.uploading.filter((uploadId) => uploadId !== id),
     }));
   }
 }

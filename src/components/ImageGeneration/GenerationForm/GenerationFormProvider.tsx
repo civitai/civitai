@@ -42,6 +42,7 @@ import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
+import { imageAnnotationsSchema } from '~/components/Generation/Input/DrawingEditor/drawing.utils';
 
 // #region [schemas]
 
@@ -63,6 +64,7 @@ const baseSchema = textToImageParamsSchema
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string().optional(),
     fluxUltraRaw: z.boolean().default(false).catch(false),
+    imageAnnotations: imageAnnotationsSchema,
   });
 const partialSchema = baseSchema.partial();
 
@@ -82,7 +84,10 @@ function createFormSchema(domainColor: string) {
     })
     .superRefine((data, ctx) => {
       if (data.workflow.startsWith('txt2img')) {
-        if (!data.prompt || data.prompt.length === 0) {
+        // Prompt is optional if imageAnnotations exists and is not empty
+        const hasAnnotations = data.imageAnnotations && data.imageAnnotations.length > 0;
+
+        if (!hasAnnotations && (!data.prompt || data.prompt.length === 0)) {
           ctx.addIssue({
             code: 'custom',
             message: 'Prompt cannot be empty',
