@@ -2,7 +2,7 @@
 title: 'Civitai - Buzz Terms and Conditions'
 ---
 
-Last Updated: 07/11/2025
+Last Updated: 12/29/2025
 
 **PLEASE READ THE FOLLOWING BUZZ TERMS CAREFULLY:**
 
@@ -15,7 +15,9 @@ These Buzz Terms and Conditions (“Buzz Terms”) govern your receipt and use o
 **Promotional Offers.** Civitai reserves the right to determine pricing for Buzz and may, at its sole discretion, make promotional offers with different features and different pricing to any Users. These promotional offers, unless made to you, will not apply to your purchase or use of Buzz.
 
 **Prohibited Conduct.** You may not use, acquire, or distribute Buzz except
-through the Services and except as expressly allowed by Civitai. Any attempt to do so constitutes a violation of the Terms of Service, will render the transaction void, and may result in the immediate suspension or termination of your Account and your license to use Buzz or the Service. Civitai does not recognize or take responsibility for third-party services that allow Users to sell, transfer, purchase, or otherwise use Buzz, and any such use by a User is a violation of the Terms of Service. Only Users who have reached the age of majority in their jurisdiction or state of residence may purchase Buzz or engage in other real-money transactions on the Services. Except as required by law, all payments for Buzz are final and not refundable. Civitai may implement changes to Buzz and these Buzz Terms at any time at Civitai’s sole discretion; this may include limiting the number of Buzz a User may acquire or lowering the purchase price of Buzz.
+through the Services and except as expressly allowed by Civitai. Any attempt to do so constitutes a violation of the Terms of Service, will render the transaction void, and may result in the immediate suspension or termination of your Account and your license to use Buzz or the Service. Civitai does not recognize or take responsibility for third-party services that allow Users to sell, transfer, purchase, or otherwise use Buzz, and any such use by a User is a violation of the Terms of Service. Only Users who have reached the age of majority in their jurisdiction or state of residence may purchase Buzz or engage in other real-money transactions on the Services. Except as required by law, all payments for Buzz are final and not refundable. Civitai may implement changes to Buzz and these Buzz Terms at any time at Civitai's sole discretion; this may include limiting the number of Buzz a User may acquire or lowering the purchase price of Buzz.
+
+**Gift Cards and Redeemable Codes.** Civitai may offer gift cards and redeemable codes that can be exchanged for Buzz or Membership subscriptions through authorized vendors and partners. All gift card and redeemable code purchases are final and non-refundable. Once a gift card or code has been redeemed, the transaction cannot be reversed, and no refunds will be issued for the redeemed value. Gift cards and codes have no cash value and cannot be exchanged for cash. Civitai is not responsible for lost, stolen, or unauthorized use of gift cards or codes. Gift cards and codes may be subject to expiration dates or other restrictions as determined by Civitai or the issuing vendor.
 
 **Prohibited Activities** Users are prohibited from engaging in any activities designed to accrue or "farm" Buzz beyond what is deemed reasonable for typical use of the Service. These prohibited activities include, but are not limited to:
 

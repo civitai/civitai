@@ -42,7 +42,7 @@ const featureFlags = createFeatureFlags({
   civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['user'],
-  videoTraining: ['mod'],
+  videoTraining: ['public'],
   aiToolkitTraining: ['mod'],
   qwenTraining: ['mod'],
   flux2Training: ['public'],
