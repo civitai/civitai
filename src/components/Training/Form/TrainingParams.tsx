@@ -372,9 +372,54 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       // sd3_medium: { all: { default: 1e-5 } },
       // sd3_large: { all: { default: 1e-5 } },
-      hy_720_fp8: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
-      wan_2_1_i2v_14b_720p: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
-      wan_2_1_t2v_14b: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      sd_1_5: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      anime: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      semi: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      realistic: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      sdxl: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      pony: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      illustrious: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      flux_dev: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      flux2_dev: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      chroma: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      qwen_image: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      zimageturbo: {
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      hy_720_fp8: {
+        all: { default: 2e-4, min: 1e-4, max: 6e-4 },
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      wan_2_1_i2v_14b_720p: {
+        all: { default: 2e-4, min: 1e-4, max: 6e-4 },
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
+      wan_2_1_t2v_14b: {
+        all: { default: 2e-4, min: 1e-4, max: 6e-4 },
+        'ai-toolkit': { min: 0.1, max: 10, default: 1.0 },
+      },
     },
   },
   {
