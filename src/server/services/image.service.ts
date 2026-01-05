@@ -711,7 +711,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: imageScanTypes,
+      scans: type === 'image' ? imageScanTypes : [ImageScanType.WD14, ImageScanType.SpineRating],
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
