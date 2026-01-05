@@ -170,6 +170,9 @@ export async function exportDrawingToBlob(
       }
     } catch (error) {
       console.error('Failed to extract EXIF metadata:', error);
+
+      if (error instanceof Error) throw error;
+      throw new Error('An unknown error occurred while extracting EXIF metadata.');
     }
   }
 

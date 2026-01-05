@@ -20,6 +20,7 @@ import {
   generateElementId,
 } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
+import { showErrorNotification } from '~/utils/notifications';
 
 const MAX_CANVAS_WIDTH = 700;
 const MAX_CANVAS_HEIGHT = 500;
@@ -207,6 +208,10 @@ export function DrawingEditorModal({
       dialog.onClose();
     } catch (error) {
       console.error('Failed to export drawing:', error);
+      showErrorNotification({
+        title: 'Export Failed',
+        error: new Error('An error occurred while exporting the drawing. Please try again.'),
+      });
     } finally {
       setLoading(false);
     }

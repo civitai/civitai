@@ -12,7 +12,7 @@ import type {
 } from './drawing.types';
 import { generateElementId, isTransformableElement } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
-import { ActionIcon } from '@mantine/core';
+import { ActionIcon, Loader, Text } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 
 // Dynamic imports for SSR compatibility
@@ -44,7 +44,7 @@ const Arrow = dynamic(() => import('react-konva').then((mod) => mod.Arrow), {
   ssr: false,
 });
 
-const Text = dynamic(() => import('react-konva').then((mod) => mod.Text), {
+const KonvaText = dynamic(() => import('react-konva').then((mod) => mod.Text), {
   ssr: false,
 });
 
@@ -81,6 +81,8 @@ export function DrawingCanvas({
 }: DrawingCanvasProps) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [transformerReady, setTransformerReady] = useState(false);
   const currentLineRef = useRef<DrawingLineElement | null>(null);
@@ -131,11 +133,22 @@ export function DrawingCanvas({
 
   // Load background image
   useEffect(() => {
+    setImageLoading(true);
+    setImageError(false);
+    setImage(null);
+
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.src = backgroundImage;
     img.onload = () => {
       setImage(img);
+      setImageLoading(false);
+      setImageError(false);
+    };
+    img.onerror = () => {
+      setImage(null);
+      setImageLoading(false);
+      setImageError(true);
     };
   }, [backgroundImage]);
 
@@ -628,6 +641,53 @@ export function DrawingCanvas({
 
   return (
     <div style={{ position: 'relative', width, height }}>
+      {/* Loading state */}
+      {imageLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+          }}
+        >
+          <div style={{ textAlign: 'center' }}>
+            <Loader size="lg" />
+            <Text mt="md" c="white">
+              Loading image...
+            </Text>
+          </div>
+        </div>
+      )}
+
+      {/* Error state */}
+      {imageError && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+          }}
+        >
+          <Text c="red" fw={500}>
+            Failed to load image
+          </Text>
+        </div>
+      )}
+
       <Stage
         width={width}
         height={height}
@@ -727,7 +787,7 @@ export function DrawingCanvas({
                 );
               case 'text':
                 return (
-                  <Text
+                  <KonvaText
                     key={element.id}
                     ref={(node) => setShapeRef(element.id, node)}
                     x={element.x}
