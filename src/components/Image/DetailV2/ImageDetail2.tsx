@@ -269,12 +269,12 @@ export function ImageDetail2() {
                           <div className="flex flex-1 flex-wrap justify-between gap-1">
                             {/* Placeholder */}
                             <div className="@md:hidden" />
-                            <div className="flex gap-1 @max-md:hidden">
+                            <div className="flex items-center gap-1 @max-md:hidden">
                               <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                               {LeftImageControls}
                             </div>
 
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1">
                               <ImageGuard2.BlurToggle
                                 {...sharedBadgeProps}
                                 className={clsx('@md:hidden', sharedBadgeProps.className)}
