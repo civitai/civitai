@@ -1,8 +1,15 @@
-import { ModelType, ReviewReactions, PrismaClient, ScanResultCode, ModelFileType, ModelStatus } from '@prisma/client';
+import {
+  ModelType,
+  ReviewReactions,
+  PrismaClient,
+  ScanResultCode,
+  ModelFileType,
+  ModelStatus,
+} from '@prisma/client';
 import { getRandomInt } from '../src/utils/number-helpers';
 
 const prisma = new PrismaClient({
-  log: ['warn','error']
+  log: ['warn', 'error'],
 });
 
 const getRandomItem = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
@@ -151,11 +158,19 @@ async function seed() {
                   url: 'https://www.google.com/',
                   sizeKB: getRandomInt(1000000000, 4000000000),
                   type: [ModelFileType.Model, ModelFileType.TrainingData][k],
-                  pickleScanResult: getRandomItem([ScanResultCode.Success, ScanResultCode.Danger, ScanResultCode.Error]),
-                  virusScanResult: getRandomItem([ScanResultCode.Success, ScanResultCode.Danger, ScanResultCode.Error]),
+                  pickleScanResult: getRandomItem([
+                    ScanResultCode.Success,
+                    ScanResultCode.Danger,
+                    ScanResultCode.Error,
+                  ]),
+                  virusScanResult: getRandomItem([
+                    ScanResultCode.Success,
+                    ScanResultCode.Danger,
+                    ScanResultCode.Error,
+                  ]),
                   scannedAt: new Date(),
                 })),
-              }
+              },
             })),
           },
         },
@@ -168,7 +183,7 @@ async function seed() {
             },
           },
         },
-      })
+      });
     })
   );
 

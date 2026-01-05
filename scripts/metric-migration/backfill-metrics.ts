@@ -219,7 +219,9 @@ async function fetchIdRange(
     WHERE timeframe = 'AllTime'
   `;
 
-  const { result } = await pg.cancellableQuery<{ minId: number; maxId: number; count: string }>(query);
+  const { result } = await pg.cancellableQuery<{ minId: number; maxId: number; count: string }>(
+    query
+  );
   const rows = await result();
   const row = rows[0];
   return {
@@ -340,23 +342,23 @@ async function processRanges(
     currentStart = rangeEnd;
 
     return async () => {
-      const rows = await withRetry(
-        () => fetchMetricsByRange(pg, config, rangeStart, rangeEnd),
-        { name: `fetch range [${rangeStart}, ${rangeEnd})` }
-      );
+      const rows = await withRetry(() => fetchMetricsByRange(pg, config, rangeStart, rangeEnd), {
+        name: `fetch range [${rangeStart}, ${rangeEnd})`,
+      });
       const events = transformToEvents(rows, config, date);
 
-      await withRetry(
-        () => insertToClickHouse(events, dryRun),
-        { name: `insert range [${rangeStart}, ${rangeEnd})` }
-      );
+      await withRetry(() => insertToClickHouse(events, dryRun), {
+        name: `insert range [${rangeStart}, ${rangeEnd})`,
+      });
 
       totalEvents += events.length;
       totalEntities += rows.length;
       processedRanges++;
 
-      const pct = ((rangeEnd - minId) / (maxId - minId + 1) * 100).toFixed(1);
-      log(`Range [${rangeStart}, ${rangeEnd}): ${rows.length} entities, ${events.length} events (${pct}% complete)`);
+      const pct = (((rangeEnd - minId) / (maxId - minId + 1)) * 100).toFixed(1);
+      log(
+        `Range [${rangeStart}, ${rangeEnd}): ${rows.length} entities, ${events.length} events (${pct}% complete)`
+      );
     };
   };
 
@@ -373,10 +375,14 @@ async function main(): Promise<void> {
 
   const config = metricTableConfigs[args.table];
   log(`Starting backfill for ${args.table} (${config.entityType})`);
-  log(`Options: date=${args.date.toISOString()}, dryRun=${args.dryRun}, batchSize=${args.batchSize}`);
+  log(
+    `Options: date=${args.date.toISOString()}, dryRun=${args.dryRun}, batchSize=${args.batchSize}`
+  );
 
   if (!clickhouse) {
-    throw new Error('ClickHouse client not initialized. Check CLICKHOUSE_HOST environment variable.');
+    throw new Error(
+      'ClickHouse client not initialized. Check CLICKHOUSE_HOST environment variable.'
+    );
   }
 
   // Initialize PostgreSQL connection
@@ -403,7 +409,12 @@ async function main(): Promise<void> {
       log(`ID Range: min=${range.minId}, max=${range.maxId}`);
       if (range.count >= 0) {
         log(`Total entities: ${range.count.toLocaleString()}`);
-        log(`ID span: ${(range.maxId - range.minId + 1).toLocaleString()} (density: ${((range.count / (range.maxId - range.minId + 1)) * 100).toFixed(1)}%)`);
+        log(
+          `ID span: ${(range.maxId - range.minId + 1).toLocaleString()} (density: ${(
+            (range.count / (range.maxId - range.minId + 1)) *
+            100
+          ).toFixed(1)}%)`
+        );
       }
     }
 

@@ -262,7 +262,7 @@ export function GeneratedImage({
           {
             <EdgeMedia2
               // Use previewUrl for rendering in queue (smaller/faster), but full url for lightbox
-              src={isLightbox ? image.url : (image.previewUrl ?? image.url)}
+              src={isLightbox ? image.url : image.previewUrl ?? image.url}
               type={image.type}
               alt=""
               className={clsx('max-h-full min-h-0 w-auto max-w-full', {
