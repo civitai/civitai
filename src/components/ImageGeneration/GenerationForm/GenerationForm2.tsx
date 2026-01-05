@@ -143,7 +143,6 @@ import {
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
-  type ImageAnnotation,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import {
   getIsSeedream,
@@ -166,6 +165,7 @@ import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
+import type { ImageAnnotation } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 
 let total = 0;
 const tips = {
@@ -989,11 +989,65 @@ export function GenerationFormContent() {
                   )}
 
                   {enableImageInput && (
-                    <InputSourceImageUpload
-                      name="sourceImage"
-                      label={isOpenAI ? 'Image (optional)' : undefined}
-                      warnOnMissingAiMetadata={isFluxKontext}
-                    />
+                    <Watch {...form} fields={['sourceImage']}>
+                      {({ sourceImage: currentSourceImage }) => {
+                        // Find annotation for current sourceImage
+                        const sourceImageAnnotation =
+                          currentSourceImage && imageAnnotations
+                            ? imageAnnotations.find(
+                                (a: ImageAnnotation) =>
+                                  a.compositeUrl === currentSourceImage.url ||
+                                  a.originalUrl === currentSourceImage.url
+                              )
+                            : undefined;
+
+                        return (
+                          <InputSourceImageUpload
+                            name="sourceImage"
+                            label={isOpenAI ? 'Image (optional)' : undefined}
+                            warnOnMissingAiMetadata={isFluxKontext}
+                            enableDrawing
+                            annotation={sourceImageAnnotation}
+                            onDrawingComplete={(compositeImage, lines) => {
+                              if (!currentSourceImage) return;
+
+                              // Check if this image is already annotated (re-editing)
+                              const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+
+                              // The original is either from existing annotation or the current image
+                              const originalImage = sourceImageAnnotation
+                                ? {
+                                    url: sourceImageAnnotation.originalUrl,
+                                    width: sourceImageAnnotation.originalWidth,
+                                    height: sourceImageAnnotation.originalHeight,
+                                  }
+                                : currentSourceImage;
+
+                              // Replace sourceImage with composite
+                              form.setValue('sourceImage', compositeImage);
+
+                              // Update annotations - remove old if re-editing, add new
+                              const filteredAnnotations = currentAnnotations.filter(
+                                (a: ImageAnnotation) =>
+                                  a.compositeUrl !== currentSourceImage.url &&
+                                  a.originalUrl !== originalImage.url
+                              );
+
+                              form.setValue('imageAnnotations', [
+                                ...filteredAnnotations,
+                                {
+                                  originalUrl: originalImage.url,
+                                  originalWidth: originalImage.width,
+                                  originalHeight: originalImage.height,
+                                  compositeUrl: compositeImage.url,
+                                  lines,
+                                },
+                              ]);
+                            }}
+                          />
+                        );
+                      }}
+                    </Watch>
                   )}
 
                   {showImg2ImgMultiple && (
@@ -1174,7 +1228,7 @@ export function GenerationFormContent() {
                                 'border-2 border-red-500': remixSimilarity < 0.75,
                               })}
                             >
-                              <div className=" flex-none">
+                              <div className="flex-none">
                                 <ImageById
                                   imageId={remixOfId}
                                   className="h-28 rounded-none rounded-l-md"

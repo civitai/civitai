@@ -142,3 +142,12 @@ export interface DrawingEditorModalProps {
   onCancel?: () => void;
   initialLines?: DrawingLineInput[]; // Accepts both old and new formats
 }
+
+/** Tracks original image info for images that have been annotated (drawn on) */
+export type ImageAnnotation = {
+  originalUrl: string;
+  originalWidth: number;
+  originalHeight: number;
+  compositeUrl: string;
+  lines: DrawingElementSchema[];
+};

@@ -4,7 +4,7 @@ import { IconPalette } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
-import type { DrawingElement } from './DrawingEditor/drawing.types';
+import type { DrawingElement, ImageAnnotation } from './DrawingEditor/drawing.types';
 import { forwardRef, useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import {
@@ -34,8 +34,10 @@ export type SourceImageUploadProps = {
   onWarnMissingAiMetadata?: (Warning: JSX.Element | null) => void;
   /** Enable drawing overlay tools */
   enableDrawing?: boolean;
+  /** Annotation for the current image (to load existing drawing) */
+  annotation?: ImageAnnotation;
   /** Called when user completes a drawing overlay */
-  onDrawingComplete?: (value: SourceImageProps) => void;
+  onDrawingComplete?: (value: SourceImageProps, lines: DrawingElement[]) => void;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
 
 export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadProps>(
@@ -51,6 +53,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       warnOnMissingAiMetadata,
       onWarnMissingAiMetadata,
       enableDrawing = false,
+      annotation,
       onDrawingComplete,
       ...inputWrapperProps
     },
@@ -61,8 +64,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [error, setError] = useState<string | null>(null);
     // const [warning, setWarning] = useState<string | null>(null);
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
-    // Store drawing elements for re-editing
-    const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
     const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
       onSettled: () => {
         setLoading(false);
@@ -137,11 +138,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
 
     const _value = value instanceof Blob ? null : value;
 
-    // Clear drawing lines when source image changes
-    useEffect(() => {
-      setDrawingLines([]);
-    }, [_value?.url]);
-
     function getHistory() {
       const stored = localStorage.getItem(key);
       return stored ? (JSON.parse(stored) as SourceImageProps[]) : [];
@@ -193,9 +189,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
       if (!onDrawingComplete) return;
 
-      // Store elements for re-editing
-      setDrawingLines(elements);
-
       setLoading(true);
       try {
         const base64 = await getBase64(drawingBlob);
@@ -203,22 +196,20 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
           mutate(
             { sourceImage: base64 },
             {
-              onSuccess: ({ blob }) => {
+              onSuccess: async ({ blob }) => {
                 const url = blob.url;
                 if (url) {
-                  getImageDimensions(url).then(({ width, height }) => {
-                    onDrawingComplete({ url, width, height });
-                  });
+                  const { width, height } = await getImageDimensions(url);
+                  onDrawingComplete({ url, width, height }, elements);
                 }
-              },
-              onSettled: () => {
-                setLoading(false);
               },
             }
           );
         }
       } catch (e) {
         console.error('Failed to upload drawing:', e);
+        throw e; // Re-throw so DrawingEditorModal can handle the error
+      } finally {
         setLoading(false);
       }
     }
@@ -226,13 +217,25 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     function handleOpenDrawingEditor() {
       if (!_value) return;
 
+      // Check if current image is a composite (has been annotated)
+      const isAnnotated = annotation && annotation.compositeUrl === _value.url;
+
+      // If this is a composite, use the original image for the drawing editor
+      const sourceImage = isAnnotated
+        ? {
+            url: annotation.originalUrl,
+            width: annotation.originalWidth,
+            height: annotation.originalHeight,
+          }
+        : _value;
+
       dialogStore.trigger({
         id: 'drawing-editor-modal',
         component: DrawingEditorModal,
         props: {
-          sourceImage: _value,
+          sourceImage,
           onConfirm: handleDrawingComplete,
-          initialLines: drawingLines,
+          initialLines: annotation?.lines || [],
         },
       });
     }
