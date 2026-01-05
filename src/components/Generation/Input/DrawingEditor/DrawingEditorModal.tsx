@@ -192,11 +192,6 @@ export function DrawingEditorModal({
   }
 
   async function handleConfirm() {
-    if (elements.length === 0) {
-      handleCancel();
-      return;
-    }
-
     setLoading(true);
     try {
       const blob = await exportDrawingToBlob(

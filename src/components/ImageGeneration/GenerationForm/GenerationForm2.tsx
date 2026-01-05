@@ -289,6 +289,7 @@ export function GenerationFormContent() {
       remixSimilarity,
       upscaleHeight,
       upscaleWidth,
+      imageAnnotations,
       ...params
     } = data;
     let additionalResources = formResources ?? [];
