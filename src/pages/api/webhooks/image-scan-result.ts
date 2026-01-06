@@ -760,6 +760,7 @@ async function updateImageScanJobs({
   const result = await dbWrite.$queryRawUnsafe<
     {
       scanJobs: { scans?: Record<string, TagSource> };
+      type: MediaType;
     }[]
   >(`
       UPDATE "Image" SET
@@ -771,10 +772,12 @@ async function updateImageScanJobs({
       ${aiModel ? `"aiModel" = '${aiModel}',` : ''}
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
       WHERE id = ${id}
-      RETURNING "scanJobs";
+      RETURNING "scanJobs", type;
     `);
 
-  return getHasRequiredScans(result[0]?.scanJobs?.scans);
+  return result[0]?.type === 'video'
+    ? getHasRequiredVideoScans(result[0]?.scanJobs?.scans)
+    : getHasRequiredScans(result[0]?.scanJobs?.scans);
 }
 
 const requiredScans = imageScanTypes
