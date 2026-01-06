@@ -78,18 +78,16 @@ export function createJob(
         jobContext.status = 'canceled';
         Promise.all(onCancel.map((x) => x()));
       };
-      let result: Promise<void | MixedObject> | undefined;
-      try {
-        result = fn(jobContext);
-        result.finally(() => {
+      const result = fn(jobContext)
+        .catch((e) => {
+          const message = typeof e === 'string' ? e : e instanceof Error ? e.message : undefined;
+          logToAxiom({ type: 'job-error', name, message });
+          throw e; // Re-throw to ensure webhook endpoint can handle errors
+        })
+        .finally(() => {
           if (jobContext.status === 'canceled') return;
           jobContext.status = 'finished';
         });
-      } catch (e) {
-        const message = typeof e === 'string' ? e : e instanceof Error ? e.message : undefined;
-        logToAxiom({ type: 'job-error', name, message });
-        throw e; // Re-throw to ensure webhook endpoint can handle errors
-      }
       return { result, cancel };
     },
     options: {
