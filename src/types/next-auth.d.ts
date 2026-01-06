@@ -53,6 +53,7 @@ declare module 'next-auth' {
   interface Session {
     user?: ExtendedUser & DefaultSession['user'];
     error?: string;
+    needsCookieRefresh?: boolean;
   }
 }
 
