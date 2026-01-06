@@ -67,9 +67,9 @@ export const processScheduledPublishing = createJob(
 
     await dbWrite.$transaction(
       async (tx) => {
-        const modelsToUpdate = scheduledModelVersions
-          .map(({ extras }) => extras?.modelId)
-          .filter(isDefined);
+        const modelsToUpdate = [
+          ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
+        ];
 
         if (modelsToUpdate.length) {
           await tx.$executeRaw`
