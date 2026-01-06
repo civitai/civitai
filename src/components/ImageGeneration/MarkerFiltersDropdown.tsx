@@ -1,6 +1,6 @@
 import type { ButtonProps, PopoverProps } from '@mantine/core';
-import { Divider, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
-import { IconFilter } from '@tabler/icons-react';
+import { Button, Divider, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
+import { IconFilter, IconX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
@@ -9,10 +9,16 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import {
+  getGenerationBaseModelConfigs,
+  baseModelGroupConfig,
+  type BaseModelGroup,
+} from '~/shared/constants/base-model.constants';
+import { WORKFLOW_TAGS, PROCESS_TYPE_OPTIONS } from '~/shared/constants/generation.constants';
 import { titleCase } from '~/utils/string-helpers';
 
-const tagGroups = {};
+// Get all base models dynamically from config
+const baseModelGroups = getGenerationBaseModelConfigs();
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -44,9 +50,23 @@ export function DumbMarkerFiltersDropdown({
     setMarker(filters.marker);
   }
 
+  // Calculate filter count for badge
   let filterLength = 0;
   if (filters.marker) filterLength += 1;
-  if (filters.tags) filterLength += filters.tags.length;
+  if (filters.tags?.length) filterLength += filters.tags.length;
+  if (filters.baseModel) filterLength += 1;
+  if (filters.processType) filterLength += 1;
+
+  // Clear all filters function
+  const clearAllFilters = () => {
+    setMarker(undefined);
+    setFilters({
+      marker: undefined,
+      tags: [],
+      baseModel: undefined,
+      processType: undefined,
+    });
+  };
 
   return (
     <IsClient>
@@ -74,6 +94,19 @@ export function DumbMarkerFiltersDropdown({
         <Popover.Dropdown maw={576} w="100%">
           <ScrollArea.Autosize mah={'calc(90vh - var(--header-height) - 56px)'} type="hover">
             <Stack gap={8}>
+              {/* Clear all filters button */}
+              {filterLength > 0 && (
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  leftSection={<IconX size={14} />}
+                  onClick={clearAllFilters}
+                  className="self-start"
+                >
+                  Clear all filters
+                </Button>
+              )}
+
               {!hideMediaTypes && (
                 <>
                   <Divider label="Generation Type" className="text-sm font-bold" />
@@ -99,6 +132,51 @@ export function DumbMarkerFiltersDropdown({
                   </div>
                 </>
               )}
+
+              {/* Base Model Filter */}
+              <Divider label="Base Model" className="text-sm font-bold" />
+              <div className="flex flex-wrap gap-2">
+                <FilterChip
+                  checked={!filters.baseModel}
+                  onChange={() => setFilters({ baseModel: undefined })}
+                >
+                  All Models
+                </FilterChip>
+                {baseModelGroups.map((group) => (
+                  <FilterChip
+                    key={group}
+                    checked={filters.baseModel === group}
+                    onChange={(checked) =>
+                      setFilters({ baseModel: checked ? group : undefined })
+                    }
+                  >
+                    {baseModelGroupConfig[group as BaseModelGroup]?.name ?? group}
+                  </FilterChip>
+                ))}
+              </div>
+
+              {/* Process Type Filter */}
+              <Divider label="Process Type" className="text-sm font-bold" />
+              <div className="flex flex-wrap gap-2">
+                <FilterChip
+                  checked={!filters.processType}
+                  onChange={() => setFilters({ processType: undefined })}
+                >
+                  All
+                </FilterChip>
+                {PROCESS_TYPE_OPTIONS.map(({ value, label }) => (
+                  <FilterChip
+                    key={value}
+                    checked={filters.processType === value}
+                    onChange={(checked) =>
+                      setFilters({ processType: checked ? value : undefined })
+                    }
+                  >
+                    {label}
+                  </FilterChip>
+                ))}
+              </div>
+
               <Divider label="Reactions" className="text-sm font-bold" />
               <div className="flex gap-2">
                 {Object.values(GenerationReactType).map((marker) => {

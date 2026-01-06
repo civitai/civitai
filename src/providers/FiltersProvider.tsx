@@ -162,6 +162,8 @@ const generationFilterSchema = z.object({
   sort: z.enum(GenerationSort).default(GenerationSort.Newest),
   marker: z.enum(GenerationReactType).optional(),
   tags: z.string().array().optional(),
+  baseModel: z.string().optional(),
+  processType: z.string().optional(),
 });
 
 type ToolFilterSchema = z.infer<typeof toolFilterSchema>;
