@@ -617,7 +617,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 // const clavataScan = env.CLAVATA_SCAN;
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
-  ImageScanType.Hash,
+  // ImageScanType.Hash,
   // ImageScanType.Clavata,
   // ImageScanType.Hive,
   ImageScanType.SpineRating,
@@ -711,7 +711,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: [ImageScanType.WD14, ImageScanType.SpineRating],
+      scans: imageScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
