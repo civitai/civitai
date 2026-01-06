@@ -244,7 +244,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         if (!refreshResult.token) {
           // Token was invalidated or expired - return empty session to force logout
           if (refreshResult.needsCookieRefresh) {
-            return { needsCookieRefresh: true } as any;
+            return { needsCookieRefresh: true };
           }
           return {} as any;
         }
@@ -254,7 +254,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 
         // Signal that client's session cookie needs refreshing
         if (refreshResult.needsCookieRefresh) {
-          (session as any).needsCookieRefresh = true;
+          session.needsCookieRefresh = true;
         }
 
         return session;

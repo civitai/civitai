@@ -18,9 +18,9 @@ type AuthResponse = GetServerSidePropsContext['res'] | NextApiResponse;
  * The flag is deleted after use so it doesn't appear in the returned session.
  */
 function checkAndSetSessionHeaders(session: Session | null, res: AuthResponse): Session | null {
-  if ((session as any)?.needsCookieRefresh) {
+  if (session?.needsCookieRefresh) {
     res.setHeader(SESSION_REFRESH_HEADER, 'true');
-    delete (session as any).needsCookieRefresh;
+    delete session.needsCookieRefresh;
   }
   return session;
 }
