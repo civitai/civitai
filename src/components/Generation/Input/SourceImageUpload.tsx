@@ -64,7 +64,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [error, setError] = useState<string | null>(null);
     // const [warning, setWarning] = useState<string | null>(null);
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
-    const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
+    const { mutate, mutateAsync, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
       onSettled: () => {
         setLoading(false);
       },
@@ -193,7 +193,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       try {
         const base64 = await getBase64(drawingBlob);
         if (base64) {
-          mutate(
+          await mutateAsync(
             { sourceImage: base64 },
             {
               onSuccess: async ({ blob }) => {
