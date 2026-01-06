@@ -783,6 +783,9 @@ const requiredScans = imageScanTypes
 function getHasRequiredScans(scans: Record<string, TagSource> = {}) {
   return requiredScans.every((scan) => scan in scans);
 }
+function getHasRequiredVideoScans(scans: Record<string, TagSource> = {}) {
+  return [ImageScanType.WD14, ImageScanType.SpineRating].every((scan) => scan in scans);
+}
 
 async function processScanResult({
   id,
@@ -1009,10 +1012,18 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   else if (flags.tagReview) reviewKey = 'tag';
   else if (flags.newUserReview) reviewKey = 'newUser';
 
+  let ingestion: ImageIngestionStatus | undefined;
+
+  if (image.type === 'video' && getHasRequiredVideoScans(image.scanJobs?.scans)) {
+    ingestion = ImageIngestionStatus.Scanned;
+  }
+
+  if (image.type !== 'video' && getHasRequiredScans(image.scanJobs?.scans)) {
+    ingestion = ImageIngestionStatus.Scanned;
+  }
+
   const data: Prisma.ImageUpdateInput = {
-    ingestion: getHasRequiredScans(image.scanJobs?.scans)
-      ? ImageIngestionStatus.Scanned
-      : undefined,
+    ingestion,
     updatedAt: new Date(),
   };
   if (!image.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
