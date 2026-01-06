@@ -784,7 +784,10 @@ function getHasRequiredScans(scans: Record<string, TagSource> = {}) {
   return requiredScans.every((scan) => scan in scans);
 }
 function getHasRequiredVideoScans(scans: Record<string, TagSource> = {}) {
-  return [ImageScanType.WD14, ImageScanType.SpineRating].every((scan) => scan in scans);
+  return [
+    ImageScanTypeTagSourceMap.get(ImageScanType.WD14),
+    ImageScanTypeTagSourceMap.get(ImageScanType.SpineRating),
+  ].every((scan) => scan! in scans);
 }
 
 async function processScanResult({
