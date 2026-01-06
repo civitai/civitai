@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 
 export type Job = {
   name: string;
@@ -77,11 +78,18 @@ export function createJob(
         jobContext.status = 'canceled';
         Promise.all(onCancel.map((x) => x()));
       };
-      const result = fn(jobContext);
-      result.finally(() => {
-        if (jobContext.status === 'canceled') return;
-        jobContext.status = 'finished';
-      });
+      let result: Promise<void | MixedObject> | undefined;
+      try {
+        result = fn(jobContext);
+        result.finally(() => {
+          if (jobContext.status === 'canceled') return;
+          jobContext.status = 'finished';
+        });
+      } catch (e) {
+        const message = typeof e === 'string' ? e : e instanceof Error ? e.message : undefined;
+        logToAxiom({ type: 'job-error', name, message });
+        throw e; // Re-throw to ensure webhook endpoint can handle errors
+      }
       return { result, cancel };
     },
     options: {
