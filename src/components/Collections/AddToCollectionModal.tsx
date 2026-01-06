@@ -264,6 +264,7 @@ function CollectionListForm({
                               size="xs"
                               label="Tag your entry"
                               value={selectedItem.tagId?.toString() ?? null}
+                              comboboxProps={{ withinPortal: false }}
                               onChange={(value) => {
                                 setSelectedCollections((curr) =>
                                   curr.map((c) => {
@@ -302,7 +303,7 @@ function CollectionListForm({
                   <Text size="sm" fw="bold" mt="md">
                     Collections you contribute to
                   </Text>
-                  <ScrollArea.Autosize mah={200}>
+                  <ScrollArea.Autosize mah={300}>
                     <Stack gap={4}>
                       {contributingCollections.map((collection) => {
                         const Icon = collectionReadPrivacyData[collection.read].icon;
@@ -355,9 +356,8 @@ function CollectionListForm({
                                 size="xs"
                                 label="Tag your entry"
                                 value={selectedItem.tagId?.toString() ?? null}
-                                style={{
-                                  zIndex: 400,
-                                }}
+                                style={{ zIndex: 400 }}
+                                comboboxProps={{ withinPortal: false }}
                                 onChange={(value) => {
                                   setSelectedCollections((curr) =>
                                     curr.map((c) => {

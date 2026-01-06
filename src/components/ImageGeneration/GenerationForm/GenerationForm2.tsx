@@ -130,18 +130,6 @@ import { capitalize, getDisplayName, hashify, parseAIR } from '~/utils/string-he
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
-  getHiDreamResourceFromPrecisionAndVariant,
-  getHiDreamResourceFromVersionId,
-  hiDreamPrecisions,
-  hiDreamVariants,
-  hiDreamVariantsPrecisionMap,
-} from '~/shared/orchestrator/hidream.config';
-import classes from './GenerationForm2.module.scss';
-import { StepProvider } from '~/components/Generation/Providers/StepProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
-import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
@@ -155,6 +143,7 @@ import {
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
+  type ImageAnnotation,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import {
   getIsSeedream,
@@ -165,6 +154,18 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
 import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
 import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
+import {
+  getHiDreamResourceFromPrecisionAndVariant,
+  getHiDreamResourceFromVersionId,
+  hiDreamPrecisions,
+  hiDreamVariants,
+  hiDreamVariantsPrecisionMap,
+} from '~/shared/orchestrator/hidream.config';
+import classes from './GenerationForm2.module.scss';
+import { StepProvider } from '~/components/Generation/Providers/StepProvider';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
 let total = 0;
 const tips = {
@@ -212,6 +213,7 @@ export function GenerationFormContent() {
   const baseModel = form.watch('baseModel');
   const model = form.watch('model');
   const [sourceImage] = form.watch(['sourceImage']);
+  const [images, imageAnnotations] = form.watch(['images', 'imageAnnotations']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -287,6 +289,7 @@ export function GenerationFormContent() {
       remixSimilarity,
       upscaleHeight,
       upscaleWidth,
+      imageAnnotations,
       ...params
     } = data;
     let additionalResources = formResources ?? [];
@@ -497,7 +500,9 @@ export function GenerationFormContent() {
           {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
-              workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
+              workflow?.startsWith('img') ||
+              (isImageGen && (sourceImage || !!images?.length)) ||
+              isFluxKontext;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir
@@ -995,14 +1000,67 @@ export function GenerationFormContent() {
                     <div className="-mx-2">
                       <InputSourceImageUploadMultiple
                         name="images"
+                        aspect="video"
                         max={7}
                         warnOnMissingAiMetadata
-                        aspect="video"
+                        enableDrawing
+                        annotations={imageAnnotations}
+                        onDrawingComplete={(compositeImage, index, lines) => {
+                          const currentImages = form.getValues('images') ?? [];
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+
+                          const currentImage = currentImages[index];
+                          if (!currentImage) return;
+
+                          // Check if this image is already annotated (re-editing)
+                          const existingAnnotation = currentAnnotations.find(
+                            (a: ImageAnnotation) => a.compositeUrl === currentImage.url
+                          );
+
+                          // The original is either from existing annotation or the current image
+                          const originalImage = existingAnnotation
+                            ? {
+                                url: existingAnnotation.originalUrl,
+                                width: existingAnnotation.originalWidth,
+                                height: existingAnnotation.originalHeight,
+                              }
+                            : currentImage;
+
+                          // 1. Replace image in array with composite
+                          const updatedImages = [...currentImages];
+                          updatedImages[index] = compositeImage;
+                          form.setValue('images', updatedImages);
+
+                          // 2. Update annotations - remove old if re-editing, add new
+                          const filteredAnnotations = currentAnnotations.filter(
+                            (a: ImageAnnotation) =>
+                              a.compositeUrl !== currentImage.url &&
+                              a.originalUrl !== originalImage.url
+                          );
+                          form.setValue('imageAnnotations', [
+                            ...filteredAnnotations,
+                            {
+                              originalUrl: originalImage.url,
+                              originalWidth: originalImage.width,
+                              originalHeight: originalImage.height,
+                              compositeUrl: compositeImage.url,
+                              lines,
+                            },
+                          ]);
+                        }}
+                        onRemove={(removedImage) => {
+                          // Remove annotation if this was a composite
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+                          const filtered = currentAnnotations.filter(
+                            (a: ImageAnnotation) => a.compositeUrl !== removedImage.url
+                          );
+                          form.setValue('imageAnnotations', filtered);
+                        }}
                       >
                         {(previewItems) => (
                           <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
                             {previewItems.map((item, i) => (
-                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                              <SourceImageUploadMultiple.Image key={item.url} index={i} {...item} />
                             ))}
                             <SourceImageUploadMultiple.Dropzone />
                           </div>

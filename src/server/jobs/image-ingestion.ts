@@ -10,7 +10,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
-const IMAGE_SCANNING_RETRY_LIMIT = 6;
+const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
 type PendingIngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
@@ -49,7 +49,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as "retryCount"
     FROM "Image"
-    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '24 hours'::interval)
+    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '96 hours'::interval)
   `) ?? []
   ).filter(
     (img) =>
