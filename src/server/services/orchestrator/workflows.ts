@@ -34,13 +34,20 @@ import {
 
 export async function queryWorkflows({
   token,
+  fromDate,
+  toDate,
   ...query
 }: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
   const client = createOrchestratorClient(token);
 
   const { data, error } = await clientQueryWorkflows({
     client,
-    query: { ...query, tags: ['civitai', ...(query.tags ?? [])] },
+    query: {
+      ...query,
+      tags: ['civitai', ...(query.tags ?? [])],
+      fromDate: fromDate?.toISOString(),
+      toDate: toDate?.toISOString(),
+    },
   }).catch((error) => {
     throw error;
   });

@@ -63,8 +63,7 @@ export function Feed() {
                 new images with our resources
               </Text>
               <Text size="sm" c="dimmed">
-                Images generated prior to 10/13/2025 are now visible on{' '}
-                <Anchor href="https://civitai.com/generate">civitai.com</Anchor>
+                Some new filtering options don't apply retroactively.
               </Text>
             </Stack>
           )}

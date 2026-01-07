@@ -15,7 +15,7 @@ import {
 } from '~/server/services/orchestrator/common';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
+import { WORKFLOW_TAGS, samplersToComfySamplers, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -121,6 +121,7 @@ export async function createComfy(
   // throw new Error('stop');
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
+  const processTag = getProcessTagFromWorkflow(params.workflow, !!params.sourceImage, 'image');
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
@@ -130,6 +131,7 @@ export async function createComfy(
         params.workflow,
         baseModel,
         process,
+        processTag,
         ...args.tags,
       ].filter(isDefined),
       steps: [step],
