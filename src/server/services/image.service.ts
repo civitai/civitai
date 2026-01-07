@@ -3,8 +3,8 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { chunk, lowerFirst, truncate, uniqBy } from 'lodash-es';
-import { MeiliSearch, type SearchParams, type SearchResponse } from 'meilisearch';
+import { chunk, truncate, uniqBy } from 'lodash-es';
+import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
@@ -48,6 +48,7 @@ import {
   thumbnailCache,
   userImageVideoCountCache,
 } from '~/server/redis/caches';
+import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { createCachedObject } from '~/server/utils/cache-helpers';
@@ -179,7 +180,6 @@ import type {
 import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
-import { number } from 'zod';
 
 const {
   cacheHitRequestsTotal,
@@ -2376,20 +2376,19 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   requestTotal.inc({ route }); // count every request up front
 
   try {
-    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
-    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
+    const { results } = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
-      .search(null, request);
+      .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
     let nextCursor: number | undefined;
-    if (results.hits.length > limit) {
-      results.hits.pop();
+    if (results.length > limit) {
+      results.pop();
       // - if we have no entrypoint, it's the first request, and set one for the future
       //   else keep it the same
-      nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
+      nextCursor = !entry ? results[0]?.sortAtUnix : entry;
     }
 
-    const filteredHits = results.hits.filter((hit) => {
+    const filteredHits = results.filter((hit) => {
       if (!hit.url)
         // check for good data
         return false;
@@ -2428,9 +2427,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       });
 
       const idSet = new Set(dbIdResp.map((r) => r.id));
-      const filtered = results.hits.filter((h) => idSet.has(h.id));
+      const filtered = results.filter((h) => idSet.has(h.id));
 
-      const droppedCount = results.hits.length - filtered.length;
+      const droppedCount = results.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
       const imageMetrics = await getImageMetricsObject(filtered);
@@ -2471,8 +2470,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
             ).catch();
           });
       }
-
       endTimer();
+
       return { data: fullData, nextCursor };
     }
 
@@ -2480,11 +2479,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const checkImageExistence = async (imageIds: number[]) => {
       // Preserve original order and remove duplicates
       const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS as string}:`;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}`);
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:` as const;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as const);
 
       // Check cached results first (1 minute TTL)
-      const cachedResults = await sysRedis.packed.mGet(cacheKeys as any);
+      const cachedResults = await sysRedis.packed.mGet(cacheKeys);
 
       // Separate cached and uncached IDs
       const uncachedIds: number[] = [];
@@ -2517,9 +2516,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       cacheHitRequestsTotal.inc({ route, hit_type: hitType });
 
       // Query DB for uncached IDs
-      let dbResults: { id: number }[] = [];
       if (uncachedIds.length > 0) {
-        dbResults = await dbRead.image.findMany({
+        const dbResults = await dbRead.image.findMany({
           where: { id: { in: uncachedIds } },
           select: { id: true },
         });
@@ -2536,23 +2534,30 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
         await Promise.all(
           Object.entries(cacheUpdates).map(([key, value]) =>
-            sysRedis.packed.set(key as any, value, { EX: 600 })
+            sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
           )
         );
       }
 
       // Filter hits based on existence check while preserving order
-      let dropped = 0;
-      const filteredHits = results.hits.filter((hit) => {
+      const dropped: number[] = [];
+      const filteredHits = results.filter((hit) => {
         const exists = cachedMap.get(hit.id);
         const keep = exists !== false; // treat undefined as exists=true
         if (!keep) {
-          dropped++;
+          dropped.push(hit.id);
         }
         return keep;
       });
 
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped.length);
+      if (dropped.length > 0) {
+        // Remove dropped IDs from search index asynchronously
+        queueImageSearchIndexUpdate({
+          ids: dropped,
+          action: SearchIndexUpdateQueueAction.Delete,
+        }).catch();
+      }
 
       return filteredHits.filter((x) => imageIds.includes(x.id));
     };
@@ -2927,11 +2932,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
   } else {
     searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
-    // - to avoid dupes (for any ascending query), we need to filter on that attribute
-    // if (entry) {
-    //   // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
-    //   filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
-    // }
   }
   sorts.push(searchSort);
   //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
@@ -2968,18 +2968,17 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.limit = requestLimit;
       request.offset = currentOffset;
 
-      // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
-      const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
+      const { results } = await metricsSearchClient
         .index(METRICS_SEARCH_INDEX)
-        .search(null, request);
+        .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
       // If no more results, break the loop
-      if (results.hits.length === 0) {
+      if (results.length === 0) {
         break;
       }
 
       // Apply post-query user-specific filtering
-      const batchFilteredHits = results.hits.filter((hit) => {
+      const batchFilteredHits = results.filter((hit) => {
         if (!hit.url)
           // check for good data
           return false;
@@ -3014,8 +3013,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       accumulatedHits.push(...batchFilteredHits);
 
       // Calculate filter ratio and adjust batch size for next iteration
-      const filterRatio =
-        results.hits.length > 0 ? 1 - batchFilteredHits.length / results.hits.length : 0;
+      const filterRatio = results.length > 0 ? 1 - batchFilteredHits.length / results.length : 0;
 
       // If more than 80% of results are filtered out, increase batch size
       if (filterRatio > 0.8 && batchSize < MAX_BATCH_SIZE) {
@@ -3023,12 +3021,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       }
 
       // Update tracking variables
-      currentOffset += results.hits.length;
-      totalProcessed += results.hits.length;
+      currentOffset += results.length;
+      totalProcessed += results.length;
       iteration++;
 
       // If we got fewer results than what we actually requested, we've likely hit the end
-      if (results.hits.length < requestLimit) {
+      if (results.length < requestLimit) {
         break;
       }
     }
@@ -3075,9 +3073,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const idSet = new Set(dbIdResp.map((r) => r.id));
       const filtered = limitedHits.filter((h) => idSet.has(h.id));
 
-      if (filtered.length > limit) {
+      if (limitedHits.length > limit) {
         const lastItem = filtered.pop();
         nextCursor = lastItem?.sortAtUnix;
+      } else {
+        nextCursor = undefined;
       }
 
       const droppedCount = limitedHits.length - filtered.length;
@@ -3121,8 +3121,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             ).catch();
           });
       }
-
       endTimer();
+
       return { data: fullData, nextCursor };
     }
 
@@ -3167,9 +3167,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       cacheHitRequestsTotal.inc({ route, hit_type: hitType });
 
       // Query DB for uncached IDs
-      let dbResults: { id: number }[] = [];
       if (uncachedIds.length > 0) {
-        dbResults = await dbRead.image.findMany({
+        const dbResults = await dbRead.image.findMany({
           where: { id: { in: uncachedIds } },
           select: { id: true },
         });
@@ -3186,32 +3185,41 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
         await Promise.all(
           Object.entries(cacheUpdates).map(([key, value]) =>
-            sysRedis.packed.set(key as any, value, { EX: 600 })
+            sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
           )
         );
       }
 
       // Filter hits based on existence check while preserving order
-      let dropped = 0;
+      const dropped: number[] = [];
       const existenceFiltered = limitedHits.filter((hit) => {
         const exists = cachedMap.get(hit.id);
         const keep = exists !== false; // treat undefined as exists=true
         if (!keep) {
-          dropped++;
+          dropped.push(hit.id);
         }
         return keep;
       });
 
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped.length);
+      if (dropped.length > 0) {
+        // Remove dropped IDs from search index asynchronously
+        queueImageSearchIndexUpdate({
+          ids: dropped,
+          action: SearchIndexUpdateQueueAction.Delete,
+        }).catch();
+      }
 
       return existenceFiltered.filter((x) => imageIds.includes(x.id));
     };
 
     // Apply the (flagged) existence check
     const filtered = await checkImageExistence(filteredHitIds);
-    if (filtered.length > limit) {
+    if (limitedHits.length > limit) {
       const lastItem = filtered.pop();
       nextCursor = lastItem?.sortAtUnix;
+    } else {
+      nextCursor = undefined;
     }
 
     const imageMetrics = await getImageMetricsObject(filtered);
@@ -3225,11 +3233,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
           laughCountAllTime: match?.reactionLaugh ?? 0,
           heartCountAllTime: match?.reactionHeart ?? 0,
           cryCountAllTime: match?.reactionCry ?? 0,
-
           commentCountAllTime: match?.comment ?? 0,
           collectedCountAllTime: match?.collection ?? 0,
           tippedAmountCountAllTime: match?.buzz ?? 0,
-
           dislikeCountAllTime: 0,
           viewCountAllTime: 0,
         },
@@ -3255,12 +3261,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
           ).catch();
         });
     }
-
     endTimer();
-    return {
-      data: fullData,
-      nextCursor,
-    };
+
+    return { data: fullData, nextCursor };
   } catch (error) {
     const err = error as Error;
     logToAxiom(
@@ -3273,8 +3276,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       },
       'temp-search'
     ).catch();
-
     endTimer();
+
     return { data: [], nextCursor: undefined };
   }
 }
