@@ -111,7 +111,7 @@ export function ProfileCard() {
           )}
           <Grid>
             <Grid.Col span={12}>
-              <InputText name="username" label="Name" required />
+              <InputText name="username" label="Username" required />
             </Grid.Col>
             <Grid.Col span={12}>
               <Stack gap="xs">

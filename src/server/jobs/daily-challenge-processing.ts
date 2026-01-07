@@ -603,6 +603,7 @@ async function pickWinners() {
     theme: currentChallenge.theme,
     entries: judgedEntries.map((entry) => ({
       creator: entry.username,
+      creatorId: entry.userId,
       summary: entry.summary,
       score: entry.score,
     })),
@@ -612,7 +613,10 @@ async function pickWinners() {
   // Map winners to entries
   const winningEntries = winners
     .map((winner, i) => {
-      const entry = judgedEntries.find((e) => e.username === winner.creator);
+      const entry = judgedEntries.find(
+        (e) =>
+          e.username.toLowerCase() === winner.creator.toLowerCase() || e.userId === winner.creatorId
+      );
       if (!entry) return null;
       return {
         ...entry,
@@ -801,7 +805,7 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
     const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
     // Adjust engagement to be between 0 and 10
     const engagementNormalized =
-      ((engagement - minEngagement) / (maxEngagement - minEngagement)) * 10;
+      ((engagement - minEngagement) / Math.max(maxEngagement - minEngagement, 1)) * 10;
     return {
       ...entry,
       summary,
