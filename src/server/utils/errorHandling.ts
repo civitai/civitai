@@ -4,6 +4,10 @@ import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '../logging/client';
 import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { parse as parseStackTrace } from 'stacktrace-parser';
+import { SourceMapConsumer } from 'source-map';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
@@ -203,4 +207,53 @@ export function withRetries<T>(
       throw error;
     }
   });
+}
+
+/**
+ * Applies source maps to a minified stack trace to get original source locations.
+ * Only works in production where source maps are available in the .next directory.
+ * @param stack - The minified stack trace string
+ * @returns The stack trace with original source locations
+ */
+export async function applySourceMaps(stack: string): Promise<string> {
+  try {
+    const parsedStack = parseStackTrace(stack);
+    const lines = stack.split('\n');
+    const filesToDownload = [...new Set(parsedStack.map((x) => x.file))] as string[];
+    const filesToRead = filesToDownload.map((x) => x.split('_next')[1]).filter(Boolean);
+
+    for (const toDownload of filesToRead) {
+      const sourceMapLocation = `${toDownload}.map`;
+      const pathname = path.join(process.cwd(), `./.next/${sourceMapLocation}`);
+
+      if (!fs.existsSync(pathname)) continue;
+
+      const sourceMap = fs.readFileSync(pathname, 'utf-8');
+      if (!sourceMap) continue;
+
+      const smc = await new SourceMapConsumer(sourceMap);
+
+      parsedStack.forEach(({ methodName, lineNumber, column, file }) => {
+        if (file) {
+          const lineIndex = lines.findIndex((x) => x.includes(file));
+          if (lineIndex > -1 && lineNumber != null && column != null) {
+            const pos = smc.originalPositionFor({ line: lineNumber, column });
+            if (pos && pos.line != null && pos.source != null) {
+              const name = pos.name || methodName;
+              lines[lineIndex] = `    at ${name !== '<unknown>' ? name : ''} (${pos.source}:${
+                pos.line
+              }:${pos.column ?? 0})`;
+            }
+          }
+        }
+      });
+
+      smc.destroy();
+    }
+
+    return lines.join('\n');
+  } catch {
+    // If source map parsing fails, return the original stack
+    return stack;
+  }
 }

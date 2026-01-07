@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { applySourceMaps } from '~/server/utils/errorHandling';
 
 export type Job = {
   name: string;
@@ -79,9 +80,16 @@ export function createJob(
         Promise.all(onCancel.map((x) => x()));
       };
       const result = fn(jobContext)
-        .catch((e) => {
-          const message = typeof e === 'string' ? e : e instanceof Error ? e.message : undefined;
-          logToAxiom({ type: 'job-error', name, message });
+        .catch(async (e) => {
+          const error = e instanceof Error ? e : undefined;
+          const message = typeof e === 'string' ? e : error?.message;
+          const stack = error?.stack ? await applySourceMaps(error.stack) : undefined;
+          logToAxiom({
+            type: 'job-error',
+            name,
+            message,
+            stack,
+          });
           throw e; // Re-throw to ensure webhook endpoint can handle errors
         })
         .finally(() => {
