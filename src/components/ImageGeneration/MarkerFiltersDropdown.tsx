@@ -1,5 +1,6 @@
 import type { ButtonProps, PopoverProps } from '@mantine/core';
-import { Button, Divider, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
+import { Button, Divider, Group, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
+import { DatePickerInput } from '@mantine/dates';
 import { IconFilter, IconX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -56,6 +57,9 @@ export function DumbMarkerFiltersDropdown({
   if (filters.tags?.length) filterLength += filters.tags.length;
   if (filters.baseModel) filterLength += 1;
   if (filters.processType) filterLength += 1;
+  if (filters.fromDate) filterLength += 1;
+  if (filters.toDate) filterLength += 1;
+  if (filters.excludeFailed) filterLength += 1;
 
   // Clear all filters function
   const clearAllFilters = () => {
@@ -65,6 +69,9 @@ export function DumbMarkerFiltersDropdown({
       tags: [],
       baseModel: undefined,
       processType: undefined,
+      fromDate: undefined,
+      toDate: undefined,
+      excludeFailed: undefined,
     });
   };
 
@@ -175,6 +182,40 @@ export function DumbMarkerFiltersDropdown({
                     {label}
                   </FilterChip>
                 ))}
+              </div>
+
+              {/* Date Range Filter */}
+              <Divider label="Date Range" className="text-sm font-bold" />
+              <Group grow>
+                <DatePickerInput
+                  label="From"
+                  placeholder="Start date"
+                  value={filters.fromDate}
+                  onChange={(date) => setFilters({ fromDate: date ?? undefined })}
+                  maxDate={filters.toDate ?? undefined}
+                  clearable
+                  size="xs"
+                />
+                <DatePickerInput
+                  label="To"
+                  placeholder="End date"
+                  value={filters.toDate}
+                  onChange={(date) => setFilters({ toDate: date ?? undefined })}
+                  minDate={filters.fromDate ?? undefined}
+                  clearable
+                  size="xs"
+                />
+              </Group>
+
+              {/* Status Filter */}
+              <Divider label="Status" className="text-sm font-bold" />
+              <div className="flex gap-2">
+                <FilterChip
+                  checked={filters.excludeFailed ?? false}
+                  onChange={(checked) => setFilters({ excludeFailed: checked || undefined })}
+                >
+                  Hide Failed
+                </FilterChip>
               </div>
 
               <Divider label="Reactions" className="text-sm font-bold" />

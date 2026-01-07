@@ -164,6 +164,9 @@ const generationFilterSchema = z.object({
   tags: z.string().array().optional(),
   baseModel: z.string().optional(),
   processType: z.string().optional(),
+  fromDate: z.date().optional(),
+  toDate: z.date().optional(),
+  excludeFailed: z.boolean().optional(),
 });
 
 type ToolFilterSchema = z.infer<typeof toolFilterSchema>;

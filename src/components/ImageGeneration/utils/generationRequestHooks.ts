@@ -112,6 +112,9 @@ export function useGetTextToImageRequests(
       ...input,
       ascending: filters.sort === GenerationSort.Oldest,
       tags: queryTags,
+      fromDate: filters.fromDate,
+      toDate: filters.toDate,
+      excludeFailed: filters.excludeFailed,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
