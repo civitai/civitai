@@ -20,14 +20,14 @@ type ErrorIngestImageRow = PendingIngestImageRow & {
 };
 
 async function fetchAllPendingImages<T extends { id: number }>(
-  query: (cursor?: number) => Promise<T[]>,
+  query: (cursor: number | undefined, limit: number) => Promise<T[]>,
   batchSize = 5000
 ): Promise<T[]> {
   const allResults: T[] = [];
   let cursor: number | undefined;
 
   while (true) {
-    const batch = await query(cursor);
+    const batch = await query(cursor, batchSize);
     if (batch.length === 0) break;
 
     allResults.push(...batch);
@@ -45,7 +45,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
   // Fetch then filter pending images in JS to avoid a slow query
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const pendingImages = (
-    await fetchAllPendingImages(async (cursor) => {
+    await fetchAllPendingImages(async (cursor, limit) => {
       return (
         (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
           SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
@@ -53,7 +53,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
           WHERE ingestion = 'Pending'::"ImageIngestionStatus"
           ${Prisma.raw(cursor ? `AND id > ${cursor}` : '')}
           ORDER BY id
-          LIMIT 5000
+          LIMIT ${limit}
         `) ?? []
       );
     })
@@ -61,7 +61,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
 
   console.log({ pendingImages: pendingImages.length });
 
-  const rescanImages = await fetchAllPendingImages(async (cursor) => {
+  const rescanImages = await fetchAllPendingImages(async (cursor, limit) => {
     return (
       (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
         SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
@@ -69,7 +69,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
         WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
         ${Prisma.raw(cursor ? `AND id > ${cursor}` : '')}
         ORDER BY id
-        LIMIT 5000
+        LIMIT ${limit}
       `) ?? []
     );
   });
