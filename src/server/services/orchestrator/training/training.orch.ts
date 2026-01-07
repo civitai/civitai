@@ -177,7 +177,6 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       prompts: samplePrompts,
     },
     epochs: aiToolkitParams.epochs,
-    resolution: aiToolkitParams.resolution ?? undefined,
     lr: aiToolkitParams.lr,
     textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
     trainTextEncoder: aiToolkitParams.trainTextEncoder,
