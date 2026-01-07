@@ -280,15 +280,15 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: '514e9489-a734-4ea9-b223-ff9833abb3fd',
+  supporterBadge: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
   memberships: {
     tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
-      free: '514e9489-a734-4ea9-b223-ff9833abb3fd',
-      founder: '514e9489-a734-4ea9-b223-ff9833abb3fd',
-      bronze: '514e9489-a734-4ea9-b223-ff9833abb3fd',
-      silver: '9dec8ea0-1cde-4c6c-ac5f-0f97c5b448e4',
-      gold: 'b98074e1-883f-46d9-a290-812bb19ec706',
+      free: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
+      founder: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
+      bronze: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
+      silver: '6961e252-3f94-4eee-ae79-01af2403fa49',
+      gold: '8e9f9aa3-74ce-443c-bf4a-e298b9019f42',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -641,12 +641,20 @@ const commonAspectRatios = [
   { label: 'Portrait', width: 832, height: 1216 },
 ];
 
-export const seedreamSizes = [
+const seedreamSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
   { label: '3:4', width: 1728, height: 2304 },
   { label: '9:16', width: 1440, height: 2560 },
+];
+
+const seedreamSizes4K = [
+  { label: '16:9', width: 4096, height: 2304 },
+  { label: '4:3', width: 4096, height: 3072 },
+  { label: '1:1', width: 4096, height: 4096 },
+  { label: '3:4', width: 3072, height: 4096 },
+  { label: '9:16', width: 2304, height: 4096 },
 ];
 
 export const qwenSizes = [
@@ -672,6 +680,12 @@ const nanoBananaProSizes = [
   { label: '3:4', width: 1728, height: 2304 },
   { label: '9:16', width: 1440, height: 2560 },
 ];
+
+export const generationResourceConfig: Record<number, MixedObject> = {
+  2470991: {
+    aspectRatios: seedreamSizes4K,
+  },
+};
 
 export type GenerationConfigKey = keyof typeof generationConfig;
 export const generationConfig = {
@@ -897,8 +911,8 @@ export const generationConfig = {
   Seedream: {
     aspectRatios: seedreamSizes,
     checkpoint: {
-      id: 2208278,
-      name: 'v4.0',
+      id: 2470991,
+      name: 'v4.5',
       trainedWords: [],
       baseModel: 'Seedream',
       strength: 1,
@@ -1154,12 +1168,15 @@ export const minUploadSize = 300;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
-export function getGenerationConfig(baseModel = 'SD1') {
+export function getGenerationConfig(baseModel = 'SD1', modelVersionId?: number) {
   if (!(baseModel in generationConfig)) {
     return getGenerationConfig(); // fallback to default config
     // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
   }
-  return generationConfig[baseModel as keyof typeof generationConfig];
+
+  const modelConfig = modelVersionId ? generationResourceConfig[modelVersionId] : undefined;
+  const baseModelConfig = generationConfig[baseModel as keyof typeof generationConfig];
+  return { ...baseModelConfig, ...modelConfig };
 }
 
 export const MODELS_SEARCH_INDEX = 'models_v9';
@@ -1294,6 +1311,11 @@ export const banReasonDetails: Record<
     code: BanReasonCode.BuzzCheating,
     publicBanReasonLabel: 'Abusing Buzz System',
     privateBanReasonLabel: 'Abusing Buzz System',
+  },
+  [BanReasonCode.RRDViolation]: {
+    code: BanReasonCode.RRDViolation,
+    publicBanReasonLabel: 'Violated Responsible Resource Development',
+    privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
   },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,

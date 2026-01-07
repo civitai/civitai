@@ -104,6 +104,10 @@ export function NewOrderRulesModal({ opened, onClose, footer }: Props) {
                 <CurrencyIcon size={16} currency="BUZZ" /> Yellow Buzz.
               </span>
             </li>
+            <li>
+              Gold amounts may be adjusted if the final consensus differs from your vote, even
+              during the 3-day waiting period.
+            </li>
           </ul>
         </div>
         <div className="flex flex-col gap-1">

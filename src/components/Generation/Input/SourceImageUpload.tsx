@@ -1,6 +1,10 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Input, CloseButton, Alert } from '@mantine/core';
+import { Input, CloseButton, Alert, ActionIcon, Tooltip } from '@mantine/core';
+import { IconPalette } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
+import type { DrawingElement } from './DrawingEditor/drawing.types';
 import { forwardRef, useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import {
@@ -28,6 +32,10 @@ export type SourceImageUploadProps = {
   iconSize?: number;
   warnOnMissingAiMetadata?: boolean;
   onWarnMissingAiMetadata?: (Warning: JSX.Element | null) => void;
+  /** Enable drawing overlay tools */
+  enableDrawing?: boolean;
+  /** Called when user completes a drawing overlay */
+  onDrawingComplete?: (value: SourceImageProps) => void;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
 
 export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadProps>(
@@ -42,6 +50,8 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       error: inputError,
       warnOnMissingAiMetadata,
       onWarnMissingAiMetadata,
+      enableDrawing = false,
+      onDrawingComplete,
       ...inputWrapperProps
     },
     ref
@@ -51,16 +61,14 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [error, setError] = useState<string | null>(null);
     // const [warning, setWarning] = useState<string | null>(null);
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
+    // Store drawing elements for re-editing
+    const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
     const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
       onSettled: () => {
         setLoading(false);
       },
       onError: (error) => {
         setError(error.message);
-        setLoading(false);
-      },
-      onSuccess: ({ blob }) => {
-        if (blob.url) handleUrlChange(blob.url);
         setLoading(false);
       },
     });
@@ -82,7 +90,16 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       setError(null);
       handleWarnOnMissingAiMetadata(null);
       if (!value) onChange?.(null);
-      else mutate({ sourceImage: value });
+      else
+        mutate(
+          { sourceImage: value },
+          {
+            onSuccess: ({ blob }) => {
+              if (blob.url) handleUrlChange(blob.url);
+              setLoading(false);
+            },
+          }
+        );
     }
 
     async function handleDrop(files: File[]) {
@@ -119,6 +136,11 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     }, [value, error]);
 
     const _value = value instanceof Blob ? null : value;
+
+    // Clear drawing lines when source image changes
+    useEffect(() => {
+      setDrawingLines([]);
+    }, [_value?.url]);
 
     function getHistory() {
       const stored = localStorage.getItem(key);
@@ -168,6 +190,53 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       if (_value) removeFromHistory(_value.url);
     }
 
+    async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
+      if (!onDrawingComplete) return;
+
+      // Store elements for re-editing
+      setDrawingLines(elements);
+
+      setLoading(true);
+      try {
+        const base64 = await getBase64(drawingBlob);
+        if (base64) {
+          mutate(
+            { sourceImage: base64 },
+            {
+              onSuccess: ({ blob }) => {
+                const url = blob.url;
+                if (url) {
+                  getImageDimensions(url).then(({ width, height }) => {
+                    onDrawingComplete({ url, width, height });
+                  });
+                }
+              },
+              onSettled: () => {
+                setLoading(false);
+              },
+            }
+          );
+        }
+      } catch (e) {
+        console.error('Failed to upload drawing:', e);
+        setLoading(false);
+      }
+    }
+
+    function handleOpenDrawingEditor() {
+      if (!_value) return;
+
+      dialogStore.trigger({
+        id: 'drawing-editor-modal',
+        component: DrawingEditorModal,
+        props: {
+          sourceImage: _value,
+          onConfirm: handleDrawingComplete,
+          initialLines: drawingLines,
+        },
+      });
+    }
+
     const _error = error ?? inputError;
     const showError = !!_error && _error !== timeoutError;
 
@@ -211,7 +280,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                 src={_value.url}
                 alt="image to refine"
                 className="mx-auto max-h-full"
-                onLoad={(e) => {
+                onLoad={() => {
                   setLoaded(true);
                 }}
                 onError={handleError}
@@ -223,6 +292,18 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                   className="absolute right-0 top-0 rounded-md"
                   onClick={handleRemoveItem}
                 />
+              )}
+              {loaded && enableDrawing && (
+                <Tooltip label="Sketch Edit" withArrow>
+                  <ActionIcon
+                    variant="filled"
+                    size="sm"
+                    className="absolute left-0 top-0 m-1 rounded-md"
+                    onClick={handleOpenDrawingEditor}
+                  >
+                    <IconPalette size={16} />
+                  </ActionIcon>
+                </Tooltip>
               )}
               {loaded && (
                 <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/50 px-2 text-white">
@@ -239,21 +320,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
 );
 
 SourceImageUpload.displayName = 'SourceImageUpload';
-
-// export function SourceImageUpload({
-//   value,
-//   onChange,
-//   removable = true,
-//   label,
-//   children,
-//   iconSize,
-//   error: inputError,
-//   warnOnMissingAiMetadata,
-//   onWarnMissingAiMetadata,
-//   ...inputWrapperProps
-// }: SourceImageUploadProps) {
-
-// }
 
 export const InputSourceImageUpload = withController(SourceImageUpload, ({ field }) => ({
   value: field.value,

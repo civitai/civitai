@@ -14,6 +14,7 @@ export default function ImageDetailModal({
   imageId,
   images,
   hideReactionCount,
+  hideReactions,
   filters,
   collectionId,
 }: {
@@ -21,6 +22,7 @@ export default function ImageDetailModal({
   filters?: Record<string, unknown>;
   images?: ImageGetInfinite;
   hideReactionCount?: boolean;
+  hideReactions?: boolean;
   collectionId?: number;
 }) {
   const dialog = useDialogContext();
@@ -59,6 +61,7 @@ export default function ImageDetailModal({
         filters={queryFilters}
         images={images}
         hideReactionCount={hideReactionCount}
+        hideReactions={hideReactions}
         collectionId={collectionId}
       >
         <ImageDetail2 />

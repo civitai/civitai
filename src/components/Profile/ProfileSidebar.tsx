@@ -246,11 +246,20 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             <Popover withArrow>
               <Popover.Target>
                 <UnstyledButton>
-                  <Badge color="red">
-                    <Group gap={0}>
-                      <Text>{user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}</Text>
+                  <Badge
+                    color="red"
+                    style={{
+                      height: 'auto',
+                      whiteSpace: 'normal',
+                      padding: '4px 8px',
+                    }}
+                  >
+                    <Group gap={4} wrap="nowrap" align="flex-start">
+                      <Text style={{ whiteSpace: 'normal', lineHeight: 1.3, textAlign: 'left' }}>
+                        {user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}
+                      </Text>
                       {user?.bannedReasonDetails && (
-                        <IconInfoCircle size={16} style={{ marginLeft: 4 }} />
+                        <IconInfoCircle size={16} style={{ flexShrink: 0 }} />
                       )}
                     </Group>
                   </Badge>
@@ -321,7 +330,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 
-      {badges.length > 0 && (
+      {badges.length > 0 && profile.privacySettings?.showBadges !== false && (
         <Stack gap={sizeOpts.spacing}>
           <Text size={sizeOpts.text} c="dimmed" fw={590}>
             Badges

@@ -99,7 +99,7 @@ export function VideoInterpolationModal({
             )}
           </div>
 
-          {isLoading ? (
+          {isLoading || !video ? (
             <div className="flex justify-center">
               <Loader />
             </div>

@@ -16,11 +16,13 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useHasPaddleSubscription, useMutatePaddle } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
 
 function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
+  const featureFlags = useFeatureFlags();
 
   const { mutate: stripeCreateSubscriptionSession, isLoading } =
     trpc.stripe.createSubscriptionSession.useMutation({
@@ -45,8 +47,17 @@ function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props
       },
     });
 
-  const handleClick = () => {
+  const proceedWithSubscription = () => {
     stripeCreateSubscriptionSession({ priceId });
+  };
+
+  const handleClick = () => {
+    // Show acknowledgement modal for green subscriptions
+    if (featureFlags.isGreen) {
+      openGreenPurchaseAcknowledgement(proceedWithSubscription, 'membership');
+    } else {
+      proceedWithSubscription();
+    }
   };
 
   return (

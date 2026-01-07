@@ -32,6 +32,7 @@ type ImageDetailState = {
   navigate: (id: number) => void;
   updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
   collection?: CollectionByIdModel;
+  hideReactions?: boolean;
 };
 
 const ImageDetailContext = createContext<ImageDetailState | null>(null);
@@ -46,6 +47,7 @@ export function ImageDetailProvider({
   imageId,
   images: initialImages = [],
   hideReactionCount,
+  hideReactions,
   filters,
   collectionId,
 }: {
@@ -53,6 +55,7 @@ export function ImageDetailProvider({
   imageId: number;
   images?: ImagesInfiniteModel[];
   hideReactionCount?: boolean;
+  hideReactions?: boolean;
   filters: ImagesQueryParamSchema;
   collectionId?: number;
 }) {
@@ -214,6 +217,7 @@ export function ImageDetailProvider({
         index,
         updateImage,
         collection,
+        hideReactions,
       }}
     >
       {children}

@@ -22,6 +22,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { DateInput } from '@mantine/dates';
 import {
+  IconBan,
   IconDownload,
   IconEye,
   IconUser,
@@ -36,8 +37,10 @@ import {
 import { formatDate } from '~/utils/date-helpers';
 import Link from 'next/link';
 import { useMemo, useState, useEffect, useRef } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
+import UserBanModal from '~/components/Profile/UserBanModal';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -377,11 +380,7 @@ export default function TrainingModerationFeedPage() {
                 <Text fw={600} size="sm" style={{ flex: 1 }}>
                   Training Page Announcement
                 </Text>
-                {announcementExpanded ? (
-                  <IconChevronUp size={16} />
-                ) : (
-                  <IconChevronDown size={16} />
-                )}
+                {announcementExpanded ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
               </Group>
 
               <Collapse in={announcementExpanded}>
@@ -389,7 +388,8 @@ export default function TrainingModerationFeedPage() {
                   <Divider />
                   <Text size="xs" c="dimmed">
                     This message is displayed in the alert box on the training page. Edit the text
-                    and select a color to update what users see.
+                    and select a color to update what users see. Markdown is supported (e.g.,
+                    **bold**, *italic*, [links](https://example.com)).
                   </Text>
                   <Textarea
                     placeholder="Enter announcement message..."
@@ -691,15 +691,34 @@ export default function TrainingModerationFeedPage() {
                               <Text size="xs" c="dimmed" fw={500}>
                                 Moderation Actions
                               </Text>
-                              <Button
-                                size="xs"
-                                variant={modelMeta?.cannotPublish ? 'filled' : 'light'}
-                                color={modelMeta?.cannotPublish ? 'red' : 'gray'}
-                                onClick={() => handleToggleCannotPublish(model.id)}
-                                loading={toggleCannotPublishMutation.isLoading}
-                              >
-                                {modelMeta?.cannotPublish ? 'Allow Publish' : 'Block Publish'}
-                              </Button>
+                              <Group gap="xs">
+                                <Button
+                                  size="xs"
+                                  variant={modelMeta?.cannotPublish ? 'filled' : 'light'}
+                                  color={modelMeta?.cannotPublish ? 'red' : 'gray'}
+                                  onClick={() => handleToggleCannotPublish(model.id)}
+                                  loading={toggleCannotPublishMutation.isLoading}
+                                >
+                                  {modelMeta?.cannotPublish ? 'Allow Publish' : 'Block Publish'}
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="filled"
+                                  color="red"
+                                  leftSection={<IconBan size={14} />}
+                                  onClick={() =>
+                                    dialogStore.trigger({
+                                      component: UserBanModal,
+                                      props: {
+                                        userId: model.user.id,
+                                        username: model.user.username as string,
+                                      },
+                                    })
+                                  }
+                                >
+                                  Ban
+                                </Button>
+                              </Group>
                             </Group>
 
                             {/* Version Badges */}

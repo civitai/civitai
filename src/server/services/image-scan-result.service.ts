@@ -92,24 +92,22 @@ export async function processImageScanResult(req: NextApiRequest) {
   if (!imageId) throw new Error(`missing workflow metadata.imageId - ${event.workflowId}`);
 
   if (event.status !== 'succeeded') {
-    const image = await dbWrite.image.findUnique({
-      where: { id: imageId },
-      select: { id: true, scanJobs: true },
-    });
-    if (image) {
-      const scanJobs = (image.scanJobs ?? {}) as { retryCount?: number; workflowId?: string };
-      scanJobs.retryCount = scanJobs.retryCount ?? 0;
-      scanJobs.retryCount++;
-      scanJobs.workflowId = event.workflowId;
-
-      await dbWrite.image.updateMany({
-        where: { id: image.id },
-        data: {
-          ingestion: ImageIngestionStatus.Error,
-          scanJobs: scanJobs as any,
-        },
-      });
-    }
+    // Atomically increment retryCount and set workflowId without clobbering other scanJobs fields
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET
+        "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+        "scanJobs" = jsonb_set(
+          jsonb_set(
+            COALESCE("scanJobs", '{}'),
+            '{retryCount}',
+            to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          ),
+          '{workflowId}',
+          ${JSON.stringify(event.workflowId)}::jsonb
+        )
+      WHERE id = ${imageId}
+    `;
   } else {
     const steps = (data.steps ?? []) as unknown as ScanResultStep[];
 
@@ -224,10 +222,10 @@ export async function processImageScanResult(req: NextApiRequest) {
 
     const validAiGeneration = isValidAIGeneration({ ...image, tags, meta: image.meta as any });
 
+    // Build update data - scanJobs will be updated atomically via raw SQL
     const toUpdate: Prisma.ImageUpdateInput = {
       updatedAt: new Date(),
       pHash,
-      scanJobs: { ...(image.scanJobs as Record<string, unknown>), workflowId: event.workflowId },
     };
     if (audit.blockedFor) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
@@ -248,7 +246,24 @@ export async function processImageScanResult(req: NextApiRequest) {
       toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
     }
 
-    await dbWrite.image.update({ where: { id: image.id }, data: toUpdate });
+    // Use atomic update for scanJobs to avoid clobbering concurrent changes to scans field
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET
+        "updatedAt" = ${toUpdate.updatedAt},
+        "pHash" = ${pHash ?? null},
+        "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+        "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
+        "nsfwLevel" = ${toUpdate.nsfwLevel as number},
+        "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+        "minor" = ${(toUpdate.minor as boolean) ?? false},
+        "poi" = ${(toUpdate.poi as boolean) ?? false},
+        "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
+        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
+          event.workflowId
+        )}::jsonb)
+      WHERE id = ${image.id}
+    `;
 
     // handle blocked image updates
     if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {

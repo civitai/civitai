@@ -50,7 +50,7 @@ export const processScheduledPublishing = createJob(
           SELECT 1
           FROM "ModelFile" mf
           WHERE mf."modelVersionId" = mv.id
-        )
+        );
     `;
     const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
@@ -67,24 +67,27 @@ export const processScheduledPublishing = createJob(
 
     await dbWrite.$transaction(
       async (tx) => {
-        await tx.$executeRaw`
-      -- Update last version of scheduled models
-      UPDATE "Model" SET "lastVersionAt" = ${now}
-      WHERE id IN (
-        SELECT DISTINCT
-          mv."modelId"
-        FROM "ModelVersion" mv
-        JOIN "Post" p ON p."modelVersionId" = mv.id
-        JOIN "Model" m ON m.id = mv."modelId"
-        WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-          AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-      );`;
+        const modelsToUpdate = [
+          ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
+        ];
+
+        if (modelsToUpdate.length) {
+          await tx.$executeRaw`
+            -- Update last version of models with versions transitioned to published
+            UPDATE "Model"
+            SET "lastVersionAt" = ${now}
+            WHERE id IN (${Prisma.join(modelsToUpdate)})
+              AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
+          `;
+        }
 
         if (scheduledModels.length) {
           const scheduledModelIds = scheduledModels.map(({ id }) => id);
+
           await tx.$executeRaw`
           -- Make scheduled models published
-          UPDATE "Model" SET status = 'Published'
+          UPDATE "Model" 
+          SET status = 'Published'
           WHERE id IN (${Prisma.join(scheduledModelIds)})
             AND status = 'Scheduled'
             AND "publishedAt" <= ${now}
@@ -94,17 +97,18 @@ export const processScheduledPublishing = createJob(
 
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
-          const returnedIds = await tx.$queryRaw<{ id: number }[]>`
+
+          await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
-          UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
+          UPDATE "Post" p
+          SET "publishedAt" = mv."publishedAt"
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-          RETURNING p.id;
+            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
         `;
 
           // commenting this out, because it should be covered by the db_trigger `update_image_sort_at`
@@ -124,11 +128,13 @@ export const processScheduledPublishing = createJob(
 
           await tx.$executeRaw`
             -- Update scheduled versions published
-            UPDATE "ModelVersion" mv SET status = 'Published', availability = 'Public'
+            UPDATE "ModelVersion" mv 
+            SET status = 'Published', availability = 'Public'
             FROM "Model" m
             WHERE mv.id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
               AND mv."modelId" = m.id
-              AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+              AND mv.status = 'Scheduled'
+              AND mv."publishedAt" <= ${now}
               AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
           `;
 
@@ -141,25 +147,23 @@ export const processScheduledPublishing = createJob(
               tx,
             });
 
-            // Attempt to update the model early access deadline:
+            // Update Model early access deadline in one operation
             await tx.$executeRaw`
+              -- Update model early access deadline
               UPDATE "Model" mo
               SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
               FROM (
-                SELECT m.id, mv."earlyAccessEndsAt" AS "earlyAccessDeadline"
+                SELECT mv."modelId", mv."earlyAccessEndsAt" AS "earlyAccessDeadline"
                 FROM "ModelVersion" mv
-                JOIN "Model" m on m.id = mv."modelId"
                 WHERE mv.id IN (${Prisma.join(earlyAccess)})
-                  AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
               ) as mea
-              WHERE mo."id" = mea."id"
+              WHERE mo."id" = mea."modelId"
+                AND (mo.meta IS NULL OR (mo.meta->>'cannotPublish')::boolean IS NOT TRUE);
             `;
           }
         }
       },
-      {
-        timeout: 10000,
-      }
+      { timeout: 30000 }
     );
 
     // Process event engagements

@@ -80,13 +80,15 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 export const profilePictureSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
-  url: z.url().or(z.string().uuid()),
+  url: z
+    .url()
+    .or(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
-  metadata: z.object({}).passthrough().optional(),
+  metadata: z.looseObject({}).optional(),
   type: z.enum(MediaType).default(MediaType.image),
 });
 

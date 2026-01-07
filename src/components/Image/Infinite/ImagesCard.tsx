@@ -285,19 +285,21 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
-              <div>
-                <Reactions
-                  entityId={image.id}
-                  entityType="image"
-                  reactions={image.reactions}
-                  metrics={reactionMetrics}
-                  targetUserId={image.user.id}
-                  readonly={!safe || (isScanned && isBlocked)}
-                  className="justify-between p-2"
-                  invisibleEmpty
-                  disableBuzzTip={image.poi}
-                />
-              </div>
+              {!contextProps.hideReactions && (
+                <div>
+                  <Reactions
+                    entityId={image.id}
+                    entityType="image"
+                    reactions={image.reactions}
+                    metrics={reactionMetrics}
+                    targetUserId={image.user.id}
+                    readonly={!safe || (isScanned && isBlocked)}
+                    className="justify-between p-2"
+                    invisibleEmpty
+                    disableBuzzTip={image.poi}
+                  />
+                </div>
+              )}
             </>
           )}
         </ImageGuard2>

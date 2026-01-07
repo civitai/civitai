@@ -8,16 +8,22 @@ import { createLogger } from '~/utils/logging';
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('token-refresh', 'green');
 
-export async function refreshToken(token: JWT): Promise<JWT | null> {
-  if (!token.user) return null;
+export type RefreshTokenResult = {
+  token: JWT | null;
+  /** True when session was refreshed or invalidated (client should update its cookie) */
+  needsCookieRefresh: boolean;
+};
+
+export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
+  if (!token.user) return { token: null, needsCookieRefresh: false };
   const user = token.user as User;
 
   // Return null only for explicit invalidations
-  if (!!(user as any).clearedAt) return null;
-  if (!user.id) return null;
+  if (!!(user as any).clearedAt) return { token: null, needsCookieRefresh: false };
+  if (!user.id) return { token: null, needsCookieRefresh: false };
 
   // Enforce token ID requirement
-  if (!token.id) return null;
+  if (!token.id) return { token: null, needsCookieRefresh: false };
 
   const tokenId = token.id as string;
   const userTokenKey = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
@@ -34,7 +40,7 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
   // Handle pipeline errors
   if (!results) {
     log(`Pipeline failed for token ${tokenId}, allowing session to continue`);
-    return token;
+    return { token, needsCookieRefresh: false };
   }
 
   // Extract results (multi().exec() in node-redis returns array of results directly)
@@ -46,19 +52,24 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
   if (tokenState === 'invalid') {
     // Remove the user token tracking since it's invalid
     await sysRedis.hDel(userTokenKey as any, tokenId);
-    return null; // Explicit invalidation - force logout
+    // Keep the 'invalid' state in TOKEN_STATE - it will expire naturally after 30 days
+    // This ensures subsequent requests with the same token continue to be rejected
+    // Signal client to refresh cookie - when it does, it will get empty session and be logged out
+    return { token: null, needsCookieRefresh: true };
   }
 
   // Determine if token should be refreshed
   let shouldRefresh = false;
+  let needsCookieRefresh = false;
 
   if (!token.signedAt) {
     shouldRefresh = true;
   }
 
-  // Handle refresh marker
+  // Handle refresh marker - this means client's cookie is stale and needs updating
   if (tokenState === 'refresh') {
     shouldRefresh = true;
+    needsCookieRefresh = true; // Signal that client should refresh their session cookie
     // Remove from hash after detecting it so it only refreshes once
     await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
     log(`Token ${tokenId} marked for refresh for user ${user.id}`);
@@ -76,23 +87,24 @@ export async function refreshToken(token: JWT): Promise<JWT | null> {
     const allInvalidationDate = new Date(allInvalidationDateStr);
     if (allInvalidationDate.getTime() > (token.signedAt as number)) {
       shouldRefresh = true;
+      needsCookieRefresh = true; // Global refresh also means cookies are stale
     }
   }
 
-  if (!shouldRefresh) return token;
+  if (!shouldRefresh) return { token, needsCookieRefresh: false };
 
   const refreshedUser = await getSessionUser({ userId: user.id });
 
   // Graceful degradation: if refresh fails, keep existing session
   if (!refreshedUser) {
     log(`Session refresh failed for user ${user.id}, keeping existing session`);
-    return token; // Return existing token instead of setting user=undefined
+    return { token, needsCookieRefresh: false }; // Return existing token instead of setting user=undefined
   }
 
   setToken(token, refreshedUser);
   log(`Refreshed session for user ${user.id}`);
 
-  return token;
+  return { token, needsCookieRefresh };
 }
 
 async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {

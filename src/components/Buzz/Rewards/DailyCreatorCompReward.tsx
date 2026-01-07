@@ -225,15 +225,13 @@ export function DailyCreatorCompReward({
                 <DismissibleAlert
                   title="Compensation Change Notice"
                   color="blue"
-                  id="compensation-change-10-13-2025"
+                  id="compensation-change-12-23-2025"
                   my="md"
                   storage="sessionStorage"
                 >
                   <p>
-                    Compensation calculated before {dayjs('2025-10-13').format('MM/DD/YYYY')} was
-                    paid in <span className="inline font-bold text-yellow-500">Yellow</span> Buzz.
-                    From this date forward, you will be compensated in the Buzz type used to
-                    generate content.
+                    Starting 12/23/2025, Creator Compensation payouts will run nightly at 2:00am UTC
+                    for all Buzz types.{' '}
                   </p>
                 </DismissibleAlert>
                 <Group justify="flex-start" gap={4}>

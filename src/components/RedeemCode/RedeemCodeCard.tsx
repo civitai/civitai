@@ -13,6 +13,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GiftNoticeAlert } from './GiftNoticeAlert';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
+import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -241,6 +242,10 @@ export function RedeemCodeCard({
 
           <Text size="xs" c="dimmed" className={classes.helpText}>
             Case-insensitive • Spaces auto-removed • Instant processing
+          </Text>
+
+          <Text size="xs" c="dimmed" ta="center">
+            {GIFT_CARD_DISCLAIMER.redemption}
           </Text>
         </Stack>
       </div>

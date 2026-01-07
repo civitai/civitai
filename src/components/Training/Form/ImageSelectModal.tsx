@@ -38,6 +38,7 @@ import type {
   ImageSelectSource,
   ImageSelectTrainingFilter,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import type { TextToImageSteps } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -78,10 +79,12 @@ export type SelectedImage = {
   url: string;
   label: string;
   type: MediaType;
+  meta?: Record<string, unknown>;
 };
 
 type GennedMedia = NormalizedGeneratedImage & {
   params: TextToImageSteps[number]['params'];
+  resources: TextToImageSteps[number]['resources'];
   completed?: Date;
 };
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
@@ -188,6 +191,7 @@ export default function ImageSelectModal({
                 completed: step.completedAt ? new Date(step.completedAt) : undefined,
                 stepName: step.name,
               },
+              resources: step.resources,
             };
           })
           .filter(isDefined)
@@ -451,6 +455,18 @@ const ImageGridMedia = ({
     if (!selectable) return;
     setSelected((prev) => {
       if (!isSelected) {
+        // Build meta for generation images using getStepMeta pattern
+        let meta: Record<string, unknown> | undefined;
+        if (type === 'generation') {
+          meta = getStepMeta({
+            params: img.params,
+            resources: img.resources,
+            metadata: {},
+          } as any);
+        } else if (type === 'uploaded' && img.meta) {
+          meta = img.meta as Record<string, unknown>;
+        }
+
         return [
           ...prev,
           {
@@ -462,6 +478,7 @@ const ImageGridMedia = ({
                 ? img.meta?.prompt ?? ''
                 : '',
             type: type === 'training' ? 'image' : img.type,
+            meta,
           },
         ];
       } else {

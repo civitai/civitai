@@ -1,6 +1,15 @@
 import { Upload } from '@aws-sdk/lib-storage';
+import type {
+  ImageResourceTrainingStep,
+  ImageResourceTrainingOutput,
+  Workflow,
+  TrainingStep,
+  TrainingOutput,
+} from '@civitai/client';
+import { WorkflowStatus } from '@civitai/client';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type {
   AutoCaptionInput,
@@ -9,7 +18,11 @@ import type {
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
-import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwRateLimitError,
+  withRetries,
+} from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { deleteObject, getGetUrl, getPutUrl, getS3Client, parseKey } from '~/utils/s3-utils';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
@@ -349,3 +362,207 @@ export const autoCaptionHandler = async ({
 export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {
   throw throwBadRequestError('This function has been deprecated - please refresh your browser.');
 };
+
+// ----- Training workflow status update logic -----
+
+type WorkflowStepMetadata = { modelFileId: number };
+export type CustomImageResourceTrainingStep = ImageResourceTrainingStep & {
+  metadata: WorkflowStepMetadata;
+};
+export type CustomTrainingStep = TrainingStep & {
+  metadata: WorkflowStepMetadata;
+};
+
+export const mapWorkflowStatusToTrainingStatus: { [key in WorkflowStatus]: TrainingStatus } = {
+  unassigned: TrainingStatus.Submitted,
+  preparing: TrainingStatus.Submitted,
+  scheduled: TrainingStatus.Submitted,
+  processing: TrainingStatus.Processing,
+  failed: TrainingStatus.Failed,
+  expired: TrainingStatus.Failed,
+  canceled: TrainingStatus.Failed,
+  succeeded: TrainingStatus.InReview,
+};
+
+export type TrainingWorkflowUpdateResult = {
+  trainingStatus: TrainingStatus;
+  previousStatus: TrainingStatus | undefined;
+  statusChanged: boolean;
+  modelVersionId: number;
+  modelVersionName: string;
+  modelId: number;
+  modelName: string;
+  userId: number;
+  userEmail: string | null;
+  username: string | null;
+  fileMetadata: FileMetadata;
+};
+
+/**
+ * Updates the model file metadata and model version training status based on workflow data.
+ * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
+ */
+export async function updateTrainingWorkflowRecords(
+  workflow: Workflow,
+  status: WorkflowStatus
+): Promise<TrainingWorkflowUpdateResult> {
+  const { transactions, steps, id: workflowId, createdAt, status: workflowStatus } = workflow;
+
+  const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
+  if (!step) throw new Error('Missing step data');
+  if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
+
+  const {
+    metadata: { modelFileId },
+    output,
+    startedAt,
+    completedAt,
+  } = step;
+
+  let trainingStatus = mapWorkflowStatusToTrainingStatus[workflowStatus ?? status];
+
+  // Determine step type and extract data accordingly
+  const stepType = step.$type;
+  let epochs: Array<{
+    epochNumber?: number;
+    blobUrl?: string;
+    blobSize?: number | null;
+    sampleImages?: string[];
+  }> = [];
+  let sampleImagesPrompts: string[] = [];
+  let moderationStatus: string | undefined;
+
+  if (stepType === 'training') {
+    // TrainingStep: new AI Toolkit format
+    const trainingStep = step as CustomTrainingStep;
+    moderationStatus = output?.moderationStatus;
+    sampleImagesPrompts = trainingStep.input?.samples?.prompts ?? [];
+
+    // Map TrainingEpochResult to our internal format
+    const trainingOutput = output as TrainingOutput | undefined;
+    epochs = (trainingOutput?.epochs ?? []).map((epoch) => ({
+      epochNumber: epoch.epochNumber ?? -1,
+      blobUrl: epoch.model?.url ?? '',
+      blobSize: 0, // Not provided in TrainingStep
+      sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
+    }));
+  } else if (stepType === 'imageResourceTraining') {
+    // ImageResourceTrainingStep: legacy format
+    const imageOutput = output as ImageResourceTrainingOutput | undefined;
+    epochs = (imageOutput?.epochs ?? []).map((e) => ({
+      epochNumber: e.epochNumber ?? -1,
+      blobUrl: e.blobUrl,
+      blobSize: e.blobSize ?? null,
+      sampleImages: e.sampleImages ?? [],
+    }));
+    sampleImagesPrompts = imageOutput?.sampleImagesPrompts ?? [];
+    moderationStatus = imageOutput?.moderationStatus;
+  } else {
+    throw new Error(`Unsupported step type: ${stepType}`);
+  }
+
+  if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
+  else if (moderationStatus === 'rejected') trainingStatus = TrainingStatus.Denied;
+
+  const modelFile = await dbWrite.modelFile.findFirst({
+    where: { id: modelFileId },
+    select: {
+      id: true,
+      metadata: true,
+      modelVersion: {
+        select: {
+          id: true,
+          name: true,
+          model: {
+            select: {
+              id: true,
+              name: true,
+              user: {
+                select: {
+                  id: true,
+                  email: true,
+                  username: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!modelFile) throw new Error(`ModelFile not found: "${modelFileId}"`);
+
+  const { modelVersion } = modelFile;
+  const { model } = modelVersion;
+
+  const thisMetadata = (modelFile.metadata ?? {}) as FileMetadata;
+  const trainingResults = (thisMetadata.trainingResults ?? {}) as TrainingResultsV2;
+  const history = trainingResults.history ?? [];
+
+  const previousStatus = history[history.length - 1]?.status as TrainingStatus | undefined;
+  const statusChanged = previousStatus !== trainingStatus;
+
+  if (statusChanged) {
+    history.push({
+      time: new Date().toISOString(),
+      status: trainingStatus,
+    });
+  }
+
+  const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
+    epochNumber: e.epochNumber ?? -1,
+    modelUrl: e.blobUrl ?? '',
+    modelSize: e.blobSize ?? 0,
+    sampleImages: e.sampleImages ?? [],
+  }));
+
+  const newTrainingResults: TrainingResultsV2 = {
+    ...trainingResults,
+    version: 2,
+    workflowId: trainingResults.workflowId ?? workflowId ?? 'unk',
+    submittedAt: (createdAt ? new Date(createdAt) : new Date()).toISOString(),
+    startedAt: trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null),
+    completedAt: completedAt ? new Date(completedAt).toISOString() : null,
+    epochs: epochData,
+    history,
+    sampleImagesPrompts,
+    transactionData: transactions?.list ?? trainingResults.transactionData ?? [],
+  };
+
+  const newMetadata: FileMetadata = {
+    ...thisMetadata,
+    trainingResults: newTrainingResults,
+  };
+
+  await withRetries(() =>
+    dbWrite.modelFile.update({
+      where: { id: modelFile.id },
+      data: {
+        metadata: newMetadata,
+      },
+    })
+  );
+
+  await withRetries(() =>
+    dbWrite.modelVersion.update({
+      where: { id: modelVersion.id },
+      data: {
+        trainingStatus,
+      },
+    })
+  );
+
+  return {
+    trainingStatus,
+    previousStatus,
+    statusChanged,
+    modelVersionId: modelVersion.id,
+    modelVersionName: modelVersion.name,
+    modelId: model.id,
+    modelName: model.name,
+    userId: model.user.id,
+    userEmail: model.user.email,
+    username: model.user.username,
+    fileMetadata: newMetadata,
+  };
+}

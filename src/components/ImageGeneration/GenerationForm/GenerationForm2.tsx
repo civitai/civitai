@@ -80,12 +80,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -117,7 +112,7 @@ import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
 import {
   flux2ModelModeOptions,
   getIsFlux2,
-  getIsFlux2ProOrFlex,
+  getIsFlux2Dev,
 } from '~/shared/orchestrator/ImageGen/flux2.config';
 import {
   getModelVersionUsesImageGen,
@@ -140,18 +135,6 @@ import { capitalize, getDisplayName, hashify, parseAIR } from '~/utils/string-he
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
-  getHiDreamResourceFromPrecisionAndVariant,
-  getHiDreamResourceFromVersionId,
-  hiDreamPrecisions,
-  hiDreamVariants,
-  hiDreamVariantsPrecisionMap,
-} from '~/shared/orchestrator/hidream.config';
-import classes from './GenerationForm2.module.scss';
-import { StepProvider } from '~/components/Generation/Providers/StepProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
-import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
@@ -165,12 +148,29 @@ import {
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
+  type ImageAnnotation,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
-import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  getIsSeedream,
+  seedreamModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
 import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
+import {
+  getHiDreamResourceFromPrecisionAndVariant,
+  getHiDreamResourceFromVersionId,
+  hiDreamPrecisions,
+  hiDreamVariants,
+  hiDreamVariantsPrecisionMap,
+} from '~/shared/orchestrator/hidream.config';
+import classes from './GenerationForm2.module.scss';
+import { StepProvider } from '~/components/Generation/Providers/StepProvider';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
 let total = 0;
 const tips = {
@@ -218,6 +218,7 @@ export function GenerationFormContent() {
   const baseModel = form.watch('baseModel');
   const model = form.watch('model');
   const [sourceImage] = form.watch(['sourceImage']);
+  const [images, imageAnnotations] = form.watch(['images', 'imageAnnotations']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -293,6 +294,7 @@ export function GenerationFormContent() {
       remixSimilarity,
       upscaleHeight,
       upscaleWidth,
+      imageAnnotations,
       ...params
     } = data;
     let additionalResources = formResources ?? [];
@@ -303,7 +305,7 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
-    const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
+    const isFlux2NotDev = getIsFlux2(model.id) && !getIsFlux2Dev(model.id);
     if (isFlux && isFluxStandard) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
@@ -314,7 +316,7 @@ export function GenerationFormContent() {
       delete params.fluxUltraAspectRatio;
     }
 
-    if (isFlux2ProOrFlex) additionalResources = []; // No additional resources allowed
+    if (isFlux2NotDev) additionalResources = []; // No additional resources allowed
 
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
@@ -474,7 +476,7 @@ export function GenerationFormContent() {
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
   const isQwenEdit = getIsQwenEditModel(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || (isQwen && !isQwenEdit);
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || (isQwen && !isQwenEdit);
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -501,12 +503,14 @@ export function GenerationFormContent() {
         onSubmit={handleSubmit}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
-        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
-          {({ fluxMode, draft, workflow, sourceImage }) => {
+        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'images']}>
+          {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') ||
-              (isImageGen && sourceImage) ||
+
+              (isImageGen && (sourceImage || !!images?.length)) ||
+
               isFluxKontext ||
               isQwenEdit;
             const isFluxStandard = getIsFluxStandard(model.model.id);
@@ -560,7 +564,7 @@ export function GenerationFormContent() {
 
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
-            const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
+            const isFlux2NotDev = isFlux2 && !getIsFlux2Dev(model.id);
 
             const disableAdditionalResources =
               runsOnFalAI ||
@@ -569,7 +573,7 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isSeedream ||
-              isFlux2ProOrFlex;
+              isFlux2NotDev;
             const disableAdvanced =
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
@@ -617,8 +621,10 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
-                !isPonyV7) ||
-              isOpenAI ||
+                !isOpenAI &&
+                !isPonyV7 &&
+                !isNanoBanana &&
+                !isSeedream) ||
               isFluxKontext ||
               isQwenEdit;
             const disableCfgScale = isFluxUltra;
@@ -656,9 +662,11 @@ export function GenerationFormContent() {
             const disableDenoise = !features.denoise || isFluxKontext;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra ||
-              isImg2Img ||
-              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2 && !isQwen);
+              (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
+              !isSeedream &&
+              !isNanoBananaPro &&
+              !isFlux2 && !isQwen &&
+              !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -778,9 +786,7 @@ export function GenerationFormContent() {
                                       : getGenerationBaseModelsByMediaType('image'),
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
-                            hideVersion={
-                              isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
-                            }
+                            hideVersion={isFluxStandard || isFlux2 || isHiDream || isImageGen}
                             isPreview={isZImageTurbo || isFlux2}
                             pb={
                               unstableResources.length ||
@@ -953,6 +959,19 @@ export function GenerationFormContent() {
                     }}
                   </Watch>
 
+                  {isOpenAI && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...openaiModelVersionToModelMap.entries()].map(([key, { name }]) => ({
+                        value: String(key),
+                        label: name,
+                      }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
                   {isNanoBanana && (
                     <SegmentedControl
                       value={model.id ? String(model.id) : undefined}
@@ -960,6 +979,21 @@ export function GenerationFormContent() {
                         value: String(key),
                         label: name,
                       }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isSeedream && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...seedreamModelVersionToModelMap.entries()].map(
+                        ([key, { name }]) => ({
+                          value: String(key),
+                          label: name,
+                        })
+                      )}
                       onChange={(stringModelId) => {
                         form.setValue('model', { ...model, id: Number(stringModelId) });
                       }}
@@ -996,14 +1030,67 @@ export function GenerationFormContent() {
                     <div className="-mx-2">
                       <InputSourceImageUploadMultiple
                         name="images"
+                        aspect="video"
                         max={7}
                         warnOnMissingAiMetadata
-                        aspect="video"
+                        enableDrawing
+                        annotations={imageAnnotations}
+                        onDrawingComplete={(compositeImage, index, lines) => {
+                          const currentImages = form.getValues('images') ?? [];
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+
+                          const currentImage = currentImages[index];
+                          if (!currentImage) return;
+
+                          // Check if this image is already annotated (re-editing)
+                          const existingAnnotation = currentAnnotations.find(
+                            (a: ImageAnnotation) => a.compositeUrl === currentImage.url
+                          );
+
+                          // The original is either from existing annotation or the current image
+                          const originalImage = existingAnnotation
+                            ? {
+                                url: existingAnnotation.originalUrl,
+                                width: existingAnnotation.originalWidth,
+                                height: existingAnnotation.originalHeight,
+                              }
+                            : currentImage;
+
+                          // 1. Replace image in array with composite
+                          const updatedImages = [...currentImages];
+                          updatedImages[index] = compositeImage;
+                          form.setValue('images', updatedImages);
+
+                          // 2. Update annotations - remove old if re-editing, add new
+                          const filteredAnnotations = currentAnnotations.filter(
+                            (a: ImageAnnotation) =>
+                              a.compositeUrl !== currentImage.url &&
+                              a.originalUrl !== originalImage.url
+                          );
+                          form.setValue('imageAnnotations', [
+                            ...filteredAnnotations,
+                            {
+                              originalUrl: originalImage.url,
+                              originalWidth: originalImage.width,
+                              originalHeight: originalImage.height,
+                              compositeUrl: compositeImage.url,
+                              lines,
+                            },
+                          ]);
+                        }}
+                        onRemove={(removedImage) => {
+                          // Remove annotation if this was a composite
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+                          const filtered = currentAnnotations.filter(
+                            (a: ImageAnnotation) => a.compositeUrl !== removedImage.url
+                          );
+                          form.setValue('imageAnnotations', filtered);
+                        }}
                       >
                         {(previewItems) => (
                           <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
                             {previewItems.map((item, i) => (
-                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                              <SourceImageUploadMultiple.Image key={item.url} index={i} {...item} />
                             ))}
                             <SourceImageUploadMultiple.Dropzone />
                           </div>
@@ -1366,7 +1453,9 @@ export function GenerationFormContent() {
                       <Input.Label>Aspect Ratio</Input.Label>
                       <InputSegmentedControl
                         name="aspectRatio"
-                        data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
+                        data={getAspectRatioControls(
+                          getGenerationConfig(baseModel, model.id).aspectRatios
+                        )}
                       />
                     </div>
                   )}

@@ -313,8 +313,14 @@ export const getPostsInfinite = async ({
     )`);
   }
 
-  if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+  if (excludedUserIds && targetUser && excludedUserIds.includes(targetUser)) {
+    return { items: [] }; // No need to make the query.
+  }
+
+  if (!targetUser && excludedUserIds?.length) {
+    // first, make sure these are all numbers:
+    const excluded: number[] = excludedUserIds?.map(Number).filter((x) => !isNaN(x)) ?? [];
+    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.raw(`${excluded.join(',')}`)})`);
   }
 
   // sorting
@@ -368,7 +374,6 @@ export const getPostsInfinite = async ({
   }
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-
   const postsRawQuery = Prisma.sql`
     ${queryWith}
     SELECT
@@ -387,6 +392,7 @@ export const getPostsInfinite = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
 
+  console.log(postsRawQuery);
   if (
     query ||
     isOwnerRequest ||

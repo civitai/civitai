@@ -25,8 +25,10 @@ export default function Pricing() {
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
+  // On green site: default to green
+  // On yellow site: default to yellow (skip the selector entirely)
   const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
-    features.isGreen ? 'green' : queryBuzzType
+    features.isGreen ? 'green' : queryBuzzType ?? 'yellow'
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
   const { subscription, subscriptionPaymentProvider, isFreeTier } = useActiveSubscription({

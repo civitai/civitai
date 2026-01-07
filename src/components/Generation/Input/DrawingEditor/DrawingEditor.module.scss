@@ -1,0 +1,341 @@
+/* DrawingEditor styles with light/dark mode support */
+
+/* Modal styles */
+.modal {
+  :global(.mantine-Modal-content) {
+    background-color: var(--mantine-color-body);
+    overflow: hidden;
+  }
+
+  :global(.mantine-Modal-header) {
+    display: none;
+  }
+
+  :global(.mantine-Modal-body) {
+    padding: 0;
+  }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background-color: var(--mantine-color-body);
+}
+
+.headerTitle {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--mantine-color-text);
+}
+
+.canvasArea {
+  position: relative;
+  padding: 1rem;
+  background-color: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-8)
+  );
+}
+
+.canvasContainer {
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--mantine-radius-md);
+  box-shadow: var(--mantine-shadow-xl);
+}
+
+.toolbarArea {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--mantine-color-default-border);
+  background-color: var(--mantine-color-body);
+}
+
+/* Toolbar styles */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toolbarInner {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-sm);
+  background-color: light-dark(
+    var(--mantine-color-gray-2),
+    var(--mantine-color-dark-6)
+  );
+}
+
+.toolbarSection {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding-right: 0.5rem;
+  border-right: 1px solid var(--mantine-color-default-border);
+
+  &:last-child {
+    padding-right: 0;
+    padding-left: 0.25rem;
+    border-right: none;
+  }
+}
+
+.toolbarSectionPadded {
+  padding: 0 0.5rem;
+  border-right: 1px solid var(--mantine-color-default-border);
+}
+
+/* Tool button */
+.toolButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--mantine-radius-md);
+  border: none;
+  cursor: pointer;
+  transition: all 150ms ease;
+  background-color: transparent;
+  color: var(--mantine-color-dimmed);
+
+  &:hover {
+    background-color: light-dark(
+      var(--mantine-color-gray-1),
+      var(--mantine-color-dark-5)
+    );
+    color: var(--mantine-color-text);
+  }
+}
+
+.toolButtonActive {
+  background-color: var(--mantine-color-blue-6);
+  color: white;
+  box-shadow: var(--mantine-shadow-sm);
+
+  &:hover {
+    background-color: var(--mantine-color-blue-6);
+    color: white;
+  }
+}
+
+/* Size button in toolbar */
+.sizeButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--mantine-radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 150ms ease;
+  background-color: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-5)
+  );
+
+  &:hover {
+    background-color: light-dark(
+      var(--mantine-color-gray-2),
+      var(--mantine-color-dark-4)
+    );
+    border-color: light-dark(
+      var(--mantine-color-gray-3),
+      var(--mantine-color-dark-3)
+    );
+  }
+}
+
+/* Size popover */
+.sizePopover {
+  background-color: var(--mantine-color-body);
+  border-color: var(--mantine-color-default-border);
+}
+
+.sizePopoverContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sizePopoverHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sizePopoverLabel {
+  font-size: 0.75rem;
+  color: var(--mantine-color-dimmed);
+}
+
+.sizePopoverValue {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--mantine-color-text);
+}
+
+.sizePresets {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.sizePresetButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2rem;
+  border-radius: var(--mantine-radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: all 150ms ease;
+  background-color: light-dark(
+    var(--mantine-color-gray-1),
+    var(--mantine-color-dark-5)
+  );
+  color: var(--mantine-color-dimmed);
+
+  &:hover {
+    background-color: light-dark(
+      var(--mantine-color-gray-2),
+      var(--mantine-color-dark-4)
+    );
+  }
+}
+
+.sizePresetButtonActive {
+  background-color: var(--mantine-color-blue-6);
+  color: white;
+
+  &:hover {
+    background-color: var(--mantine-color-blue-6);
+  }
+}
+
+/* Color section wrapper */
+.colorSection {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.5rem;
+  border-right: 1px solid var(--mantine-color-default-border);
+}
+
+/* Custom color picker button */
+.customColorButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--mantine-radius-md);
+  border: 2px solid var(--mantine-color-default-border);
+  cursor: pointer;
+  transition: all 150ms ease;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+
+  &:hover {
+    border-color: var(--mantine-color-blue-5);
+    transform: scale(1.05);
+  }
+}
+
+/* Color picker popover */
+.colorPickerPopover {
+  background-color: var(--mantine-color-body);
+  border-color: var(--mantine-color-default-border);
+  padding: 0.75rem;
+}
+
+.colorPickerContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.colorPickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.colorPickerLabel {
+  font-size: 0.75rem;
+  color: var(--mantine-color-dimmed);
+}
+
+/* Hex color input */
+.hexInput {
+  width: 5.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: monospace;
+  text-align: right;
+  padding: 0.25rem 0.5rem;
+  height: 1.75rem;
+  min-height: unset;
+}
+
+/* Eraser mode indicator */
+.eraserIndicator {
+  display: flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  border-right: 1px solid var(--mantine-color-default-border);
+  font-size: 0.75rem;
+  color: var(--mantine-color-dimmed);
+}
+
+/* Action buttons */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding-left: 0.25rem;
+}
+
+/* Text input overlay */
+.textInputOverlay {
+  pointer-events: auto;
+}
+
+.textInputField {
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  resize: none;
+  outline: none;
+  line-height: 1.2;
+
+  &::placeholder {
+    color: var(--mantine-color-dimmed);
+  }
+
+  &:focus {
+    border: none;
+    outline: none;
+    box-shadow: none;
+  }
+}
+
+/* Cursor styles */
+.textCursor {
+  pointer-events: none;
+}
+
+.crosshairCursor {
+  pointer-events: none;
+}

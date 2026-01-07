@@ -1,4 +1,4 @@
-import type { ButtonProps } from '@mantine/core';
+import type { ButtonProps, MantineSize } from '@mantine/core';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -11,6 +11,7 @@ export default function ConfirmDialog({
   labels,
   confirmProps,
   cancelProps,
+  size,
 }: {
   title?: React.ReactNode;
   message: React.ReactNode;
@@ -19,6 +20,7 @@ export default function ConfirmDialog({
   labels?: { cancel?: string; confirm?: string };
   confirmProps?: ButtonProps;
   cancelProps?: ButtonProps;
+  size?: number | MantineSize;
 }) {
   const dialog = useDialogContext();
   const [loading, setLoading] = useState(false);
@@ -45,6 +47,7 @@ export default function ConfirmDialog({
       title={<Text className="font-semibold">{title}</Text>}
       onClose={handleCancel}
       centered
+      size={size}
     >
       <Stack>
         {message}

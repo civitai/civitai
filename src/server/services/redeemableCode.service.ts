@@ -352,7 +352,8 @@ export async function consumeRedeemableCode({
                       ...subscriptionMetadata.prepaids,
                       [consumedProductTier]:
                         (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue,
+                        consumedCode.unitValue -
+                        1, // -1 because we grant buzz right away
                     },
                     buzzTransactionIds: [
                       ...(subscriptionMetadata.buzzTransactionIds ?? []),
@@ -425,7 +426,8 @@ export async function consumeRedeemableCode({
                       ...subscriptionMetadata.prepaids,
                       [consumedProductTier]:
                         (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue,
+                        consumedCode.unitValue -
+                        1, // -1 because we grant buzz right away
                     },
                     buzzTransactionIds: [
                       ...(subscriptionMetadata.buzzTransactionIds ?? []),

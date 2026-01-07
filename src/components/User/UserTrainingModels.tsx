@@ -26,6 +26,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconCircleCheck,
+  IconClock,
   IconCopy,
   IconExclamationCircle,
   IconExternalLink,
@@ -41,6 +42,7 @@ import React, { useMemo, useState } from 'react';
 import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
@@ -74,6 +76,7 @@ type TrainingFileData = {
   metadata: FileMetadata;
   url: string;
   sizeKB: number;
+  dataPurged?: boolean;
 };
 
 type ModalData = {
@@ -406,6 +409,7 @@ export default function UserTrainingModels() {
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
           const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+          const isDataPurged = thisFile?.dataPurged === true;
 
           const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
           const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
@@ -424,6 +428,23 @@ export default function UserTrainingModels() {
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
 
           if (!mv.trainingStatus) return <Badge color="gray">N/A</Badge>;
+
+          if (isDataPurged) {
+            return (
+              <HoverCard shadow="md" width={300} zIndex={100} withArrow withinPortal>
+                <HoverCard.Target>
+                  <Badge color="orange">Files Expired</Badge>
+                </HoverCard.Target>
+                <HoverCard.Dropdown>
+                  <Text size="sm">
+                    Training files have been automatically removed after 30 days. Epoch files and
+                    sample images are no longer available. To train a new model, please start a new
+                    training run.
+                  </Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
+            );
+          }
 
           return (
             <Group gap="sm">
@@ -605,11 +626,22 @@ export default function UserTrainingModels() {
           const mv = row.original;
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
+          const isDataPurged = thisFile?.dataPurged === true;
 
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const hasFiles = !!thisFile;
           const hasTrainingParams = !!thisTrainingDetails?.params;
           const needsInfo = !hasFiles || !hasTrainingParams;
+
+          if (isDataPurged) {
+            return (
+              <Tooltip label="Files expired after 30 days" withArrow withinPortal>
+                <Center>
+                  <IconX color="orange" size={20} />
+                </Center>
+              </Tooltip>
+            );
+          }
 
           if (isFailed) {
             return (
@@ -654,6 +686,7 @@ export default function UserTrainingModels() {
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
           const thisFile = mv.files[0];
           const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
+          const isDataPurged = thisFile?.dataPurged === true;
 
           const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
           const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
@@ -670,7 +703,7 @@ export default function UserTrainingModels() {
 
           return (
             <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
-              {mv.trainingStatus === TrainingStatus.InReview && (
+              {mv.trainingStatus === TrainingStatus.InReview && !isDataPurged && (
                 <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                   <Button
                     component="a"
@@ -682,7 +715,7 @@ export default function UserTrainingModels() {
                   </Button>
                 </Link>
               )}
-              {hasFailedWithEpochs && (
+              {hasFailedWithEpochs && !isDataPurged && (
                 <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                   <Button
                     component="a"
@@ -695,25 +728,23 @@ export default function UserTrainingModels() {
                   </Button>
                 </Link>
               )}
-              {mv.trainingStatus === TrainingStatus.Failed && (
-                <Tooltip label="Recheck Training Status" withArrow withinPortal>
-                  <LegacyActionIcon
-                    variant="light"
-                    size="md"
-                    radius="xl"
-                    loading={
-                      recheckTrainingStatusMutation.isLoading &&
-                      recheckTrainingStatusMutation.variables?.id === mv.id
-                    }
-                    onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                      e.stopPropagation();
-                      handleRecheckTrainingStatus(e, mv);
-                    }}
-                  >
-                    <IconRefresh size={16} />
-                  </LegacyActionIcon>
-                </Tooltip>
-              )}
+              <Tooltip label="Recheck Training Status" withArrow withinPortal>
+                <LegacyActionIcon
+                  variant="light"
+                  size="md"
+                  radius="xl"
+                  loading={
+                    recheckTrainingStatusMutation.isLoading &&
+                    recheckTrainingStatusMutation.variables?.id === mv.id
+                  }
+                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                    e.stopPropagation();
+                    handleRecheckTrainingStatus(e, mv);
+                  }}
+                >
+                  <IconRefresh size={16} />
+                </LegacyActionIcon>
+              </Tooltip>
               <Tooltip label="View Details" withArrow withinPortal>
                 <LegacyActionIcon
                   variant="filled"
@@ -764,7 +795,7 @@ export default function UserTrainingModels() {
           color={announcement.color || 'yellow'}
           size="sm"
         >
-          {announcement.message}
+          <CustomMarkdown>{announcement.message}</CustomMarkdown>
         </AlertWithIcon>
       )}
 
@@ -867,6 +898,14 @@ export default function UserTrainingModels() {
         />
       </Group>
 
+      <Group gap={6}>
+        <IconClock size={16} color="var(--mantine-color-dimmed)" />
+        <Text size="sm" c="dimmed">
+          Trained LoRAs are kept in the Trainer for 30 days. Download or Publish them to your
+          Profile to save them.
+        </Text>
+      </Group>
+
       {!hasTraining && !isLoading ? (
         <Center py="md">
           <NoContent message="You have no training models" />
@@ -879,9 +918,7 @@ export default function UserTrainingModels() {
           manualSorting
           onPaginationChange={(updater) => {
             const newPagination =
-              typeof updater === 'function'
-                ? updater({ pageIndex: page - 1, pageSize })
-                : updater;
+              typeof updater === 'function' ? updater({ pageIndex: page - 1, pageSize }) : updater;
             setPage(newPagination.pageIndex + 1);
             if (newPagination.pageSize !== pageSize) {
               setPageSize(newPagination.pageSize);
@@ -1049,7 +1086,11 @@ export default function UserTrainingModels() {
             },
             {
               label: 'Dataset',
-              value: modalData.file?.url ? (
+              value: modalData.file?.dataPurged ? (
+                <Text c="dimmed" size="sm">
+                  Files expired after 30 days
+                </Text>
+              ) : modalData.file?.url ? (
                 <DownloadButton
                   component="a"
                   canDownload

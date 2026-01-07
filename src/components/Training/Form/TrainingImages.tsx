@@ -347,9 +347,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     let img: HTMLImageElement;
     try {
       img = await createImageElement(imgUrl);
-    } catch {
-      URL.revokeObjectURL(imgUrl);
+    } catch (loadError) {
       const name = fileName ?? 'image';
+      console.error(`[ImageValidation] createImageElement failed for "${name}"`, {
+        error: loadError,
+        errorMessage: loadError instanceof Error ? loadError.message : String(loadError),
+        type,
+      });
+      URL.revokeObjectURL(imgUrl);
       showImgCorrupt.current.push(name);
       throw new Error(`Image "${name}" failed to load and may be corrupt.`);
     }
@@ -367,32 +372,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     }
 
-    // Validate image integrity by fully decoding the image (similar to PIL's verify + exif_transpose)
-    // This catches truncated/corrupt images by forcing a full decode and sampling multiple regions
-    try {
-      const testCanvas = document.createElement('canvas');
-      // Use full image dimensions to force complete decode (like PIL's exif_transpose)
-      testCanvas.width = width;
-      testCanvas.height = height;
-      const testCtx = testCanvas.getContext('2d');
-      if (!testCtx) throw new Error('Canvas context unavailable');
-
-      // Draw the entire image - this forces full decode and will fail for truncated images
-      testCtx.drawImage(img, 0, 0, width, height);
-
-      // Sample pixel data from multiple regions to catch partial corruption
-      // Check top-left corner
-      testCtx.getImageData(0, 0, 1, 1);
-      // Check bottom-right corner (where truncation typically manifests)
-      testCtx.getImageData(width - 1, height - 1, 1, 1);
-      // Check center
-      testCtx.getImageData(Math.floor(width / 2), Math.floor(height / 2), 1, 1);
-    } catch {
-      URL.revokeObjectURL(imgUrl);
-      const name = fileName ?? 'image';
-      showImgCorrupt.current.push(name);
-      throw new Error(`Image "${name}" appears to be corrupt and cannot be processed.`);
-    }
+    // Note: Image integrity is already validated by createImageElement() which loads
+    // the image and attempts decode(). If we reach this point, the image loaded successfully.
+    // Previous canvas-based validation was removed as it caused false positives under
+    // memory pressure when processing large batches of images concurrently.
 
     // both w and h must be less than the max
     const goodMax = width <= maxWidth && height <= maxHeight;
@@ -435,11 +418,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (!ctx) throw new Error('Error resizing image');
     ctx.drawImage(img, 0, 0, width, height);
 
+    // Normalize MIME type - 'image/jpg' is not valid, browsers expect 'image/jpeg'
+    const normalizedType = type === 'image/jpg' ? 'image/jpeg' : type;
+    // Use high quality for JPEG to prevent compression artifacts
+    const quality = normalizedType === 'image/jpeg' ? 0.92 : undefined;
+
     return new Promise((resolve, reject) => {
-      canvas.toBlob((file) => {
-        if (!file) reject();
-        else resolve(URL.createObjectURL(file));
-      }, type);
+      canvas.toBlob(
+        (file) => {
+          // Revoke the original blob URL to prevent memory leaks
+          URL.revokeObjectURL(imgUrl);
+          if (!file) {
+            reject(
+              new Error(`Failed to resize image - canvas.toBlob returned null for type ${type}`)
+            );
+          } else {
+            resolve(URL.createObjectURL(file));
+          }
+        },
+        normalizedType,
+        quality
+      );
     });
   };
 
@@ -524,41 +523,69 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const zipReader = await getJSZip();
     const zData = await zipReader.loadAsync(f);
 
+    const zipEntries = Object.entries(zData.files);
+    const imageEntries = zipEntries.filter(([zname, zf]) => {
+      if (zf.dir) return false;
+      if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return false;
+      const fileExt = (zname.split('.').pop() || '').toLowerCase();
+      return fileExt in mediaExts;
+    });
+
+    console.log(
+      `[ZipProcessing] Starting to process ${imageEntries.length} images from zip (total entries: ${zipEntries.length})`
+    );
+    let completedCount = 0;
+    const totalImages = imageEntries.length;
+
+    // Use pLimit to process images with controlled concurrency (max 10 at a time)
+    // This prevents memory pressure from loading too many images simultaneously
     const ret = await Promise.all(
-      Object.entries(zData.files).map(async ([zname, zf]) => {
-        let hasLabelFiles = false;
+      Object.entries(zData.files).map(([zname, zf]) =>
+        limit(async () => {
+          let hasLabelFiles = false;
 
-        if (zf.dir) return;
-        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+          if (zf.dir) return;
+          if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
 
-        // - we could read the type here with some crazy blob/hex inspecting
-        const fileSplit = zname.split('.');
-        const fileExt = (fileSplit.pop() || '').toLowerCase();
-        const baseFileName = fileSplit.join('.');
-        if (fileExt in mediaExts) {
-          const imgBlob = await zf.async('blob');
-          try {
-            const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt], zname);
-            const czFile = zipReader.file(`${baseFileName}.txt`);
-            let labelStr = '';
-            if (czFile) {
-              labelStr = await czFile.async('string');
-              hasLabelFiles = true;
+          // - we could read the type here with some crazy blob/hex inspecting
+          const fileSplit = zname.split('.');
+          const fileExt = (fileSplit.pop() || '').toLowerCase();
+          const baseFileName = fileSplit.join('.');
+          if (fileExt in mediaExts) {
+            const imgBlob = await zf.async('blob');
+            try {
+              const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt], zname);
+              const czFile = zipReader.file(`${baseFileName}.txt`);
+              let labelStr = '';
+              if (czFile) {
+                labelStr = await czFile.async('string');
+                hasLabelFiles = true;
+              }
+              parsedFiles.push({
+                name: zname,
+                type: mediaExts[fileExt],
+                url: scaledUrl,
+                label: labelStr,
+                invalidLabel: false,
+                source: source ?? null,
+              });
+              completedCount++;
+              // Log progress every 10 images to reduce console spam
+              if (completedCount % 10 === 0 || completedCount === totalImages) {
+                console.log(`[ZipProcessing] Progress: ${completedCount}/${totalImages}`);
+              }
+            } catch (err) {
+              completedCount++;
+              console.error(
+                `[ZipProcessing] Failed "${zname}" (${completedCount}/${totalImages})`,
+                err
+              );
+              // Error already tracked and will be shown in showResizeWarnings
             }
-            parsedFiles.push({
-              name: zname,
-              type: mediaExts[fileExt],
-              url: scaledUrl,
-              label: labelStr,
-              invalidLabel: false,
-              source: source ?? null,
-            });
-          } catch {
-            // Error already tracked and will be shown in showResizeWarnings
           }
-        }
-        return hasLabelFiles;
-      })
+          return hasLabelFiles;
+        })
+      )
     );
 
     const hasAnyLabelFiles = ret.some((r) => r === true);

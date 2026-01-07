@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -13,11 +12,10 @@ export const getUserDownloads = async ({
 }: Partial<GetUserDownloadsSchema> & {
   userId: number;
 }) => {
-  let { hideDownloadsSince } = await getUserSettings(userId);
-  hideDownloadsSince = undefined;
+  const { hideDownloadsSince } = await getUserSettings(userId);
 
   if (!clickhouse) {
-    return { items: [] };
+    return { items: [], nextCursor: undefined };
   }
 
   // Build WHERE conditions
@@ -33,6 +31,8 @@ export const getUserDownloads = async ({
 
   const whereClause = conditions.join(' AND ');
 
+  // Fetch limit + 1 to detect if there's more data
+  const fetchLimit = limit + 1;
   const downloadHistory = await clickhouse.$query<{
     modelVersionId: number;
     downloadAt: Date;
@@ -44,15 +44,26 @@ export const getUserDownloads = async ({
     WHERE ${whereClause}
     GROUP BY modelVersionId
     ORDER BY max(lastDownloaded) DESC
-    LIMIT ${limit}
+    LIMIT ${fetchLimit}
   `;
 
-  if (downloadHistory.length === 0) {
-    return { items: [] };
+  // Determine pagination from ClickHouse results BEFORE filtering
+  const hasMore = downloadHistory.length > limit;
+  let nextCursor: Date | undefined;
+  if (hasMore) {
+    // Cursor is from the extra item (position `limit`)
+    nextCursor = downloadHistory[limit].downloadAt;
+  }
+
+  // Work with only the first `limit` items for filtering
+  const itemsToProcess = downloadHistory.slice(0, limit);
+
+  if (itemsToProcess.length === 0) {
+    return { items: [], nextCursor: undefined };
   }
 
   // Get model/version IDs from download history
-  const downloadedVersionIds = downloadHistory.map((dh) => dh.modelVersionId);
+  const downloadedVersionIds = itemsToProcess.map((dh) => dh.modelVersionId);
 
   // Check which of these downloads are hidden
   const hiddenDownloads = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
@@ -64,10 +75,11 @@ export const getUserDownloads = async ({
   const hiddenIds = hiddenDownloads.map((h) => h.modelVersionId);
 
   // Filter out hidden downloads
-  const visibleDownloads = downloadHistory.filter((dh) => !hiddenIds.includes(dh.modelVersionId));
+  const visibleDownloads = itemsToProcess.filter((dh) => !hiddenIds.includes(dh.modelVersionId));
 
   if (visibleDownloads.length === 0) {
-    return { items: [] };
+    // No visible items on this page, but there may be more pages
+    return { items: [], nextCursor };
   }
 
   // Get model/version names from PostgreSQL in a separate query
@@ -106,7 +118,7 @@ export const getUserDownloads = async ({
     };
   });
 
-  return { items };
+  return { items, nextCursor };
 };
 
 export const hideDownload = async ({

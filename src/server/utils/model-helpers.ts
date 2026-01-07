@@ -69,7 +69,6 @@ export const getFileDisplayName = ({
 };
 
 export const getEpochJobAndFileName = (downloadUrl: string) => {
-
   let jobFileUrl; // Leaves you with: ${jobId}/assets/${fileName}
   let jobId;
   let fileName;
@@ -91,8 +90,7 @@ export const getEpochJobAndFileName = (downloadUrl: string) => {
   }
 
   return { jobId, fileName };
-  
-}
+};
 
 export const getTrainingFileEpochNumberDetails = (
   file: { type: string | ModelFileType; metadata: FileMetadata },
@@ -103,7 +101,6 @@ export const getTrainingFileEpochNumberDetails = (
     file.metadata.trainingResults?.epochs?.find((e) =>
       'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
     ) ?? file.metadata.trainingResults?.epochs?.pop();
-  
 
   if (!epoch) return null;
 

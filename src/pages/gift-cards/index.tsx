@@ -30,6 +30,7 @@ import { getEnabledVendors, getVendorById, getDefaultVendor } from '~/utils/gift
 import type { Vendor, BuzzCard, Membership } from '~/utils/gift-cards/vendors';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { getVendorDiscount } from '~/utils/gift-cards/discount-utils';
+import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 
@@ -544,6 +545,23 @@ export default function GiftCardsPage() {
 
           {/* Wholesale Program Callout */}
           {!showKinguinCheckout && <WholesaleCallout />}
+
+          {/* Disclaimer */}
+          {!showKinguinCheckout && (
+            <Text size="xs" c="dimmed" ta="center" mt="md">
+              {GIFT_CARD_DISCLAIMER.purchase} By purchasing, you agree to our{' '}
+              <Text
+                component={NextLink}
+                href={GIFT_CARD_DISCLAIMER.termsUrl}
+                size="xs"
+                c="blue"
+                td="underline"
+              >
+                {GIFT_CARD_DISCLAIMER.termsLinkText}
+              </Text>
+              .
+            </Text>
+          )}
         </Stack>
       </Container>
     </>

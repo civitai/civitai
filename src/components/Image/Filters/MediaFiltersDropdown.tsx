@@ -101,8 +101,6 @@ export function MediaFiltersDropdown({
     (isModerator && mergedFilters.disablePoi ? 1 : 0) +
     (isModerator && mergedFilters.disableMinor ? 1 : 0);
 
-  console.log(filters, filterLength);
-
   const clearFilters = useCallback(() => {
     const reset = {
       types: undefined,

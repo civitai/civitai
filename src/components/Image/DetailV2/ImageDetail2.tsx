@@ -113,8 +113,18 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index, collection } =
-    useImageDetailContext();
+  const {
+    images,
+    active,
+    close,
+    toggleInfo,
+    shareUrl,
+    connect,
+    navigate,
+    index,
+    collection,
+    hideReactions,
+  } = useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
@@ -259,12 +269,12 @@ export function ImageDetail2() {
                           <div className="flex flex-1 flex-wrap justify-between gap-1">
                             {/* Placeholder */}
                             <div className="@md:hidden" />
-                            <div className="flex gap-1 @max-md:hidden">
+                            <div className="flex items-center gap-1 @max-md:hidden">
                               <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                               {LeftImageControls}
                             </div>
 
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1">
                               <ImageGuard2.BlurToggle
                                 {...sharedBadgeProps}
                                 className={clsx('@md:hidden', sharedBadgeProps.className)}
@@ -341,9 +351,11 @@ export function ImageDetail2() {
                             <ReactionSettingsProvider
                               settings={{
                                 hideReactionCount: false,
-                                hideReactions: collectionItems.some((ci) =>
-                                  contestCollectionReactionsHidden(ci.collection)
-                                ),
+                                hideReactions:
+                                  hideReactions ||
+                                  collectionItems.some((ci) =>
+                                    contestCollectionReactionsHidden(ci.collection)
+                                  ),
                                 buttonStyling: (reaction, hasReacted) => ({
                                   radius: 'xl',
                                   variant: 'light',

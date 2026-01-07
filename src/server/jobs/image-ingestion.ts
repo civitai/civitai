@@ -10,7 +10,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
-const IMAGE_SCANNING_RETRY_LIMIT = 6;
+const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
 type PendingIngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
@@ -19,29 +19,60 @@ type ErrorIngestImageRow = PendingIngestImageRow & {
   retryCount: number;
 };
 
+async function fetchAllPendingImages<T extends { id: number }>(
+  query: (cursor: number | undefined, limit: number) => Promise<T[]>,
+  batchSize = 5000
+): Promise<T[]> {
+  const allResults: T[] = [];
+  let cursor: number | undefined;
+
+  while (true) {
+    const batch = await query(cursor, batchSize);
+    if (batch.length === 0) break;
+
+    allResults.push(...batch);
+    cursor = batch[batch.length - 1].id;
+
+    if (batch.length < batchSize) break;
+  }
+
+  return allResults;
+}
+
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
   const now = new Date();
 
   // Fetch then filter pending images in JS to avoid a slow query
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const pendingImages = (
-    (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
-    FROM "Image"
-    WHERE ingestion = 'Pending'::"ImageIngestionStatus"
-    ORDER BY id
-    LIMIT 20000
-  `) ?? []
+    await fetchAllPendingImages(async (cursor, limit) => {
+      return (
+        (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+          SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
+          FROM "Image"
+          WHERE ingestion = 'Pending'::"ImageIngestionStatus"
+          ${Prisma.raw(cursor ? `AND id > ${cursor}` : '')}
+          ORDER BY id
+          LIMIT ${limit}
+        `) ?? []
+      );
+    })
   ).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
 
-  const rescanImages =
-    (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
-    FROM "Image"
-    WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
-    ORDER BY id
-    LIMIT 20000
-  `) ?? [];
+  console.log({ pendingImages: pendingImages.length });
+
+  const rescanImages = await fetchAllPendingImages(async (cursor, limit) => {
+    return (
+      (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+        SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
+        FROM "Image"
+        WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
+        ${Prisma.raw(cursor ? `AND id > ${cursor}` : '')}
+        ORDER BY id
+        LIMIT ${limit}
+      `) ?? []
+    );
+  });
 
   // Fetch then filter error images in JS to avoid a slow query
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
@@ -49,7 +80,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     (await dbWrite.$queryRaw<ErrorIngestImageRow[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as "retryCount"
     FROM "Image"
-    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '24 hours'::interval)
+    WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '96 hours'::interval)
   `) ?? []
   ).filter(
     (img) =>

@@ -617,7 +617,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 // const clavataScan = env.CLAVATA_SCAN;
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
-  ImageScanType.Hash,
+  // ImageScanType.Hash,
   // ImageScanType.Clavata,
   // ImageScanType.Hive,
   ImageScanType.SpineRating,
@@ -4741,22 +4741,31 @@ export const getImageModerationReviewQueue = async ({
 
   let cursorProp = 'i."id"';
   let cursorDirection = 'DESC';
+  let tagReviewCTE: Prisma.Sql | undefined;
+  let tagReviewJoin: Prisma.Sql | undefined;
 
   if (tagReview) {
-    // Optimize: avoid CTE + IN + DISTINCT; use EXISTS for early stop and better plans
     AND.push(Prisma.sql`
       i."nsfwLevel" < ${NsfwLevel.Blocked}
     `);
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImageDetails" toi
-      WHERE toi."imageId" = i.id
-        AND toi."needsReview"
-        AND toi.disabled = false
-    )`);
-    // When paginating tag review, apply cursor directly on image id (DESC)
-    if (cursor) {
-      AND.push(Prisma.sql`i."id" < ${cursor}`);
-    }
+
+    // Optimize: Use CTE to filter tags first with explicit materialization
+    // This forces PostgreSQL to scan the partial index first before joining to images
+    tagReviewCTE = Prisma.sql`
+      WITH reviewable_images AS MATERIALIZED (
+        SELECT DISTINCT "imageId"
+        FROM "TagsOnImageNew"
+        WHERE (((attributes >> 9)::integer & 1) = 1)      -- needsReview = true
+          AND (((attributes >> 10)::integer & 1) <> 1)    -- disabled = false
+          ${cursor ? Prisma.sql`AND "imageId" < ${cursor}` : Prisma.sql``}
+        ORDER BY "imageId" DESC
+      )
+    `;
+
+    // Join to the materialized CTE
+    tagReviewJoin = Prisma.sql`
+      INNER JOIN reviewable_images ri ON ri."imageId" = i.id
+    `;
   } else {
     if (reportReview) {
       // Add this to the WHERE:
@@ -4766,13 +4775,11 @@ export const getImageModerationReviewQueue = async ({
       cursorProp = 'report.id';
       cursorDirection = 'ASC';
     }
+  }
 
-    if (cursor) {
-      // Random sort cursor is handled by the WITH query
-      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-      if (cursorProp)
-        AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
-    }
+  if (cursor) {
+    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+    AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
   // TODO: find a better way to handle different select/join for each type of review
@@ -4781,6 +4788,7 @@ export const getImageModerationReviewQueue = async ({
 
   const query = Prisma.sql`
     -- Image moderation queue
+    ${tagReviewCTE ? tagReviewCTE : Prisma.empty}
     SELECT
       i.id,
       i.name,
@@ -4821,6 +4829,7 @@ export const getImageModerationReviewQueue = async ({
       LEFT JOIN "Post" p ON p.id = i."postId"
       LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
       ${Prisma.raw(additionalQuery ? additionalQuery.join : '')}
+      ${tagReviewJoin ? tagReviewJoin : Prisma.empty}
       WHERE ${Prisma.join(AND, ' AND ')}
       ORDER BY ${Prisma.raw(orderBy)}
       LIMIT ${limit + 1}
