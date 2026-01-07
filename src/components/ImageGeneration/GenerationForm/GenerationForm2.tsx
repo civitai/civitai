@@ -100,7 +100,6 @@ import {
   fluxDraftAir,
   fluxKreaAir,
   getIsFluxKrea,
-  getIsQwen,
   getIsChroma,
   getIsZImageTurbo,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
@@ -119,6 +118,12 @@ import {
   getModelVersionUsesImageGen,
   imageGenModelVersionMap,
 } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import {
+  qwenModelModeOptions,
+  getIsQwen,
+  qwenModelVersionToModelMap,
+  getIsQwenEditModel,
+} from '~/shared/orchestrator/ImageGen/qwen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
@@ -453,7 +458,7 @@ export function GenerationFormContent() {
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
-  const isQwen = getIsQwen(baseModel);
+  const isQwen = getIsQwen(model.id);
   const isChroma = getIsChroma(baseModel);
   const isZImageTurbo = getIsZImageTurbo(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
@@ -470,7 +475,8 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI;
+  const isQwenEdit = getIsQwenEditModel(model.id);
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || (isQwen && !isQwenEdit);
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -480,6 +486,7 @@ export function GenerationFormContent() {
     () => [
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
+      // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
     [isFluxKontext, isFlux2]
@@ -501,8 +508,11 @@ export function GenerationFormContent() {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') ||
+
               (isImageGen && (sourceImage || !!images?.length)) ||
-              isFluxKontext;
+
+              isFluxKontext ||
+              isQwenEdit;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir
@@ -555,6 +565,7 @@ export function GenerationFormContent() {
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
             const isFlux2NotDev = isFlux2 && !getIsFlux2Dev(model.id);
+
             const disableAdditionalResources =
               runsOnFalAI ||
               isOpenAI ||
@@ -614,7 +625,8 @@ export function GenerationFormContent() {
                 !isPonyV7 &&
                 !isNanoBanana &&
                 !isSeedream) ||
-              isFluxKontext;
+              isFluxKontext ||
+              isQwenEdit;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
               isFlux ||
@@ -653,7 +665,7 @@ export function GenerationFormContent() {
               (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
               !isSeedream &&
               !isNanoBananaPro &&
-              !isFlux2 &&
+              !isFlux2 && !isQwen &&
               !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
@@ -984,6 +996,24 @@ export function GenerationFormContent() {
                       )}
                       onChange={(stringModelId) => {
                         form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isQwen && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={qwenModelModeOptions}
+                      onChange={(stringModelId) => {
+                        const modelVersionId = Number(stringModelId);
+                        const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
+                        form.setValue('model', {
+                          ...model,
+                          id: Number(stringModelId),
+                          model: selectedOption
+                            ? { ...model.model, id: selectedOption.modelId }
+                            : model.model,
+                        });
                       }}
                     />
                   )}
@@ -1904,7 +1934,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const isFlux = getIsFlux(baseModel);
   const isFlux2 = getIsFlux2(model.id);
   const isSD3 = getIsSD3(baseModel);
-  const isQwen = getIsQwen(baseModel);
+  const isQwen = getIsQwen(model.id);
   const isOpenAI = baseModel === 'OpenAI';
   const checkpoint = model;
   const isSeedream = getIsSeedream(checkpoint.id);

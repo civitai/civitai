@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import type { BaseModelType } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import {
+  getBaseModelGenerationSupported,
+  type BaseModel,
+} from '~/shared/constants/base-model.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
 import type { Context } from '~/server/createContext';
@@ -182,7 +185,9 @@ export const getModelVersionHandler = async ({
 
     const unavailableGenResources = await getUnavailableResources();
     const canGenerate =
-      !!version.generationCoverage?.covered && !unavailableGenResources.includes(version.id);
+      !!version.generationCoverage?.covered &&
+      !unavailableGenResources.includes(version.id) &&
+      getBaseModelGenerationSupported(version.baseModel, version.model.type);
 
     return {
       ...version,
