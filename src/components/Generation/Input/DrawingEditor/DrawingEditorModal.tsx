@@ -45,6 +45,8 @@ export function DrawingEditorModal({
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [brushColor, setBrushColor] = useState<string>(DEFAULT_BRUSH_COLOR);
   const [loading, setLoading] = useState(false);
+  // Selection state for move/resize
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Ref to always have current elements (avoids stale closure in commitToHistory)
   const elementsRef = useRef<DrawingElement[]>(elements);
@@ -96,13 +98,25 @@ export function DrawingEditorModal({
     });
   }, []);
 
+  // Delete selected element
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedId) {
+      setElements((prev) => prev.filter((el) => el.id !== selectedId));
+      setSelectedId(null);
+      setTimeout(commitToHistory, 0);
+    }
+  }, [selectedId, commitToHistory]);
+
+  // Handle modal cancel/close
+  const handleCancel = useCallback(() => {
+    onCancel?.();
+    dialog.onClose();
+  }, [onCancel, dialog]);
+
   // Check if there are unsaved changes
   const hasChanges = useMemo(() => {
     return JSON.stringify(elements) !== JSON.stringify(normalizedInitialElements);
   }, [elements, normalizedInitialElements]);
-
-  // Selection state for move/resize
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Text input state - supports both new placement and editing existing text
   const [textInput, setTextInput] = useState<{
@@ -117,55 +131,17 @@ export function DrawingEditorModal({
   useHotkeys(
     [
       // Undo: Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
-      [
-        'mod+Z',
-        () => {
-          if (!textInput) handleUndo();
-        },
-        { preventDefault: true },
-      ],
+      ['mod+Z', handleUndo, { preventDefault: true }],
       // Redo: Ctrl+Shift+Z (Windows/Linux/Mac) or Cmd+Shift+Z (Mac)
-      [
-        'mod+shift+Z',
-        () => {
-          if (!textInput) handleRedo();
-        },
-        { preventDefault: true },
-      ],
+      ['mod+shift+Z', handleRedo, { preventDefault: true }],
       // Redo alternative: Ctrl+Y (Windows)
-      [
-        'ctrl+Y',
-        () => {
-          if (!textInput) handleRedo();
-        },
-        { preventDefault: true },
-      ],
+      ['ctrl+Y', handleRedo, { preventDefault: true }],
       // Delete selected element
-      [
-        'Delete',
-        () => {
-          if (selectedId && !textInput) {
-            setElements((prev) => prev.filter((el) => el.id !== selectedId));
-            setSelectedId(null);
-            setTimeout(commitToHistory, 0);
-          }
-        },
-        { preventDefault: true },
-      ],
+      ['Delete', handleDeleteSelected, { preventDefault: true }],
       // Backspace as alternative to Delete
-      [
-        'Backspace',
-        () => {
-          if (selectedId && !textInput) {
-            setElements((prev) => prev.filter((el) => el.id !== selectedId));
-            setSelectedId(null);
-            setTimeout(commitToHistory, 0);
-          }
-        },
-        { preventDefault: true },
-      ],
+      ['Backspace', handleDeleteSelected, { preventDefault: true }],
     ],
-    [] // Empty array means don't ignore hotkeys on any element - we handle textInput state ourselves
+    ['INPUT', 'TEXTAREA'] // Ignore hotkeys when focus is in input/textarea elements (allows native undo/redo in text fields)
   );
 
   // Calculate canvas dimensions based on source image
@@ -248,11 +224,6 @@ export function DrawingEditorModal({
     setTextInput(null);
   }, []);
 
-  function handleCancel() {
-    onCancel?.();
-    dialog.onClose();
-  }
-
   async function handleConfirm() {
     setLoading(true);
     try {
@@ -322,7 +293,7 @@ export function DrawingEditorModal({
       fullScreen={isMobile}
       onClose={handleCancel}
       closeOnClickOutside={!loading}
-      closeOnEscape={false}
+      closeOnEscape={!textInput && !loading}
       padding={0}
       radius="md"
       className={styles.modal}
