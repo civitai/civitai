@@ -9,6 +9,7 @@ import type { TagType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
+  ImageConnectionType,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
@@ -40,6 +41,8 @@ import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
 
 type WdTaggingStep = {
   $type: 'wdTagging';
@@ -283,6 +286,23 @@ export async function processImageScanResult(req: NextApiRequest) {
       }
 
       if (image.postId) await updatePostNsfwLevel(image.postId);
+
+      // NEW: Debounced article updates (prevents N+1 issue)
+      // Only process if feature flag is enabled
+      const featureFlags = getFeatureFlagsLazy({ req });
+      if (featureFlags.articleImageScanning) {
+        const articleConnections = await dbWrite.imageConnection.findMany({
+          where: { imageId: image.id, entityType: ImageConnectionType.Article },
+          select: { entityId: true },
+        });
+
+        if (articleConnections.length > 0) {
+          for (const { entityId } of articleConnections) {
+            // Uses debouncing: 50 images → 1 DB update
+            await debounceArticleUpdate(entityId);
+          }
+        }
+      }
 
       await queueImageSearchIndexUpdate({
         ids: [image.id],

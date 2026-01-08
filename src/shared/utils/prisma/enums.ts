@@ -505,6 +505,7 @@ export const ArticleStatus = {
   Published: 'Published',
   Unpublished: 'Unpublished',
   UnpublishedViolation: 'UnpublishedViolation',
+  Processing: 'Processing',
 } as const;
 
 export type ArticleStatus = (typeof ArticleStatus)[keyof typeof ArticleStatus];
