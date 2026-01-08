@@ -63,7 +63,7 @@ export function Feed() {
                 new images with our resources
               </Text>
               <Text size="sm" c="dimmed">
-                Some new filtering options don't apply retroactively.
+                Some new filtering options don&rsquo;t apply retroactively.
               </Text>
             </Stack>
           )}
