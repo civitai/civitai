@@ -2542,24 +2542,16 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       }
 
       // Filter hits based on existence check while preserving order
-      const dropped: number[] = [];
+      let dropped = 0;
       const filteredHits = results.filter((hit) => {
         const exists = cachedMap.get(hit.id);
         const keep = exists !== false; // treat undefined as exists=true
-        if (!keep) {
-          dropped.push(hit.id);
-        }
+        if (!keep) dropped++;
+
         return keep;
       });
 
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped.length);
-      if (dropped.length > 0) {
-        // Remove dropped IDs from search index asynchronously
-        queueImageSearchIndexUpdate({
-          ids: dropped,
-          action: SearchIndexUpdateQueueAction.Delete,
-        }).catch();
-      }
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
 
       return filteredHits.filter((x) => imageIds.includes(x.id));
     };
@@ -2578,11 +2570,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
           laughCountAllTime: match?.reactionLaugh ?? 0,
           heartCountAllTime: match?.reactionHeart ?? 0,
           cryCountAllTime: match?.reactionCry ?? 0,
-
           commentCountAllTime: match?.comment ?? 0,
           collectedCountAllTime: match?.collection ?? 0,
           tippedAmountCountAllTime: match?.buzz ?? 0,
-
           dislikeCountAllTime: 0,
           viewCountAllTime: 0,
         },
@@ -3193,24 +3183,16 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       }
 
       // Filter hits based on existence check while preserving order
-      const dropped: number[] = [];
+      let dropped = 0;
       const existenceFiltered = limitedHits.filter((hit) => {
         const exists = cachedMap.get(hit.id);
         const keep = exists !== false; // treat undefined as exists=true
-        if (!keep) {
-          dropped.push(hit.id);
-        }
+        if (!keep) dropped++;
+
         return keep;
       });
 
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped.length);
-      if (dropped.length > 0) {
-        // Remove dropped IDs from search index asynchronously
-        queueImageSearchIndexUpdate({
-          ids: dropped,
-          action: SearchIndexUpdateQueueAction.Delete,
-        }).catch();
-      }
+      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
 
       return existenceFiltered.filter((x) => imageIds.includes(x.id));
     };
