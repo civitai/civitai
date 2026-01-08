@@ -2453,25 +2453,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         };
       });
 
-      if (fullData.length) {
-        sysRedis.packed
-          .sAdd(
-            REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
-            fullData.map((i) => i.id)
-          )
-          .catch((e) => {
-            const err = e as Error;
-            logToAxiom(
-              {
-                type: 'search-redis-error',
-                error: err.message,
-                cause: err.cause,
-                stack: err.stack,
-              },
-              'temp-search'
-            ).catch();
-          });
-      }
       endTimer();
 
       return { data: fullData, nextCursor };
@@ -2578,26 +2559,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         },
       };
     });
-
-    if (fullData.length) {
-      sysRedis.packed
-        .sAdd(
-          REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
-          fullData.map((i) => i.id)
-        )
-        .catch((e) => {
-          const err = e as Error;
-          logToAxiom(
-            {
-              type: 'search-redis-error',
-              error: err.message,
-              cause: err.cause,
-              stack: err.stack,
-            },
-            'temp-search'
-          ).catch();
-        });
-    }
 
     endTimer();
     return {
@@ -3094,25 +3055,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         };
       });
 
-      if (fullData.length) {
-        sysRedis.packed
-          .sAdd(
-            REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
-            fullData.map((i) => i.id)
-          )
-          .catch((e) => {
-            const err = e as Error;
-            logToAxiom(
-              {
-                type: 'search-redis-error',
-                error: err.message,
-                cause: err.cause,
-                stack: err.stack,
-              },
-              'temp-search'
-            ).catch();
-          });
-      }
       endTimer();
 
       return { data: fullData, nextCursor };
@@ -3226,25 +3168,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       };
     });
 
-    if (fullData.length) {
-      sysRedis.packed
-        .sAdd(
-          REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
-          fullData.map((i) => i.id)
-        )
-        .catch((e) => {
-          const err = e as Error;
-          logToAxiom(
-            {
-              type: 'search-redis-error',
-              error: err.message,
-              cause: err.cause,
-              stack: err.stack,
-            },
-            'temp-search'
-          ).catch();
-        });
-    }
     endTimer();
 
     return { data: fullData, nextCursor };
@@ -6318,4 +6241,38 @@ export async function refreshImageResources(imageId: number) {
   //   action: SearchIndexUpdateQueueAction.Update,
   // });
   return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
+}
+
+export async function addSeenImageIds(imageIds: number[], maxSize = 10000) {
+  if (imageIds.length === 0) return;
+
+  const key = REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES;
+  const score = Date.now();
+
+  await sysRedis
+    .multi()
+    .zAdd(
+      key,
+      imageIds.map((id) => ({ score, value: id.toString() }))
+    )
+    .zRemRangeByRank(key, 0, -(maxSize + 1))
+    .exec()
+    .catch((e) => {
+      const err = e as Error;
+      logToAxiom(
+        {
+          type: 'search-redis-error',
+          error: err.message,
+          cause: err.cause,
+          stack: err.stack,
+        },
+        'temp-search'
+      ).catch();
+    });
+}
+
+export async function getSeenImageIds(): Promise<number[]> {
+  const key = REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES;
+  const ids = await sysRedis.zRange(key, 0, -1, { REV: true });
+  return ids.map((id) => parseInt(id, 10));
 }

@@ -702,6 +702,9 @@ export const REDIS_KEYS = {
   ENTITY_METRICS: {
     BASE: 'entitymetric',
   },
+  QUEUES: {
+    SEEN_IMAGES: 'queues:recent-images',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

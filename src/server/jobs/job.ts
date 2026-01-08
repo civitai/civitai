@@ -87,7 +87,7 @@ export function createJob(
           logToAxiom({
             type: 'job-error',
             name,
-            message,
+            message: !stack ? message : undefined,
             stack,
           });
           throw e; // Re-throw to ensure webhook endpoint can handle errors
