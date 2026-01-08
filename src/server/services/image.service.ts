@@ -233,9 +233,11 @@ export const invalidateManyImageExistence = async (ids: number[]) => {
   // Set keys individually to avoid CROSSSLOT errors
   await Promise.all(
     ids.map((id) =>
-      sysRedis.packed.set(`${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}` as const, 'false', {
-        EX: 60 * 5,
-      })
+      sysRedis.packed.set(
+        `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${id}` as RedisKeyTemplateSys,
+        'false',
+        { EX: 60 * 5 }
+      )
     )
   );
 };
@@ -2479,8 +2481,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const checkImageExistence = async (imageIds: number[]) => {
       // Preserve original order and remove duplicates
       const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:` as const;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as const);
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
 
       // Check cached results first (1 minute TTL)
       const cachedResults = await sysRedis.packed.mGet(cacheKeys);
@@ -3130,8 +3132,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const checkImageExistence = async (imageIds: number[]) => {
       // Preserve original order and remove duplicates
       const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:` as const;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as const);
+      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
+      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
 
       // Check cached results first (1 minute TTL)
       const cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
