@@ -1,5 +1,6 @@
 import { Badge, Button, Modal, Textarea } from '@mantine/core';
-import { useRef, useState, useMemo, useCallback, useEffect } from 'react';
+import { useHotkeys } from '@mantine/hooks';
+import { useRef, useState, useMemo, useCallback } from 'react';
 import type Konva from 'konva';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { isMobileDevice } from '~/hooks/useIsMobile';
@@ -44,6 +45,8 @@ export function DrawingEditorModal({
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [brushColor, setBrushColor] = useState<string>(DEFAULT_BRUSH_COLOR);
   const [loading, setLoading] = useState(false);
+  // Selection state for move/resize
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Ref to always have current elements (avoids stale closure in commitToHistory)
   const elementsRef = useRef<DrawingElement[]>(elements);
@@ -71,13 +74,49 @@ export function DrawingEditorModal({
     });
   }, []); // No dependencies needed - uses ref and functional update
 
+  // Undo function
+  const handleUndo = useCallback(() => {
+    setHistoryState((state) => {
+      if (state.index > 0) {
+        const prevIndex = state.index - 1;
+        setElements(state.entries[prevIndex]);
+        return { ...state, index: prevIndex };
+      }
+      return state;
+    });
+  }, []);
+
+  // Redo function
+  const handleRedo = useCallback(() => {
+    setHistoryState((state) => {
+      if (state.index < state.entries.length - 1) {
+        const nextIndex = state.index + 1;
+        setElements(state.entries[nextIndex]);
+        return { ...state, index: nextIndex };
+      }
+      return state;
+    });
+  }, []);
+
+  // Delete selected element
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedId) {
+      setElements((prev) => prev.filter((el) => el.id !== selectedId));
+      setSelectedId(null);
+      setTimeout(commitToHistory, 0);
+    }
+  }, [selectedId, commitToHistory]);
+
+  // Handle modal cancel/close
+  const handleCancel = useCallback(() => {
+    onCancel?.();
+    dialog.onClose();
+  }, [onCancel, dialog]);
+
   // Check if there are unsaved changes
   const hasChanges = useMemo(() => {
     return JSON.stringify(elements) !== JSON.stringify(normalizedInitialElements);
   }, [elements, normalizedInitialElements]);
-
-  // Selection state for move/resize
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Text input state - supports both new placement and editing existing text
   const [textInput, setTextInput] = useState<{
@@ -88,24 +127,22 @@ export function DrawingEditorModal({
     fontSize?: number; // Font size to preserve when editing
   } | null>(null);
 
-  // Handle keyboard events for delete/backspace
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle delete when we have a selection and not in text input mode
-      if (!selectedId || textInput) return;
-
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault();
-        setElements((prev) => prev.filter((el) => el.id !== selectedId));
-        setSelectedId(null);
-        // Use setTimeout to ensure state is updated before committing
-        setTimeout(commitToHistory, 0);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, textInput, commitToHistory]);
+  // Handle keyboard shortcuts using Mantine's useHotkeys
+  useHotkeys(
+    [
+      // Undo: Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
+      ['mod+Z', handleUndo, { preventDefault: true }],
+      // Redo: Ctrl+Shift+Z (Windows/Linux/Mac) or Cmd+Shift+Z (Mac)
+      ['mod+shift+Z', handleRedo, { preventDefault: true }],
+      // Redo alternative: Ctrl+Y (Windows)
+      ['ctrl+Y', handleRedo, { preventDefault: true }],
+      // Delete selected element
+      ['Delete', handleDeleteSelected, { preventDefault: true }],
+      // Backspace as alternative to Delete
+      ['Backspace', handleDeleteSelected, { preventDefault: true }],
+    ],
+    ['INPUT', 'TEXTAREA'] // Ignore hotkeys when focus is in input/textarea elements (allows native undo/redo in text fields)
+  );
 
   // Calculate canvas dimensions based on source image
   const canvasDimensions = useMemo(() => {
@@ -187,11 +224,6 @@ export function DrawingEditorModal({
     setTextInput(null);
   }, []);
 
-  function handleCancel() {
-    onCancel?.();
-    dialog.onClose();
-  }
-
   async function handleConfirm() {
     setLoading(true);
     try {
@@ -250,16 +282,7 @@ export function DrawingEditorModal({
     setHistoryState({ entries: [[]], index: 0 });
   }
 
-  function handleUndo() {
-    if (historyState.index > 0) {
-      const prevIndex = historyState.index - 1;
-      setHistoryState((state) => ({ ...state, index: prevIndex }));
-      setElements(historyState.entries[prevIndex]);
-    }
-  }
-
   const canUndo = historyState.index > 0;
-
   const isMobile = isMobileDevice();
 
   return (
@@ -270,7 +293,7 @@ export function DrawingEditorModal({
       fullScreen={isMobile}
       onClose={handleCancel}
       closeOnClickOutside={!loading}
-      closeOnEscape={!loading}
+      closeOnEscape={!textInput && !loading}
       padding={0}
       radius="md"
       className={styles.modal}
