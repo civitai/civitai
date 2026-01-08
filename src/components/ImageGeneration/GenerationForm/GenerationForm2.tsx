@@ -13,6 +13,7 @@ import {
   List,
   Notification,
   Paper,
+  Radio,
   SegmentedControl,
   Stack,
   Text,
@@ -122,7 +123,9 @@ import {
   qwenModelModeOptions,
   getIsQwen,
   qwenModelVersionToModelMap,
-  getIsQwenEditModel,
+  getIsQwenImageEditModel,
+  getQwenVersionOptions,
+  getQwenProcess,
 } from '~/shared/orchestrator/ImageGen/qwen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -475,8 +478,8 @@ export function GenerationFormContent() {
   const isFlux2 = getIsFlux2(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const isQwenEdit = getIsQwenEditModel(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || (isQwen && !isQwenEdit);
+  const isQwenImageEdit = getIsQwenImageEditModel(model.id);
+  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -508,11 +511,8 @@ export function GenerationFormContent() {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') ||
-
               (isImageGen && (sourceImage || !!images?.length)) ||
-
-              isFluxKontext ||
-              isQwenEdit;
+              isFluxKontext;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir
@@ -579,7 +579,6 @@ export function GenerationFormContent() {
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
-              isQwen ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
@@ -624,9 +623,9 @@ export function GenerationFormContent() {
                 !isOpenAI &&
                 !isPonyV7 &&
                 !isNanoBanana &&
-                !isSeedream) ||
-              isFluxKontext ||
-              isQwenEdit;
+                !isSeedream &&
+                !isQwenImageEdit) ||
+              isFluxKontext;
             const disableCfgScale = isFluxUltra;
             const disableSampler =
               isFlux ||
@@ -665,7 +664,8 @@ export function GenerationFormContent() {
               (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
               !isSeedream &&
               !isNanoBananaPro &&
-              !isFlux2 && !isQwen &&
+              !isFlux2 &&
+              !isQwen &&
               !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
@@ -1001,21 +1001,56 @@ export function GenerationFormContent() {
                   )}
 
                   {isQwen && (
-                    <SegmentedControl
-                      value={model.id ? String(model.id) : undefined}
-                      data={qwenModelModeOptions}
-                      onChange={(stringModelId) => {
-                        const modelVersionId = Number(stringModelId);
-                        const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
-                        form.setValue('model', {
-                          ...model,
-                          id: Number(stringModelId),
-                          model: selectedOption
-                            ? { ...model.model, id: selectedOption.modelId }
-                            : model.model,
-                        });
-                      }}
-                    />
+                    <>
+                      <SegmentedControl
+                        value={getQwenProcess(model.id)}
+                        data={[
+                          { label: 'Text to Image', value: 'txt2img' },
+                          { label: 'Image Edit', value: 'img2img' },
+                        ]}
+                        color="blue"
+                        onChange={(process) => {
+                          const modelVersionId = [...qwenModelVersionToModelMap.entries()]
+                            .reverse()
+                            .find(([, v]) => v.process === process)?.[0];
+                          if (modelVersionId) {
+                            const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
+                            form.setValue('model', {
+                              ...model,
+                              id: modelVersionId,
+                              model: selectedOption
+                                ? { ...model.model, id: selectedOption.modelId }
+                                : model.model,
+                            });
+                          }
+                        }}
+                      />
+                      <Group>
+                        <Text size="sm" fw={500}>
+                          Version
+                        </Text>
+                        <Radio.Group
+                          value={model.id ? String(model.id) : undefined}
+                          onChange={(stringModelId) => {
+                            const modelVersionId = Number(stringModelId);
+                            const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
+                            form.setValue('model', {
+                              ...model,
+                              id: Number(stringModelId),
+                              model: selectedOption
+                                ? { ...model.model, id: selectedOption.modelId }
+                                : model.model,
+                            });
+                          }}
+                        >
+                          <Group>
+                            {(getQwenVersionOptions(model.id) ?? []).map((option) => (
+                              <Radio key={option.value} value={option.value} label={option.label} />
+                            ))}
+                          </Group>
+                        </Radio.Group>
+                      </Group>
+                    </>
                   )}
 
                   {enableImageInput && (
