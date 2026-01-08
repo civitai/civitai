@@ -1,4 +1,15 @@
-import { ActionIcon, Tooltip, Popover, Slider, ColorPicker, TextInput } from '@mantine/core';
+import {
+  ActionIcon,
+  Tooltip,
+  Popover,
+  Slider,
+  ColorPicker,
+  TextInput,
+  Text,
+  Stack,
+  Group,
+  Kbd,
+} from '@mantine/core';
 import {
   IconBrush,
   IconEraser,
@@ -10,11 +21,13 @@ import {
   IconTypography,
   IconPointer,
   IconDownload,
+  IconKeyboard,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { DrawingToolbarProps } from './drawing.types';
 import { EXTENDED_COLOR_SWATCHES, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
+import { useOs } from '@mantine/hooks';
 
 export function DrawingToolbar({
   tool,
@@ -32,6 +45,9 @@ export function DrawingToolbar({
   const showColors = tool !== 'eraser' && tool !== 'select';
   // Show size slider for stroke-based tools (not text or select)
   const showSizeSlider = tool !== 'text' && tool !== 'select';
+
+  const os = useOs();
+  const isDesktop = os === 'windows' || os === 'macos' || os === 'linux';
 
   return (
     <div className={styles.toolbar}>
@@ -232,6 +248,54 @@ export function DrawingToolbar({
               <IconArrowBackUp size={20} />
             </ActionIcon>
           </Tooltip>
+          {isDesktop && (
+            <Popover position="top" withArrow shadow="md" radius="md" width={250}>
+              <Popover.Target>
+                <Tooltip label="Keyboard shortcuts" withArrow>
+                  <ActionIcon variant="subtle" size="lg" radius="md">
+                    <IconKeyboard size={20} />
+                  </ActionIcon>
+                </Tooltip>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Stack gap="xs">
+                  <Text size="sm" fw={600}>
+                    Keyboard Shortcuts
+                  </Text>
+                  <Stack gap="xs">
+                    <Group justify="space-between">
+                      <Text size="sm">Undo</Text>
+                      {os === 'macos' ? <Kbd size="xs">⌘ + Z</Kbd> : <Kbd size="xs">Ctrl + Z</Kbd>}
+                    </Group>
+                    <Group justify="space-between">
+                      <Text size="sm">Redo</Text>
+                      {os === 'macos' ? (
+                        <Kbd size="xs">⌘ + Shift + Z</Kbd>
+                      ) : (
+                        <Kbd size="xs">Ctrl + Shift + Z</Kbd>
+                      )}
+                    </Group>
+                    <Group justify="space-between">
+                      <Text size="sm">Delete selected</Text>
+                      <Kbd size="xs">Backspace</Kbd>
+                    </Group>
+                    <Group justify="space-between">
+                      <Text size="sm">Confirm text</Text>
+                      {os === 'macos' ? (
+                        <Kbd size="xs">⌘ + Enter</Kbd>
+                      ) : (
+                        <Kbd size="xs">Ctrl + Enter</Kbd>
+                      )}
+                    </Group>
+                    <Group justify="space-between">
+                      <Text size="sm">Cancel text</Text>
+                      <Kbd size="xs">Esc</Kbd>
+                    </Group>
+                  </Stack>
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
+          )}
           {onDownload && (
             <Tooltip label="Download" withArrow>
               <ActionIcon variant="subtle" size="lg" radius="md" onClick={onDownload}>
