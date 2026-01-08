@@ -209,7 +209,7 @@ export async function smitePlayer({
     .catch((e) => handleLogError(e, 'signals:new-order-smite-player'));
 
   createNotification({
-    category: NotificationCategory.Other,
+    category: NotificationCategory.System,
     type: 'new-order-smite-received',
     key: `new-order-smite-received:${playerId}:${smite.id}`,
     userId: playerId,
@@ -242,7 +242,7 @@ export async function cleanseAllSmites({
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed-all'));
 
   createNotification({
-    category: NotificationCategory.Other,
+    category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:all:${new Date().getTime()}`,
     userId: playerId,
@@ -277,7 +277,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed'));
 
   createNotification({
-    category: NotificationCategory.Other,
+    category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:${id}`,
     userId: playerId,
@@ -1068,7 +1068,7 @@ export async function handleSanityCheckFailure(playerId: number, imageId: number
     if (failureCount === 1) {
       // First failure - warning only
       await createNotification({
-        category: NotificationCategory.Other,
+        category: NotificationCategory.System,
         type: 'new-order-sanity-warning',
         key: `new-order-sanity-warning:${playerId}:${Date.now()}`,
         userId: playerId,
@@ -1237,7 +1237,7 @@ export async function resetPlayer({
 
   if (withNotification)
     createNotification({
-      category: NotificationCategory.Other,
+      category: NotificationCategory.System,
       type: 'new-order-game-over',
       key: `new-order-game-over:${playerId}:${new Date().getTime()}`,
       userId: playerId,
