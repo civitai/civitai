@@ -25,6 +25,8 @@ export const contestCollectionVimeoUpload = createJob(
   'collection-contest-vimeo-upload',
   '0 * * * *',
   async () => {
+    return;
+
     if (!env.VIMEO_CLIENT_ID || !env.VIMEO_SECRET || !env.VIMEO_ACCESS_TOKEN) {
       logWebhook({ error: 'Vimeo credentials not set' });
       return;
