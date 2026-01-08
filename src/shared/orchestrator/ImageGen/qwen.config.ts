@@ -109,8 +109,8 @@ export const qwenConfig = ImageGenConfig({
         {}
       );
 
-    let imagesEditSchema = sourceImageSchema.array().max(7);
-    let imagesVariantSchema = sourceImageSchema.array().max(1);
+    let imagesEditSchema = z.string().array().max(7);
+    let imagesVariantSchema = z.string().array().max(1);
     if (!whatIf) {
       imagesEditSchema = imagesEditSchema.min(1);
       imagesVariantSchema = imagesVariantSchema.min(1);
@@ -120,18 +120,14 @@ export const qwenConfig = ImageGenConfig({
       baseSchema.extend({
         operation: z.literal('createImage'),
       }),
-      baseSchema
-        .extend({
-          operation: z.literal('editImage'),
-          images: imagesEditSchema,
-        })
-        .transform((obj) => ({ ...obj, images: obj.images.map((x) => x.url) })),
-      baseSchema
-        .extend({
-          operation: z.literal('createVariant'),
-          images: imagesVariantSchema,
-        })
-        .transform(({ images, ...obj }) => ({ ...obj, image: images[0].url })),
+      baseSchema.extend({
+        operation: z.literal('editImage'),
+        images: imagesEditSchema,
+      }),
+      baseSchema.extend({
+        operation: z.literal('createVariant'),
+        images: imagesVariantSchema,
+      }),
     ]);
 
     if (process === 'txt2img') {
