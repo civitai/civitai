@@ -275,15 +275,14 @@ function CollectionListForm({
                                   })
                                 );
                               }}
-                              clearable
+                              clearable={false}
+                              allowDeselect={false}
                               autoFocus
                               data={availableTags.map((tag) => ({
                                 value: tag.id.toString(),
                                 label: tag.name,
                               }))}
-                              style={{
-                                zIndex: 400,
-                              }}
+                              style={{ zIndex: 400 }}
                             />
                           )}
                         </Stack>
@@ -371,7 +370,8 @@ function CollectionListForm({
                                     })
                                   );
                                 }}
-                                clearable
+                                clearable={false}
+                                allowDeselect={false}
                                 autoFocus
                                 data={availableTags.map((tag) => ({
                                   value: tag.id.toString(),

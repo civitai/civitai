@@ -463,7 +463,6 @@ export const REDIS_SYS_KEYS = {
   },
   COLLECTION: {
     RANDOM_SEED: 'collection:random-seed',
-    CONTEST_IDS: 'collection:contest-ids',
   },
   EVENT: 'event', // special case
   SESSION: {
