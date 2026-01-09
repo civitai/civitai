@@ -185,6 +185,17 @@ function GenerationCostPopoverDetail({
       className: classes.tableCell,
     },
     {
+      label: 'Output Format',
+      value: (
+        <Group gap={4} justify="flex-end" wrap="nowrap">
+          {workflowCost.fixed?.format}
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
+        </Group>
+      ),
+      visible: !!workflowCost.fixed?.format,
+      className: classes.tableCell,
+    },
+    {
       label: (
         <div className="flex items-center justify-between">
           Creator Tip{' '}
@@ -254,7 +265,7 @@ function GenerationCostPopoverDetail({
       label: 'Civitai Tip',
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
-          {baseCost ?? '0'}
+          {workflowCost.tips?.civitai ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),

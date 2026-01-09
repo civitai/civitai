@@ -410,8 +410,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               form.setValue('cfgScale', 1);
               form.setValue('steps', 9);
             }, 0);
+          } else if (baseModel === 'Qwen' && prevBaseModel !== baseModel) {
+            form.setValue('cfgScale', 2.5);
           } else if (
             baseModel !== 'ZImageTurbo' &&
+            baseModel !== 'Qwen' &&
             !fluxBaseModels.includes(baseModel) &&
             (prevBaseModel === 'ZImageTurbo' || fluxBaseModels.includes(prevBaseModel))
           ) {

@@ -217,7 +217,6 @@ export async function parseGenerateImageInput({
   delete originalParams.resolution;
   delete originalParams.openAITransparentBackground;
   delete originalParams.openAIQuality;
-  delete originalParams.outputFormat;
   if (originalParams.workflow.startsWith('txt2img')) {
     originalParams.sourceImage = null;
     originalParams.images = null;
@@ -367,6 +366,8 @@ export async function parseGenerateImageInput({
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
     if (!injectableResources.draft) params.sampler = 'LCM';
+  } else if (params.sampler === 'LCM') {
+    params.sampler = 'Euler';
   }
 
   let upscaleWidth = params.upscaleHeight;

@@ -13,8 +13,8 @@ import {
   List,
   Notification,
   Paper,
-  Radio,
   SegmentedControl,
+  Select,
   Stack,
   Text,
   useMantineTheme,
@@ -39,7 +39,7 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { GenForm } from '~/components/Generation/Form/GenForm';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputRequestPriorityCompact } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
@@ -120,12 +120,10 @@ import {
   imageGenModelVersionMap,
 } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import {
-  qwenModelModeOptions,
   getIsQwen,
   qwenModelVersionToModelMap,
   getIsQwenImageEditModel,
-  getQwenVersionOptions,
-  getQwenProcess,
+  qwenGroupedOptions,
 } from '~/shared/orchestrator/ImageGen/qwen.config';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
@@ -160,7 +158,7 @@ import {
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
-import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { InputPreferredImageFormatCompact } from '~/components/Generation/Input/OutputFormat';
 import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
 import {
   getHiDreamResourceFromPrecisionAndVariant,
@@ -206,7 +204,6 @@ export function GenerationFormContent() {
   const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
-  const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -220,9 +217,13 @@ export function GenerationFormContent() {
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const baseModel = form.watch('baseModel');
   const model = form.watch('model');
+  const fluxMode = form.watch('fluxMode');
   const [sourceImage] = form.watch(['sourceImage']);
   const [images, imageAnnotations] = form.watch(['images', 'imageAnnotations']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
+
+  const runsOnFalAI =
+    model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir;
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
@@ -383,17 +384,13 @@ export function GenerationFormContent() {
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
   useEffect(() => {
-    const subscription = form.watch(({ model, resources, vae, fluxMode }, { name }) => {
+    const subscription = form.watch(({ model, resources, vae }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources(
           [model, ...(resources ?? []), vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor)
             .length > 0
         );
       }
-
-      setRunsOnFalAI(
-        model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir
-      );
     });
     return () => {
       subscription.unsubscribe();
@@ -1001,56 +998,23 @@ export function GenerationFormContent() {
                   )}
 
                   {isQwen && (
-                    <>
-                      <SegmentedControl
-                        value={getQwenProcess(model.id)}
-                        data={[
-                          { label: 'Text to Image', value: 'txt2img' },
-                          { label: 'Image Edit', value: 'img2img' },
-                        ]}
-                        color="blue"
-                        onChange={(process) => {
-                          const modelVersionId = [...qwenModelVersionToModelMap.entries()]
-                            .reverse()
-                            .find(([, v]) => v.process === process)?.[0];
-                          if (modelVersionId) {
-                            const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
-                            form.setValue('model', {
-                              ...model,
-                              id: modelVersionId,
-                              model: selectedOption
-                                ? { ...model.model, id: selectedOption.modelId }
-                                : model.model,
-                            });
-                          }
-                        }}
-                      />
-                      <Group>
-                        <Text size="sm" fw={500}>
-                          Version
-                        </Text>
-                        <Radio.Group
-                          value={model.id ? String(model.id) : undefined}
-                          onChange={(stringModelId) => {
-                            const modelVersionId = Number(stringModelId);
-                            const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
-                            form.setValue('model', {
-                              ...model,
-                              id: Number(stringModelId),
-                              model: selectedOption
-                                ? { ...model.model, id: selectedOption.modelId }
-                                : model.model,
-                            });
-                          }}
-                        >
-                          <Group>
-                            {(getQwenVersionOptions(model.id) ?? []).map((option) => (
-                              <Radio key={option.value} value={option.value} label={option.label} />
-                            ))}
-                          </Group>
-                        </Radio.Group>
-                      </Group>
-                    </>
+                    <Select
+                      label="Mode"
+                      value={model.id ? String(model.id) : null}
+                      data={qwenGroupedOptions}
+                      onChange={(stringModelId) => {
+                        if (!stringModelId) return;
+                        const modelVersionId = Number(stringModelId);
+                        const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
+                        form.setValue('model', {
+                          ...model,
+                          id: modelVersionId,
+                          model: selectedOption
+                            ? { ...model.model, id: selectedOption.modelId }
+                            : model.model,
+                        });
+                      }}
+                    />
                   )}
 
                   {enableImageInput && (
@@ -1543,10 +1507,13 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
-                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
-                  {!disablePriority && (
-                    <InputRequestPriority name="priority" label="Request Priority" />
-                  )}
+                  <div className="flex flex-col gap-1">
+                    <Input.Label>Output Settings</Input.Label>
+                    <div className="flex items-center gap-2">
+                      <InputPreferredImageFormatCompact name="outputFormat" />
+                      {!disablePriority && <InputRequestPriorityCompact name="priority" />}
+                    </div>
+                  </div>
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"

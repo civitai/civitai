@@ -1,14 +1,9 @@
-import type {
-  Qwen20bCreateImageGenInput,
-  Qwen20bEditImageGenInput,
-  Qwen20bImageGenInput,
-} from '@civitai/client';
+import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
 import * as z from 'zod';
 import {
   negativePromptSchema,
   promptSchema,
   seedSchema,
-  sourceImageSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
@@ -62,6 +57,27 @@ export const qwenModelModeOptions = Array.from(qwenModelVersionToModelMap.entrie
   })
 );
 
+export const qwenGroupedOptions = [
+  {
+    group: 'Text to Image',
+    items: [...qwenModelVersionToModelMap.entries()]
+      .filter(([, { process }]) => process === 'txt2img')
+      .map(([key, { version }]) => ({
+        label: `Text to Image - Version ${version}`,
+        value: key.toString(),
+      })),
+  },
+  {
+    group: 'Image Edit',
+    items: [...qwenModelVersionToModelMap.entries()]
+      .filter(([, { process }]) => process === 'img2img')
+      .map(([key, { version }]) => ({
+        label: `Image Edit - Version ${version}`,
+        value: key.toString(),
+      })),
+  },
+];
+
 const baseSchema = z.object({
   engine: z.literal('sdcpp').catch('sdcpp'),
   ecosystem: z.literal(engine).catch(engine),
@@ -88,6 +104,7 @@ export const qwenConfig = ImageGenConfig({
       negativePrompt: params.negativePrompt,
       width: params.width,
       height: params.height,
+      aspectRatio: params.aspectRatio,
       cfgScale: params.cfgScale,
       steps: params.steps,
       quantity: params.quantity,
