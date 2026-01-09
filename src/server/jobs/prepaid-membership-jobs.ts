@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
+import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
@@ -93,10 +94,10 @@ export const deliverPrepaidMembershipBuzz = createJob(
         return {
           fromAccountId: 0,
           toAccountId: d.userId,
-          toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+          toAccountType: (d.buzzType as BuzzAccountType) ?? 'yellow', // Default to yellow if not specified
           type: TransactionType.Purchase,
           externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}:v3`,
-          amount: amount,
+          amount,
           description: `Membership Bonus`,
           details: {
             type: 'civitai-membership-payment',
@@ -117,8 +118,8 @@ export const deliverPrepaidMembershipBuzz = createJob(
         async () => {
           await createBuzzTransactionMany(batch);
           const userData = batch.map((b) => ({
-            id: (b.details as any).subscriptionId, // Use subscription ID, not user ID
-            tier: (b.details as any).tier,
+            id: b.details.subscriptionId, // Use subscription ID, not user ID
+            tier: b.details.tier,
             externalTransactionId: b.externalTransactionId,
           }));
 
@@ -245,7 +246,7 @@ export const processPrepaidMembershipTransitions = createJob(
       priceId?: string;
       currentPeriodStart?: Date;
       currentPeriodEnd?: Date;
-      metadata?: any;
+      metadata?: SubscriptionMetadata;
       status?: string;
       canceledAt?: Date;
       endedAt?: Date;
@@ -274,7 +275,6 @@ export const processPrepaidMembershipTransitions = createJob(
           const tier = paidTiers[i];
           const remainingMonths = prepaids[tier as keyof typeof prepaids] || 0;
           const proratedDaysForTier = proratedDays[tier as keyof typeof proratedDays] || 0;
-          console.log({ proratedDaysForTier });
 
           if (remainingMonths > 0 || proratedDaysForTier > 0) {
             nextTier = tier;
