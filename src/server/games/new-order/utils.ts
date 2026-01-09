@@ -489,11 +489,16 @@ export const getImageRatingsCounter = (imageId: number) => {
         return 0;
       }
 
+      // Uses the by_imageId projection via GROUP BY imageId, userId with argMax
       const data = await clickhouse.$query<{ count: number }>`
-        SELECT
-          COUNT(*) as count
-        FROM knights_new_order_image_rating
-        WHERE "imageId" = ${imageId} AND rank = '${rank}' AND rating = ${nsfwLevel}
+        SELECT count() as count
+        FROM (
+          SELECT 1
+          FROM knights_new_order_image_rating
+          WHERE imageId = ${imageId}
+          GROUP BY imageId, userId
+          HAVING argMax(rank, createdAt) = '${rank}' AND argMax(rating, createdAt) = ${nsfwLevel}
+        )
       `;
 
       const count = data[0]?.count ?? 0;
