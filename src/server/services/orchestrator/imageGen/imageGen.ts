@@ -17,7 +17,7 @@ export async function createImageGenStep(
   },
   config?: ReturnType<typeof ImageGenConfig>
 ) {
-  const { priority } = args.params;
+  const { priority, outputFormat } = args.params;
   const timeSpan = new TimeSpan(0, 10, 0);
 
   if (!config) {
@@ -37,7 +37,7 @@ export async function createImageGenStep(
   return {
     $type: 'imageGen',
     priority,
-    input,
+    input: { ...input, outputFormat },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata,
   } as ImageGenStepTemplate;

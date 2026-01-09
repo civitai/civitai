@@ -181,7 +181,7 @@ export function QueueSnackbar() {
       {requestsRemaining <= 0 && userTier === 'free' && (
         <Badge color="yellow" h={'auto'} w="100%" p={0} radius="xl" classNames={classes}>
           <div className="flex w-full flex-wrap items-center justify-between gap-2 p-0.5">
-            <Text>
+            <Text component="div">
               <div className="flex items-center gap-1 pl-1">
                 <IconHandStop size={16} />
                 You can queue {requestLimit} jobs at once
