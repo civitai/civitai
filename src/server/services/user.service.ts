@@ -29,6 +29,7 @@ import {
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -107,7 +108,6 @@ import type {
   UserSettingsSchema,
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
-import { clickhouse } from '~/server/clickhouse/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
@@ -425,37 +425,36 @@ export async function getUserDownloadedModelVersions({
   userId: number;
   modelVersionIds?: number | number[];
 }) {
-  if (!clickhouse) {
-    return [];
-  }
-
   const versionIds = modelVersionIds
     ? Array.isArray(modelVersionIds)
       ? modelVersionIds
       : [modelVersionIds]
     : null;
 
-  const { hideDownloadsSince } = await getUserSettings(userId);
+  // Fetch cached downloads and user settings in parallel
+  const [cached, { hideDownloadsSince }] = await Promise.all([
+    userDownloadsCache.fetch([userId]),
+    getUserSettings(userId),
+  ]);
 
-  // Build WHERE conditions
-  const conditions: string[] = [`userId = ${userId}`];
-  if (versionIds && versionIds.length > 0) {
-    conditions.push(`modelVersionId IN (${versionIds.join(', ')})`);
-  }
+  let downloads = cached[userId]?.downloads ?? [];
+
+  // Filter by hideDownloadsSince if set
   if (hideDownloadsSince) {
-    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+    downloads = downloads.filter((d) => d.lastDownloaded > hideDownloadsSince);
   }
 
-  const whereClause = conditions.join(' AND ');
+  // Filter by requested modelVersionIds if provided
+  if (versionIds && versionIds.length > 0) {
+    const versionIdSet = new Set(versionIds);
+    downloads = downloads.filter((d) => versionIdSet.has(d.modelVersionId));
+  }
 
-  const results = await clickhouse.$query<{ modelVersionId: number }>`
-    SELECT DISTINCT modelVersionId
-    FROM userModelDownloads
-    WHERE ${whereClause}
-  `;
+  return downloads.map((d) => ({ modelVersionId: d.modelVersionId }));
+}
 
-  return results;
+export async function bustUserDownloadsCache(userId: number) {
+  await userDownloadsCache.bust([userId]);
 }
 
 export const getUserEngagedModelByModelId = ({

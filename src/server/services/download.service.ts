@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { userDownloadsCache } from '~/server/redis/caches';
 import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -12,51 +12,41 @@ export const getUserDownloads = async ({
 }: Partial<GetUserDownloadsSchema> & {
   userId: number;
 }) => {
-  const { hideDownloadsSince } = await getUserSettings(userId);
+  // Fetch cached downloads and user settings in parallel
+  const [cached, { hideDownloadsSince }] = await Promise.all([
+    userDownloadsCache.fetch([userId]),
+    getUserSettings(userId),
+  ]);
 
-  if (!clickhouse) {
-    return { items: [], nextCursor: undefined };
-  }
+  let downloads = cached[userId]?.downloads ?? [];
 
-  // Build WHERE conditions
-  const conditions: string[] = [`userId = ${userId}`];
-  if (cursor) {
-    const cursorDate = new Date(cursor).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    conditions.push(`lastDownloaded < parseDateTime64BestEffort('${cursorDate}')`);
-  }
+  // Filter by hideDownloadsSince if set
   if (hideDownloadsSince) {
-    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+    downloads = downloads.filter((d) => d.lastDownloaded > hideDownloadsSince);
   }
 
-  const whereClause = conditions.join(' AND ');
+  // Filter by cursor (downloads older than cursor)
+  if (cursor) {
+    const cursorTime = new Date(cursor).getTime();
+    downloads = downloads.filter((d) => d.lastDownloaded < cursorTime);
+  }
 
-  // Fetch limit + 1 to detect if there's more data
+  // Sort by lastDownloaded DESC
+  downloads = downloads.sort((a, b) => b.lastDownloaded - a.lastDownloaded);
+
+  // Paginate: fetch limit + 1 to detect if there's more data
   const fetchLimit = limit + 1;
-  const downloadHistory = await clickhouse.$query<{
-    modelVersionId: number;
-    downloadAt: Date;
-  }>`
-    SELECT
-      modelVersionId,
-      max(lastDownloaded) as downloadAt
-    FROM userModelDownloads
-    WHERE ${whereClause}
-    GROUP BY modelVersionId
-    ORDER BY max(lastDownloaded) DESC
-    LIMIT ${fetchLimit}
-  `;
+  const paginatedDownloads = downloads.slice(0, fetchLimit);
 
-  // Determine pagination from ClickHouse results BEFORE filtering
-  const hasMore = downloadHistory.length > limit;
+  // Determine pagination
+  const hasMore = paginatedDownloads.length > limit;
   let nextCursor: Date | undefined;
   if (hasMore) {
-    // Cursor is from the extra item (position `limit`)
-    nextCursor = downloadHistory[limit].downloadAt;
+    nextCursor = new Date(paginatedDownloads[limit].lastDownloaded);
   }
 
   // Work with only the first `limit` items for filtering
-  const itemsToProcess = downloadHistory.slice(0, limit);
+  const itemsToProcess = paginatedDownloads.slice(0, limit);
 
   if (itemsToProcess.length === 0) {
     return { items: [], nextCursor: undefined };
@@ -106,7 +96,7 @@ export const getUserDownloads = async ({
   const items = visibleDownloads.map((dh) => {
     const version = versionMap.get(dh.modelVersionId);
     return {
-      downloadAt: dh.downloadAt,
+      downloadAt: new Date(dh.lastDownloaded),
       modelVersion: {
         id: dh.modelVersionId,
         name: version?.name ?? 'Unknown',

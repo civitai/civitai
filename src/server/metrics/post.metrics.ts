@@ -90,10 +90,10 @@ async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
       SELECT DISTINCT entityId as imageId
-      FROM entityMetricEvents
+      FROM entityMetricDailyAgg
       WHERE entityType = 'Image'
         AND entityId IS NOT NULL
-        AND createdAt > ${ctx.lastUpdate}
+        AND day >= toDate(${ctx.lastUpdate})
       ORDER BY entityId ASC;
   `;
 
