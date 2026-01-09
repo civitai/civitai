@@ -384,22 +384,22 @@ type ArticleViews = {
 };
 async function getViewTasks(ctx: MetricProcessorRunContext) {
   const viewed = await ctx.ch.$query<ArticleViews>`
-    WITH targets AS (
-      SELECT DISTINCT entityId AS entityId
-      FROM views
-      WHERE type = 'ArticleView'
-        AND time >= ${ctx.lastUpdate}
-    )
     SELECT
       entityId,
-      SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS day,
-      SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS week,
-      SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS month,
-      SUM(if(uv.time >= subtractYears(now(), 1), 1, null)) AS year,
-      COUNT() AS all_time
-    FROM uniqueViews uv
+      sumIf(view_count, date >= toDate(subtractDays(now(), 1))) AS day,
+      sumIf(view_count, date >= toDate(subtractDays(now(), 7))) AS week,
+      sumIf(view_count, date >= toDate(subtractMonths(now(), 1))) AS month,
+      sumIf(view_count, date >= toDate(subtractYears(now(), 1))) AS year,
+      sum(view_count) AS all_time
+    FROM uniqueViewsDaily
     WHERE type = 'ArticleView'
-      AND entityId IN (select entityId FROM targets)
+      AND entityId IN (
+        SELECT entityId
+        FROM views
+        WHERE type = 'ArticleView'
+          AND time >= ${ctx.lastUpdate}
+        GROUP BY entityId
+      )
     GROUP BY entityId;
   `;
   ctx.addAffected(viewed.map((x) => x.entityId));

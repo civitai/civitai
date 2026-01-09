@@ -1437,6 +1437,28 @@ clickhouse client -n <<-EOSQL
             entityId,
             viewKey;
 
+    CREATE MATERIALIZED VIEW default.uniqueViewsDaily
+                (
+                type String,
+                entityId Int32,
+                date Date,
+                view_count UInt32
+                    )
+                ENGINE = SummingMergeTree()
+                    PARTITION BY toYYYYMM(date)
+                    ORDER BY (type, entityId, date)
+                    SETTINGS index_granularity = 8192
+    AS
+    SELECT type,
+        entityId,
+        toDate(time) AS date,
+        toUInt32(1) AS view_count
+    FROM default.views
+    GROUP BY type,
+            entityId,
+            toDate(time),
+            if(userId = 0, ip, toString(userId));
+
     CREATE MATERIALIZED VIEW default.user_activity_combined_pt1
                 (
                 userId Int32,
