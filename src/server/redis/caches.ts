@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -1089,5 +1090,52 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
         },
       ])
     );
+  },
+});
+
+type UserDownloadItem = {
+  modelVersionId: number;
+  lastDownloaded: number; // timestamp in ms
+};
+
+type UserDownloadsCacheItem = {
+  userId: number;
+  downloads: UserDownloadItem[];
+};
+
+export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
+  key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
+  idKey: 'userId',
+  ttl: CacheTTL.hour,
+  cacheNotFound: false,
+  lookupFn: async (userIds) => {
+    if (!clickhouse) return {};
+    if (userIds.length === 0) return {};
+
+    const results = await clickhouse.$query<{
+      userId: number;
+      modelVersionId: number;
+      lastDownloaded: string;
+    }>`
+      SELECT
+        userId,
+        modelVersionId,
+        max(lastDownloaded) as lastDownloaded
+      FROM userModelDownloads
+      WHERE userId IN (${userIds.join(',')})
+      GROUP BY userId, modelVersionId
+    `;
+
+    // Group by userId
+    const grouped = results.reduce((acc, { userId, modelVersionId, lastDownloaded }) => {
+      acc[userId] ??= { userId, downloads: [] };
+      acc[userId].downloads.push({
+        modelVersionId,
+        lastDownloaded: new Date(lastDownloaded).getTime(),
+      });
+      return acc;
+    }, {} as Record<number, UserDownloadsCacheItem>);
+
+    return grouped;
   },
 });

@@ -100,7 +100,11 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
-import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  bustUserDownloadsCache,
+  getUserSettings,
+} from '~/server/services/user.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -870,6 +874,13 @@ export const getDownloadCommandHandler = async ({
         nsfw: modelVersion.model.nsfw,
         time: now,
       });
+
+      // Bust the downloads cache so the user sees their download immediately
+      if (ctx.user?.id) {
+        bustUserDownloadsCache(ctx.user.id).catch(() => {
+          // ignore
+        });
+      }
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
