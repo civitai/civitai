@@ -50,8 +50,6 @@ export function createMetricProcessor({
         },
       };
 
-      //TODO.justin - check why queue is empty for model metrics job
-
       // Clear if first run of the day
       const isFirstOfDay = lastUpdate.getDate() !== new Date().getDate();
       if (isFirstOfDay) await clearDay?.(ctx);

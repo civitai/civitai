@@ -1131,7 +1131,8 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
       acc[userId] ??= { userId, downloads: [] };
       acc[userId].downloads.push({
         modelVersionId,
-        lastDownloaded: new Date(lastDownloaded).getTime(),
+        // ClickHouse returns dates as strings without timezone - append 'Z' to parse as UTC
+        lastDownloaded: new Date(lastDownloaded.replace(' ', 'T') + 'Z').getTime(),
       });
       return acc;
     }, {} as Record<number, UserDownloadsCacheItem>);
