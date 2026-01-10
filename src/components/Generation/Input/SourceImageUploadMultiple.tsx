@@ -33,20 +33,11 @@ import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
-import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
+import type { DrawingElement, ImageAnnotation } from './DrawingEditor/drawing.types';
 import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
 type AspectRatio = `${number}:${number}`;
-
-/** Tracks original image info for images that have been annotated (drawn on) */
-export type ImageAnnotation = {
-  originalUrl: string;
-  originalWidth: number;
-  originalHeight: number;
-  compositeUrl: string;
-  lines: DrawingElementSchema[];
-};
 
 type SourceImageUploadProps = {
   value?: SourceImageProps[] | null;
