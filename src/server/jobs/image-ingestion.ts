@@ -171,18 +171,38 @@ export async function removeBlockedImagesRecursive(
   nextCursor?: number,
   limit = 1000
 ) {
-  const images = await dbRead.$queryRaw<{ id: number }[]>`
-    select id, ingestion, "blockedFor"
-    from "Image"
-    WHERE "ingestion" = 'Blocked' AND "blockedFor" != 'AiNotVerified'
-    AND (
-      ("blockedFor" != 'moderated' and "createdAt" <= ${cutoff}) OR
-      ("blockedFor" = 'moderated' and "updatedAt" <= ${cutoff})
-    )
-    ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
+  const halfLimit = Math.floor(limit / 2);
+
+  // Split into two queries to avoid slow OR condition
+  // Query 1: Non-moderated blocked images by createdAt
+  const nonModeratedImages = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Image"
+    WHERE "ingestion" = 'Blocked'
+      AND "blockedFor" != 'AiNotVerified'
+      AND "blockedFor" != 'moderated'
+      AND "createdAt" <= ${cutoff}
+      ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
     ORDER BY id
-    LIMIT ${limit + 1}
+    LIMIT ${halfLimit + 1}
   `;
+
+  // Query 2: Moderated blocked images by updatedAt
+  const moderatedImages = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Image"
+    WHERE "ingestion" = 'Blocked'
+      AND "blockedFor" = 'moderated'
+      AND "updatedAt" <= ${cutoff}
+      ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
+    ORDER BY id
+    LIMIT ${halfLimit + 1}
+  `;
+
+  // Merge, dedupe, and sort results
+  const mergedImages = [...nonModeratedImages, ...moderatedImages];
+  const uniqueIds = [...new Set(mergedImages.map((x) => x.id))].sort((a, b) => a - b);
+  const images = uniqueIds.slice(0, limit + 1).map((id) => ({ id }));
 
   if (images.length > limit) {
     const nextItem = images.pop();

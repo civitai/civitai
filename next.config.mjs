@@ -99,6 +99,7 @@ export default defineNextConfig(
     transpilePackages: ['lodash', 'lodash-es', 'prisma'],
     experimental: {
       // scrollRestoration: true,
+      serverSourceMaps: true,
       largePageDataBytes: 512 * 100000,
       optimizePackageImports: [
         '@civitai/client',
@@ -138,15 +139,15 @@ export default defineNextConfig(
       headers.push({
         source: '/gift-cards',
         headers: [
-          { 
-            key: 'Content-Security-Policy', 
-            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;" 
+          {
+            key: 'Content-Security-Policy',
+            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;"
           }
           // NOTE: Intentionally NO X-Frame-Options header as per Kinguin's documentation
           // NOTE: Only setting frame-src, letting other resources use browser defaults
         ],
       });
-      
+
       // Apply X-Frame-Options to all pages EXCEPT gift-cards
       headers.push({
         source: '/((?!gift-cards).*)',
