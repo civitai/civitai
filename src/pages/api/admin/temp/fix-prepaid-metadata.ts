@@ -5,11 +5,11 @@ import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { booleanString } from '~/utils/zod-helpers';
 import { chunk } from 'lodash-es';
+import type { SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 
 // Configuration
 const BATCH_SIZE = 50; // Process 50 users per batch
 const CONCURRENCY = 5; // 5 batches in parallel
-const BUG_FIX_DATE = '2025-12-08'; // When the bug was fixed
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
@@ -52,14 +52,15 @@ async function identifyAffectedUsers(userId?: number): Promise<AffectedUser[]> {
         rc."userId",
         rc."redeemedAt",
         rc."unitValue",
-        p.metadata->>'tier' as tier,
+        pr.metadata->>'tier' as tier,
         p."interval"
       FROM "RedeemableCode" rc
       JOIN "Price" p ON p.id = rc."priceId"
+      JOIN "Product" pr ON pr.id = p."productId"
+        AND pr.provider = 'Civitai'
       WHERE rc."type" = 'Membership'
         AND rc."redeemedAt" IS NOT NULL
         AND rc."userId" IS NOT NULL
-        -- AND rc."redeemedAt" < ${BUG_FIX_DATE}::timestamp
     ),
     user_tier_redemptions AS (
       -- Sum total months purchased per user per tier
@@ -91,7 +92,7 @@ async function identifyAffectedUsers(userId?: number): Promise<AffectedUser[]> {
     FROM "CustomerSubscription" cs
     JOIN "Product" pr ON pr.id = cs."productId"
     JOIN user_tier_redemptions utr ON utr."userId" = cs."userId"
-      -- AND utr.tier = (pr.metadata->>'tier')
+      AND utr.tier = (pr.metadata->>'tier')
     WHERE cs.status = 'active'
       AND pr.provider = 'Civitai'
       AND cs."currentPeriodEnd" > (utr.first_redemption + (utr.total_months_purchased || ' month')::interval)
@@ -143,8 +144,8 @@ async function processBatch(
       continue;
     }
 
-    const metadata = subscription.metadata as Record<string, any>;
-    const prepaids = (metadata?.prepaids || {}) as Record<string, number>;
+    const metadata = subscription.metadata as SubscriptionMetadata | null;
+    const prepaids = (metadata?.prepaids || {}) as SubscriptionMetadata['prepaids'];
 
     // Update only the prepaid balance for the current tier
     const updatedPrepaids = {
