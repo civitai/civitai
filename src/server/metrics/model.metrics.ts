@@ -14,7 +14,7 @@ import { allInjectableResourceIds } from '~/shared/constants/generation.constant
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model');
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 200;
 
 const versionMetricKeys = [
   'downloadCount',
