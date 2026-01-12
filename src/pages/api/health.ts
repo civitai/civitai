@@ -114,17 +114,12 @@ const counters = (() =>
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
-  const disabledChecks = JSON.parse(
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS
-    )) ?? '[]'
-  ) as CheckKey[];
+  const disabledChecks = await getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS);
   const resultsArray = await Promise.all(
     Object.entries(checkFns)
       .filter(([name]) => !disabledChecks.includes(name as CheckKey))
       .map(([name, fn]) =>
-        timeoutAsyncFn(fn)
+        timeoutAsyncFn(fn, false)
           .then((result) => {
             if (!result) counters[name as CheckKey]?.inc();
             return { [name]: result };
@@ -132,12 +127,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           .catch(() => ({ [name]: false }))
       )
   );
-  const nonCriticalChecks = JSON.parse(
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
-    )) ?? '[]'
-  ) as CheckKey[];
+  const nonCriticalChecks = await getHealthcheckConfig(
+    REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
+  );
 
   const healthy = resultsArray.every((result) => {
     const [key, value] = Object.entries(result)[0];
@@ -157,9 +149,17 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   });
 });
 
-function timeoutAsyncFn(fn: () => Promise<boolean>) {
+function timeoutAsyncFn<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   return Promise.race([
     fn(),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), env.HEALTHCHECK_TIMEOUT)),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), env.HEALTHCHECK_TIMEOUT)),
   ]);
+}
+
+async function getHealthcheckConfig(key: string): Promise<CheckKey[]> {
+  const value = await timeoutAsyncFn(
+    () => sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, key),
+    null
+  );
+  return JSON.parse(value ?? '[]') as CheckKey[];
 }
