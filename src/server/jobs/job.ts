@@ -74,10 +74,10 @@ export function createJob(
         },
         req,
       };
-      const cancel = () => {
+      const cancel = async () => {
         if (jobContext.status !== 'running') return;
         jobContext.status = 'canceled';
-        Promise.all(onCancel.map((x) => x()));
+        await Promise.all(onCancel.map((x) => x()));
       };
       const result = fn(jobContext)
         .catch(async (e) => {
