@@ -834,15 +834,6 @@ export const ChallengeStatus = {
 
 export type ChallengeStatus = (typeof ChallengeStatus)[keyof typeof ChallengeStatus];
 
-export const ChallengeEntryStatus = {
-  Pending: 'Pending',
-  Accepted: 'Accepted',
-  Rejected: 'Rejected',
-  Scored: 'Scored',
-} as const;
-
-export type ChallengeEntryStatus = (typeof ChallengeEntryStatus)[keyof typeof ChallengeEntryStatus];
-
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

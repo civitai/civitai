@@ -1,16 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import {
-  ChallengeEntryStatus,
-  ChallengeSource,
-  ChallengeStatus,
-} from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
 import type { Prize, Score } from './daily-challenge.utils';
 
 // =============================================================================
 // Challenge Table Helpers (New System)
 // =============================================================================
+// Note: Challenge entries are stored as CollectionItems in the challenge's collection.
+// Use collection service methods for entry management.
 
 export type ChallengeDetails = {
   id: number;
@@ -25,7 +23,7 @@ export type ChallengeDetails = {
   nsfwLevel: number;
   modelId: number | null;
   modelVersionIds: number[];
-  collectionId: number | null;
+  collectionId: number; // Required - entries are stored here
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxReviews: number | null;
@@ -149,7 +147,7 @@ export type CreateChallengeInput = {
   judgingPrompt?: string;
   reviewPercentage?: number;
   maxReviews?: number;
-  collectionId?: number;
+  collectionId: number; // Required - created before calling this
   maxEntriesPerUser?: number;
   prizes: Prize[];
   entryPrize?: Prize;
@@ -160,6 +158,35 @@ export type CreateChallengeInput = {
   status?: ChallengeStatus;
   metadata?: Record<string, unknown>;
 };
+
+/**
+ * Creates a Contest Collection for a challenge.
+ * Call this before createChallengeRecord to get the collectionId.
+ */
+export async function createChallengeCollection(input: {
+  title: string;
+  description?: string;
+  userId: number;
+  startsAt: Date;
+  endsAt: Date;
+  maxEntriesPerUser: number;
+}): Promise<number> {
+  const collection = await dbWrite.collection.create({
+    data: {
+      name: `Challenge: ${input.title}`,
+      description: input.description || `Entries for challenge: ${input.title}`,
+      userId: input.userId,
+      mode: CollectionMode.Contest,
+      metadata: {
+        maxItemsPerUser: input.maxEntriesPerUser,
+        submissionStartDate: input.startsAt,
+        submissionEndDate: input.endsAt,
+      },
+    },
+    select: { id: true },
+  });
+  return collection.id;
+}
 
 export async function createChallengeRecord(input: CreateChallengeInput): Promise<number> {
   const challenge = await dbWrite.challenge.create({
@@ -211,43 +238,9 @@ export async function setChallengeActive(challengeId: number): Promise<void> {
   await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
 }
 
-export type CreateEntryInput = {
-  challengeId: number;
-  imageId: number;
-  userId: number;
-};
-
-export async function createChallengeEntry(input: CreateEntryInput): Promise<number> {
-  const entry = await dbWrite.challengeEntry.create({
-    data: {
-      challengeId: input.challengeId,
-      imageId: input.imageId,
-      userId: input.userId,
-      status: ChallengeEntryStatus.Pending,
-    },
-    select: { id: true },
-  });
-  return entry.id;
-}
-
-export async function updateEntryStatus(
-  entryId: number,
-  status: ChallengeEntryStatus,
-  reviewedById?: number,
-  score?: Score,
-  aiSummary?: string
-): Promise<void> {
-  await dbWrite.challengeEntry.update({
-    where: { id: entryId },
-    data: {
-      status,
-      reviewedAt: new Date(),
-      reviewedById,
-      score: score as unknown as Prisma.InputJsonValue,
-      aiSummary,
-    },
-  });
-}
+// =============================================================================
+// Winner Helpers
+// =============================================================================
 
 export type CreateWinnerInput = {
   challengeId: number;
@@ -273,46 +266,6 @@ export async function createChallengeWinner(input: CreateWinnerInput): Promise<n
     select: { id: true },
   });
   return winner.id;
-}
-
-export async function getChallengeEntries(
-  challengeId: number,
-  status?: ChallengeEntryStatus
-): Promise<
-  Array<{
-    id: number;
-    imageId: number;
-    userId: number;
-    username: string;
-    imageUrl: string;
-    score: Score | null;
-    aiSummary: string | null;
-    status: ChallengeEntryStatus;
-    createdAt: Date;
-  }>
-> {
-  const statusFilter = status
-    ? Prisma.sql`AND ce.status = ${status}::"ChallengeEntryStatus"`
-    : Prisma.empty;
-
-  return dbRead.$queryRaw`
-    SELECT
-      ce.id,
-      ce."imageId",
-      ce."userId",
-      u.username,
-      i.url as "imageUrl",
-      ce.score,
-      ce."aiSummary",
-      ce.status,
-      ce."createdAt"
-    FROM "ChallengeEntry" ce
-    JOIN "User" u ON u.id = ce."userId"
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce."challengeId" = ${challengeId}
-    ${statusFilter}
-    ORDER BY ce."createdAt" ASC
-  `;
 }
 
 export async function getChallengeWinners(challengeId: number): Promise<
@@ -347,9 +300,11 @@ export async function getChallengeWinners(challengeId: number): Promise<
   `;
 }
 
-export async function closeChallengeCollection(challenge: { collectionId: number | null }) {
-  if (!challenge.collectionId) return;
+// =============================================================================
+// Collection Helpers
+// =============================================================================
 
+export async function closeChallengeCollection(challenge: { collectionId: number }) {
   await dbWrite.$executeRaw`
     UPDATE "Collection"
     SET write = 'Private'::"CollectionWriteConfiguration"
@@ -361,6 +316,22 @@ export async function closeChallengeCollection(challenge: { collectionId: number
     WHERE "collectionId" = ${challenge.collectionId}
   `;
 }
+
+/**
+ * Get entry count for a challenge from its collection
+ */
+export async function getChallengeEntryCount(collectionId: number): Promise<number> {
+  const [result] = await dbRead.$queryRaw<[{ count: bigint }]>`
+    SELECT COUNT(*) as count
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId}
+  `;
+  return Number(result.count);
+}
+
+// =============================================================================
+// Utility Helpers
+// =============================================================================
 
 export async function updateChallengeField<K extends keyof CreateChallengeInput>(
   challengeId: number,
@@ -374,6 +345,7 @@ export async function updateChallengeField<K extends keyof CreateChallengeInput>
 }
 
 export async function incrementOperationSpent(challengeId: number, amount: number): Promise<void> {
+  // Use atomic increment to avoid race conditions
   await dbWrite.$executeRaw`
     UPDATE "Challenge"
     SET "operationSpent" = "operationSpent" + ${amount}

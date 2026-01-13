@@ -42,26 +42,8 @@ export function useQueryChallenge(id: number, options?: { enabled?: boolean }) {
   );
 }
 
-// Hook to get challenge entries
-export function useQueryChallengeEntries(
-  challengeId: number,
-  filters?: { userId?: number; scored?: boolean },
-  options?: { enabled?: boolean }
-) {
-  const { enabled = true } = options ?? {};
-
-  const { data, ...rest } = trpc.challenge.getEntries.useInfiniteQuery(
-    { challengeId, ...filters },
-    {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      enabled: enabled && challengeId > 0,
-    }
-  );
-
-  const entries = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
-
-  return { entries, ...rest };
-}
+// Note: Challenge entries are stored as CollectionItems in the challenge's collection.
+// Query entries via the collection ID from the challenge detail.
 
 // Hook to get challenge winners
 export function useQueryChallengeWinners(challengeId: number, options?: { enabled?: boolean }) {

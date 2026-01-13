@@ -4,29 +4,22 @@ import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getChallengeById,
-  getChallengeEntries,
   getChallengeWinners,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   ChallengeSort,
   deleteChallengeSchema,
-  getChallengeEntriesSchema,
   getChallengeWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
   updateChallengeStatusSchema,
   upsertChallengeSchema,
   type GetInfiniteChallengesInput,
-  type GetModeratorChallengesInput,
   type Prize,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
-import {
-  ChallengeEntryStatus,
-  ChallengeSource,
-  ChallengeStatus,
-} from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus, CollectionMode } from '~/shared/utils/prisma/enums';
 
 // Types for query results
 export type ChallengeListItem = {
@@ -68,7 +61,7 @@ export type ChallengeDetail = {
     id: number;
     name: string;
   } | null;
-  collectionId: number | null;
+  collectionId: number; // Required - entries are stored here
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxEntriesPerUser: number;
@@ -159,6 +152,7 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       break;
   }
 
+  // Entry count now comes from CollectionItem via the challenge's collection
   const items = await dbRead.$queryRawUnsafe<
     Array<{
       id: number;
@@ -188,7 +182,7 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.status,
       c.source,
       c."prizePool",
-      (SELECT COUNT(*) FROM "ChallengeEntry" WHERE "challengeId" = c.id) as "entryCount",
+      (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId") as "entryCount",
       c."modelId",
       m.name as "modelName",
       c."createdById",
@@ -240,11 +234,11 @@ async function getChallengeDetail(id: number): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
 
-  // Get entry count
+  // Get entry count from the challenge's collection
   const [countResult] = await dbRead.$queryRaw<[{ count: bigint }]>`
     SELECT COUNT(*) as count
-    FROM "ChallengeEntry"
-    WHERE "challengeId" = ${id}
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${challenge.collectionId}
   `;
   const entryCount = Number(countResult.count);
 
@@ -354,78 +348,6 @@ export const challengeRouter = router({
       }));
     }),
 
-  // Get challenge entries (paginated)
-  getEntries: publicProcedure.input(getChallengeEntriesSchema).query(async ({ input }) => {
-    const { challengeId, userId, scored, limit, cursor } = input;
-
-    // Build conditions
-    const conditions: Prisma.Sql[] = [Prisma.sql`ce."challengeId" = ${challengeId}`];
-
-    if (userId) {
-      conditions.push(Prisma.sql`ce."userId" = ${userId}`);
-    }
-
-    if (scored !== undefined) {
-      if (scored) {
-        conditions.push(
-          Prisma.sql`ce.status = ${ChallengeEntryStatus.Scored}::"ChallengeEntryStatus"`
-        );
-      } else {
-        conditions.push(
-          Prisma.sql`ce.status != ${ChallengeEntryStatus.Scored}::"ChallengeEntryStatus"`
-        );
-      }
-    }
-
-    if (cursor) {
-      conditions.push(Prisma.sql`ce.id < ${cursor}`);
-    }
-
-    const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
-
-    const items = await dbRead.$queryRaw<
-      Array<{
-        id: number;
-        imageId: number;
-        imageUrl: string;
-        userId: number;
-        username: string;
-        userImage: string | null;
-        status: ChallengeEntryStatus;
-        aiSummary: string | null;
-        createdAt: Date;
-      }>
-    >`
-      SELECT
-        ce.id,
-        ce."imageId",
-        i.url as "imageUrl",
-        ce."userId",
-        u.username,
-        u.image as "userImage",
-        ce.status,
-        ce."aiSummary",
-        ce."createdAt"
-      FROM "ChallengeEntry" ce
-      JOIN "Image" i ON i.id = ce."imageId"
-      JOIN "User" u ON u.id = ce."userId"
-      ${whereClause}
-      ORDER BY ce."createdAt" DESC
-      LIMIT ${limit + 1}
-    `;
-
-    let nextCursor: number | undefined;
-    if (items.length > limit) {
-      const nextItem = items.pop();
-      nextCursor = nextItem?.id;
-    }
-
-    return {
-      items,
-      nextCursor,
-    };
-  }),
-
   // Get challenge winners
   getWinners: publicProcedure.input(getChallengeWinnersSchema).query(async ({ input }) => {
     return getChallengeWinners(input.challengeId);
@@ -459,6 +381,7 @@ export const challengeRouter = router({
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
+      // Entry count now from CollectionItem
       const items = await dbRead.$queryRawUnsafe<
         Array<{
           id: number;
@@ -471,6 +394,7 @@ export const challengeRouter = router({
           source: ChallengeSource;
           prizePool: number;
           entryCount: bigint;
+          collectionId: number;
           createdById: number;
           creatorUsername: string | null;
         }>
@@ -485,7 +409,8 @@ export const challengeRouter = router({
           c.status,
           c.source,
           c."prizePool",
-          (SELECT COUNT(*) FROM "ChallengeEntry" WHERE "challengeId" = c.id) as "entryCount",
+          (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId") as "entryCount",
+          c."collectionId",
           c."createdById",
           u.username as "creatorUsername"
         FROM "Challenge" c
@@ -526,10 +451,27 @@ export const challengeRouter = router({
       });
       return challenge;
     } else {
-      // Create new challenge
+      // Create new challenge with a Contest Collection for entries
+      // First create the collection
+      const collection = await dbWrite.collection.create({
+        data: {
+          name: `Challenge: ${data.title}`,
+          description: data.description || `Entries for challenge: ${data.title}`,
+          userId: ctx.user.id,
+          mode: CollectionMode.Contest,
+          metadata: {
+            maxItemsPerUser: data.maxEntriesPerUser,
+            submissionStartDate: data.startsAt,
+            submissionEndDate: data.endsAt,
+          },
+        },
+      });
+
+      // Then create the challenge linked to the collection
       const challenge = await dbWrite.challenge.create({
         data: {
           ...data,
+          collectionId: collection.id,
           createdById: ctx.user.id,
           prizes: data.prizes as Prisma.InputJsonValue,
           entryPrize: data.entryPrize as Prisma.InputJsonValue | undefined,
@@ -557,9 +499,22 @@ export const challengeRouter = router({
   delete: moderatorProcedure.input(deleteChallengeSchema).mutation(async ({ input }) => {
     const { id } = input;
 
-    // Check if challenge has any entries
-    const entryCount = await dbRead.challengeEntry.count({
-      where: { challengeId: id },
+    // Get the challenge to find its collection
+    const challenge = await dbRead.challenge.findUnique({
+      where: { id },
+      select: { collectionId: true },
+    });
+
+    if (!challenge) {
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: 'Challenge not found',
+      });
+    }
+
+    // Check if challenge collection has any entries
+    const entryCount = await dbRead.collectionItem.count({
+      where: { collectionId: challenge.collectionId },
     });
 
     if (entryCount > 0) {
@@ -569,6 +524,7 @@ export const challengeRouter = router({
       });
     }
 
+    // Delete the challenge (collection deletion would need separate handling based on business rules)
     await dbWrite.challenge.delete({
       where: { id },
     });

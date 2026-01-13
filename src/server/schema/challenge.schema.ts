@@ -34,16 +34,8 @@ export const getInfiniteChallengesSchema = infiniteQuerySchema.merge(
   })
 );
 
-// Query schema for challenge entries
-export type GetChallengeEntriesInput = z.infer<typeof getChallengeEntriesSchema>;
-export const getChallengeEntriesSchema = infiniteQuerySchema.merge(
-  z.object({
-    challengeId: z.number(),
-    userId: z.number().optional(), // Filter by entrant
-    scored: z.boolean().optional(), // Only show scored entries
-    limit: z.coerce.number().min(1).max(100).default(30),
-  })
-);
+// Note: Challenge entries are stored as CollectionItems in the challenge's collection.
+// Use collection endpoints to query entries.
 
 // Query schema for challenge winners
 export type GetChallengeWinnersInput = z.infer<typeof getChallengeWinnersSchema>;

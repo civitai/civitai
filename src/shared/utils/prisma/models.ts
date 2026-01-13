@@ -174,8 +174,6 @@ export type ChallengeSource = "System" | "Mod" | "User";
 
 export type ChallengeStatus = "Draft" | "Scheduled" | "Active" | "Judging" | "Completed" | "Cancelled";
 
-export type ChallengeEntryStatus = "Pending" | "Accepted" | "Rejected" | "Scored";
-
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -445,8 +443,6 @@ export interface User {
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
   challengesCreated?: Challenge[];
-  challengeEntries?: ChallengeEntry[];
-  challengeEntriesReviewed?: ChallengeEntry[];
   challengeWins?: ChallengeWinner[];
 }
 
@@ -1158,7 +1154,6 @@ export interface Image {
   imageResourceNew?: ImageResourceNew[];
   imageTagsForReview?: ImageTagForReview[];
   challengesCover?: Challenge[];
-  challengeEntries?: ChallengeEntry[];
   challengeWins?: ChallengeWinner[];
 }
 
@@ -2803,8 +2798,8 @@ export interface Challenge {
   judgingPrompt: string | null;
   reviewPercentage: number;
   maxReviews: number | null;
-  collectionId: number | null;
-  collection?: Collection | null;
+  collectionId: number;
+  collection?: Collection;
   maxEntriesPerUser: number;
   prizes: JsonValue;
   entryPrize: JsonValue | null;
@@ -2818,25 +2813,7 @@ export interface Challenge {
   metadata: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
-  entries?: ChallengeEntry[];
   winners?: ChallengeWinner[];
-}
-
-export interface ChallengeEntry {
-  id: number;
-  challengeId: number;
-  challenge?: Challenge;
-  imageId: number;
-  image?: Image;
-  userId: number;
-  user?: User;
-  score: JsonValue | null;
-  aiSummary: string | null;
-  status: ChallengeEntryStatus;
-  reviewedAt: Date | null;
-  reviewedById: number | null;
-  reviewedBy?: User | null;
-  createdAt: Date;
 }
 
 export interface ChallengeWinner {

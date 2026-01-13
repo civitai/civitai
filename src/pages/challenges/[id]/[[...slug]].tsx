@@ -47,7 +47,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useQueryChallenge, useQueryChallengeEntries } from '~/components/Challenge/challenge.utils';
+import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { slugit } from '~/utils/string-helpers';
@@ -507,18 +507,13 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
 
-  const {
-    entries,
-    isLoading,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-  } = useQueryChallengeEntries(challenge.id);
-
   const isActive = challenge.status === ChallengeStatus.Active;
   const displaySubmitAction = isActive && !currentUser?.muted;
 
-  const Wrapper = ({ children }: { children: React.ReactNode }) => (
+  // Entries are stored in the challenge's collection
+  const collectionUrl = `/collections/${challenge.collectionId}`;
+
+  return (
     <Container
       fluid
       my="md"
@@ -535,7 +530,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 size="xs"
                 variant="outline"
                 component={Link}
-                href={`/generate?challengeId=${challenge.id}`}
+                href={`/posts/create?collectionId=${challenge.collectionId}`}
                 leftSection={<IconSparkles size={14} />}
               >
                 Submit Entry
@@ -545,75 +540,33 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
               {challenge.entryCount.toLocaleString()} total entries
             </Text>
           </Group>
-          {children}
+
+          {challenge.entryCount === 0 ? (
+            <NoContent
+              message={
+                isActive
+                  ? 'No entries yet. Be the first to submit!'
+                  : 'No entries for this challenge.'
+              }
+            />
+          ) : (
+            <Stack gap="md">
+              <Text c="dimmed">
+                View all entries in the challenge collection.
+              </Text>
+              <Button
+                component={Link}
+                href={collectionUrl}
+                variant="light"
+                leftSection={<IconPhoto size={16} />}
+              >
+                View {challenge.entryCount.toLocaleString()} Entries
+              </Button>
+            </Stack>
+          )}
         </Stack>
       </Container>
     </Container>
-  );
-
-  if (isLoading) {
-    return (
-      <Wrapper>
-        <Center>
-          <Loader />
-        </Center>
-      </Wrapper>
-    );
-  }
-
-  if (!entries.length) {
-    return (
-      <Wrapper>
-        <NoContent
-          message={isActive ? 'No entries yet. Be the first to submit!' : 'No entries for this challenge.'}
-        />
-      </Wrapper>
-    );
-  }
-
-  return (
-    <Wrapper>
-      <SimpleGrid
-        cols={{
-          base: 2,
-          sm: 3,
-          md: 4,
-          lg: 5,
-        }}
-        spacing="sm"
-      >
-        {entries.map((entry) => (
-          <div
-            key={entry.id}
-            className="group relative aspect-square overflow-hidden rounded-lg"
-          >
-            <EdgeMedia2
-              src={entry.imageUrl}
-              type={MediaType.image}
-              width={300}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-            />
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
-              <Link href={`/user/${entry.username}`}>
-                <Text size="xs" c="white" fw={500}>{entry.username}</Text>
-              </Link>
-            </div>
-          </div>
-        ))}
-      </SimpleGrid>
-      {hasNextPage && (
-        <Center>
-          <Button
-            onClick={() => fetchNextPage()}
-            loading={isFetchingNextPage}
-            color="gray"
-            variant={colorScheme === 'dark' ? 'filled' : 'light'}
-          >
-            {isFetchingNextPage ? 'Loading more...' : 'Load more'}
-          </Button>
-        </Center>
-      )}
-    </Wrapper>
   );
 }
 

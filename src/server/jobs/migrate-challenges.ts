@@ -82,6 +82,12 @@ async function migrateChallenge(article: ArticleChallenge): Promise<number | nul
     const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
     const visibleAt = challengeDate;
 
+    // Skip if no collection - collectionId is now required
+    if (!article.collectionId) {
+      log(`Skipping articleId=${article.articleId} - no collectionId`);
+      return null;
+    }
+
     // Create Challenge record
     const challenge = await dbWrite.challenge.create({
       data: {

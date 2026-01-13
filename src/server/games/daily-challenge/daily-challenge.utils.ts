@@ -5,11 +5,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import {
-  ChallengeEntryStatus,
-  ChallengeSource,
-  ChallengeStatus,
-} from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 const challengeConfigSchema = z.object({
   challengeType: z.string(),
