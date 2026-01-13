@@ -530,14 +530,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           defaultValue={query}
           value={search}
           data={items}
-          onChange={setSearch}
+          onChange={(value) => {
+            if (!value || value === 'View more results') return;
+            setSearch(value);
+          }}
           onBlur={handleClear}
           onClear={handleClear}
           onKeyDown={getHotkeyHandler([
             ['Escape', blurInput],
             ['Enter', handleSubmit],
           ])}
-          onOptionSubmit={(v) => handleItemClick(v)}
+          onOptionSubmit={handleItemClick}
           renderOption={({ option }) => {
             const { key, ...item } = getItemFromValue(option.value);
             // Render special states
