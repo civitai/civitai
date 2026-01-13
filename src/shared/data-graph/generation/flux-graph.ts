@@ -176,3 +176,16 @@ export const fluxGraph = new DataGraph<
 
 // Export flux mode options for use in components that need to render a mode selector
 export { fluxModeVersionOptions, fluxVersionIds };
+
+/*
+TODO
+flux draft
+- seed
+- enhancedCompatibility
+flux standard
+- resources
+- cfgScale
+- steps
+- seed
+- enhancedCompatibility
+*/

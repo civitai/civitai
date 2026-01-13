@@ -31,28 +31,28 @@ import { stableDiffusionGraph } from './stable-diffusion-graph';
 import { videoInterpolationGraph } from './video-interpolation-graph';
 import { videoUpscaleGraph } from './video-upscale-graph';
 import {
-  getDefaultEcosystemForFeature,
-  getInputTypeForFeature,
-  getOutputTypeForFeature,
-  isFeatureAvailable,
-} from './features';
+  getDefaultEcosystemForWorkflow,
+  getInputTypeForWorkflow,
+  getOutputTypeForWorkflow,
+  isWorkflowAvailable,
+} from './workflows';
 
 // =============================================================================
 // Helper Functions
 // =============================================================================
 
 /**
- * Get valid ecosystem key for the given feature.
- * If the current value supports the feature, keep it; otherwise return the default ecosystem.
+ * Get valid ecosystem key for the given workflow.
+ * If the current value supports the workflow, keep it; otherwise return the default ecosystem.
  */
-function getValidEcosystemForFeature(featureId: string, currentValue?: string): string {
+function getValidEcosystemForWorkflow(workflowId: string, currentValue?: string): string {
   if (currentValue) {
     const ecosystem = ecosystemByKey.get(currentValue);
-    if (ecosystem && isFeatureAvailable(featureId, ecosystem.id)) {
+    if (ecosystem && isWorkflowAvailable(workflowId, ecosystem.id)) {
       return currentValue;
     }
   }
-  const defaultEcoId = getDefaultEcosystemForFeature(featureId);
+  const defaultEcoId = getDefaultEcosystemForWorkflow(workflowId);
   if (defaultEcoId) {
     const eco = ecosystemById.get(defaultEcoId);
     if (eco) return eco.key;
@@ -107,12 +107,12 @@ const ecosystemGraph = new DataGraph<
       if (!ecosystem) return;
 
       // If current baseModel supports the workflow, nothing to do
-      if (isFeatureAvailable(ctx.workflow, ecosystem.id)) {
+      if (isWorkflowAvailable(ctx.workflow, ecosystem.id)) {
         return;
       }
 
       // Find a compatible ecosystem for this workflow
-      const validEcosystem = getValidEcosystemForFeature(ctx.workflow, ctx.baseModel);
+      const validEcosystem = getValidEcosystemForWorkflow(ctx.workflow, ctx.baseModel);
       if (validEcosystem !== ctx.baseModel) {
         set('baseModel', validEcosystem);
       }
@@ -126,7 +126,7 @@ const ecosystemGraph = new DataGraph<
       if (!ecosystem) return;
 
       // If current workflow is supported by the new baseModel, nothing to do
-      if (isFeatureAvailable(ctx.workflow, ecosystem.id)) {
+      if (isWorkflowAvailable(ctx.workflow, ecosystem.id)) {
         return;
       }
 
@@ -205,7 +205,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
   .computed(
     'output',
     (ctx) => {
-      return getOutputTypeForFeature(ctx.workflow);
+      return getOutputTypeForWorkflow(ctx.workflow);
     },
     ['workflow']
   )
@@ -213,7 +213,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
   .computed(
     'input',
     (ctx) => {
-      return getInputTypeForFeature(ctx.workflow);
+      return getInputTypeForWorkflow(ctx.workflow);
     },
     ['workflow']
   )

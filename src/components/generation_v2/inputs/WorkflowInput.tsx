@@ -1,5 +1,5 @@
 /**
- * FeatureInput
+ * WorkflowInput
  *
  * A form input for selecting generation features (workflows).
  * Displays inline menu cards for Image and Video features, each opening their own dropdown.
@@ -11,25 +11,25 @@ import { IconChevronDown, IconCheck, IconPhoto, IconVideo } from '@tabler/icons-
 import clsx from 'clsx';
 import { useMemo } from 'react';
 
-import { getAllFeaturesGrouped } from '~/shared/data-graph/generation/features';
+import { getAllWorkflowsGrouped } from '~/shared/data-graph/generation/workflows';
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export interface FeatureOption {
+export interface WorkflowOption {
   id: string;
   label: string;
   compatible: boolean;
 }
 
-export interface FeatureCategory {
+export interface WorkflowCategoryGroup {
   category: string;
   label: string;
-  features: FeatureOption[];
+  workflows: WorkflowOption[];
 }
 
-export interface FeatureInputProps {
+export interface WorkflowInputProps {
   value?: string;
   onChange?: (value: string) => void;
   /** Whether the control is disabled */
@@ -42,28 +42,28 @@ export interface FeatureInputProps {
 // Helper Functions
 // =============================================================================
 
-function getSelectedFeature(
-  options: FeatureCategory[],
+function getSelectedWorkflow(
+  options: WorkflowCategoryGroup[],
   value?: string
-): { feature: FeatureOption; category: FeatureCategory } | undefined {
+): { workflow: WorkflowOption; category: WorkflowCategoryGroup } | undefined {
   for (const category of options) {
-    const feature = category.features.find((f) => f.id === value);
-    if (feature) return { feature, category };
+    const workflow = category.workflows.find((w) => w.id === value);
+    if (workflow) return { workflow, category };
   }
   return undefined;
 }
 
 // =============================================================================
-// Feature Menu Item
+// Workflow Menu Item
 // =============================================================================
 
-interface FeatureMenuItemProps {
-  feature: FeatureOption;
+interface WorkflowMenuItemProps {
+  workflow: WorkflowOption;
   isSelected: boolean;
   onSelect: () => void;
 }
 
-function FeatureMenuItem({ feature, isSelected, onSelect }: FeatureMenuItemProps) {
+function WorkflowMenuItem({ workflow, isSelected, onSelect }: WorkflowMenuItemProps) {
   return (
     <UnstyledButton
       onClick={onSelect}
@@ -76,7 +76,7 @@ function FeatureMenuItem({ feature, isSelected, onSelect }: FeatureMenuItemProps
       <Group gap="xs" wrap="nowrap">
         <div className="flex-1">
           <Text size="sm" fw={isSelected ? 600 : 400}>
-            {feature.label}
+            {workflow.label}
           </Text>
         </div>
         {isSelected && <IconCheck size={16} className="text-blue-6" />}
@@ -86,10 +86,10 @@ function FeatureMenuItem({ feature, isSelected, onSelect }: FeatureMenuItemProps
 }
 
 // =============================================================================
-// Feature Card (Single Menu Card)
+// Workflow Card (Single Menu Card)
 // =============================================================================
 
-interface FeatureCardProps {
+interface WorkflowCardProps {
   icon: React.ReactNode;
   title: string;
   selectedLabel?: string;
@@ -98,12 +98,12 @@ interface FeatureCardProps {
   opened: boolean;
   onToggle: () => void;
   onClose: () => void;
-  categories: FeatureCategory[];
+  categories: WorkflowCategoryGroup[];
   selectedValue?: string;
-  onSelect: (featureId: string) => void;
+  onSelect: (workflowId: string) => void;
 }
 
-function FeatureCard({
+function WorkflowCard({
   icon,
   title,
   selectedLabel,
@@ -115,8 +115,8 @@ function FeatureCard({
   categories,
   selectedValue,
   onSelect,
-}: FeatureCardProps) {
-  const visibleCategories = categories.filter((cat) => cat.features.length > 0);
+}: WorkflowCardProps) {
+  const visibleCategories = categories.filter((cat) => cat.workflows.length > 0);
 
   return (
     <Popover
@@ -180,12 +180,12 @@ function FeatureCard({
                 </div>
               )}
               <Stack gap={0} py={visibleCategories.length > 1 ? 0 : 'xs'} pb="xs">
-                {category.features.map((feature) => (
-                  <FeatureMenuItem
-                    key={feature.id}
-                    feature={feature}
-                    isSelected={feature.id === selectedValue}
-                    onSelect={() => onSelect(feature.id)}
+                {category.workflows.map((workflow) => (
+                  <WorkflowMenuItem
+                    key={workflow.id}
+                    workflow={workflow}
+                    isSelected={workflow.id === selectedValue}
+                    onSelect={() => onSelect(workflow.id)}
                   />
                 ))}
               </Stack>
@@ -201,17 +201,20 @@ function FeatureCard({
 // Component
 // =============================================================================
 
-export function FeatureInput({ value, onChange, disabled, className }: FeatureInputProps) {
+export function WorkflowInput({ value, onChange, disabled, className }: WorkflowInputProps) {
   const [imageOpened, { close: closeImage, toggle: toggleImage }] = useDisclosure(false);
   const [videoOpened, { close: closeVideo, toggle: toggleVideo }] = useDisclosure(false);
 
-  // Get all features grouped by category (static - no ecosystem filtering)
-  const options = useMemo(() => getAllFeaturesGrouped(), []);
-  const selected = getSelectedFeature(options, value);
+  // Get all workflows grouped by category (static - no ecosystem filtering)
+  const options = useMemo(() => getAllWorkflowsGrouped(), []);
+  const selected = getSelectedWorkflow(options, value);
 
   // Separate image and video categories
   const imageCategories = options.filter(
-    (cat) => cat.category === 'text-to-image' || cat.category === 'image-to-image'
+    (cat) =>
+      cat.category === 'text-to-image' ||
+      cat.category === 'image-to-image' ||
+      cat.category === 'image-enhancements'
   );
   const videoCategories = options.filter(
     (cat) =>
@@ -221,40 +224,41 @@ export function FeatureInput({ value, onChange, disabled, className }: FeatureIn
   );
 
   // Check if current selection is image or video
-  const isImageFeature =
+  const isImageWorkflow =
     selected &&
     (selected.category.category === 'text-to-image' ||
-      selected.category.category === 'image-to-image');
-  const isVideoFeature =
+      selected.category.category === 'image-to-image' ||
+      selected.category.category === 'image-enhancements');
+  const isVideoWorkflow =
     selected &&
     (selected.category.category === 'text-to-video' ||
       selected.category.category === 'image-to-video' ||
       selected.category.category === 'video-enhancements');
 
   // Get display labels
-  const imageLabel = isImageFeature ? selected.feature.label : undefined;
-  const videoLabel = isVideoFeature ? selected.feature.label : undefined;
+  const imageLabel = isImageWorkflow ? selected.workflow.label : undefined;
+  const videoLabel = isVideoWorkflow ? selected.workflow.label : undefined;
 
-  const handleImageSelect = (featureId: string) => {
-    onChange?.(featureId);
+  const handleImageSelect = (workflowId: string) => {
+    onChange?.(workflowId);
     closeImage();
   };
 
-  const handleVideoSelect = (featureId: string) => {
-    onChange?.(featureId);
+  const handleVideoSelect = (workflowId: string) => {
+    onChange?.(workflowId);
     closeVideo();
   };
 
-  // Check if video features are available
-  const hasVideoFeatures = videoCategories.some((cat) => cat.features.length > 0);
+  // Check if video workflows are available
+  const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
 
   return (
     <Group gap="sm" className={className} grow>
-      <FeatureCard
+      <WorkflowCard
         icon={<IconPhoto size={20} />}
         title="Image"
         selectedLabel={imageLabel}
-        isActive={isImageFeature ?? false}
+        isActive={isImageWorkflow ?? false}
         disabled={disabled}
         opened={imageOpened}
         onToggle={() => {
@@ -267,12 +271,12 @@ export function FeatureInput({ value, onChange, disabled, className }: FeatureIn
         onSelect={handleImageSelect}
       />
 
-      {hasVideoFeatures && (
-        <FeatureCard
+      {hasVideoWorkflows && (
+        <WorkflowCard
           icon={<IconVideo size={20} />}
           title="Video"
           selectedLabel={videoLabel}
-          isActive={isVideoFeature ?? false}
+          isActive={isVideoWorkflow ?? false}
           disabled={disabled}
           opened={videoOpened}
           onToggle={() => {

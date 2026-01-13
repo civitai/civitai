@@ -41,7 +41,7 @@ import {
 
 // Input components
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
-import { FeatureInput } from '~/components/generation_v2/inputs/FeatureInput';
+import { WorkflowInput } from '~/components/generation_v2/inputs/WorkflowInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
 import { PromptInput } from '~/components/generation_v2/inputs/PromptInput';
@@ -203,7 +203,7 @@ function GenerationForm() {
           <Controller
             graph={graph}
             name="workflow"
-            render={({ value, onChange }) => <FeatureInput value={value} onChange={onChange} />}
+            render={({ value, onChange }) => <WorkflowInput value={value} onChange={onChange} />}
           />
 
           {/* Base model selector */}

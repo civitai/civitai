@@ -78,6 +78,14 @@ export type SupportOverride = {
   disabled?: boolean; // Defaults to false (enabled)
 };
 
+export type WorkflowCategory =
+  | 'text-to-image'
+  | 'image-to-image'
+  | 'image-enhancements'
+  | 'text-to-video'
+  | 'image-to-video'
+  | 'video-enhancements';
+
 export type WorkflowRecord = {
   /** Unique workflow key */
   key: string;
@@ -87,6 +95,8 @@ export type WorkflowRecord = {
   inputType: 'text' | 'image' | 'video';
   /** Output type produced (defaults to 'image' if not specified) */
   outputType?: 'image' | 'video';
+  /** UI category for grouping */
+  category: WorkflowCategory;
   /** Ecosystem IDs that support this workflow */
   ecosystemIds: number[];
 };
@@ -1060,24 +1070,28 @@ export const workflows: WorkflowRecord[] = [
     key: 'txt2img',
     label: 'Create Image',
     inputType: 'text',
+    category: 'text-to-image',
     ecosystemIds: TXT2IMG_IDS,
   },
   {
     key: 'draft',
     label: 'Draft',
     inputType: 'text',
+    category: 'text-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'txt2img:face-fix',
     label: 'Create + Face Fix',
     inputType: 'text',
+    category: 'text-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'txt2img:hires-fix',
     label: 'Create + Hires Fix',
     inputType: 'text',
+    category: 'text-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
 
@@ -1086,25 +1100,45 @@ export const workflows: WorkflowRecord[] = [
     key: 'img2img',
     label: 'Variations',
     inputType: 'image',
+    category: 'image-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'img2img:face-fix',
     label: 'Face Fix',
     inputType: 'image',
+    category: 'image-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'img2img:hires-fix',
     label: 'Hires Fix',
     inputType: 'image',
+    category: 'image-to-image',
     ecosystemIds: SD_FAMILY_IDS,
   },
   {
     key: 'image-edit',
     label: 'Image Edit',
     inputType: 'image',
+    category: 'image-to-image',
     ecosystemIds: [ECO.Qwen, ECO.Seedream, ECO.NanoBanana, ECO.OpenAI, ECO.Flux2],
+  },
+
+  // Image enhancement workflows
+  {
+    key: 'img2img:remove-background',
+    label: 'Remove Background',
+    inputType: 'image',
+    category: 'image-enhancements',
+    ecosystemIds: [], // No ecosystems currently support this
+  },
+  {
+    key: 'img2img:upscale',
+    label: 'Upscale',
+    inputType: 'image',
+    category: 'image-enhancements',
+    ecosystemIds: [], // No ecosystems currently support this
   },
 
   // Video workflows
@@ -1113,6 +1147,7 @@ export const workflows: WorkflowRecord[] = [
     label: 'Create Video',
     inputType: 'text',
     outputType: 'video',
+    category: 'text-to-video',
     ecosystemIds: TXT2VID_IDS,
   },
   {
@@ -1120,6 +1155,7 @@ export const workflows: WorkflowRecord[] = [
     label: 'Animate Image',
     inputType: 'image',
     outputType: 'video',
+    category: 'image-to-video',
     ecosystemIds: IMG2VID_IDS,
   },
 
@@ -1129,6 +1165,7 @@ export const workflows: WorkflowRecord[] = [
     label: 'Upscale',
     inputType: 'video',
     outputType: 'video',
+    category: 'video-enhancements',
     ecosystemIds: [], // No ecosystems currently support vid2vid
   },
   {
@@ -1136,6 +1173,7 @@ export const workflows: WorkflowRecord[] = [
     label: 'Interpolate',
     inputType: 'video',
     outputType: 'video',
+    category: 'video-enhancements',
     ecosystemIds: [], // No ecosystems currently support vid2vid
   },
 ];
