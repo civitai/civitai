@@ -89,71 +89,76 @@ export type ChallengeDetail = {
 async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   const { query, status, source, sort, userId, modelId, includeEnded, limit, cursor } = input;
 
-  // Build WHERE conditions
-  const conditions: string[] = [];
+  // Build WHERE conditions using parameterized queries (SQL injection safe)
+  const conditions: Prisma.Sql[] = [];
 
   // Only show visible challenges
-  conditions.push(`c."visibleAt" <= now()`);
+  conditions.push(Prisma.sql`c."visibleAt" <= now()`);
 
-  // Status filter
+  // Status filter (parameterized)
   if (status && status.length > 0) {
-    const statusList = status.map((s) => `'${s}'`).join(', ');
-    conditions.push(`c.status IN (${statusList})`);
+    const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
+    conditions.push(Prisma.sql`c.status IN (${Prisma.join(statusValues)})`);
   } else if (!includeEnded) {
-    // Default: exclude completed/cancelled unless requested
     conditions.push(
-      `c.status NOT IN ('${ChallengeStatus.Completed}', '${ChallengeStatus.Cancelled}')`
+      Prisma.sql`c.status NOT IN (${ChallengeStatus.Completed}::"ChallengeStatus", ${ChallengeStatus.Cancelled}::"ChallengeStatus")`
     );
   }
 
-  // Source filter
+  // Source filter (parameterized)
   if (source && source.length > 0) {
-    const sourceList = source.map((s) => `'${s}'`).join(', ');
-    conditions.push(`c.source IN (${sourceList})`);
+    const sourceValues = source.map((s) => Prisma.sql`${s}::"ChallengeSource"`);
+    conditions.push(Prisma.sql`c.source IN (${Prisma.join(sourceValues)})`);
   }
 
-  // Text search
+  // Text search (parameterized - safe from SQL injection)
   if (query) {
-    conditions.push(`(c.title ILIKE '%${query}%' OR c.theme ILIKE '%${query}%')`);
+    const searchPattern = `%${query}%`;
+    conditions.push(
+      Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`
+    );
   }
 
-  // Creator filter
+  // Creator filter (parameterized)
   if (userId) {
-    conditions.push(`c."createdById" = ${userId}`);
+    conditions.push(Prisma.sql`c."createdById" = ${userId}`);
   }
 
-  // Model filter
+  // Model filter (parameterized)
   if (modelId) {
-    conditions.push(`c."modelId" = ${modelId}`);
+    conditions.push(Prisma.sql`c."modelId" = ${modelId}`);
   }
 
-  // Cursor for pagination
+  // Cursor for pagination (parameterized)
   if (cursor) {
-    conditions.push(`c.id < ${cursor}`);
+    conditions.push(Prisma.sql`c.id < ${cursor}`);
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause =
+    conditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+      : Prisma.empty;
 
-  // Build ORDER BY
-  let orderBy: string;
+  // Build ORDER BY (safe - not user input)
+  let orderByClause: Prisma.Sql;
   switch (sort) {
     case ChallengeSort.EndingSoon:
-      orderBy = `c."endsAt" ASC, c.id DESC`;
+      orderByClause = Prisma.sql`c."endsAt" ASC, c.id DESC`;
       break;
     case ChallengeSort.MostEntries:
-      orderBy = `entry_count DESC, c.id DESC`;
+      orderByClause = Prisma.sql`"entryCount" DESC, c.id DESC`;
       break;
     case ChallengeSort.HighestPrize:
-      orderBy = `c."prizePool" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`c."prizePool" DESC, c.id DESC`;
       break;
     case ChallengeSort.Newest:
     default:
-      orderBy = `c."startsAt" DESC, c.id DESC`;
+      orderByClause = Prisma.sql`c."startsAt" DESC, c.id DESC`;
       break;
   }
 
   // Entry count now comes from CollectionItem via the challenge's collection
-  const items = await dbRead.$queryRawUnsafe<
+  const items = await dbRead.$queryRaw<
     Array<{
       id: number;
       title: string;
@@ -171,7 +176,7 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       creatorUsername: string | null;
       creatorImage: string | null;
     }>
-  >(`
+  >`
     SELECT
       c.id,
       c.title,
@@ -192,9 +197,9 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     LEFT JOIN "Model" m ON m.id = c."modelId"
     JOIN "User" u ON u.id = c."createdById"
     ${whereClause}
-    ORDER BY ${orderBy}
+    ORDER BY ${orderByClause}
     LIMIT ${limit + 1}
-  `);
+  `;
 
   // Check if there are more results
   let nextCursor: number | undefined;
@@ -230,9 +235,25 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
   };
 }
 
-async function getChallengeDetail(id: number): Promise<ChallengeDetail | null> {
+async function getChallengeDetail(
+  id: number,
+  bypassVisibility = false
+): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
+
+  // Visibility check: only show challenges that are visible to the public
+  // unless bypassVisibility is true (for moderators)
+  if (!bypassVisibility) {
+    const now = new Date();
+    if (challenge.visibleAt > now) {
+      return null; // Not yet visible
+    }
+    // Also hide drafts from public
+    if (challenge.status === ChallengeStatus.Draft) {
+      return null;
+    }
+  }
 
   // Get entry count from the challenge's collection
   const [countResult] = await dbRead.$queryRaw<[{ count: bigint }]>`
@@ -359,30 +380,37 @@ export const challengeRouter = router({
     .query(async ({ input }) => {
       const { query, status, source, limit, cursor } = input;
 
-      const conditions: string[] = [];
+      // Build WHERE conditions using parameterized queries (SQL injection safe)
+      const conditions: Prisma.Sql[] = [];
 
       if (status && status.length > 0) {
-        const statusList = status.map((s) => `'${s}'`).join(', ');
-        conditions.push(`c.status IN (${statusList})`);
+        const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
+        conditions.push(Prisma.sql`c.status IN (${Prisma.join(statusValues)})`);
       }
 
       if (source && source.length > 0) {
-        const sourceList = source.map((s) => `'${s}'`).join(', ');
-        conditions.push(`c.source IN (${sourceList})`);
+        const sourceValues = source.map((s) => Prisma.sql`${s}::"ChallengeSource"`);
+        conditions.push(Prisma.sql`c.source IN (${Prisma.join(sourceValues)})`);
       }
 
       if (query) {
-        conditions.push(`(c.title ILIKE '%${query}%' OR c.theme ILIKE '%${query}%')`);
+        const searchPattern = `%${query}%`;
+        conditions.push(
+          Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`
+        );
       }
 
       if (cursor) {
-        conditions.push(`c.id < ${cursor}`);
+        conditions.push(Prisma.sql`c.id < ${cursor}`);
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const whereClause =
+        conditions.length > 0
+          ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+          : Prisma.empty;
 
       // Entry count now from CollectionItem
-      const items = await dbRead.$queryRawUnsafe<
+      const items = await dbRead.$queryRaw<
         Array<{
           id: number;
           title: string;
@@ -398,7 +426,7 @@ export const challengeRouter = router({
           createdById: number;
           creatorUsername: string | null;
         }>
-      >(`
+      >`
         SELECT
           c.id,
           c.title,
@@ -418,7 +446,7 @@ export const challengeRouter = router({
         ${whereClause}
         ORDER BY c."startsAt" DESC, c.id DESC
         LIMIT ${limit + 1}
-      `);
+      `;
 
       let nextCursor: number | undefined;
       if (items.length > limit) {
