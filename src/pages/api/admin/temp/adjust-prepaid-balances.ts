@@ -23,7 +23,7 @@ type SubscriptionData = {
   currentPeriodStart: Date;
   currentPeriodEnd: Date;
   metadata: SubscriptionMetadata;
-  tier: string;
+  activeTier: string; // Current subscription tier
   priceId: string;
 };
 
@@ -60,11 +60,28 @@ type AdjustmentResult = {
   error?: string;
 };
 
+type SubscriptionQueryRow = {
+  id: string;
+  userId: number;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  metadata: unknown;
+  priceId: string;
+  tier: string;
+};
+
+type RedemptionQueryRow = {
+  userId: number;
+  unitValue: number;
+  redeemedAt: Date;
+  priceId: string;
+};
+
 // Fetch subscriptions with basic data (no complex calculations)
 async function fetchSubscriptions(userId?: number): Promise<SubscriptionData[]> {
   const userFilter = userId ? Prisma.sql`AND cs."userId" = ${userId}` : Prisma.empty;
 
-  const results = await dbWrite.$queryRaw<any[]>`
+  const results = await dbWrite.$queryRaw<SubscriptionQueryRow[]>`
     SELECT
       cs.id,
       cs."userId",
@@ -87,7 +104,7 @@ async function fetchSubscriptions(userId?: number): Promise<SubscriptionData[]> 
     currentPeriodStart: new Date(row.currentPeriodStart),
     currentPeriodEnd: new Date(row.currentPeriodEnd),
     metadata: row.metadata as SubscriptionMetadata,
-    tier: row.tier,
+    activeTier: row.tier,
     priceId: row.priceId,
   }));
 }
@@ -97,7 +114,7 @@ async function fetchRedemptions(userIds: number[]): Promise<RedemptionData[]> {
   if (userIds.length === 0) return [];
 
   // Use IN clause with Prisma.join for array parameters
-  const results = await dbWrite.$queryRaw<any[]>`
+  const results = await dbWrite.$queryRaw<RedemptionQueryRow[]>`
     SELECT
       "userId",
       "unitValue",
@@ -118,19 +135,29 @@ async function fetchRedemptions(userIds: number[]): Promise<RedemptionData[]> {
   }));
 }
 
-// Calculate adjustment for a single subscription
-function calculateAdjustment(
+// Calculate adjustment for active tier only
+function calculateActiveTierAdjustment(
   subscription: SubscriptionData,
   allRedemptions: RedemptionData[]
 ): AdjustmentCalculation {
-  const today = dayjs();
-  const periodEnd = dayjs(subscription.currentPeriodEnd);
-  const periodStart = dayjs(subscription.currentPeriodStart);
+  const today = dayjs.utc();
+  const periodEnd = dayjs.utc(subscription.currentPeriodEnd);
+  const periodStart = dayjs.utc(subscription.currentPeriodStart);
 
-  // Calculate months remaining from today to period end
-  const monthsRemaining = Math.max(0, periodEnd.diff(today, 'month'));
+  // Get the cycle day from periodStart (e.g., if period starts on 6th, cycles happen on 6th)
+  const cycleDay = periodStart.date();
 
-  // Get redemptions for this subscription's tier (matching priceId)
+  // Calculate next cycle date after today (in UTC)
+  let nextCycleDate = today.date(cycleDay).hour(0).minute(0).second(0).millisecond(0);
+  if (nextCycleDate.isBefore(today) || nextCycleDate.isSame(today, 'day')) {
+    // If today is past the cycle day (or is the cycle day), next cycle is next month
+    nextCycleDate = nextCycleDate.add(1, 'month');
+  }
+
+  // Calculate months remaining from next cycle to period end
+  const monthsRemaining = Math.max(0, periodEnd.diff(nextCycleDate, 'month'));
+
+  // Get redemptions for the active tier
   const tierRedemptions = allRedemptions.filter(
     (r) => r.userId === subscription.userId && r.priceId === subscription.priceId
   );
@@ -138,7 +165,7 @@ function calculateAdjustment(
   // ROLLOVER DETECTION:
   // If user has redemptions, check if period start is suspiciously late
   if (tierRedemptions.length > 0) {
-    const firstRedemption = dayjs(tierRedemptions[0].redeemedAt);
+    const firstRedemption = dayjs.utc(tierRedemptions[0].redeemedAt);
     const totalMonths = tierRedemptions.reduce((sum, r) => sum + r.unitValue, 0);
 
     // If period start is more than totalMonths after first redemption, it rolled over
@@ -164,7 +191,27 @@ function calculateAdjustment(
   };
 }
 
-// Process a batch of subscriptions
+// Helper to create adjustment result
+function createAdjustmentResult(
+  subscription: AffectedSubscription,
+  success: boolean,
+  error?: string
+): AdjustmentResult {
+  return {
+    subscriptionId: subscription.id,
+    userId: subscription.userId,
+    tier: subscription.activeTier,
+    previousBalance: subscription.currentPrepaidBalance,
+    newBalance: subscription.adjustedPrepaidBalance,
+    adjustment: subscription.currentPrepaidBalance - subscription.adjustedPrepaidBalance,
+    isRolloverCase: subscription.isRolloverCase,
+    monthsRolled: subscription.monthsRolled,
+    success,
+    ...(error && { error }),
+  };
+}
+
+// Process a batch of subscriptions (active tier only)
 async function processBatch(
   batch: AffectedSubscription[],
   dryRun: boolean
@@ -174,7 +221,7 @@ async function processBatch(
   for (const subscription of batch) {
     try {
       if (!dryRun) {
-        // Update the subscription metadata
+        // Update the active tier's prepaid balance only
         await dbWrite.customerSubscription.update({
           where: { id: subscription.id },
           data: {
@@ -182,7 +229,7 @@ async function processBatch(
               ...subscription.metadata,
               prepaids: {
                 ...subscription.metadata.prepaids,
-                [subscription.tier]: subscription.adjustedPrepaidBalance,
+                [subscription.activeTier]: subscription.adjustedPrepaidBalance,
               },
             },
             updatedAt: new Date(),
@@ -190,30 +237,15 @@ async function processBatch(
         });
       }
 
-      results.push({
-        subscriptionId: subscription.id,
-        userId: subscription.userId,
-        tier: subscription.tier,
-        previousBalance: subscription.currentPrepaidBalance,
-        newBalance: subscription.adjustedPrepaidBalance,
-        adjustment: subscription.currentPrepaidBalance - subscription.adjustedPrepaidBalance,
-        isRolloverCase: subscription.isRolloverCase,
-        monthsRolled: subscription.monthsRolled,
-        success: true,
-      });
+      results.push(createAdjustmentResult(subscription, true));
     } catch (error) {
-      results.push({
-        subscriptionId: subscription.id,
-        userId: subscription.userId,
-        tier: subscription.tier,
-        previousBalance: subscription.currentPrepaidBalance,
-        newBalance: subscription.adjustedPrepaidBalance,
-        adjustment: subscription.currentPrepaidBalance - subscription.adjustedPrepaidBalance,
-        isRolloverCase: subscription.isRolloverCase,
-        monthsRolled: subscription.monthsRolled,
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      results.push(
+        createAdjustmentResult(
+          subscription,
+          false,
+          error instanceof Error ? error.message : 'Unknown error'
+        )
+      );
     }
   }
 
@@ -265,12 +297,13 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const redemptions = await fetchRedemptions(userIds);
   log(`Found ${redemptions.length} redemptions`);
 
-  // Step 3: Calculate adjustments in JavaScript
-  log('Calculating adjustments...');
+  // Step 3: Calculate adjustments for active tier only
+  log('Calculating adjustments for active tiers...');
   const affectedSubscriptions = subscriptions
     .map((sub) => {
-      const calculation = calculateAdjustment(sub, redemptions);
-      const currentPrepaid = sub.metadata.prepaids?.[sub.tier as 'bronze' | 'silver' | 'gold'] ?? 0;
+      const calculation = calculateActiveTierAdjustment(sub, redemptions);
+      const currentPrepaid =
+        sub.metadata.prepaids?.[sub.activeTier as 'bronze' | 'silver' | 'gold'] ?? 0;
 
       return {
         ...sub,
