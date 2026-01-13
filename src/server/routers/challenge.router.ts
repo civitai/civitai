@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getChallengeById,
@@ -311,6 +312,47 @@ export const challengeRouter = router({
 
   // Get single challenge by ID
   getById: publicProcedure.input(getByIdSchema).query(({ input }) => getChallengeDetail(input.id)),
+
+  // Get upcoming challenge themes for preview widget
+  getUpcomingThemes: publicProcedure
+    .input(z.object({ count: z.number().min(1).max(10).default(3) }))
+    .query(async ({ input }) => {
+      const { count } = input;
+
+      // Get upcoming visible challenges
+      const items = await dbRead.$queryRaw<
+        Array<{
+          startsAt: Date;
+          theme: string | null;
+          modelName: string | null;
+          modelCreator: string | null;
+        }>
+      >`
+        SELECT
+          c."startsAt",
+          c.theme,
+          m.name as "modelName",
+          u.username as "modelCreator"
+        FROM "Challenge" c
+        LEFT JOIN "Model" m ON m.id = c."modelId"
+        LEFT JOIN "User" u ON u.id = m."userId"
+        WHERE c."visibleAt" <= NOW()
+        AND c.status IN (
+          ${ChallengeStatus.Scheduled}::"ChallengeStatus",
+          ${ChallengeStatus.Active}::"ChallengeStatus"
+        )
+        AND c."startsAt" > NOW()
+        ORDER BY c."startsAt" ASC
+        LIMIT ${count}
+      `;
+
+      return items.map((item) => ({
+        date: item.startsAt.toISOString().split('T')[0],
+        theme: item.theme || 'Mystery Theme',
+        modelName: item.modelName || 'Any Model',
+        modelCreator: item.modelCreator || null,
+      }));
+    }),
 
   // Get challenge entries (paginated)
   getEntries: publicProcedure.input(getChallengeEntriesSchema).query(async ({ input }) => {
