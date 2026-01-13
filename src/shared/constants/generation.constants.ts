@@ -8,6 +8,7 @@ import {
   getGenerationConfig,
   maxUpscaleSize,
   minDownscaleSize,
+  maxRandomSeed,
 } from '~/server/common/constants';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
@@ -22,6 +23,20 @@ import {
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
+
+// =============================================================================
+// Seed Constants
+// =============================================================================
+
+/** Maximum seed value that can be input (unsigned 32-bit integer max) */
+export const MAX_SEED = 4294967295;
+
+/** Maximum seed value for random generation (signed 32-bit integer max) */
+export { maxRandomSeed as MAX_RANDOM_SEED };
+
+// =============================================================================
+// Workflow Tags
+// =============================================================================
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -115,6 +130,17 @@ export const whatIfQueryOverrides = {
   cfgScale: generation.defaultValues.cfgScale,
   remixSimilarity: 1,
 };
+
+export const samplers = [
+  'Euler a',
+  'Euler',
+  'Heun',
+  'LMS',
+  'DDIM',
+  'DPM++ 2M Karras',
+  'DPM2',
+  'DPM2 a',
+] as const;
 
 export const samplersToSchedulers = {
   'Euler a': Scheduler.EULER_A,
@@ -309,7 +335,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   if (isSDXL) params.clipSkip = 2;
 
   if (limits) {
-    if (params.steps) params.steps = Math.min(params.steps, limits.steps);
+    if (params.steps) params.steps = Math.min(params.steps, 50);
     if (params.quantity) params.quantity = Math.min(params.quantity, limits.quantity);
   }
   return params;

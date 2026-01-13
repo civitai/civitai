@@ -110,27 +110,39 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
-  const getLayout = (page: ReactElement) => (
-    <FeatureLayout conditional={Component?.features}>
-      <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
-        <BrowsingSettingsAddonsProvider>
-          {Component.getLayout?.(page) ?? (
-            <AppLayout
-              left={Component.left}
-              right={Component.right}
-              subNav={Component.subNav}
-              scrollable={Component.scrollable}
-              header={Component.header}
-              footer={Component.footer}
-              announcements={Component.announcements}
-            >
-              {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-            </AppLayout>
-          )}
-        </BrowsingSettingsAddonsProvider>
-      </BrowsingLevelProviderOptional>
-    </FeatureLayout>
-  );
+  // // Standalone pages bypass all providers and render directly
+  // if ('standalone' in Component && Component.standalone) {
+  //   return <Component {...pageProps} />;
+  // }
+
+  const getLayout = (page: ReactElement) =>
+    'standalone' in Component && Component.standalone ? (
+      <Component {...pageProps} />
+    ) : (
+      <FeatureLayout conditional={Component?.features}>
+        <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
+          <BrowsingSettingsAddonsProvider>
+            {Component.getLayout?.(page) ?? (
+              <AppLayout
+                left={Component.left}
+                right={Component.right}
+                subNav={Component.subNav}
+                scrollable={Component.scrollable}
+                header={Component.header}
+                footer={Component.footer}
+                announcements={Component.announcements}
+              >
+                {Component.InnerLayout ? (
+                  <Component.InnerLayout>{page}</Component.InnerLayout>
+                ) : (
+                  page
+                )}
+              </AppLayout>
+            )}
+          </BrowsingSettingsAddonsProvider>
+        </BrowsingLevelProviderOptional>
+      </FeatureLayout>
+    );
 
   return (
     <AppProvider

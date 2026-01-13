@@ -527,7 +527,7 @@ export function GenerationFormContent() {
             const samplerDisabled = isDraft;
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
-            let stepsMax = isDraft ? 12 : status.limits.steps;
+            let stepsMax = isDraft ? 12 : 50;
             if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;

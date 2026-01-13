@@ -5,7 +5,6 @@ import React, { createContext, useCallback, useContext, useEffect, useRef } from
 import * as z from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { constants, generation, getGenerationConfig } from '~/server/common/constants';
@@ -68,7 +67,7 @@ const baseSchema = textToImageParamsSchema
   });
 const partialSchema = baseSchema.partial();
 
-function createFormSchema(domainColor: string) {
+function createFormSchema() {
   return baseSchema
     .transform(({ ...data }) => {
       const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
@@ -228,7 +227,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
-  const domainColor = useDomainColor();
   // const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
@@ -246,7 +244,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const prevBaseModelRef = useRef<BaseModelGroup | null>();
   const debouncer = useDebouncer(1000);
 
-  const formSchema = createFormSchema(domainColor);
+  const formSchema = createFormSchema();
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,

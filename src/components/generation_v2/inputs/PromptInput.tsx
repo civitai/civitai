@@ -1,0 +1,157 @@
+import { Textarea, type TextareaProps } from '@mantine/core';
+import { getHotkeyHandler } from '@mantine/hooks';
+import type { KeyboardEvent } from 'react';
+
+export type PromptInputProps = Omit<TextareaProps, 'onChange'> & {
+  onChange?: (value: string) => void;
+};
+
+export function PromptInput(props: PromptInputProps) {
+  function handleArrowUpOrDown(event: KeyboardEvent<HTMLElement> | globalThis.KeyboardEvent) {
+    if (props.name) {
+      const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
+      props.onChange?.(text ?? '');
+    }
+  }
+
+  const keyHandler = getHotkeyHandler([
+    // ['mod+Enter', handleSubmit],
+    ['mod+ArrowUp', handleArrowUpOrDown],
+    ['mod+ArrowDown', handleArrowUpOrDown],
+  ]);
+
+  return (
+    <Textarea
+      {...props}
+      onChange={(e) => props.onChange?.(e.target.value)}
+      onKeyDown={keyHandler}
+    />
+  );
+}
+
+/**
+ * Taken from stable-diffusion-webui github repo and modified to fit our needs
+ * @see https://github.com/AUTOMATIC1111/stable-diffusion-webui/blob/master/javascript/edit-attention.js
+ */
+const DELIMETERS = '.,\\/!?%^*;:{}=`~()\r\n\t';
+export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+  const target = event.target as HTMLTextAreaElement;
+  if (!(event.metaKey || event.ctrlKey)) return;
+
+  const isPlus = event.key == 'ArrowUp';
+  const isMinus = event.key == 'ArrowDown';
+  if (!isPlus && !isMinus) return;
+
+  let selectionStart = target.selectionStart;
+  let selectionEnd = target.selectionEnd;
+  let text = target.value;
+
+  function selectCurrentParenthesisBlock(OPEN: string, CLOSE: string) {
+    if (selectionStart !== selectionEnd) return false;
+
+    // Find opening parenthesis around current cursor
+    const before = text.substring(0, selectionStart);
+    let beforeParen = before.lastIndexOf(OPEN);
+    if (beforeParen == -1) return false;
+    let beforeParenClose = before.lastIndexOf(CLOSE);
+    while (beforeParenClose !== -1 && beforeParenClose > beforeParen) {
+      beforeParen = before.lastIndexOf(OPEN, beforeParen - 1);
+      beforeParenClose = before.lastIndexOf(CLOSE, beforeParenClose - 1);
+    }
+
+    // Find closing parenthesis around current cursor
+    const after = text.substring(selectionStart);
+    let afterParen = after.indexOf(CLOSE);
+    if (afterParen == -1) return false;
+    let afterParenOpen = after.indexOf(OPEN);
+    while (afterParenOpen !== -1 && afterParen > afterParenOpen) {
+      afterParen = after.indexOf(CLOSE, afterParen + 1);
+      afterParenOpen = after.indexOf(OPEN, afterParenOpen + 1);
+    }
+    if (beforeParen === -1 || afterParen === -1) return false;
+
+    // Set the selection to the text between the parenthesis
+    const parenContent = text.substring(beforeParen + 1, selectionStart + afterParen);
+    const lastColon = parenContent.lastIndexOf(':');
+    selectionStart = beforeParen + 1;
+    selectionEnd = selectionStart + lastColon;
+    target.setSelectionRange(selectionStart, selectionEnd);
+    return true;
+  }
+
+  function selectCurrentWord() {
+    if (selectionStart !== selectionEnd) return false;
+
+    // seek backward until to find beggining
+    while (!DELIMETERS.includes(text[selectionStart - 1]) && selectionStart > 0) {
+      selectionStart--;
+    }
+
+    // seek forward to find end
+    while (!DELIMETERS.includes(text[selectionEnd]) && selectionEnd < text.length) {
+      selectionEnd++;
+    }
+
+    target.setSelectionRange(selectionStart, selectionEnd);
+    return true;
+  }
+
+  // If the user hasn't selected anything, let's select their current parenthesis block or word
+  if (!selectCurrentParenthesisBlock('<', '>') && !selectCurrentParenthesisBlock('(', ')')) {
+    selectCurrentWord();
+  }
+
+  event.preventDefault();
+
+  let closeCharacter = ')';
+  let delta = 0.1;
+
+  if (selectionStart > 0 && text[selectionStart - 1] == '<') {
+    closeCharacter = '>';
+    delta = 0.05;
+  } else if (selectionStart == 0 || text[selectionStart - 1] != '(') {
+    // do not include spaces at the end
+    while (selectionEnd > selectionStart && text[selectionEnd - 1] == ' ') {
+      selectionEnd -= 1;
+    }
+    if (selectionStart == selectionEnd) {
+      return;
+    }
+
+    text =
+      text.slice(0, selectionStart) +
+      '(' +
+      text.slice(selectionStart, selectionEnd) +
+      ':1.0)' +
+      text.slice(selectionEnd);
+
+    selectionStart += 1;
+    selectionEnd += 1;
+  }
+
+  const end = text.slice(selectionEnd + 1).indexOf(closeCharacter) + 1;
+  let weight = parseFloat(text.slice(selectionEnd + 1, selectionEnd + 1 + end));
+  if (isNaN(weight)) return;
+
+  weight += isPlus ? delta : -delta;
+  weight = parseFloat(weight.toPrecision(12));
+
+  if (closeCharacter == ')' && weight === 1) {
+    const endParenPos = text.substring(selectionEnd).indexOf(')');
+    text =
+      text.slice(0, selectionStart - 1) +
+      text.slice(selectionStart, selectionEnd) +
+      text.slice(selectionEnd + endParenPos + 1);
+    selectionStart--;
+    selectionEnd--;
+  } else {
+    text = text.slice(0, selectionEnd + 1) + weight + text.slice(selectionEnd + end);
+  }
+
+  target.focus();
+  target.value = text;
+  target.selectionStart = selectionStart;
+  target.selectionEnd = selectionEnd;
+
+  return text;
+}

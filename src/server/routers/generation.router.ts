@@ -3,6 +3,7 @@ import {
   checkResourcesCoverageSchema,
   getGenerationDataSchema,
   getGenerationResourcesSchema,
+  getResourceDataByIdsSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -10,6 +11,7 @@ import {
   getGenerationData,
   getGenerationResources,
   getGenerationStatus,
+  getResourceData,
   getUnavailableResources,
   getUnstableResources,
   // textToImage,
@@ -64,4 +66,7 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
+  getResourceDataByIds: publicProcedure
+    .input(getResourceDataByIdsSchema)
+    .query(({ input, ctx }) => getResourceData(input.ids, ctx.user)),
 });
