@@ -5,6 +5,15 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
+import {
+  createChallengeRecord,
+  createChallengeWinner,
+  getChallengeById,
+  getScheduledChallengeFromDb,
+  updateChallengeStatus,
+  type ChallengeDetails,
+} from '~/server/games/daily-challenge/challenge-helpers';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type { ChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   endChallenge,
@@ -259,6 +268,35 @@ export async function createUpcomingChallenge() {
   await preventReplicationLag('article', article.id);
 
   log('Article created:', article);
+
+  // Create Challenge record (new system - dual write during transition)
+  const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+  const challengeId = await createChallengeRecord({
+    startsAt: challengeDate,
+    endsAt,
+    visibleAt: challengeDate, // Visible when it starts
+    title: articleDetails.title,
+    description: articleDetails.content,
+    theme: articleDetails.theme,
+    invitation: articleDetails.invitation,
+    coverImageId,
+    nsfwLevel: 1,
+    modelId: resource.modelId,
+    collectionId: collection.id,
+    maxEntriesPerUser: config.entryPrizeRequirement * 2,
+    prizes: prizeConfig.prizes,
+    entryPrize: prizeConfig.entryPrize,
+    prizePool: prizeConfig.prizes.reduce((sum, p) => sum + p.buzz, 0),
+    createdById: challengeTypeConfig.userId,
+    source: ChallengeSource.System,
+    status: ChallengeStatus.Scheduled,
+    metadata: {
+      articleId: article.id,
+      challengeType: config.challengeType,
+      resourceUserId: randomUser.userId,
+    },
+  });
+  log('Challenge record created:', challengeId);
 
   // Add to challenge collection
   await dbWrite.collectionItem.create({
@@ -719,6 +757,32 @@ ${outcome}
   );
   log('Prizes sent');
 
+  // Create ChallengeWinner records (new system - dual write during transition)
+  // Find the Challenge by collectionId
+  const winnerChallengeRecords = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Challenge"
+    WHERE "collectionId" = ${currentChallenge.collectionId}
+    AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
+    LIMIT 1
+  `;
+  const winnerChallengeRecord = winnerChallengeRecords[0];
+  if (winnerChallengeRecord) {
+    for (const entry of winningEntries) {
+      await createChallengeWinner({
+        challengeId: winnerChallengeRecord.id,
+        userId: entry.userId,
+        imageId: entry.imageId,
+        place: entry.position,
+        buzzAwarded: entry.prize,
+        pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
+        reason: entry.reason,
+      });
+    }
+    // Update Challenge status to Completed
+    await updateChallengeStatus(winnerChallengeRecord.id, ChallengeStatus.Completed);
+    log('ChallengeWinner records created and status updated to Completed');
+  }
+
   // Start next challenge
   // ----------------------------------------------
   await startNextChallenge(config);
@@ -896,6 +960,20 @@ export async function startNextChallenge(config: ChallengeConfig) {
     WHERE id = ${upcomingChallenge.articleId};
   `;
   log('Article published');
+
+  // Update Challenge status to Active (new system - dual write during transition)
+  // Find the Challenge by collectionId since we don't have challengeId here
+  const challengeRecords = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Challenge"
+    WHERE "collectionId" = ${upcomingChallenge.collectionId}
+    AND status = ${ChallengeStatus.Scheduled}::"ChallengeStatus"
+    LIMIT 1
+  `;
+  const challengeRecord = challengeRecords[0];
+  if (challengeRecord) {
+    await updateChallengeStatus(challengeRecord.id, ChallengeStatus.Active);
+    log('Challenge status updated to Active:', challengeRecord.id);
+  }
 
   // Accept Collection Item in Challenge Collection
   await dbWrite.$executeRaw`
