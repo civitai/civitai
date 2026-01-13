@@ -69,7 +69,7 @@ export const serverSchema = z.object({
   S3_IMAGE_UPLOAD_REGION: z.string(),
   S3_IMAGE_UPLOAD_ENDPOINT: z.url(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
-  S3_IMAGE_FORCE_PATH_STYLE: zc.booleanString.default(false),
+  S3_IMAGE_FORCE_PATH_STYLE: zc.booleanString.optional().default(false),
   S3_IMAGE_UPLOAD_OVERRIDE: z.string().optional(),
   S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
   S3_IMAGE_CACHE_BUCKET: z.string().default(''),
