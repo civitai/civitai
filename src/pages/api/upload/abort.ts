@@ -13,11 +13,24 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   const { bucket, key, type, uploadId } = req.body;
-  const s3 = type === UploadType.Image ? getS3Client('image') : undefined;
-  const result = await abortMultipartUpload(bucket, key, uploadId, s3);
-  await logToAxiom({ name: 's3-upload-abort', userId, type, key, uploadId });
-
-  res.status(200).json(result);
+  try {
+    const s3 = type === UploadType.Image ? getS3Client('image') : undefined;
+    const result = await abortMultipartUpload(bucket, key, uploadId, s3);
+    await logToAxiom({ name: 's3-upload-abort', userId, type, key, uploadId });
+    res.status(200).json(result);
+  } catch (e) {
+    const error = e as Error;
+    console.error('Upload abort error:', error.message, error.stack);
+    await logToAxiom({
+      name: 's3-upload-abort-error',
+      userId,
+      type,
+      key,
+      uploadId,
+      error: error.message,
+    });
+    res.status(500).json({ error });
+  }
 };
 
 export default upload;
