@@ -5,7 +5,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh } from '~/server/metrics/metric-helpers';
+import { executeRefresh, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
@@ -520,34 +520,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
 }
 
 async function getCollectionTasks(ctx: ModelMetricContext) {
-  const affected = await getAffected(ctx, 'Model')`
-    -- Get recent model collects
-    SELECT DISTINCT "modelId" as id
-    FROM "CollectionItem"
-    WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
-    ORDER BY "modelId"
-  `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await getModelMetrics(
-      ctx,
-      `-- get model collection metrics
-      SELECT
-        c."modelId",
-        COUNT(DISTINCT c."addedById") AS "collectedCount"
-      FROM "CollectionItem" c
-      JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-      WHERE c."modelId" = ANY($1::int[])
-        AND c."modelId" BETWEEN $2 AND $3
-      GROUP BY c."modelId"`,
-      [ids, ids[0], ids[ids.length - 1]]
-    );
-    log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
-  });
-
-  return tasks;
+  return getEntityMetricTasks(ctx)('Model', 'collectedCount');
 }
 
 async function getBuzzTasks(ctx: ModelMetricContext) {
