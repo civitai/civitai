@@ -330,7 +330,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 
-      {badges.length > 0 && (
+      {badges.length > 0 && profile.privacySettings?.showBadges !== false && (
         <Stack gap={sizeOpts.spacing}>
           <Text size={sizeOpts.text} c="dimmed" fw={590}>
             Badges

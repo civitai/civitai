@@ -112,7 +112,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { refreshSession } from '~/server/auth/session-invalidation';
+import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -982,7 +982,7 @@ export const toggleMuteHandler = async ({
     data: { muted: !user.muted },
     updateSource: 'toggleMute',
   });
-  await refreshSession(id);
+  await invalidateSession(id);
 
   await ctx.track.userActivity({
     type: user.muted ? 'Unmuted' : 'Muted',

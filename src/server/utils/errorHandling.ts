@@ -4,6 +4,10 @@ import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '../logging/client';
 import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { parse as parseStackTrace } from 'stacktrace-parser';
+import { SourceMapConsumer } from 'source-map';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
@@ -203,4 +207,85 @@ export function withRetries<T>(
       throw error;
     }
   });
+}
+
+/**
+ * Extracts the relative path from a stack trace file path.
+ * Handles both /app/.next/... and .../_next/... formats.
+ */
+function extractNextPath(filePath: string): string | null {
+  // Handle /app/.next/server/chunks/123.js format
+  const appNextMatch = filePath.match(/\.next\/(.+)$/);
+  if (appNextMatch) return appNextMatch[1];
+
+  // Handle /_next/... format (URLs)
+  const underscoreNextMatch = filePath.match(/_next\/(.+)$/);
+  if (underscoreNextMatch) return underscoreNextMatch[1];
+
+  return null;
+}
+
+/**
+ * Applies source maps to a minified stack trace to get original source locations.
+ * Only works in production where source maps are available in the .next directory.
+ * @param stack - The minified stack trace string
+ * @returns The stack trace with original source locations
+ */
+export async function applySourceMaps(stack: string): Promise<string> {
+  try {
+    const parsedStack = parseStackTrace(stack);
+    const lines = stack.split('\n');
+
+    // Build a map of relative paths to their source map consumers
+    const sourceMapConsumers = new Map<string, SourceMapConsumer>();
+    const filesToProcess = [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[];
+
+    for (const file of filesToProcess) {
+      const relativePath = extractNextPath(file);
+      if (!relativePath) continue;
+
+      const sourceMapPath = path.join(process.cwd(), '.next', `${relativePath}.map`);
+
+      if (!fs.existsSync(sourceMapPath)) continue;
+
+      try {
+        const sourceMapContent = fs.readFileSync(sourceMapPath, 'utf-8');
+        if (sourceMapContent) {
+          const smc = await new SourceMapConsumer(sourceMapContent);
+          sourceMapConsumers.set(file, smc);
+        }
+      } catch {
+        // Skip files where source map can't be read
+      }
+    }
+
+    // Apply source maps to each stack frame
+    for (const frame of parsedStack) {
+      const { methodName, lineNumber, column, file } = frame;
+      if (!file || lineNumber == null || column == null) continue;
+
+      const smc = sourceMapConsumers.get(file);
+      if (!smc) continue;
+
+      const pos = smc.originalPositionFor({ line: lineNumber, column });
+      if (pos && pos.line != null && pos.source != null) {
+        const name = pos.name || methodName || '<anonymous>';
+        const lineIndex = lines.findIndex((x) => x.includes(file) && x.includes(`:${lineNumber}:`));
+        if (lineIndex > -1) {
+          const displayName = name !== '<unknown>' ? name : '';
+          lines[lineIndex] = `    at ${displayName} (${pos.source}:${pos.line}:${pos.column ?? 0})`;
+        }
+      }
+    }
+
+    // Clean up source map consumers
+    for (const smc of sourceMapConsumers.values()) {
+      smc.destroy();
+    }
+
+    return lines.join('\n');
+  } catch {
+    // If source map parsing fails, return the original stack
+    return stack;
+  }
 }

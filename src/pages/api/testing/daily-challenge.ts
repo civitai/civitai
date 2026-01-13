@@ -137,6 +137,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       theme: challengeDetails.theme,
       entries: judgedEntries.map((entry) => ({
         creator: entry.username,
+        creatorId: entry.userId,
         summary: entry.summary,
         score: entry.score,
       })),

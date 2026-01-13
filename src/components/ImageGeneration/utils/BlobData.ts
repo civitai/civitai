@@ -31,6 +31,8 @@ export class BlobData implements NormalizedWorkflowStepOutput {
   jobId?: string | null;
   nsfwLevel?: NsfwLevel;
   blockedReason?: string | null;
+  previewUrl?: string | null;
+  previewUrlExpiresAt?: string | null;
 
   constructor({
     data,

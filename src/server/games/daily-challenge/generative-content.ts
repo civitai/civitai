@@ -249,6 +249,7 @@ export async function generateReview(input: GenerateReviewInput) {
 
 type GenerateWinnersInput = {
   entries: Array<{
+    creatorId: number;
     creator: string;
     summary: string;
     score: Score;
@@ -258,6 +259,7 @@ type GenerateWinnersInput = {
 };
 type GeneratedWinners = {
   winners: Array<{
+    creatorId: number;
     creator: string;
     reason: string;
   }>;
@@ -276,6 +278,7 @@ export async function generateWinners(input: GenerateWinnersInput) {
         'winner',
         `{
           "winners": [{
+          "creatorId": "id of the creator",
           "creator": "name of the creator",
           "reason": "why you chose them and what you liked about their image"
           }],

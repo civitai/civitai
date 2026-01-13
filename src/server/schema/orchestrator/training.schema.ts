@@ -96,7 +96,13 @@ const whatIfTrainingDetailsParams = trainingDetailsParams.pick({
 const whatIfKohyaParams = z.object({
   model: z.string(),
   priority: z.enum(OrchPriorityTypes),
-  engine: z.enum([OrchEngineTypes.Kohya, OrchEngineTypes.Rapid, OrchEngineTypes.Flux2Dev, OrchEngineTypes.Flux2DevEdit, OrchEngineTypes.Musubi]),
+  engine: z.enum([
+    OrchEngineTypes.Kohya,
+    OrchEngineTypes.Rapid,
+    OrchEngineTypes.Flux2Dev,
+    OrchEngineTypes.Flux2DevEdit,
+    OrchEngineTypes.Musubi,
+  ]),
   trainingDataImagesCount: z.number(),
   resolution: z.number(),
   maxTrainEpochs: z.number(),

@@ -7,7 +7,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { UsePersistFormReturn } from '~/libs/form/hooks/usePersistForm';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { constants, generation, getGenerationConfig } from '~/server/common/constants';
+import { generation, getGenerationConfig } from '~/server/common/constants';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import type {
   GenerationData,
@@ -16,9 +16,7 @@ import type {
 import {
   fluxKreaAir,
   fluxModeOptions,
-  fluxModelId,
   fluxStandardAir,
-  generationSamplers,
   getBaseModelFromResourcesWithDefault,
   getBaseModelSetType,
   getClosestAspectRatio,
@@ -43,6 +41,7 @@ import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
+import { imageAnnotationsSchema } from '~/components/Generation/Input/DrawingEditor/drawing.utils';
 
 // #region [schemas]
 
@@ -64,6 +63,7 @@ const baseSchema = textToImageParamsSchema
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string().optional(),
     fluxUltraRaw: z.boolean().default(false).catch(false),
+    imageAnnotations: imageAnnotationsSchema,
   });
 const partialSchema = baseSchema.partial();
 
@@ -73,7 +73,7 @@ function createFormSchema() {
       const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
       const { height, width } = isFluxUltra
         ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
-        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+        : getSizeFromAspectRatio(data.aspectRatio, data.baseModel, data.model.id);
 
       return removeEmpty({
         ...data,
@@ -83,7 +83,10 @@ function createFormSchema() {
     })
     .superRefine((data, ctx) => {
       if (data.workflow.startsWith('txt2img')) {
-        if (!data.prompt || data.prompt.length === 0) {
+        // Prompt is optional if imageAnnotations exists and is not empty
+        const hasAnnotations = data.imageAnnotations && data.imageAnnotations.length > 0;
+
+        if (!hasAnnotations && (!data.prompt || data.prompt.length === 0)) {
           ctx.addIssue({
             code: 'custom',
             message: 'Prompt cannot be empty',
@@ -143,7 +146,7 @@ function formatGenerationData(data: Omit<GenerationData, 'type'>): PartialFormDa
       data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
     );
 
-  const config = getGenerationConfig(baseModel);
+  const config = getGenerationConfig(baseModel, checkpoint?.id);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
   if (

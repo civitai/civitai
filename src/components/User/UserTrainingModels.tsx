@@ -42,6 +42,7 @@ import React, { useMemo, useState } from 'react';
 import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
@@ -794,7 +795,7 @@ export default function UserTrainingModels() {
           color={announcement.color || 'yellow'}
           size="sm"
         >
-          {announcement.message}
+          <CustomMarkdown>{announcement.message}</CustomMarkdown>
         </AlertWithIcon>
       )}
 

@@ -41,7 +41,7 @@ export const creatorsProgramDistribute = createJob(
     if (!clickhouse) return;
 
     const availability = getCreatorProgramAvailability();
-    if (!availability) return;
+    if (!availability.isAvailable) return;
 
     // Determine `month` we're settling
     let month = await dbKV.get('compensation-pool-month', FIRST_CREATOR_PROGRAM_MONTH);
@@ -120,7 +120,7 @@ export const creatorsProgramInviteTipalti = createJob(
   '50 23 L * *',
   async () => {
     const availability = getCreatorProgramAvailability();
-    if (!availability) return;
+    if (!availability.isAvailable) return;
     const participants = await getPoolParticipantsV2(
       dayjs().subtract(1, 'months').toDate(),
       true,
@@ -190,7 +190,7 @@ export const creatorsProgramSettleCash = createJob(
     if (!clickhouse) return;
 
     const availability = getCreatorProgramAvailability();
-    if (!availability) return;
+    if (!availability.isAvailable) return;
 
     const month = dayjs().subtract(1, 'months').toDate();
     const participants = await getPoolParticipantsV2(month, true, 'yellow');

@@ -463,7 +463,6 @@ export const REDIS_SYS_KEYS = {
   },
   COLLECTION: {
     RANDOM_SEED: 'collection:random-seed',
-    CONTEST_IDS: 'collection:contest-ids',
   },
   EVENT: 'event', // special case
   SESSION: {
@@ -619,6 +618,7 @@ export const REDIS_KEYS = {
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
+    USER_DOWNLOADS: 'packed:caches:user-downloads',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',
       IMAGES: 'packed:caches:mod-rules:images',
@@ -702,6 +702,9 @@ export const REDIS_KEYS = {
   },
   ENTITY_METRICS: {
     BASE: 'entitymetric',
+  },
+  QUEUES: {
+    SEEN_IMAGES: 'queues:recent-images',
   },
 } as const;
 

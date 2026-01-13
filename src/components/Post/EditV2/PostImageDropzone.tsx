@@ -1,12 +1,18 @@
-import { Progress } from '@mantine/core';
+import { Button, Progress } from '@mantine/core';
 import { useEffect } from 'react';
+import { IconPhotoPlus } from '@tabler/icons-react';
+import pLimit from 'p-limit';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
+import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
+import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import {
@@ -14,8 +20,12 @@ import {
   useExternalMetaStore,
   useOrchestratorUrlStore,
 } from '~/store/post-image-transmitter.store';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+
+const importLimit = pLimit(5);
 
 const max = POST_IMAGE_LIMIT;
 
@@ -117,6 +127,79 @@ export function PostImageDropzone({
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
     handleUpload(args);
   };
+
+  const handleImportFromGenerator = async (assets: SelectedImage[]) => {
+    if (!assets.length) return;
+
+    const importNotifId = `importing-generator-${Date.now()}`;
+    showNotification({
+      id: importNotifId,
+      loading: true,
+      autoClose: false,
+      withCloseButton: false,
+      message: `Importing ${assets.length} image${
+        assets.length !== 1 ? 's' : ''
+      } from generator...`,
+    });
+
+    const files = await Promise.all(
+      assets.map((asset, idx) =>
+        importLimit(async () => {
+          try {
+            const result = await fetch(getEdgeUrl(asset.url));
+            if (!result.ok) return;
+
+            const blob = await result.blob();
+            return {
+              file: new File(
+                [blob],
+                `generator_import_${Date.now()}_${idx}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
+                {
+                  type: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(blob.type as never)
+                    ? blob.type
+                    : asset.type === 'video'
+                    ? MIME_TYPES.mp4
+                    : MIME_TYPES.jpeg,
+                }
+              ),
+              meta: asset.meta ?? { prompt: asset.label },
+            };
+          } catch (e) {
+            return;
+          }
+        })
+      )
+    );
+
+    const goodFiles = files.filter(isDefined);
+
+    if (goodFiles.length > 0) {
+      handleUpload(goodFiles);
+    }
+
+    // Hide notification after a short delay to allow upload to start
+    setTimeout(() => {
+      hideNotification(importNotifId);
+    }, 500);
+  };
+
+  const openGeneratorImportModal = () => {
+    const existingUrls = images
+      .filter((img) => img.type === 'added')
+      .map((img) => img.data.url)
+      .filter(isDefined);
+
+    dialogStore.trigger({
+      component: ImageSelectModal,
+      props: {
+        title: 'Import from Generator',
+        selectSource: 'generation',
+        onSelect: handleImportFromGenerator,
+        importedUrls: existingUrls,
+        videoAllowed: true,
+      },
+    });
+  };
   // #endregion
 
   const orchestratorTransferredMedia = useOrchestratorUrlStore((state) => state.data);
@@ -132,7 +215,7 @@ export function PostImageDropzone({
   // #endregion
 
   return (
-    <div className={`flex flex-col gap-1`}>
+    <div className="flex flex-col gap-1">
       <div className="w-full">
         <MediaDropzone
           onDrop={handleDrop}
@@ -143,6 +226,15 @@ export function PostImageDropzone({
           className="rounded-lg"
         />
       </div>
+      <Button
+        variant="light"
+        leftSection={<IconPhotoPlus size={16} />}
+        onClick={openGeneratorImportModal}
+        disabled={!canAdd}
+        fullWidth
+      >
+        Import from Generator
+      </Button>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
       {!files.length && <UploadNotice />}
     </div>

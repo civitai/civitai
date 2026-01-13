@@ -16,17 +16,12 @@ export const getUserDownloadsInfiniteHandler = async ({
   const limit = input.limit ?? DEFAULT_PAGE_SIZE;
 
   try {
-    const { items } = await getUserDownloads({
+    // Service handles pagination internally and returns nextCursor
+    const { items, nextCursor } = await getUserDownloads({
       ...input,
-      limit: limit + 1,
+      limit,
       userId,
     });
-
-    let nextCursor: Date | undefined;
-    if (items.length > limit) {
-      const nextItem = items.pop();
-      nextCursor = nextItem?.downloadAt;
-    }
 
     return { items, nextCursor };
   } catch (error) {

@@ -37,6 +37,7 @@ export function getS3Client(destination: S3Clients = 'model') {
       },
       region: env.S3_IMAGE_UPLOAD_REGION,
       endpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
+      forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
     });
   }
 

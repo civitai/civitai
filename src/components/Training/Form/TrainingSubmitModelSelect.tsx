@@ -14,6 +14,7 @@ import {
 import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
@@ -366,7 +367,7 @@ export const ModelSelect = ({
                   color={announcement.color || 'yellow'}
                   size="sm"
                 >
-                  {announcement.message}
+                  <CustomMarkdown>{announcement.message}</CustomMarkdown>
                 </AlertWithIcon>
               )}
               {mediaType === 'image' && (
@@ -451,30 +452,26 @@ export const ModelSelect = ({
               )}
               {mediaType === 'video' && (
                 <>
-                  {false && (
-                    <ModelSelector
-                      selectedRun={selectedRun}
-                      color="teal"
-                      name="Hunyuan"
-                      value={baseModelHunyuan}
-                      baseType="hunyuan"
-                      makeDefaultParams={makeDefaultParams}
-                      isVideo
-                      isNew={new Date() < new Date('2025-04-30')}
-                    />
-                  )}
-                  {false && (
-                    <ModelSelector
-                      selectedRun={selectedRun}
-                      color="green"
-                      name="Wan"
-                      value={baseModelWan}
-                      baseType="wan"
-                      makeDefaultParams={makeDefaultParams}
-                      isVideo
-                      isNew={new Date() < new Date('2025-04-30')}
-                    />
-                  )}
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="teal"
+                    name="Hunyuan"
+                    value={baseModelHunyuan}
+                    baseType="hunyuan"
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew={new Date() < new Date('2025-04-30')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="green"
+                    name="Wan"
+                    value={baseModelWan}
+                    baseType="wan"
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew={new Date() < new Date('2025-04-30')}
+                  />
                 </>
               )}
               {mediaType === 'image' && (

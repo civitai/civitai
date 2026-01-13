@@ -714,10 +714,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     group: 'NanoBanana',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Nano Banana'] }],
   },
-  {
-    group: 'Qwen',
-    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
-  },
+  // {
+  //   group: 'Qwen',
+  //   support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Qwen'] }],
+  // },
   {
     group: 'Seedream',
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Seedream'] }],
@@ -842,6 +842,10 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],
   },
   {
+    group: 'LTXV',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['LTXV'] }],
+  },
+  {
     group: 'ZImageTurbo',
     support: [
       {
@@ -932,6 +936,13 @@ export function getGenerationBaseModelResourceOptions(
 export function getGenerationBaseModels(group: string, modelType: ModelType) {
   const match = getGenerationBaseModelGroup(group);
   return match?.supportMap.get(modelType)?.map((x) => x.baseModel) ?? [];
+}
+
+export function getBaseModelGenerationSupported(baseModel: string, modelType: ModelType) {
+  const group = getGenerationBaseModelGroup(baseModel);
+  if (!group) return false;
+  const support = group.supportMap.get(modelType)?.find((x) => x.baseModel === baseModel);
+  return !!support;
 }
 
 export function getGenerationBaseModelAssociatedGroups(group: string, modelType: ModelType) {

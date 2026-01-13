@@ -24,6 +24,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './TrainingBasicInfo.module.css';
+import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 
 type tmTypes = TrainingDetailsObj['type'];
 type tMediaTypes = TrainingDetailsObj['mediaType'];
@@ -132,6 +133,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const queryUtils = trpc.useUtils();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const features = useFeatureFlags();
+  const status = useTrainingServiceStatus();
 
   const { resetRuns } = trainingStore;
 
@@ -399,6 +401,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           loading={
             upsertModelMutation.isLoading || upsertVersionMutation.isLoading || awaitInvalidate
           }
+          disabled={status && !status.available}
         >
           Next
         </Button>

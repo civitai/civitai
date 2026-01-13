@@ -67,10 +67,10 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     const tasks = chunk(ids, 5000).map((batch) => async () => {
       const results = await ch?.$query<Metrics>(`
         SELECT entityId as "id",
-          sumIf(metricValue, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
-          sumIf(metricValue, metricType = 'Comment') as "commentCount",
-          sumIf(metricValue, metricType = 'Collection') as "collectedCount"
-        FROM entityMetricEvents
+          sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
+          sumIf(total, metricType = 'Comment') as "commentCount",
+          sumIf(total, metricType = 'Collection') as "collectedCount"
+        FROM entityMetricDailyAgg
         WHERE entityType = 'Image'
           AND entityId IN (${batch.join(',')})
         GROUP BY id

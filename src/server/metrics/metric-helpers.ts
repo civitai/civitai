@@ -1,7 +1,12 @@
+import { chunk } from 'lodash-es';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
+import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-helpers';
 import type { JobContext } from '~/server/jobs/job';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('metric-helpers');
 
 export function getAffected(ctx: {
   pg: AugmentedPool;
@@ -131,3 +136,115 @@ export const snippets = {
   reactionMetricNames,
   reactionMetricUpserts,
 };
+
+const METRIC_BATCH_SIZE = 200;
+
+// Add additional entity types here as needed
+type EntityType = 'Model' | 'ModelVersion' | 'Post' | 'Article' | 'Image' | 'Collection';
+
+type EntityMetricContext = {
+  ch: CustomClickHouseClient;
+  jobContext: JobContext;
+  lastUpdate: Date;
+  queue: number[];
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
+  addAffected?: (ids: number[]) => void;
+};
+
+type EntityMetricOptions = {
+  updates?: Record<number, Record<string, number>>;
+  idKey?: string;
+  queue?: number[];
+  addAffected?: (ids: number[]) => void;
+};
+
+// The agg table refreshes every 5 minutes. We use a 30s buffer to account for refresh duration.
+const AGG_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const AGG_REFRESH_BUFFER_MS = 30 * 1000;
+
+const getAggInterval = (date: Date) =>
+  Math.floor(date.getTime() / AGG_REFRESH_INTERVAL_MS);
+
+const floorToAggInterval = (date: Date) =>
+  new Date(getAggInterval(date) * AGG_REFRESH_INTERVAL_MS - AGG_REFRESH_BUFFER_MS);
+
+const hasCrossedAggBoundary = (lastUpdate: Date) =>
+  getAggInterval(lastUpdate) !== getAggInterval(new Date());
+
+export function getEntityMetricTasks(ctx: EntityMetricContext) {
+  return async function (
+    entityType: EntityType,
+    metricType: string,
+    options?: EntityMetricOptions
+  ): Promise<Array<() => Promise<void>>> {
+    // Use provided options or fall back to context defaults
+    const updates = options?.updates ?? ctx.updates;
+    const idKey = options?.idKey ?? ctx.idKey;
+    const queue = options?.queue ?? ctx.queue;
+    const addAffected = options?.addAffected ?? ctx.addAffected;
+
+    // Skip if we haven't crossed an agg refresh boundary (no new data to fetch)
+    if (!hasCrossedAggBoundary(ctx.lastUpdate)) {
+      log(`getEntityMetricTasks(${entityType}, ${metricType}) skipped - no new agg data`);
+      return [];
+    }
+
+    // Floor lastUpdate to the agg refresh interval to ensure we don't miss events
+    // that were processed in the latest agg table refresh
+    const lastUpdateFloored = floorToAggInterval(ctx.lastUpdate);
+
+    // Get affected entities from ClickHouse
+    const events = await ctx.ch.$query<{ entityId: number }>`
+      SELECT DISTINCT entityId
+      FROM entityMetricEvents_month
+      WHERE entityType = '${entityType}'
+        AND metricType = '${metricType}'
+        AND createdAt >= ${lastUpdateFloored}
+    `;
+
+    // Merge with queue
+    const affected = [...new Set([...events.map((x) => x.entityId), ...queue])];
+
+    // Track affected if callback provided
+    if (addAffected) {
+      addAffected(affected);
+    }
+
+    // Create batched tasks
+    const tasks = chunk(affected, METRIC_BATCH_SIZE).map((ids, i) => async () => {
+      ctx.jobContext.checkIfCanceled();
+      log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length);
+
+      const metrics = await ctx.ch.$query<{ entityId: number; value: number }>`
+        SELECT
+          entityId,
+          sum(total) AS value
+        FROM (
+          SELECT
+            entityId,
+            day,
+            argMax(total, refreshedAt) AS total
+          FROM entityMetricDailyAgg_new
+          WHERE entityType = '${entityType}'
+            AND metricType = '${metricType}'
+            AND entityId IN (${ids})
+          GROUP BY entityId, day
+        )
+        GROUP BY entityId
+      `;
+
+      ctx.jobContext.checkIfCanceled();
+
+      for (const row of metrics) {
+        const entityId = row.entityId;
+        updates[entityId] ??= { [idKey]: entityId };
+        updates[entityId][metricType] = row.value;
+      }
+
+      log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length, 'done');
+    });
+
+    return tasks;
+  };
+}
