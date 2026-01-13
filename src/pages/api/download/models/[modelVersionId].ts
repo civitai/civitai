@@ -7,6 +7,7 @@ import { colorDomains, getRequestDomainColor } from '~/shared/constants/domain.c
 import { dbRead } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
@@ -161,6 +162,13 @@ export default PublicEndpoint(
         earlyAccess: fileResult.inEarlyAccess,
         time: now,
       });
+
+      // Bust the downloads cache so the user sees their download immediately
+      if (session?.user?.id) {
+        bustUserDownloadsCache(session.user.id).catch(() => {
+          // ignore
+        });
+      }
 
       // Increment download count for user
       await downloadLimiter.increment(userKey);

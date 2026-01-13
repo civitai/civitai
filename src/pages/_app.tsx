@@ -145,17 +145,17 @@ function MyApp(props: CustomAppProps) {
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
-        <UpdateRequiredWatcher>
-          <IsClientProvider>
-            <ClientHistoryStore />
-            <RegisterCatchNavigation />
-            <RouterTransition />
-            {/* <ChadGPT isAuthed={!!session} /> */}
-            <SessionProvider
-              session={session ? session : !hasAuthCookie ? null : undefined}
-              refetchOnWindowFocus={false}
-              refetchWhenOffline={false}
-            >
+        <SessionProvider
+          session={session ? session : !hasAuthCookie ? null : undefined}
+          refetchOnWindowFocus={false}
+          refetchWhenOffline={false}
+        >
+          <UpdateRequiredWatcher>
+            <IsClientProvider>
+              <ClientHistoryStore />
+              <RegisterCatchNavigation />
+              <RouterTransition />
+              {/* <ChadGPT isAuthed={!!session} /> */}
               <FeatureFlagsProvider flags={flags}>
                 <GoogleAnalytics />
                 <AccountProvider>
@@ -204,9 +204,9 @@ function MyApp(props: CustomAppProps) {
                   </CivitaiSessionProvider>
                 </AccountProvider>
               </FeatureFlagsProvider>
-            </SessionProvider>
-          </IsClientProvider>
-        </UpdateRequiredWatcher>
+            </IsClientProvider>
+          </UpdateRequiredWatcher>
+        </SessionProvider>
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 

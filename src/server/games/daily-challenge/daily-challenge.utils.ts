@@ -27,6 +27,7 @@ const challengeConfigSchema = z.object({
     min: z.number(),
     max: z.number(),
   }),
+  maxScoredPerUser: z.number(),
   finalReviewAmount: z.number(),
   resourceCosmeticId: z.number().nullable(),
   articleTagId: z.number(),
@@ -47,6 +48,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 200, points: 10 } as Prize,
   reviewAmount: { min: 2, max: 6 },
+  maxScoredPerUser: 5,
   finalReviewAmount: 10,
   resourceCosmeticId: null,
   articleTagId: 128643, // Announcement.

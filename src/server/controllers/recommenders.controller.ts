@@ -1,4 +1,5 @@
 import { MetricTimeframe, ModelModifier } from '~/shared/utils/prisma/enums';
+import { getBaseModelGenerationSupported } from '~/shared/constants/base-model.constants';
 import { TRPCError } from '@trpc/server';
 import { ModelSort } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
@@ -101,7 +102,10 @@ export const getRecommendedResourcesCardDataHandler = async ({
           (modelInput.user || modelInput.username);
         if (!versionImages.length && !showImageless) return null;
 
-        const canGenerate = !!version.covered && !unavailableGenResources.includes(version.id);
+        const canGenerate =
+          !!version.covered &&
+          !unavailableGenResources.includes(version.id) &&
+          getBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,

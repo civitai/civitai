@@ -28,30 +28,54 @@ function logError({ error, name, details }: { error: Error; name: string; detail
   }
 }
 
+// Create an AbortController with timeout for health checks
+function createHealthCheckAbort() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.HEALTHCHECK_TIMEOUT);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeout),
+  };
+}
+
 const checkFns = {
   async write() {
-    return !!(await dbWrite.$queryRawUnsafe('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'dbWrite', details: null });
-      return false;
-    }));
+    return !!(await dbWrite
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}`);
+        return tx.$queryRawUnsafe(`SELECT 1`);
+      })
+      .catch((e) => {
+        logError({ error: e, name: 'dbWrite', details: null });
+        return false;
+      }));
   },
   async read() {
-    return !!(await dbRead.$queryRawUnsafe('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'dbRead', details: null });
-      return false;
-    }));
+    return !!(await dbRead
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}`);
+        return tx.$queryRawUnsafe(`SELECT 1`);
+      })
+      .catch((e) => {
+        logError({ error: e, name: 'dbRead', details: null });
+        return false;
+      }));
   },
   async pgWrite() {
-    return !!(await pgDbWrite.query('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'pgWrite', details: null });
-      return false;
-    }));
+    return !!(await pgDbWrite
+      .query(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`)
+      .catch((e) => {
+        logError({ error: e, name: 'pgWrite', details: null });
+        return false;
+      }));
   },
   async pgRead() {
-    return !!(await pgDbRead.query('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'pgRead', details: null });
-      return false;
-    }));
+    return !!(await pgDbRead
+      .query(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`)
+      .catch((e) => {
+        logError({ error: e, name: 'pgRead', details: null });
+        return false;
+      }));
   },
   async searchMetrics() {
     if (metricsSearchClient === null) return true;
@@ -84,15 +108,17 @@ const checkFns = {
       });
   },
   async clickhouse() {
-    return (
-      (await clickhouse
-        ?.ping()
-        .then(({ success }) => success)
-        .catch((e) => {
-          logError({ error: e, name: 'clickhouse', details: null });
-          return false;
-        })) ?? true
-    );
+    if (!clickhouse) return true;
+    const { clear } = createHealthCheckAbort();
+    try {
+      const { success } = await clickhouse.ping();
+      clear();
+      return success;
+    } catch (e) {
+      clear();
+      logError({ error: e as Error, name: 'clickhouse', details: null });
+      return false;
+    }
   },
   // async buzz() {
   //   return await pingBuzzService().catch((e) => {
@@ -114,17 +140,12 @@ const counters = (() =>
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
-  const disabledChecks = JSON.parse(
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS
-    )) ?? '[]'
-  ) as CheckKey[];
+  const disabledChecks = await getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS);
   const resultsArray = await Promise.all(
     Object.entries(checkFns)
       .filter(([name]) => !disabledChecks.includes(name as CheckKey))
       .map(([name, fn]) =>
-        timeoutAsyncFn(fn)
+        timeoutAsyncFn(fn, false)
           .then((result) => {
             if (!result) counters[name as CheckKey]?.inc();
             return { [name]: result };
@@ -132,12 +153,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           .catch(() => ({ [name]: false }))
       )
   );
-  const nonCriticalChecks = JSON.parse(
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
-    )) ?? '[]'
-  ) as CheckKey[];
+  const nonCriticalChecks = await getHealthcheckConfig(
+    REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
+  );
 
   const healthy = resultsArray.every((result) => {
     const [key, value] = Object.entries(result)[0];
@@ -157,9 +175,17 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   });
 });
 
-function timeoutAsyncFn(fn: () => Promise<boolean>) {
+function timeoutAsyncFn<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   return Promise.race([
     fn(),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), env.HEALTHCHECK_TIMEOUT)),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), env.HEALTHCHECK_TIMEOUT)),
   ]);
+}
+
+async function getHealthcheckConfig(key: string): Promise<CheckKey[]> {
+  const value = await timeoutAsyncFn(
+    () => sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, key),
+    null
+  );
+  return JSON.parse(value ?? '[]') as CheckKey[];
 }

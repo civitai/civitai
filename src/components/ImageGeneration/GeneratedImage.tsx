@@ -228,7 +228,7 @@ export function GeneratedImage({
     const element = e.currentTarget;
     const previewUrl = image.previewUrl ?? image.url;
 
-    if (image.previewUrl && 'src' in element) {
+    if (image.previewUrl && 'src' in element && !isLightbox) {
       element.src = image.url;
 
       // Restore preview after context menu closes

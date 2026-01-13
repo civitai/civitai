@@ -397,7 +397,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       </>
                     )}
 
-                    {isImageCollection && (
+                    {/* {isImageCollection && (
                       <>
                         <Divider label="Vimeo Support" />
                         <InputCheckbox
@@ -406,7 +406,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                           description="Approved videos longer than 30s will be uploaded to vimeo on an hourly basis."
                         />
                       </>
-                    )}
+                    )} */}
                   </>
                 )}
               </>

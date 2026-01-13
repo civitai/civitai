@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
-import { CacheTTL, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
+import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -15,7 +15,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { userCollectionCountCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { userPreferencesSchema } from '~/server/schema/base.schema';
@@ -877,16 +877,6 @@ export const upsertCollection = async ({
 
       await userCollectionCountCache.bust(updated.userId);
 
-      // Bust contest collection IDs cache if mode changed to/from Contest
-      if (currentCollection.mode !== updated.mode) {
-        if (
-          updated.mode === CollectionMode.Contest ||
-          currentCollection.mode === CollectionMode.Contest
-        ) {
-          await bustContestCollectionIdsCache();
-        }
-      }
-
       return updated;
     });
 
@@ -1015,11 +1005,6 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.bust(userId);
-
-  // Bust contest collection IDs cache if creating a contest collection
-  if (collection.mode === CollectionMode.Contest) {
-    await bustContestCollectionIdsCache();
-  }
 
   return collection;
 };
@@ -1584,11 +1569,6 @@ export const deleteCollectionById = async ({
     },
   ]);
 
-  // Bust contest collection IDs cache if deleting a contest collection
-  if (collection.mode === CollectionMode.Contest) {
-    await bustContestCollectionIdsCache();
-  }
-
   return res;
 };
 
@@ -1855,31 +1835,6 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
-// Cache contest collection IDs for 1 hour
-export async function getContestCollectionIds(): Promise<number[]> {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.COLLECTION.CONTEST_IDS);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-
-  const contestCollections = await dbRead.collection.findMany({
-    where: { mode: CollectionMode.Contest },
-    select: { id: true },
-  });
-
-  const ids = contestCollections.map((c) => c.id);
-  await sysRedis.set(REDIS_SYS_KEYS.COLLECTION.CONTEST_IDS, JSON.stringify(ids), {
-    EX: CacheTTL.hour,
-  }); // 1 hour TTL
-
-  return ids;
-}
-
-// Bust the contest collection IDs cache when a collection mode changes
-export async function bustContestCollectionIdsCache(): Promise<void> {
-  await sysRedis.del(REDIS_SYS_KEYS.COLLECTION.CONTEST_IDS);
-}
-
 export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
@@ -2095,41 +2050,36 @@ const validateFeaturedCollectionEntry = async ({
     return;
   }
 
-  // Use cached contest collection IDs
-  const contestCollectionIds = await getContestCollectionIds();
+  // Build the item filter clause based on which item type is provided
+  let itemFilter: Prisma.Sql;
+  if (modelIds.length > 0) {
+    itemFilter = Prisma.sql`ci."modelId" IN (${Prisma.join(modelIds)})`;
+  } else if (imageIds.length > 0) {
+    itemFilter = Prisma.sql`ci."imageId" IN (${Prisma.join(imageIds)})`;
+  } else if (articleIds.length > 0) {
+    itemFilter = Prisma.sql`ci."articleId" IN (${Prisma.join(articleIds)})`;
+  } else if (postIds.length > 0) {
+    itemFilter = Prisma.sql`ci."postId" IN (${Prisma.join(postIds)})`;
+  } else {
+    return; // No items to check
+  }
 
-  if (contestCollectionIds.length > 0) {
-    // Build WHERE clause for only the populated item type
-    // This allows PostgreSQL to use the hash index on the specific item ID field first,
-    // then filter by collectionId - much more efficient than collectionId IN (...) with OR conditions
-    const whereClause: Prisma.CollectionItemWhereInput = {
-      collectionId: { in: contestCollectionIds },
-    };
+  // Use raw SQL to avoid Prisma's enum casting issue that prevents index usage
+  // This query joins CollectionItem with Collection directly, using the Collection_contests
+  // partial index for efficient Contest collection lookup
+  const existingItems = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT ci.id
+    FROM "CollectionItem" ci
+    JOIN "Collection" c ON c.id = ci."collectionId"
+    WHERE c.mode = 'Contest'::"CollectionMode"
+      AND ${itemFilter}
+    LIMIT 1
+  `;
 
-    if (modelIds.length > 0) {
-      whereClause.modelId = { in: modelIds };
-    } else if (imageIds.length > 0) {
-      whereClause.imageId = { in: imageIds };
-    } else if (articleIds.length > 0) {
-      whereClause.articleId = { in: articleIds };
-    } else if (postIds.length > 0) {
-      whereClause.postId = { in: postIds };
-    } else {
-      return; // No items to check
-    }
-
-    // Query uses item-specific index first (hash lookup), then filters by collectionId
-    // This is 100-1000x faster than the previous OR-based query
-    const existingCollectionItemsOnContestCollection = await dbRead.collectionItem.findFirst({
-      select: { id: true },
-      where: whereClause,
-    });
-
-    if (existingCollectionItemsOnContestCollection) {
-      throw throwBadRequestError(
-        'At least one of the items provided is already in a contest collection and cannot be added to the featured collections.'
-      );
-    }
+  if (existingItems.length > 0) {
+    throw throwBadRequestError(
+      'At least one of the items provided is already in a contest collection and cannot be added to the featured collections.'
+    );
   }
 };
 
@@ -2430,13 +2380,12 @@ export const getCollectionCoverImages = async ({
   `
       : [];
 
-  const tags = await dbRead.tagsOnImageDetails.findMany({
-    where: {
-      imageId: { in: [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))] },
-      disabled: false,
-    },
-    select: { imageId: true, tagId: true },
-  });
+  // Use Redis cache for tag lookups (much faster than direct DB query)
+  const imageIds = [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))];
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+  const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
+    cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
+  );
 
   return itemImages
     .map(({ id, image, src }) => ({

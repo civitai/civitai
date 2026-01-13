@@ -62,6 +62,19 @@ npm test                 # Run Playwright tests
 npm run test:ui          # Run tests with UI
 ```
 
+### Database
+```bash
+npm run db:migrate:empty  # Create an empty migration file
+```
+
+### Release (requires user permission)
+```bash
+npm run release          # Patch release (0.0.x) - default
+npm run release:minor    # Minor release (0.x.0)
+npm run release:major    # Major release (x.0.0)
+```
+**IMPORTANT**: Never run release commands without explicit user approval. These commands bump the version, push tags, and rebase the release branch.
+
 ## Component Standards
 
 ### File Structure

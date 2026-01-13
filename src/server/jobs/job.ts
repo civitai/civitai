@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { applySourceMaps } from '~/server/utils/errorHandling';
 
 export type Job = {
   name: string;
@@ -72,16 +74,28 @@ export function createJob(
         },
         req,
       };
-      const cancel = () => {
+      const cancel = async () => {
         if (jobContext.status !== 'running') return;
         jobContext.status = 'canceled';
-        Promise.all(onCancel.map((x) => x()));
+        await Promise.all(onCancel.map((x) => x()));
       };
-      const result = fn(jobContext);
-      result.finally(() => {
-        if (jobContext.status === 'canceled') return;
-        jobContext.status = 'finished';
-      });
+      const result = fn(jobContext)
+        .catch(async (e) => {
+          const error = e instanceof Error ? e : undefined;
+          const message = typeof e === 'string' ? e : error?.message;
+          const stack = error?.stack ? await applySourceMaps(error.stack) : undefined;
+          logToAxiom({
+            type: 'job-error',
+            name,
+            message: !stack ? message : undefined,
+            stack,
+          });
+          throw e; // Re-throw to ensure webhook endpoint can handle errors
+        })
+        .finally(() => {
+          if (jobContext.status === 'canceled') return;
+          jobContext.status = 'finished';
+        });
       return { result, cancel };
     },
     options: {

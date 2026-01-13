@@ -64,12 +64,17 @@ function getClickHouse() {
 
     log('$query', query);
 
-    const response = await client.query({
-      query,
-      format: 'JSONEachRow',
-    });
-    const data = await response?.json<T>();
-    return data;
+    try {
+      const response = await client.query({
+        query,
+        format: 'JSONEachRow',
+      });
+      const data = await response?.json<T>();
+      return data;
+    } catch (e) {
+      const error = e as Error;
+      throw new Error(`ClickHouse query failed: ${error.message}\nQuery: ${query}`);
+    }
   };
 
   client.$exec = async function (query: TemplateStringsArray | string, ...values: any[]) {

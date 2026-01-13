@@ -225,17 +225,12 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         const { deletedAt, ...restUser } = (token.user ?? {}) as User;
         token.user = { ...restUser };
 
-        // Check if token should be refreshed or invalidated
-        const refreshedToken = isNewToken ? token : await refreshToken(token);
+        // Note: We don't call refreshToken here anymore.
+        // The session callback handles all refresh/invalidation logic.
+        // This keeps the JWT callback simple and avoids double-processing
+        // which would consume the Redis state before the session callback sees it.
 
-        // If token is invalid (returns null), return null to force NextAuth to clear the cookie
-        // Note: Returning null tells NextAuth the token is invalid and should be cleared
-        if (!refreshedToken) {
-          token.user = {};
-          return token;
-        }
-
-        return refreshedToken;
+        return token;
       },
       async session({ session, token }) {
         if (!token.user || !token.id) {
@@ -243,16 +238,24 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         }
 
         // Validate and refresh token on every request (this runs on every getServerSession call)
-        // This ensures invalidated sessions are caught immediately, not just when the JWT renews
-        const validatedToken = await refreshToken(token);
+        // This ensures invalidated sessions are caught immediately
+        const refreshResult = await refreshToken(token);
 
-        if (!validatedToken) {
+        if (!refreshResult.token) {
           // Token was invalidated or expired - return empty session to force logout
-          return (session = {} as any); // Return without user to force logout
+          if (refreshResult.needsCookieRefresh) {
+            return { needsCookieRefresh: true };
+          }
+          return {} as any;
         }
 
         // Token is valid, use the (potentially refreshed) user data
-        session.user = validatedToken.user as any;
+        session.user = refreshResult.token.user as any;
+
+        // Signal that client's session cookie needs refreshing
+        if (refreshResult.needsCookieRefresh) {
+          session.needsCookieRefresh = true;
+        }
 
         return session;
       },

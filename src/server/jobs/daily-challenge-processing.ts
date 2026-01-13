@@ -383,6 +383,18 @@ async function reviewEntries() {
     const lastReviewedAt = new Date(Number(article.reviewedAt));
     log('Last reviewed at:', lastReviewedAt);
 
+    // Get count of already-scored entries per user for this challenge (for per-user cap)
+    const userScoredCounts = await dbWrite.$queryRaw<{ userId: number; count: bigint }[]>`
+    SELECT i."userId", COUNT(*) as count
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${currentChallenge.collectionId}
+    AND ci."tagId" = ${config.judgedTagId}
+    GROUP BY i."userId"
+  `;
+    const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
+    log('Users with scored entries:', scoredCountMap.size);
+
     // Get entries approved since last reviewed
     const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
@@ -408,12 +420,16 @@ async function reviewEntries() {
     for (const entry of shuffledEntries) {
       if (toReviewCount <= 0) break;
       if (reviewingUsers.has(entry.userId)) continue;
+      // Skip users who have already hit the per-user scored cap
+      const userScored = scoredCountMap.get(entry.userId) ?? 0;
+      if (userScored >= config.maxScoredPerUser) continue;
       toReview.push(entry);
+      reviewingUsers.add(entry.userId);
       toReviewCount--;
     }
     log('Entries to review:', toReview.length);
 
-    // Get forced to review entries
+    // Get forced to review entries (also respecting per-user cap)
     const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -428,7 +444,14 @@ async function reviewEntries() {
     AND ci."tagId" = ${config.reviewMeTagId}
   `;
     log('Requested review:', requestReview.length);
-    toReview.push(...requestReview);
+    // Filter reviewMe entries to also respect per-user cap
+    for (const entry of requestReview) {
+      const userScored = scoredCountMap.get(entry.userId) ?? 0;
+      if (userScored >= config.maxScoredPerUser) continue;
+      if (reviewingUsers.has(entry.userId)) continue;
+      toReview.push(entry);
+      reviewingUsers.add(entry.userId);
+    }
 
     // Rate entries
     const tasks = toReview.map((entry) => async () => {
@@ -603,6 +626,7 @@ async function pickWinners() {
     theme: currentChallenge.theme,
     entries: judgedEntries.map((entry) => ({
       creator: entry.username,
+      creatorId: entry.userId,
       summary: entry.summary,
       score: entry.score,
     })),
@@ -612,7 +636,10 @@ async function pickWinners() {
   // Map winners to entries
   const winningEntries = winners
     .map((winner, i) => {
-      const entry = judgedEntries.find((e) => e.username === winner.creator);
+      const entry = judgedEntries.find(
+        (e) =>
+          e.username.toLowerCase() === winner.creator.toLowerCase() || e.userId === winner.creatorId
+      );
       if (!entry) return null;
       return {
         ...entry,
@@ -761,47 +788,62 @@ export async function getCoverOfModel(modelId: number) {
 }
 
 export async function getJudgedEntries(collectionId: number, config: ChallengeConfig) {
-  const judgedEntriesRaw = await dbRead.$queryRaw<Omit<JudgedEntry, 'engagement'>[]>`
-    SELECT
-      ci."imageId",
-      i."userId",
-      u."username",
-      ci.note
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    JOIN "User" u ON u.id = i."userId"
-    WHERE ci."collectionId" = ${collectionId}
-    AND ci."tagId" = ${config.judgedTagId}
-    AND ci.note IS NOT NULL -- Since people can apply judged tag atm...
-    AND ci.status = 'ACCEPTED'
+  // Get each user's BEST entry only (by AI score), so users with many entries
+  // don't have an advantage over users with fewer entries
+  const userBestEntries = await dbRead.$queryRaw<Omit<JudgedEntry, 'engagement'>[]>`
+    WITH ranked AS (
+      SELECT
+        ci."imageId",
+        i."userId",
+        u."username",
+        ci.note,
+        ROW_NUMBER() OVER (
+          PARTITION BY i."userId"
+          ORDER BY (
+            (ci.note::json->'score'->>'theme')::float +
+            (ci.note::json->'score'->>'wittiness')::float +
+            (ci.note::json->'score'->>'humor')::float +
+            (ci.note::json->'score'->>'aesthetic')::float
+          ) DESC
+        ) as rn
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      JOIN "User" u ON u.id = i."userId"
+      WHERE ci."collectionId" = ${collectionId}
+      AND ci."tagId" = ${config.judgedTagId}
+      AND ci.note IS NOT NULL
+      AND ci.status = 'ACCEPTED'
+    )
+    SELECT "imageId", "userId", username, note
+    FROM ranked
+    WHERE rn = 1
   `;
-  log('Judged entries:', judgedEntriesRaw?.length);
-  if (!judgedEntriesRaw.length) {
+  log('Users with judged entries:', userBestEntries?.length);
+  if (!userBestEntries.length) {
     return [];
   }
 
-  // Fetch engagement metrics from Redis
-  const imageIds = judgedEntriesRaw.map((entry) => entry.imageId);
+  // Fetch engagement metrics from Redis for best entries only
+  const imageIds = userBestEntries.map((entry) => entry.imageId);
   const metricsMap = await entityMetricRedis.getBulkMetrics('Image', imageIds);
 
   // Calculate engagement (sum of all metrics except Buzz)
-  const judgedEntriesWithEngagement = judgedEntriesRaw.map((entry) => {
+  const entriesWithEngagement = userBestEntries.map((entry) => {
     const metrics = metricsMap.get(entry.imageId);
-    // @ai: Using static helper to avoid object creation overhead
     const engagement = metrics ? EntityMetricsHelper.getTotalEngagement(metrics) : 0;
     return { ...entry, engagement };
   });
 
-  // Sort judged entries by (rating * 0.75) and (engagement * 0.25)
-  const maxEngagement = Math.max(...judgedEntriesWithEngagement.map((entry) => entry.engagement));
-  const minEngagement = Math.min(...judgedEntriesWithEngagement.map((entry) => entry.engagement));
-  const judgedEntries = judgedEntriesWithEngagement.map(({ note, engagement, ...entry }) => {
+  // Sort entries by (rating * 0.75) and (engagement * 0.25)
+  const maxEngagement = Math.max(...entriesWithEngagement.map((entry) => entry.engagement));
+  const minEngagement = Math.min(...entriesWithEngagement.map((entry) => entry.engagement));
+  const judgedEntries = entriesWithEngagement.map(({ note, engagement, ...entry }) => {
     const { score, summary } = JSON.parse(note);
     // Calculate average rating
     const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
     // Adjust engagement to be between 0 and 10
     const engagementNormalized =
-      ((engagement - minEngagement) / (maxEngagement - minEngagement)) * 10;
+      ((engagement - minEngagement) / Math.max(maxEngagement - minEngagement, 1)) * 10;
     return {
       ...entry,
       summary,
@@ -811,19 +853,8 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
   });
   judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating);
 
-  // Take top 10 entries per user
-  let toSend = config.finalReviewAmount;
-  const toFinalJudgment: typeof judgedEntries = [];
-  const finalJudgmentUsers = new Set<number>();
-  for (const entry of judgedEntries) {
-    if (toSend <= 0) break;
-    if (finalJudgmentUsers.has(entry.userId)) continue;
-    toFinalJudgment.push(entry);
-    finalJudgmentUsers.add(entry.userId);
-    toSend--;
-  }
-
-  return toFinalJudgment;
+  // Take top entries for final judgment (already one per user from the query)
+  return judgedEntries.slice(0, config.finalReviewAmount);
 }
 
 export async function startNextChallenge(config: ChallengeConfig) {

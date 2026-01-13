@@ -19,29 +19,60 @@ type ErrorIngestImageRow = PendingIngestImageRow & {
   retryCount: number;
 };
 
+async function fetchAllPendingImages<T extends { id: number }>(
+  query: (cursor: number | undefined, limit: number) => Promise<T[]>,
+  batchSize = 5000
+): Promise<T[]> {
+  const allResults: T[] = [];
+  let cursor: number | undefined;
+
+  while (true) {
+    const batch = await query(cursor, batchSize);
+    if (batch.length === 0) break;
+
+    allResults.push(...batch);
+    cursor = batch[batch.length - 1].id;
+
+    if (batch.length < batchSize) break;
+  }
+
+  return allResults;
+}
+
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
   const now = new Date();
 
   // Fetch then filter pending images in JS to avoid a slow query
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const pendingImages = (
-    (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
-    FROM "Image"
-    WHERE ingestion = 'Pending'::"ImageIngestionStatus"
-    ORDER BY id
-    LIMIT 20000
-  `) ?? []
+    await fetchAllPendingImages(async (cursor, limit) => {
+      return (
+        (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+          SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
+          FROM "Image"
+          WHERE ingestion = 'Pending'::"ImageIngestionStatus"
+          ${Prisma.raw(cursor ? `AND id > ${cursor}` : '')}
+          ORDER BY id
+          LIMIT ${limit}
+        `) ?? []
+      );
+    })
   ).filter((img) => !img.scanRequestedAt || img.scanRequestedAt <= rescanDate);
 
-  const rescanImages =
-    (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
-    FROM "Image"
-    WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
-    ORDER BY id
-    LIMIT 20000
-  `) ?? [];
+  console.log({ pendingImages: pendingImages.length });
+
+  const rescanImages = await fetchAllPendingImages(async (cursor, limit) => {
+    return (
+      (await dbWrite.$queryRaw<PendingIngestImageRow[]>`
+        SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt"
+        FROM "Image"
+        WHERE ingestion = 'Rescan'::"ImageIngestionStatus"
+        ${Prisma.raw(cursor ? `AND id > ${cursor}` : '')}
+        ORDER BY id
+        LIMIT ${limit}
+      `) ?? []
+    );
+  });
 
   // Fetch then filter error images in JS to avoid a slow query
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
@@ -140,18 +171,38 @@ export async function removeBlockedImagesRecursive(
   nextCursor?: number,
   limit = 1000
 ) {
-  const images = await dbRead.$queryRaw<{ id: number }[]>`
-    select id, ingestion, "blockedFor"
-    from "Image"
-    WHERE "ingestion" = 'Blocked' AND "blockedFor" != 'AiNotVerified'
-    AND (
-      ("blockedFor" != 'moderated' and "createdAt" <= ${cutoff}) OR
-      ("blockedFor" = 'moderated' and "updatedAt" <= ${cutoff})
-    )
-    ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
+  const halfLimit = Math.floor(limit / 2);
+
+  // Split into two queries to avoid slow OR condition
+  // Query 1: Non-moderated blocked images by createdAt
+  const nonModeratedImages = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Image"
+    WHERE "ingestion" = 'Blocked'
+      AND "blockedFor" != 'AiNotVerified'
+      AND "blockedFor" != 'moderated'
+      AND "createdAt" <= ${cutoff}
+      ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
     ORDER BY id
-    LIMIT ${limit + 1}
+    LIMIT ${halfLimit + 1}
   `;
+
+  // Query 2: Moderated blocked images by updatedAt
+  const moderatedImages = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "Image"
+    WHERE "ingestion" = 'Blocked'
+      AND "blockedFor" = 'moderated'
+      AND "updatedAt" <= ${cutoff}
+      ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
+    ORDER BY id
+    LIMIT ${halfLimit + 1}
+  `;
+
+  // Merge, dedupe, and sort results
+  const mergedImages = [...nonModeratedImages, ...moderatedImages];
+  const uniqueIds = [...new Set(mergedImages.map((x) => x.id))].sort((a, b) => a - b);
+  const images = uniqueIds.slice(0, limit + 1).map((id) => ({ id }));
 
   if (images.length > limit) {
     const nextItem = images.pop();
