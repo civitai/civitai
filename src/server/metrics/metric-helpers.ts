@@ -140,7 +140,7 @@ export const snippets = {
 const METRIC_BATCH_SIZE = 200;
 
 // Add additional entity types here as needed
-type EntityType = 'Model' | 'ModelVersion' | 'Post' | 'Article' | 'Image';
+type EntityType = 'Model' | 'ModelVersion' | 'Post' | 'Article' | 'Image' | 'Collection';
 
 type EntityMetricContext = {
   ch: CustomClickHouseClient;

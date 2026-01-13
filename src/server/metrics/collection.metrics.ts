@@ -1,7 +1,11 @@
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefreshWithParams, getAffected } from '~/server/metrics/metric-helpers';
+import {
+  executeRefreshWithParams,
+  getAffected,
+  getEntityMetricTasks,
+} from '~/server/metrics/metric-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -11,9 +15,9 @@ const log = createLogger('metrics:collection');
 
 const metrics = ['followerCount', 'contributorCount', 'itemCount'] as const;
 
-type MetricKey = (typeof metrics)[number];
 type CollectionMetricContext = MetricProcessorRunContext & {
-  updates: Record<number, Partial<Record<MetricKey, number>> & { collectionId: number }>;
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
 };
 
 export const collectionMetrics = createMetricProcessor({
@@ -22,6 +26,7 @@ export const collectionMetrics = createMetricProcessor({
     // Update the context to include the update record
     const ctx = baseCtx as CollectionMetricContext;
     ctx.updates = {};
+    ctx.idKey = 'collectionId';
 
     // Get the metric tasks
     //---------------------------------------
@@ -101,13 +106,13 @@ async function getMetrics(ctx: CollectionMetricContext, sql: string, params: any
   if (!data.length) return;
 
   for (const row of data) {
-    const collectionId = row.collectionId;
-    ctx.updates[collectionId] ??= { collectionId };
+    const entityId = row.collectionId;
+    ctx.updates[entityId] ??= { [ctx.idKey]: entityId };
     for (const key of Object.keys(row) as (keyof typeof row)[]) {
-      if (key === 'collectionId' || key === 'timeframe') continue;
+      if (key === ctx.idKey || key === 'timeframe') continue;
       const value = row[key];
       if (value == null) continue;
-      (ctx.updates[collectionId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
+      ctx.updates[entityId][key] = typeof value === 'string' ? parseInt(value) : value;
     }
   }
 }
@@ -120,7 +125,7 @@ async function getContributorTasks(ctx: CollectionMetricContext) {
     WHERE "createdAt" > ${ctx.lastUpdate}
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, 100).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getContributorTasks', i + 1, 'of', tasks.length);
 
@@ -144,31 +149,5 @@ async function getContributorTasks(ctx: CollectionMetricContext) {
 }
 
 async function getItemTasks(ctx: CollectionMetricContext) {
-  const affected = await getAffected(ctx)`
-    -- get recent collection items
-    SELECT "collectionId" as id
-    FROM "CollectionItem"
-    WHERE "createdAt" > ${ctx.lastUpdate}
-  `;
-
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getItemTasks', i + 1, 'of', tasks.length);
-
-    await getMetrics(
-      ctx,
-      `-- get collection item metrics
-      SELECT
-        "collectionId",
-        COUNT(1)::int as "itemCount"
-      FROM "CollectionItem"
-      WHERE "collectionId" = ANY($1::int[])
-      GROUP BY "collectionId"`,
-      [ids]
-    );
-
-    log('getItemTasks', i + 1, 'of', tasks.length, 'done');
-  });
-
-  return tasks;
+  return getEntityMetricTasks(ctx)('Collection', 'itemCount');
 }
