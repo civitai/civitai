@@ -175,13 +175,13 @@ async function bulkInsertMetrics<T extends readonly string[]>(
       WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("${idColumn}" INT, ${metricInsertColumns}))
       INSERT INTO "${options.table}" ("${idColumn}", "updatedAt", ${metricInsertKeys})
       SELECT
-        d."${options.idColumn}",
+        d."${idColumn}",
         NOW() as "updatedAt",
         ${metricValues}
       FROM data d
       LEFT JOIN "${table}" im ON im."${idColumn}" = d."${idColumn}"
       WHERE EXISTS (SELECT 1 FROM "${table.replace('Metric', '')}" WHERE id = d."${idColumn}")
-      ON CONFLICT ("${options.idColumn}") DO UPDATE
+      ON CONFLICT ("${idColumn}") DO UPDATE
         SET
           ${metricOverrides},
           "updatedAt" = NOW()
