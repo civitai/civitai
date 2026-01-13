@@ -15,7 +15,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { userCollectionCountCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { userPreferencesSchema } from '~/server/schema/base.schema';
@@ -2380,13 +2380,12 @@ export const getCollectionCoverImages = async ({
   `
       : [];
 
-  const tags = await dbRead.tagsOnImageDetails.findMany({
-    where: {
-      imageId: { in: [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))] },
-      disabled: false,
-    },
-    select: { imageId: true, tagId: true },
-  });
+  // Use Redis cache for tag lookups (much faster than direct DB query)
+  const imageIds = [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))];
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+  const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
+    cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
+  );
 
   return itemImages
     .map(({ id, image, src }) => ({
