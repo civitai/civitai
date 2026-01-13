@@ -28,30 +28,54 @@ function logError({ error, name, details }: { error: Error; name: string; detail
   }
 }
 
+// Create an AbortController with timeout for health checks
+function createHealthCheckAbort() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.HEALTHCHECK_TIMEOUT);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeout),
+  };
+}
+
 const checkFns = {
   async write() {
-    return !!(await dbWrite.$queryRawUnsafe('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'dbWrite', details: null });
-      return false;
-    }));
+    return !!(await dbWrite
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}`);
+        return tx.$queryRawUnsafe(`SELECT 1`);
+      })
+      .catch((e) => {
+        logError({ error: e, name: 'dbWrite', details: null });
+        return false;
+      }));
   },
   async read() {
-    return !!(await dbRead.$queryRawUnsafe('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'dbRead', details: null });
-      return false;
-    }));
+    return !!(await dbRead
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}`);
+        return tx.$queryRawUnsafe(`SELECT 1`);
+      })
+      .catch((e) => {
+        logError({ error: e, name: 'dbRead', details: null });
+        return false;
+      }));
   },
   async pgWrite() {
-    return !!(await pgDbWrite.query('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'pgWrite', details: null });
-      return false;
-    }));
+    return !!(await pgDbWrite
+      .query(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`)
+      .catch((e) => {
+        logError({ error: e, name: 'pgWrite', details: null });
+        return false;
+      }));
   },
   async pgRead() {
-    return !!(await pgDbRead.query('SELECT 1').catch((e) => {
-      logError({ error: e, name: 'pgRead', details: null });
-      return false;
-    }));
+    return !!(await pgDbRead
+      .query(`SET LOCAL statement_timeout = ${env.HEALTHCHECK_TIMEOUT}; SELECT 1`)
+      .catch((e) => {
+        logError({ error: e, name: 'pgRead', details: null });
+        return false;
+      }));
   },
   async searchMetrics() {
     if (metricsSearchClient === null) return true;
@@ -84,15 +108,17 @@ const checkFns = {
       });
   },
   async clickhouse() {
-    return (
-      (await clickhouse
-        ?.ping()
-        .then(({ success }) => success)
-        .catch((e) => {
-          logError({ error: e, name: 'clickhouse', details: null });
-          return false;
-        })) ?? true
-    );
+    if (!clickhouse) return true;
+    const { clear } = createHealthCheckAbort();
+    try {
+      const { success } = await clickhouse.ping();
+      clear();
+      return success;
+    } catch (e) {
+      clear();
+      logError({ error: e as Error, name: 'clickhouse', details: null });
+      return false;
+    }
   },
   // async buzz() {
   //   return await pingBuzzService().catch((e) => {
