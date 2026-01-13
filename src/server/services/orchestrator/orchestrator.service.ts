@@ -186,7 +186,7 @@ export async function createImageIngestionRequest({
 }: {
   imageId: number;
   url: string;
-  callbackUrl: string;
+  callbackUrl?: string;
   priority?: Priority;
   type?: MediaType;
 }) {
@@ -296,14 +296,23 @@ export async function createImageIngestionRequest({
                 },
               } as WorkflowStepTemplate,
             ],
-      callbacks: [
-        {
-          url: `${callbackUrl}`,
-          type: ['workflow:succeeded', 'workflow:failed', 'workflow:expired', 'workflow:canceled'],
-        },
-      ],
+      callbacks: callbackUrl
+        ? [
+            {
+              url: `${callbackUrl}`,
+              type: [
+                'workflow:succeeded',
+                'workflow:failed',
+                'workflow:expired',
+                'workflow:canceled',
+              ],
+            },
+          ]
+        : undefined,
     },
   });
+
+  const serverTiming = response.headers.get('Server-Timing');
 
   if (!data) {
     logToAxiom({
@@ -312,6 +321,7 @@ export async function createImageIngestionRequest({
       imageId,
       url,
       responseStatus: response.status,
+      serverTiming,
       error,
     });
   }

@@ -10,6 +10,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { invalidateSession } from '~/server/auth/session-invalidation';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
 
 type MatureContent = {
   count: number;
@@ -22,24 +23,13 @@ const IMAGE_SCANNING_RETRY_LIMIT = 6;
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    const now = new Date();
-    const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
-    const errorImages = (
-      (await dbWrite.$queryRaw<any[]>`
-       SELECT id, url, type, width, height, meta->>'prompt' as prompt, "scanRequestedAt", ("scanJobs"->>'retryCount')::int as "retryCount"
-       FROM "Image"
-       WHERE ingestion = 'Error'::"ImageIngestionStatus" AND ("createdAt" > now() - '6 hours'::interval OR ("nsfwLevel" IS NOT NULL AND "createdAt" > '10/15/2025'))
-     `) ?? []
-    ).filter((img) => {
-      console.log(Number(img.retryCount ?? 0));
-      return (
-        img.scanRequestedAt &&
-        new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
-        Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
-      );
+    const workflow = await createImageIngestionRequest({
+      imageId: 117366427,
+      url: '456b830f-1d62-4530-8d30-792010004b99',
+      type: 'image',
     });
 
-    res.status(200).send({ errorImages });
+    res.status(200).send({ workflow });
   } catch (e) {
     console.log(e);
     res.status(400).end();
