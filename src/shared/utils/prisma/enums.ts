@@ -815,6 +815,34 @@ export const NewOrderRankType = {
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 
+export const ChallengeSource = {
+  System: 'System',
+  Mod: 'Mod',
+  User: 'User',
+} as const;
+
+export type ChallengeSource = (typeof ChallengeSource)[keyof typeof ChallengeSource];
+
+export const ChallengeStatus = {
+  Draft: 'Draft',
+  Scheduled: 'Scheduled',
+  Active: 'Active',
+  Judging: 'Judging',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+
+export type ChallengeStatus = (typeof ChallengeStatus)[keyof typeof ChallengeStatus];
+
+export const ChallengeEntryStatus = {
+  Pending: 'Pending',
+  Accepted: 'Accepted',
+  Rejected: 'Rejected',
+  Scored: 'Scored',
+} as const;
+
+export type ChallengeEntryStatus = (typeof ChallengeEntryStatus)[keyof typeof ChallengeEntryStatus];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

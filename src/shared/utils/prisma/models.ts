@@ -170,6 +170,12 @@ export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incide
 
 export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
+export type ChallengeSource = "System" | "Mod" | "User";
+
+export type ChallengeStatus = "Draft" | "Scheduled" | "Active" | "Judging" | "Completed" | "Cancelled";
+
+export type ChallengeEntryStatus = "Pending" | "Accepted" | "Rejected" | "Scored";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -438,6 +444,10 @@ export interface User {
   playerInfo?: NewOrderPlayer | null;
   CryptoWallet?: CryptoWallet[];
   CryptoTransaction?: CryptoTransaction[];
+  challengesCreated?: Challenge[];
+  challengeEntries?: ChallengeEntry[];
+  challengeEntriesReviewed?: ChallengeEntry[];
+  challengeWins?: ChallengeWinner[];
 }
 
 export interface CustomerSubscription {
@@ -621,6 +631,7 @@ export interface Model {
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
   coveredCheckpoints?: CoveredCheckpoint[];
+  challenges?: Challenge[];
 }
 
 export interface ModelFlag {
@@ -734,6 +745,7 @@ export interface ModelVersion {
   featuredInfo?: FeaturedModelVersion[];
   ImageResourceNew?: ImageResourceNew[];
   coveredCheckpoints?: CoveredCheckpoint[];
+  challenges?: Challenge[];
 }
 
 export interface ModelVersionEngagement {
@@ -1145,6 +1157,9 @@ export interface Image {
   tagsNew?: TagsOnImageNew[];
   imageResourceNew?: ImageResourceNew[];
   imageTagsForReview?: ImageTagForReview[];
+  challengesCover?: Challenge[];
+  challengeEntries?: ChallengeEntry[];
+  challengeWins?: ChallengeWinner[];
 }
 
 export interface ImageTagForReview {
@@ -1964,6 +1979,7 @@ export interface Collection {
   rank?: CollectionRank | null;
   stats?: CollectionStat | null;
   metrics?: CollectionMetric[];
+  challenges?: Challenge[];
 }
 
 export interface CollectionItem {
@@ -2766,6 +2782,76 @@ export interface ReportAutomated {
 
 export interface RestrictedBaseModels {
   baseModel: string;
+}
+
+export interface Challenge {
+  id: number;
+  startsAt: Date;
+  endsAt: Date;
+  visibleAt: Date;
+  title: string;
+  description: string | null;
+  theme: string | null;
+  invitation: string | null;
+  coverImageId: number | null;
+  coverImage?: Image | null;
+  nsfwLevel: number;
+  modelId: number | null;
+  model?: Model | null;
+  modelVersionId: number | null;
+  modelVersion?: ModelVersion | null;
+  judgingPrompt: string | null;
+  reviewPercentage: number;
+  maxReviews: number | null;
+  collectionId: number | null;
+  collection?: Collection | null;
+  maxEntriesPerUser: number;
+  prizes: JsonValue;
+  entryPrize: JsonValue | null;
+  prizePool: number;
+  operationBudget: number;
+  operationSpent: number;
+  createdById: number;
+  createdBy?: User;
+  source: ChallengeSource;
+  status: ChallengeStatus;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  entries?: ChallengeEntry[];
+  winners?: ChallengeWinner[];
+}
+
+export interface ChallengeEntry {
+  id: number;
+  challengeId: number;
+  challenge?: Challenge;
+  imageId: number;
+  image?: Image;
+  userId: number;
+  user?: User;
+  score: JsonValue | null;
+  aiSummary: string | null;
+  status: ChallengeEntryStatus;
+  reviewedAt: Date | null;
+  reviewedById: number | null;
+  reviewedBy?: User | null;
+  createdAt: Date;
+}
+
+export interface ChallengeWinner {
+  id: number;
+  challengeId: number;
+  challenge?: Challenge;
+  userId: number;
+  user?: User;
+  imageId: number;
+  image?: Image;
+  place: number;
+  buzzAwarded: number;
+  pointsAwarded: number;
+  reason: string | null;
+  createdAt: Date;
 }
 
 export interface QuestionRank {
