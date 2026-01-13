@@ -21,6 +21,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     res.status(200).json(result.Location);
   } catch (e) {
     const error = e as Error;
+    console.error('Upload complete error:', error.message, error.stack);
+    await logToAxiom({
+      name: 's3-upload-complete-error',
+      userId,
+      type,
+      key,
+      uploadId,
+      error: error.message,
+    });
     res.status(500).json({ error });
   }
 };
