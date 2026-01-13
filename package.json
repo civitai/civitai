@@ -98,6 +98,7 @@
     "@next/third-parties": "^15.0.3",
     "@number-flow/react": "^0.5.7",
     "@okikio/sharedworker": "^1.1.0",
+    "@openrouter/sdk": "^0.3.12",
     "@paddle/paddle-js": "^1.2.1",
     "@paddle/paddle-node-sdk": "^1.4.1",
     "@paypal/react-paypal-js": "^8.1.3",
