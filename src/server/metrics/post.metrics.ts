@@ -1,7 +1,7 @@
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, getAffected } from '~/server/metrics/metric-helpers';
+import { executeRefresh, getAffected, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -23,6 +23,7 @@ export const postMetrics = createMetricProcessor({
     // Update the context to include the update record
     const ctx = baseCtx as MetricContext;
     ctx.updates = {};
+    ctx.idKey = 'postId';
 
     // Get the metric tasks
     //---------------------------------------
@@ -89,12 +90,12 @@ export const postMetrics = createMetricProcessor({
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
-      SELECT DISTINCT entityId as imageId
-      FROM entityMetricDailyAgg
-      WHERE entityType = 'Image'
-        AND entityId IS NOT NULL
-        AND day >= toDate(${ctx.lastUpdate})
-      ORDER BY entityId ASC;
+    -- get recent images with reactions
+    SELECT DISTINCT entityId as imageId
+    FROM entityMetricEvents
+    WHERE entityType = 'Image'
+    AND metricType LIKE 'Reaction%'
+    AND createdAt > ${ctx.lastUpdate};
   `;
 
   const affected = new Set<number>();
@@ -175,37 +176,13 @@ async function getCommentTasks(ctx: MetricContext) {
 }
 
 async function getCollectionTasks(ctx: MetricContext) {
-  const affected = await getAffected(ctx)`
-    -- get recent post collections
-    SELECT DISTINCT
-      "postId" AS id
-    FROM "CollectionItem"
-    WHERE "postId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
-  `;
-
-  const tasks = chunk(affected, 100).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await getMetrics(ctx)`
-      -- get post collection metrics
-      SELECT
-        ci."postId",
-        'AllTime'::"MetricTimeframe" AS timeframe,
-        COUNT(ci.id)::int AS "collectedCount"
-      FROM "CollectionItem" ci
-      WHERE ci."postId" IN (${ids})
-        AND ci."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY ci."postId"
-    `;
-    log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
-  });
-
-  return tasks;
+  return getEntityMetricTasks(ctx)('Post', 'collectedCount');
 }
 
 type MetricKey = keyof PostMetric;
 type MetricContext = MetricProcessorRunContext & {
-  updates: Record<number, Record<MetricKey, number>>;
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
 };
 const metrics = [
   'heartCount',
@@ -225,13 +202,13 @@ function getMetrics(ctx: MetricContext) {
     if (!data.length) return;
 
     for (const row of data) {
-      const postId = row.postId;
-      ctx.updates[postId] ??= { postId } as Record<MetricKey, number>;
+      const entityId = row.postId;
+      ctx.updates[entityId] ??= { [ctx.idKey]: entityId };
       for (const key of Object.keys(row) as MetricKey[]) {
-        if (key === 'postId' || key === 'timeframe') continue;
+        if (key === ctx.idKey || key === 'timeframe') continue;
         const value = row[key];
         if (value == null) continue;
-        ctx.updates[postId][key] = Number(value);
+        ctx.updates[entityId][key] = Number(value);
       }
     }
   });

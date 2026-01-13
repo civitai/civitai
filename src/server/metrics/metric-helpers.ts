@@ -139,39 +139,76 @@ export const snippets = {
 
 const METRIC_BATCH_SIZE = 200;
 
+// Add additional entity types here as needed
+type EntityType = 'Model' | 'ModelVersion' | 'Post' | 'Article' | 'Image';
+
 type EntityMetricContext = {
   ch: CustomClickHouseClient;
   jobContext: JobContext;
   lastUpdate: Date;
   queue: number[];
-  queuedModelVersions: number[];
-  addAffected: (ids: number[]) => void;
-  modelUpdates: Record<number, { modelId: number } & Record<string, number>>;
-  versionUpdates: Record<number, { modelVersionId: number } & Record<string, number>>;
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
+  addAffected?: (ids: number[]) => void;
 };
+
+type EntityMetricOptions = {
+  updates?: Record<number, Record<string, number>>;
+  idKey?: string;
+  queue?: number[];
+  addAffected?: (ids: number[]) => void;
+};
+
+// The agg table refreshes every 5 minutes. We use a 30s buffer to account for refresh duration.
+const AGG_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const AGG_REFRESH_BUFFER_MS = 30 * 1000;
+
+const getAggInterval = (date: Date) =>
+  Math.floor(date.getTime() / AGG_REFRESH_INTERVAL_MS);
+
+const floorToAggInterval = (date: Date) =>
+  new Date(getAggInterval(date) * AGG_REFRESH_INTERVAL_MS - AGG_REFRESH_BUFFER_MS);
+
+const hasCrossedAggBoundary = (lastUpdate: Date) =>
+  getAggInterval(lastUpdate) !== getAggInterval(new Date());
 
 export function getEntityMetricTasks(ctx: EntityMetricContext) {
   return async function (
-    entityType: 'Model' | 'ModelVersion',
+    entityType: EntityType,
     metricType: string,
-    onMetric?: (entityId: number, value: number) => void
+    options?: EntityMetricOptions
   ): Promise<Array<() => Promise<void>>> {
+    // Use provided options or fall back to context defaults
+    const updates = options?.updates ?? ctx.updates;
+    const idKey = options?.idKey ?? ctx.idKey;
+    const queue = options?.queue ?? ctx.queue;
+    const addAffected = options?.addAffected ?? ctx.addAffected;
+
+    // Skip if we haven't crossed an agg refresh boundary (no new data to fetch)
+    if (!hasCrossedAggBoundary(ctx.lastUpdate)) {
+      log(`getEntityMetricTasks(${entityType}, ${metricType}) skipped - no new agg data`);
+      return [];
+    }
+
+    // Floor lastUpdate to the agg refresh interval to ensure we don't miss events
+    // that were processed in the latest agg table refresh
+    const lastUpdateFloored = floorToAggInterval(ctx.lastUpdate);
+
     // Get affected entities from ClickHouse
     const events = await ctx.ch.$query<{ entityId: number }>`
       SELECT DISTINCT entityId
       FROM entityMetricEvents_month
       WHERE entityType = '${entityType}'
         AND metricType = '${metricType}'
-        AND createdAt >= ${ctx.lastUpdate}
+        AND createdAt >= ${lastUpdateFloored}
     `;
 
-    // Merge with appropriate queue
-    const queue = entityType === 'Model' ? ctx.queue : ctx.queuedModelVersions;
+    // Merge with queue
     const affected = [...new Set([...events.map((x) => x.entityId), ...queue])];
 
-    // Track affected models
-    if (entityType === 'Model') {
-      ctx.addAffected(affected);
+    // Track affected if callback provided
+    if (addAffected) {
+      addAffected(affected);
     }
 
     // Create batched tasks
@@ -200,17 +237,9 @@ export function getEntityMetricTasks(ctx: EntityMetricContext) {
       ctx.jobContext.checkIfCanceled();
 
       for (const row of metrics) {
-        if (onMetric) {
-          onMetric(row.entityId, row.value);
-        } else if (entityType === 'Model') {
-          const modelId = row.entityId;
-          ctx.modelUpdates[modelId] ??= { modelId };
-          (ctx.modelUpdates[modelId] as Record<string, number>)[metricType] = row.value;
-        } else {
-          const modelVersionId = row.entityId;
-          ctx.versionUpdates[modelVersionId] ??= { modelVersionId };
-          (ctx.versionUpdates[modelVersionId] as Record<string, number>)[metricType] = row.value;
-        }
+        const entityId = row.entityId;
+        updates[entityId] ??= { [idKey]: entityId };
+        updates[entityId][metricType] = row.value;
       }
 
       log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length, 'done');

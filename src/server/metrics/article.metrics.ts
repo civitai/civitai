@@ -6,7 +6,7 @@ import { articlesSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected } from '~/server/metrics/metric-helpers';
+import { executeRefresh, getAffected, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
 import { articleStatCache } from '~/server/redis/caches';
 import type { ArticleMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
@@ -19,6 +19,7 @@ export const articleMetrics = createMetricProcessor({
     // Update the context to include the update record
     const ctx = baseCtx as MetricContext;
     ctx.updates = {};
+    ctx.idKey = 'articleId';
 
     // Get the metric tasks
     //---------------------------------------
@@ -156,31 +157,7 @@ async function getCommentTasks(ctx: MetricContext) {
 }
 
 async function getCollectionTasks(ctx: MetricContext) {
-  const affected = await getAffected(ctx)`
-    -- get recent article collections
-    SELECT "articleId" as id
-    FROM "CollectionItem"
-    WHERE "articleId" IS NOT NULL AND "createdAt" > ${ctx.lastUpdate}
-  `;
-
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await getMetrics(ctx)`
-      -- get article collection metrics
-      SELECT
-        ci."articleId",
-        'AllTime'::"MetricTimeframe" AS timeframe,
-        COUNT(ci.id)::int AS "collectedCount"
-      FROM "CollectionItem" ci
-      WHERE ci."articleId" IN (${ids})
-        AND ci."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY ci."articleId"
-    `;
-    log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
-  });
-
-  return tasks;
+  return getEntityMetricTasks(ctx)('Article', 'collectedCount');
 }
 
 async function getBuzzTasks(ctx: MetricContext) {
@@ -270,9 +247,9 @@ async function getViewTasks(ctx: MetricContext) {
 
     // Add view metrics to ctx.updates
     for (const row of batch) {
-      const articleId = row.entityId;
-      ctx.updates[articleId] ??= { articleId } as Record<MetricKey, number>;
-      ctx.updates[articleId].viewCount = Number(row.all_time);
+      const entityId = row.entityId;
+      ctx.updates[entityId] ??= { [ctx.idKey]: entityId };
+      ctx.updates[entityId].viewCount = Number(row.all_time);
     }
 
     log('getViewTasks', i + 1, 'of', tasks.length, 'done');
@@ -283,7 +260,8 @@ async function getViewTasks(ctx: MetricContext) {
 
 type MetricKey = keyof ArticleMetric;
 type MetricContext = MetricProcessorRunContext & {
-  updates: Record<number, Record<MetricKey, number>>;
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
 };
 const metrics = [
   'heartCount',
@@ -307,13 +285,13 @@ function getMetrics(ctx: MetricContext) {
     if (!data.length) return;
 
     for (const row of data) {
-      const articleId = row.articleId;
-      ctx.updates[articleId] ??= { articleId } as Record<MetricKey, number>;
+      const entityId = row.articleId;
+      ctx.updates[entityId] ??= { [ctx.idKey]: entityId };
       for (const key of Object.keys(row) as MetricKey[]) {
-        if (key === 'articleId' || key === 'timeframe') continue;
+        if (key === ctx.idKey || key === 'timeframe') continue;
         const value = row[key];
         if (value == null) continue;
-        ctx.updates[articleId][key] = Number(value);
+        ctx.updates[entityId][key] = Number(value);
       }
     }
   });

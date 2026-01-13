@@ -49,7 +49,8 @@ type ModelMetricContext = MetricProcessorRunContext & {
     number,
     Partial<Record<ModelVersionMetricKey, number>> & { modelVersionId: number }
   >;
-  modelUpdates: Record<number, Partial<Record<ModelMetricKey, number>> & { modelId: number }>;
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
 };
 
 export const modelMetrics = createMetricProcessor({
@@ -60,7 +61,8 @@ export const modelMetrics = createMetricProcessor({
     const ctx = ctxRaw as ModelMetricContext;
     ctx.queuedModelVersions = [];
     ctx.versionUpdates = {};
-    ctx.modelUpdates = {};
+    ctx.updates = {};
+    ctx.idKey = 'modelId';
     ctx.isBeginningOfDay = dayjs(ctx.lastUpdate).isSame(dayjs().subtract(1, 'day'), 'day');
     if (ctx.queue.length > 0) {
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
@@ -103,9 +105,8 @@ export const modelMetrics = createMetricProcessor({
 
     // Bulk insert model metrics
     //---------------------------------------
-    await bulkInsertMetrics(ctx, Object.values(ctx.modelUpdates), modelMetricKeys, {
+    await bulkInsertMetrics(ctx, Object.values(ctx.updates), modelMetricKeys, {
       table: 'ModelMetric',
-      idColumn: 'modelId',
       logName: 'model metrics',
     });
 
@@ -152,11 +153,12 @@ async function bulkInsertMetrics<T extends readonly string[]>(
   metrics: T,
   options: {
     table: string;
-    idColumn: string;
+    idColumn?: string;
     logName: string;
   }
 ) {
-  const { table, idColumn } = options;
+  const { table } = options;
+  const idColumn = options.idColumn ?? ctx.idKey;
   const metricInsertColumns = metrics.map((key) => `"${key}" INT`).join(', ');
   const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
   const metricValues = metrics
@@ -219,13 +221,13 @@ async function getModelMetrics(ctx: ModelMetricContext, sql: string, params: any
   if (!data.length) return;
 
   for (const row of data) {
-    const modelId = row.modelId;
-    ctx.modelUpdates[modelId] ??= { modelId };
+    const entityId = row.modelId;
+    ctx.updates[entityId] ??= { [ctx.idKey]: entityId };
     for (const key of Object.keys(row) as (keyof typeof row)[]) {
-      if (key === 'modelId') continue;
+      if (key === ctx.idKey) continue;
       const value = row[key];
       if (value == null) continue;
-      (ctx.modelUpdates[modelId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
+      (ctx.updates[entityId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
     }
   }
 }
