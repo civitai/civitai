@@ -16,6 +16,9 @@ export const workflowQuerySchema = z.object({
   cursor: z.string().optional(),
   tags: z.string().array().default([]),
   ascending: z.boolean().optional(),
+  fromDate: z.date().optional(),
+  toDate: z.date().optional(),
+  excludeFailed: z.boolean().optional(),
 });
 
 export const workflowResourceSchema = z.object({

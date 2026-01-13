@@ -33,7 +33,61 @@ export const WORKFLOW_TAGS = {
     LIKED: 'feedback:liked',
     DISLIKED: 'feedback:disliked',
   },
+  // Process types for filtering
+  PROCESS: {
+    // Image processes
+    TXT2IMG: 'process:txt2img',
+    IMG2IMG: 'process:img2img',
+    UPSCALE: 'process:upscale',
+    BACKGROUND_REMOVAL: 'process:bg-removal',
+    // Video processes
+    TXT2VID: 'process:txt2vid',
+    IMG2VID: 'process:img2vid',
+    VID_UPSCALE: 'process:vid-upscale',
+    VID_INTERPOLATION: 'process:vid-interpolation',
+    VID_ENHANCEMENT: 'process:vid-enhancement',
+  },
 };
+
+/**
+ * Derives the process tag from workflow ID and source image presence.
+ * Used to add consistent process tags to workflows for filtering.
+ */
+export function getProcessTagFromWorkflow(
+  workflow: string,
+  hasSourceImage: boolean,
+  mediaType: 'image' | 'video' = 'image'
+): string {
+  // Check for specific workflow types first
+  if (workflow.includes('background-removal')) return WORKFLOW_TAGS.PROCESS.BACKGROUND_REMOVAL;
+  if (workflow.includes('upscale') && mediaType === 'video')
+    return WORKFLOW_TAGS.PROCESS.VID_UPSCALE;
+  if (workflow.includes('upscale')) return WORKFLOW_TAGS.PROCESS.UPSCALE;
+  if (workflow.includes('interpolation')) return WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION;
+  if (workflow.includes('enhancement') && mediaType === 'video')
+    return WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT;
+
+  // Default based on media type and source image
+  if (mediaType === 'video') {
+    return hasSourceImage ? WORKFLOW_TAGS.PROCESS.IMG2VID : WORKFLOW_TAGS.PROCESS.TXT2VID;
+  }
+  return hasSourceImage ? WORKFLOW_TAGS.PROCESS.IMG2IMG : WORKFLOW_TAGS.PROCESS.TXT2IMG;
+}
+
+/** Process type options for filter UI */
+export const PROCESS_TYPE_OPTIONS = [
+  // Image processes
+  { value: WORKFLOW_TAGS.PROCESS.TXT2IMG, label: 'Text to Image' },
+  { value: WORKFLOW_TAGS.PROCESS.IMG2IMG, label: 'Image to Image' },
+  { value: WORKFLOW_TAGS.PROCESS.UPSCALE, label: 'Upscale' },
+  { value: WORKFLOW_TAGS.PROCESS.BACKGROUND_REMOVAL, label: 'Background Removal' },
+  // Video processes
+  { value: WORKFLOW_TAGS.PROCESS.TXT2VID, label: 'Text to Video' },
+  { value: WORKFLOW_TAGS.PROCESS.IMG2VID, label: 'Image to Video' },
+  { value: WORKFLOW_TAGS.PROCESS.VID_UPSCALE, label: 'Video Upscale' },
+  { value: WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION, label: 'Interpolation' },
+  { value: WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT, label: 'Enhancement' },
+] as const;
 
 export const generationServiceCookie = {
   name: 'generation-token',
