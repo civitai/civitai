@@ -11,7 +11,7 @@ import { IconChevronDown, IconCheck, IconPhoto, IconVideo } from '@tabler/icons-
 import clsx from 'clsx';
 import { useMemo } from 'react';
 
-import { getAllFeaturesGrouped } from '~/shared/data-graph/generation-v2/features';
+import { getAllFeaturesGrouped } from '~/shared/data-graph/generation/features';
 
 // =============================================================================
 // Types
@@ -161,10 +161,7 @@ function FeatureCard({
             </div>
             <IconChevronDown
               size={16}
-              className={clsx(
-                'text-gray-5 transition-transform',
-                opened && 'rotate-180'
-              )}
+              className={clsx('text-gray-5 transition-transform', opened && 'rotate-180')}
             />
           </Group>
         </UnstyledButton>
@@ -204,12 +201,7 @@ function FeatureCard({
 // Component
 // =============================================================================
 
-export function FeatureInput({
-  value,
-  onChange,
-  disabled,
-  className,
-}: FeatureInputProps) {
+export function FeatureInput({ value, onChange, disabled, className }: FeatureInputProps) {
   const [imageOpened, { close: closeImage, toggle: toggleImage }] = useDisclosure(false);
   const [videoOpened, { close: closeVideo, toggle: toggleVideo }] = useDisclosure(false);
 
