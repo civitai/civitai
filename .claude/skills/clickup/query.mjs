@@ -20,6 +20,7 @@
  *   move <task> <list_id>         Move task to different list
  *   link <task> <url> ["desc"]    Add external link reference
  *   checklist <task> "item"       Add checklist item
+ *   delete-comment <comment_id>   Delete a comment
  *
  * Options:
  *   --json       Output raw JSON
@@ -44,7 +45,7 @@ import {
   setPriority,
   moveTask,
 } from './api/tasks.mjs';
-import { getComments, postComment } from './api/comments.mjs';
+import { getComments, postComment, deleteComment } from './api/comments.mjs';
 import { addChecklistItemToTask, getChecklists } from './api/checklists.mjs';
 import { addExternalLink } from './api/links.mjs';
 
@@ -105,6 +106,7 @@ Commands:
   move <task> <list_id>         Move task to different list
   link <task> <url> ["desc"]    Add external link reference
   checklist <task> "item"       Add checklist item
+  delete-comment <comment_id>   Delete a comment
 
 Options:
   --json       Output raw JSON
@@ -125,7 +127,8 @@ Examples:
   node query.mjs subtask 86a1b2c3d "Write unit tests"
   node query.mjs move 86a1b2c3d 901111220964
   node query.mjs link 86a1b2c3d "https://github.com/..." "PR #123"
-  node query.mjs checklist 86a1b2c3d "Review code"`);
+  node query.mjs checklist 86a1b2c3d "Review code"
+  node query.mjs delete-comment 90110200841741`);
   process.exit(1);
 }
 
@@ -477,6 +480,22 @@ async function main() {
           console.log(JSON.stringify({ checklist, item }, null, 2));
         } else {
           console.log(`Added to checklist "${checklist.name}"`);
+        }
+        break;
+      }
+
+      case 'delete-comment': {
+        const commentId = targetInput;
+        if (!commentId) {
+          console.error('Error: Comment ID required');
+          console.error('Usage: node query.mjs delete-comment <comment_id>');
+          process.exit(1);
+        }
+        await deleteComment(commentId);
+        if (jsonOutput) {
+          console.log(JSON.stringify({ deleted: true, commentId }, null, 2));
+        } else {
+          console.log(`Comment ${commentId} deleted`);
         }
         break;
       }

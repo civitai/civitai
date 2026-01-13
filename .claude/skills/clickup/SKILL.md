@@ -46,6 +46,7 @@ node .claude/skills/clickup/query.mjs <command> [options]
 | `move <task> <list_id>` | Move task to a different list |
 | `link <task> <url> ["desc"]` | Add external link reference (as comment) |
 | `checklist <task> "item"` | Add checklist item to task |
+| `delete-comment <comment_id>` | Delete a comment |
 
 ### Options
 
@@ -190,6 +191,13 @@ node .claude/skills/clickup/query.mjs comment 86a1b2c3d "Status update:
 
 ```bash
 node .claude/skills/clickup/query.mjs me
+```
+
+### Delete a Comment
+
+```bash
+# Get comment IDs from the comments command (shown in --json output)
+node .claude/skills/clickup/query.mjs delete-comment 90110200841741
 ```
 
 ## Task/List URL Formats

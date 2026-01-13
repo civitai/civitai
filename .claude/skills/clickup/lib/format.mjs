@@ -2,6 +2,8 @@
  * Display formatting utilities
  */
 
+import { clickUpToMarkdown } from './markdown.mjs';
+
 // Format date
 export function formatDate(timestamp) {
   if (!timestamp) return 'Not set';
@@ -111,7 +113,8 @@ export function formatComments(comments) {
   for (const comment of comments) {
     const date = formatDateTime(comment.date);
     const user = comment.user?.username || comment.user?.email || 'Unknown';
-    const text = comment.comment_text || extractCommentText(comment.comment);
+    // Prefer the comment array (rich formatting) over comment_text (plain text)
+    const text = comment.comment ? extractCommentText(comment.comment) : comment.comment_text || '';
 
     lines.push(`[${date}] ${user}:`);
     lines.push(`  ${text.split('\n').join('\n  ')}`);
@@ -121,12 +124,12 @@ export function formatComments(comments) {
   return lines.join('\n').trim();
 }
 
-// Extract text from comment array structure
+// Extract text from comment array structure and convert to markdown
 export function extractCommentText(commentArray) {
   if (!commentArray) return '';
   if (typeof commentArray === 'string') return commentArray;
   if (Array.isArray(commentArray)) {
-    return commentArray.map(c => c.text || '').join('');
+    return clickUpToMarkdown(commentArray);
   }
   return '';
 }

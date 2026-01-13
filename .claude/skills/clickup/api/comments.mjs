@@ -28,3 +28,11 @@ export async function postComment(taskId, text, useMarkdown = true) {
   });
   return response;
 }
+
+// Delete a comment
+export async function deleteComment(commentId) {
+  const response = await apiRequest(`/comment/${commentId}`, {
+    method: 'DELETE',
+  });
+  return response;
+}
