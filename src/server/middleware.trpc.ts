@@ -177,8 +177,10 @@ export function rateLimit<TInput = any>(
     attempts.push(Date.now());
     const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
-    await redis.packed.hSet(cacheKey, hashKey, updatedAttempts);
-    await redis.sAdd(REDIS_KEYS.TRPC.LIMIT.KEYS, cacheKey);
+    await Promise.all([
+      redis.packed.hSet(cacheKey, hashKey, updatedAttempts),
+      redis.hExpire(cacheKey, hashKey, CacheTTL.day),
+    ]);
     return await next();
   });
 }
