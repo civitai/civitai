@@ -1,7 +1,7 @@
 import type { ImageGenInput } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { GenerateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { WORKFLOW_TAGS, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -63,12 +63,15 @@ export function ImageGenConfig<
 
   function getTags(args: GenerateImageSchema) {
     const params = getParamsMetadata(args);
+    const hasSourceImage = !!args.params.sourceImage;
+    const processTag = getProcessTagFromWorkflow(params.engine, hasSourceImage, 'image');
     return [
       WORKFLOW_TAGS.GENERATION,
       WORKFLOW_TAGS.IMAGE,
       params.engine,
       params.baseModel,
       params.process,
+      processTag,
       ...args.tags,
     ].filter(isDefined);
   }

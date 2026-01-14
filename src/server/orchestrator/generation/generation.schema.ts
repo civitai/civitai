@@ -4,7 +4,7 @@ import { imageUpscalerSchema } from '~/server/orchestrator/image-upscaler/image-
 import { videoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 import { videoInterpolationSchema } from '~/server/orchestrator/video-interpolation/video-interpolation';
 import { videoUpscalerSchema } from '~/server/orchestrator/video-upscaler/video-upscaler.schema';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { WORKFLOW_TAGS, getProcessTagFromWorkflow } from '~/shared/constants/generation.constants';
 import { isDefined } from '~/utils/type-guards';
 
 const baseGenerationSchema = z.object({
@@ -54,16 +54,26 @@ export function getGenerationTags(args: GenerationDataSchema) {
   const type = args.$type;
   switch (args.$type) {
     case 'videoUpscaler':
+      tags.push(WORKFLOW_TAGS.VIDEO, WORKFLOW_TAGS.PROCESS.VID_UPSCALE);
+      break;
     case 'videoEnhancement':
+      tags.push(WORKFLOW_TAGS.VIDEO, WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT);
+      break;
     case 'videoInterpolation':
-      tags.push(WORKFLOW_TAGS.VIDEO);
+      tags.push(WORKFLOW_TAGS.VIDEO, WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION);
       break;
-    case 'videoGen':
-      tags.push(WORKFLOW_TAGS.VIDEO, args.data.engine, args.data.process);
+    case 'videoGen': {
+      const hasSourceImage = args.data.process === 'img2vid';
+      const processTag = getProcessTagFromWorkflow(args.data.engine, hasSourceImage, 'video');
+      tags.push(WORKFLOW_TAGS.VIDEO, args.data.engine, args.data.process, processTag);
       break;
-    case 'image':
-      tags.push(WORKFLOW_TAGS.IMAGE, args.data.workflow, args.data.process);
+    }
+    case 'image': {
+      const hasSourceImage = args.data.process === 'img2img';
+      const processTag = getProcessTagFromWorkflow(args.data.workflow, hasSourceImage, 'image');
+      tags.push(WORKFLOW_TAGS.IMAGE, args.data.workflow, args.data.process, processTag);
       break;
+    }
     default:
       throw new Error(`generation tags not implemented for $type: ${type}`);
   }

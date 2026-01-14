@@ -93,8 +93,9 @@ export function getClient(
     params?: any[]
   ) {
     const connection = await pool.connect();
-    const pidQuery = await connection.query('SELECT pg_backend_pid()');
-    const pid = pidQuery.rows[0].pg_backend_pid;
+    // Use the connection's processID property instead of an extra query
+    // This is set when the connection is established by the pg library
+    const pid = (connection as any).processID as number;
 
     let queryText: string;
     let queryParams: any[] | undefined;

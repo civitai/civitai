@@ -4,22 +4,16 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import * as rewardImports from '~/server/rewards';
 import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { clickhouse } from '~/server/clickhouse/client';
-import dayjs from '~/shared/utils/dayjs';
 
 const rewards = Object.values(rewardImports);
 export const processRewards = createJob('rewards-process', '*/1 * * * *', async () => {
   if (!clickhouse) return;
-  const timers = {
-    optimized: 0,
-    processed: 0,
-  };
 
   const [lastUpdate, setLastUpdate] = await getJobDate('process-rewards');
   const now = new Date();
 
-  timers.optimized += await mergeUniqueEvents();
-
-  // Get all records that need to be processed
+  // Get all records that need to be processed, using argMax to deduplicate by version
+  // This avoids needing to call OPTIMIZE TABLE which is slow
   const toProcessAll = await clickhouse.$query<BuzzEventLog>`
     SELECT
       type,
@@ -30,51 +24,46 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
       multiplier,
       status,
       ip,
-      version,
+      maxVersion as version,
       transactionDetails
-    FROM buzzEvents
-    WHERE status = 'pending'
-      AND time >= ${lastUpdate}
-      AND time < ${now}
+    FROM (
+      SELECT
+        type,
+        forId,
+        toUserId,
+        byUserId,
+        argMax(awardAmount, version) as awardAmount,
+        argMax(multiplier, version) as multiplier,
+        argMax(status, version) as status,
+        argMax(ip, version) as ip,
+        max(version) as maxVersion,
+        argMax(transactionDetails, version) as transactionDetails
+      FROM buzzEvents
+      WHERE time >= ${lastUpdate}
+        AND time < ${now}
+      GROUP BY type, forId, toUserId, byUserId
+      HAVING status = 'pending'
+    )
   `;
 
+  const start = Date.now();
   for (const reward of rewards) {
     const toProcess = toProcessAll.filter((x) => reward.types.includes(x.type));
     if (!toProcess.length) continue;
 
-    const start = Date.now();
     await reward.process({
       db: dbWrite,
       ch: clickhouse,
       lastUpdate,
       toProcess,
     });
-    timers.processed += Date.now() - start;
-    timers.optimized += await mergeUniqueEvents();
   }
 
   setLastUpdate(now);
 
-  return timers;
+  return { processed: Date.now() - start };
 });
 
 export const rewardsDailyReset = createJob('rewards-daily-reset', '0 0 * * *', async () => {
   redis.del(REDIS_KEYS.BUZZ_EVENTS);
 });
-
-async function mergeUniqueEvents() {
-  if (!clickhouse) return 0;
-
-  const start = Date.now();
-  try {
-    await clickhouse.command({
-      query: `OPTIMIZE TABLE buzzEvents`,
-      clickhouse_settings: {
-        wait_end_of_query: 1,
-      },
-    });
-  } catch (e) {
-    throw new Error(`Failed to optimize table: ${(e as any).message}`);
-  }
-  return Date.now() - start;
-}

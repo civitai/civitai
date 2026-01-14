@@ -77,6 +77,7 @@ const MigrateModelToCollection = dynamic(
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
@@ -681,12 +682,7 @@ export default function ModelDetailsV2({
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
                     </Title>
-                    <Tooltip
-                      label={`${(
-                        model.rank?.thumbsUpCountAllTime ?? 0
-                      ).toLocaleString()} unique positive reviews`}
-                      withinPortal
-                    >
+                    <StatHoverCard label="Unique Reviews" value={model.rank?.thumbsUpCountAllTime ?? 0}>
                       <div>
                         <LoginRedirect reason="favorite-model">
                           <IconBadge
@@ -709,12 +705,14 @@ export default function ModelDetailsV2({
                           </IconBadge>
                         </LoginRedirect>
                       </div>
-                    </Tooltip>
-                    <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
-                      <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
-                      </Text>
-                    </IconBadge>
+                    </StatHoverCard>
+                    <StatHoverCard label="Unique Downloads" value={model.rank?.downloadCountAllTime ?? 0}>
+                      <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
+                        <Text className={classes.modelBadgeText}>
+                          {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
+                        </Text>
+                      </IconBadge>
+                    </StatHoverCard>
                     {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
                     {latestGenerationVersion && (
                       <GenerateButton
@@ -733,42 +731,47 @@ export default function ModelDetailsV2({
                       </GenerateButton>
                     )}
                     {features.collections && (
-                      <LoginRedirect reason="add-to-collection">
-                        <IconBadge
-                          radius="sm"
-                          size="lg"
-                          icon={<IconBookmark size={18} />}
-                          className="cursor-pointer"
-                          onClick={handleCollect}
-                        >
-                          <Text className={classes.modelBadgeText}>
-                            {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
-                          </Text>
-                        </IconBadge>
-                      </LoginRedirect>
+                      <StatHoverCard label="Collections" value={model.rank?.collectedCountAllTime ?? 0}>
+                        <div>
+                          <LoginRedirect reason="add-to-collection">
+                            <IconBadge
+                              radius="sm"
+                              size="lg"
+                              icon={<IconBookmark size={18} />}
+                              className="cursor-pointer"
+                              onClick={handleCollect}
+                            >
+                              <Text className={classes.modelBadgeText}>
+                                {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
+                              </Text>
+                            </IconBadge>
+                          </LoginRedirect>
+                        </div>
+                      </StatHoverCard>
                     )}
                     {!model.poi && (
-                      <InteractiveTipBuzzButton
-                        toUserId={model.user.id}
-                        entityId={model.id}
-                        entityType="Model"
-                      >
-                        <IconBadge
-                          className="cursor-pointer"
-                          radius="sm"
-                          size="lg"
-                          icon={
-                            <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
-                          }
-                        >
-                          <Text
-                            className={classes.modelBadgeText}
-                            title={buzzEarned.toLocaleString()}
+                      <StatHoverCard label="Buzz Earned" value={buzzEarned}>
+                        <div>
+                          <InteractiveTipBuzzButton
+                            toUserId={model.user.id}
+                            entityId={model.id}
+                            entityType="Model"
                           >
-                            {abbreviateNumber(buzzEarned)}
-                          </Text>
-                        </IconBadge>
-                      </InteractiveTipBuzzButton>
+                            <IconBadge
+                              className="cursor-pointer"
+                              radius="sm"
+                              size="lg"
+                              icon={
+                                <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
+                              }
+                            >
+                              <Text className={classes.modelBadgeText}>
+                                {abbreviateNumber(buzzEarned)}
+                              </Text>
+                            </IconBadge>
+                          </InteractiveTipBuzzButton>
+                        </div>
+                      </StatHoverCard>
                     )}
                     {inEarlyAccess && (
                       <Tooltip

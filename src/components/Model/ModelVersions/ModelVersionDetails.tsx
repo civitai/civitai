@@ -387,7 +387,7 @@ export function ModelVersionDetails({
       value: (
         <Group gap={4}>
           {!downloadsDisabled && (
-            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
+            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Unique Downloads">
               <Text fz={11} fw="bold" inline>
                 {(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}
               </Text>

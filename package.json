@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1355",
+  "version": "5.0.1366",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -236,6 +236,7 @@
     "zustand": "^4.3.7"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.6",
     "@faker-js/faker": "^9.0.3",
     "@next/eslint-plugin-next": "^12.1.4",
     "@playwright/test": "^1.50.0",

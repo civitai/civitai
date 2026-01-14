@@ -79,7 +79,8 @@ export function useGetTextToImageRequests(
 
   const filters = useFiltersContext((state) => state.generation);
 
-  const tags = useMemo(() => {
+  // Convert marker filter to tags
+  const markerTags = useMemo(() => {
     switch (filters.marker) {
       case GenerationReactType.Favorited:
         return [WORKFLOW_TAGS.FAVORITE];
@@ -92,15 +93,28 @@ export function useGetTextToImageRequests(
     }
   }, [filters.marker]);
 
+  // Build complete query tags including new filters
+  const queryTags = useMemo(() => {
+    const baseTags = [
+      WORKFLOW_TAGS.GENERATION,
+      ...(options?.includeTags === false ? [] : [...markerTags, ...(filters.tags ?? [])]),
+      ...(input?.tags ?? []),
+    ];
+
+    if (filters.baseModel) baseTags.push(filters.baseModel);
+    if (filters.processType) baseTags.push(filters.processType);
+
+    return baseTags;
+  }, [markerTags, filters.tags, filters.baseModel, filters.processType, options?.includeTags, input?.tags]);
+
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
     {
       ...input,
       ascending: filters.sort === GenerationSort.Oldest,
-      tags: [
-        WORKFLOW_TAGS.GENERATION,
-        ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
-        ...(input?.tags ?? []),
-      ],
+      tags: queryTags,
+      fromDate: filters.fromDate,
+      toDate: filters.toDate,
+      excludeFailed: filters.excludeFailed,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -113,12 +127,12 @@ export function useGetTextToImageRequests(
       data?.pages.flatMap((x) =>
         (x.items ?? [])
           .filter((workflow) => {
-            if (!!tags.length && workflow.tags.every((tag) => !tags.includes(tag))) return false;
+            if (!!markerTags.length && workflow.tags.every((tag) => !markerTags.includes(tag))) return false;
             return true;
           })
           .map((workflow) => {
             const steps = workflow.steps.map((step) => {
-              const images = imageFilter({ step, tags }).map(
+              const images = imageFilter({ step, tags: markerTags }).map(
                 (image) =>
                   new BlobData({
                     data: image,
@@ -133,11 +147,11 @@ export function useGetTextToImageRequests(
             return { ...workflow, steps };
           })
       ) ?? [],
-    [data, nsfwEnabled, domain, tags]
+    [data, nsfwEnabled, domain, markerTags]
   );
 
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(() => steps.flatMap((step) => imageFilter({ step, tags })), [steps]);
+  const images = useMemo(() => steps.flatMap((step) => imageFilter({ step, tags: markerTags })), [steps, markerTags]);
 
   return { data: flatData, steps, images, ...rest };
 }

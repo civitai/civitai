@@ -690,9 +690,6 @@ export function GenerationFormContent() {
                                 limited workflows that cover some of the most important use cases.
                                 Community workflows coming soon.
                               </InfoPopover>
-                              <Badge color="yellow" size="xs">
-                                New
-                              </Badge>
                             </div>
                           }
                           className="flex-1"

@@ -26,6 +26,7 @@ type S3ConstructorProps = {
   uploadSecret?: string;
   uploadEndpoint?: string;
   uploadRegion?: string;
+  forcePathStyle?: boolean;
 };
 type BaseS3MethodProps = { bucket: string; key: string };
 type MultipartUploadPart = {
@@ -43,6 +44,7 @@ function createS3Client({
   uploadSecret,
   uploadEndpoint,
   uploadRegion,
+  forcePathStyle,
 }: S3ConstructorProps) {
   const keys: string[] = [];
   if (!uploadKey) keys.push('uploadKey');
@@ -57,6 +59,7 @@ function createS3Client({
     },
     region: uploadRegion,
     endpoint: uploadEndpoint,
+    forcePathStyle,
   });
 }
 
@@ -254,4 +257,5 @@ export const imageS3Client = new S3Client({
   uploadSecret: env.S3_IMAGE_UPLOAD_SECRET,
   uploadEndpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
   uploadRegion: env.S3_IMAGE_UPLOAD_REGION,
+  forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
 });

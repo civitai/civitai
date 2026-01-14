@@ -706,15 +706,20 @@ export async function updatePendingImageRatings({
 }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
-  // Get players that rated this image:
+  // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
   const votes = await clickhouse.$query<{ userId: number; createdAt: Date; rating: number }>`
-    SELECT
-      DISTINCT "userId",
-      ir."createdAt",
-      ir.rating
-    FROM knights_new_order_image_rating ir
-    WHERE "imageId" = ${imageId}
-      AND status = '${NewOrderImageRatingStatus.Pending}'
+    SELECT userId, lastCreatedAt as createdAt, latestRating as rating
+    FROM (
+      SELECT
+        userId,
+        max(createdAt) as lastCreatedAt,
+        argMax(rating, createdAt) as latestRating,
+        argMax(status, createdAt) as latestStatus
+      FROM knights_new_order_image_rating
+      WHERE imageId = ${imageId}
+      GROUP BY imageId, userId
+    )
+    WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
   `;
 
   await clickhouse.$exec`
@@ -1509,24 +1514,20 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
   if (imageIds.length === 0) return {};
 
+  // Uses by_imageId projection via GROUP BY pattern (rank filter in HAVING to enable projection)
   const ratings = await clickhouse.$query<{
     userId: number;
     imageId: number;
     rating: NsfwLevel;
   }>`
-    SELECT "userId", "imageId", any("rating") as "rating"
-    FROM (
-      SELECT
-        "userId",
-        "imageId",
-        "rating",
-        row_number() OVER (PARTITION BY "imageId" ORDER BY "createdAt" DESC) as rn
-      FROM knights_new_order_image_rating
-      WHERE "imageId" IN (${imageIds})
-        AND rank = '${NewOrderRankType.Knight}'
-    )
-    WHERE rn <= ${newOrderConfig.limits.maxKnightVotes}
-    GROUP BY "userId", "imageId"
+    SELECT
+      userId,
+      imageId,
+      argMax(rating, createdAt) as rating
+    FROM knights_new_order_image_rating
+    WHERE imageId IN (${imageIds})
+    GROUP BY imageId, userId
+    HAVING argMax(rank, createdAt) = '${NewOrderRankType.Knight}'
   `;
 
   const raters: Record<
