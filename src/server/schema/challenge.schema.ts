@@ -28,7 +28,7 @@ export const getInfiniteChallengesSchema = infiniteQuerySchema.merge(
       ])
       .default(ChallengeSort.Newest),
     userId: z.number().optional(), // Filter by creator
-    modelId: z.number().optional(), // Filter by featured model
+    modelVersionId: z.number().optional(), // Filter by model version
     includeEnded: z.boolean().default(false), // Include completed challenges
     limit: z.coerce.number().min(1).max(100).default(20),
   })
@@ -72,7 +72,6 @@ export const upsertChallengeSchema = z.object({
   coverImageId: z.number().optional().nullable(),
   nsfwLevel: z.number().min(1).max(32).default(1),
   allowedNsfwLevel: z.number().min(1).max(63).default(1), // Bitwise NSFW levels for entries (1=PG, 3=PG+PG13, etc.)
-  modelId: z.number().optional().nullable(),
   modelVersionIds: z.array(z.number()).default([]), // Array of allowed model version IDs
   judgingPrompt: z.string().optional().nullable(),
   reviewPercentage: z.number().min(0).max(100).default(100),

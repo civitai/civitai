@@ -33,8 +33,7 @@ export type ChallengeListItem = {
   source: ChallengeSource;
   prizePool: number;
   entryCount: number;
-  modelId: number | null;
-  modelName: string | null;
+  modelName: string | null; // Derived from first modelVersionId
   createdBy: {
     id: number;
     username: string | null;
@@ -56,12 +55,11 @@ export type ChallengeDetail = {
   source: ChallengeSource;
   nsfwLevel: number;
   allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
-  modelId: number | null;
   modelVersionIds: number[]; // Array of allowed model version IDs
   model: {
     id: number;
     name: string;
-  } | null;
+  } | null; // Derived from first modelVersionId
   collectionId: number | null; // Collection for entries (null if not yet created)
   judgingPrompt: string | null;
   reviewPercentage: number;
@@ -89,7 +87,7 @@ export type ChallengeDetail = {
 
 // Service functions
 async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
-  const { query, status, source, sort, userId, modelId, includeEnded, limit, cursor } = input;
+  const { query, status, source, sort, userId, modelVersionId, includeEnded, limit, cursor } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
   const conditions: Prisma.Sql[] = [];
@@ -126,9 +124,9 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     conditions.push(Prisma.sql`c."createdById" = ${userId}`);
   }
 
-  // Model filter (parameterized)
-  if (modelId) {
-    conditions.push(Prisma.sql`c."modelId" = ${modelId}`);
+  // Model version filter - check if version is in the modelVersionIds array
+  if (modelVersionId) {
+    conditions.push(Prisma.sql`${modelVersionId} = ANY(c."modelVersionIds")`);
   }
 
   // Cursor for pagination (parameterized)
@@ -172,7 +170,6 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       source: ChallengeSource;
       prizePool: number;
       entryCount: bigint;
-      modelId: number | null;
       modelName: string | null;
       createdById: number;
       creatorUsername: string | null;
@@ -190,13 +187,11 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
       c.source,
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId") as "entryCount",
-      c."modelId",
-      m.name as "modelName",
+      (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1] LIMIT 1) as "modelName",
       c."createdById",
       u.username as "creatorUsername",
       u.image as "creatorImage"
     FROM "Challenge" c
-    LEFT JOIN "Model" m ON m.id = c."modelId"
     JOIN "User" u ON u.id = c."createdById"
     ${whereClause}
     ORDER BY ${orderByClause}
@@ -222,7 +217,6 @@ async function getInfiniteChallenges(input: GetInfiniteChallengesInput) {
     source: item.source,
     prizePool: item.prizePool,
     entryCount: Number(item.entryCount),
-    modelId: item.modelId,
     modelName: item.modelName,
     createdBy: {
       id: item.createdById,
@@ -280,13 +274,14 @@ async function getChallengeDetail(
     WHERE id = ${challenge.createdById}
   `;
 
-  // Get model info if present
+  // Get model info from first modelVersionId if present
   let model: { id: number; name: string } | null = null;
-  if (challenge.modelId) {
+  if (challenge.modelVersionIds.length > 0) {
     const [modelResult] = await dbRead.$queryRaw<[{ id: number; name: string }]>`
-      SELECT id, name
-      FROM "Model"
-      WHERE id = ${challenge.modelId}
+      SELECT m.id, m.name
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mv.id = ${challenge.modelVersionIds[0]}
     `;
     model = modelResult || null;
   }
@@ -311,7 +306,6 @@ async function getChallengeDetail(
     source: challenge.source,
     nsfwLevel: challenge.nsfwLevel,
     allowedNsfwLevel: challenge.allowedNsfwLevel,
-    modelId: challenge.modelId,
     modelVersionIds: challenge.modelVersionIds,
     model,
     collectionId: challenge.collectionId,
@@ -356,11 +350,9 @@ export const challengeRouter = router({
         SELECT
           c."startsAt",
           c.theme,
-          m.name as "modelName",
-          u.username as "modelCreator"
+          (SELECT m.name FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" WHERE mv.id = c."modelVersionIds"[1]) as "modelName",
+          (SELECT u.username FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" JOIN "User" u ON u.id = m."userId" WHERE mv.id = c."modelVersionIds"[1]) as "modelCreator"
         FROM "Challenge" c
-        LEFT JOIN "Model" m ON m.id = c."modelId"
-        LEFT JOIN "User" u ON u.id = m."userId"
         WHERE c."visibleAt" <= NOW()
         AND c.status IN (
           ${ChallengeStatus.Scheduled}::"ChallengeStatus",

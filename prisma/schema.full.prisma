@@ -699,7 +699,6 @@ model Model {
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
   coveredCheckpoints CoveredCheckpoint[]
-  challenges         Challenge[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -3725,10 +3724,8 @@ model Challenge {
   coverImage   Image?  @relation("ChallengeCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
   nsfwLevel    Int     @default(1)
 
-  // Required resources (optional - null/empty means any allowed)
-  modelId         Int?
-  model           Model?  @relation(fields: [modelId], references: [id], onDelete: SetNull)
-  modelVersionIds Int[]   @default([]) // Array of allowed model version IDs (OR logic)
+  // Required model versions (optional - empty means any allowed)
+  modelVersionIds Int[] @default([]) // Array of allowed model version IDs (OR logic)
 
   // Entry requirements
   allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)

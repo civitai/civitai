@@ -24,7 +24,6 @@ import { trpc } from '~/utils/trpc';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { ChallengeSource, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
 import type { Prize } from '~/server/schema/challenge.schema';
-import { ModelSearchInput } from '~/components/Challenge/ModelSearchInput';
 
 // NSFW level options (bitwise flags)
 const nsfwLevelOptions = [
@@ -41,8 +40,7 @@ type ChallengeFormData = {
   description: string;
   theme: string;
   invitation: string;
-  modelId: number | null;
-  modelVersionIds: number[];
+  modelVersionIds: number[]; // Array of allowed model version IDs
   nsfwLevel: number;
   allowedNsfwLevel: number; // Bitwise NSFW levels for entries
   judgingPrompt: string;
@@ -68,7 +66,6 @@ type ChallengeForEdit = {
   description: string | null;
   theme: string | null;
   invitation: string | null;
-  modelId: number | null;
   modelVersionIds: number[];
   nsfwLevel: number;
   allowedNsfwLevel: number;
@@ -118,7 +115,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       description: challenge?.description ?? '',
       theme: challenge?.theme ?? '',
       invitation: challenge?.invitation ?? '',
-      modelId: challenge?.modelId ?? null,
       modelVersionIds: challenge?.modelVersionIds ?? [],
       nsfwLevel: challenge?.nsfwLevel ?? 1,
       allowedNsfwLevel: challenge?.allowedNsfwLevel ?? 1,
@@ -173,7 +169,6 @@ export function ChallengeUpsertForm({ challenge }: Props) {
       description: data.description || undefined,
       theme: data.theme || undefined,
       invitation: data.invitation || undefined,
-      modelId: data.modelId,
       modelVersionIds: data.modelVersionIds,
       nsfwLevel: data.nsfwLevel,
       allowedNsfwLevel: data.allowedNsfwLevel,
@@ -246,31 +241,28 @@ export function ChallengeUpsertForm({ challenge }: Props) {
           </Stack>
         </Paper>
 
-        {/* Model Selection */}
+        {/* Model Version Selection */}
         <Paper withBorder p="md">
           <Stack gap="md">
-            <Title order={4}>Featured Model</Title>
+            <Title order={4}>Required Model Versions</Title>
             <Text size="sm" c="dimmed">
-              Optionally require a specific model for entries. Leave empty to allow any model.
+              Optionally require specific model versions for entries. Leave empty to allow any model.
             </Text>
 
+            {/* TODO: Add proper ModelVersionSelector component */}
             <Controller
-              name="modelId"
+              name="modelVersionIds"
               control={control}
               render={({ field }) => (
-                <ModelSearchInput
-                  value={field.value}
-                  onChange={(modelId) => {
-                    field.onChange(modelId);
-                    // Clear versions when model changes - will be auto-populated based on modelId
-                    setValue('modelVersionIds', []);
-                  }}
-                  error={errors.modelId?.message}
-                />
+                <Text size="sm" c="dimmed">
+                  {field.value.length > 0
+                    ? `${field.value.length} model version(s) selected`
+                    : 'No model versions required (any model allowed)'}
+                </Text>
               )}
             />
             <Text size="xs" c="dimmed">
-              When a model is selected, all its versions will be allowed for entries.
+              Model version selection UI coming soon. For now, challenges allow any model.
             </Text>
           </Stack>
         </Paper>

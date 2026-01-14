@@ -22,7 +22,6 @@ export type ChallengeDetails = {
   coverUrl: string | null;
   nsfwLevel: number;
   allowedNsfwLevel: number; // Bitwise NSFW levels allowed for entries
-  modelId: number | null;
   modelVersionIds: number[]; // Array of allowed model version IDs
   collectionId: number | null; // Collection for entries (null if not yet created)
   judgingPrompt: string | null;
@@ -66,7 +65,6 @@ export async function getChallengeById(challengeId: number): Promise<ChallengeDe
       (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
       c."nsfwLevel",
       c."allowedNsfwLevel",
-      c."modelId",
       c."modelVersionIds",
       c."collectionId",
       c."judgingPrompt",
@@ -147,7 +145,6 @@ export type CreateChallengeInput = {
   coverImageId?: number;
   nsfwLevel?: number;
   allowedNsfwLevel?: number; // Bitwise NSFW levels for entries (default 1 = PG only)
-  modelId?: number;
   modelVersionIds?: number[]; // Array of allowed model version IDs
   judgingPrompt?: string;
   reviewPercentage?: number;
@@ -209,7 +206,6 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       coverImageId: input.coverImageId,
       nsfwLevel: input.nsfwLevel ?? 1,
       allowedNsfwLevel: input.allowedNsfwLevel ?? 1,
-      modelId: input.modelId,
       modelVersionIds: input.modelVersionIds ?? [],
       judgingPrompt: input.judgingPrompt,
       reviewPercentage: input.reviewPercentage ?? 100,
