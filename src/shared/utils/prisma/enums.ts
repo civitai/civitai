@@ -732,6 +732,7 @@ export const JobQueueType = {
   UpdateSearchIndex: 'UpdateSearchIndex',
   CleanIfEmpty: 'CleanIfEmpty',
   ModerationRequest: 'ModerationRequest',
+  BlockedImageDelete: 'BlockedImageDelete',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];

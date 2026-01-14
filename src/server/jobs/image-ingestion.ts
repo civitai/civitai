@@ -7,6 +7,7 @@ import { createJob } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage, ingestImageBulk } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
@@ -158,66 +159,99 @@ async function sendImagesForScanBulk(
   console.log('Failed sends:', failedSends.length);
 }
 
-// const delayedBlockCutoff = new Date('2025-05-31');
+const BLOCKED_IMAGE_RETENTION_DAYS = 7;
+
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
-  // During the delayed block period, we want to keep the images for 30 days
-  // if (!isProd || delayedBlockCutoff > new Date()) return;
-  let nextCursor: number | undefined;
-  await removeBlockedImagesRecursive(undefined, nextCursor);
-});
+  // Pull from JobQueue instead of scanning Image table
+  const jobQueue = await dbRead.jobQueue.findMany({
+    where: { type: JobQueueType.BlockedImageDelete, entityType: EntityType.Image },
+    take: 10000,
+    orderBy: { createdAt: 'asc' },
+  });
 
-export async function removeBlockedImagesRecursive(
-  cutoff: Date = decreaseDate(new Date(), 7, 'days'),
-  nextCursor?: number,
-  limit = 1000
-) {
-  const halfLimit = Math.floor(limit / 2);
-
-  // Split into two queries to avoid slow OR condition
-  // Query 1: Non-moderated blocked images by createdAt
-  const nonModeratedImages = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT id
-    FROM "Image"
-    WHERE "ingestion" = 'Blocked'
-      AND "blockedFor" != 'AiNotVerified'
-      AND "blockedFor" != 'moderated'
-      AND "createdAt" <= ${cutoff}
-      ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
-    ORDER BY id
-    LIMIT ${halfLimit + 1}
-  `;
-
-  // Query 2: Moderated blocked images by updatedAt
-  const moderatedImages = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT id
-    FROM "Image"
-    WHERE "ingestion" = 'Blocked'
-      AND "blockedFor" = 'moderated'
-      AND "updatedAt" <= ${cutoff}
-      ${Prisma.raw(nextCursor ? `AND id > ${nextCursor}` : ``)}
-    ORDER BY id
-    LIMIT ${halfLimit + 1}
-  `;
-
-  // Merge, dedupe, and sort results
-  const mergedImages = [...nonModeratedImages, ...moderatedImages];
-  const uniqueIds = [...new Set(mergedImages.map((x) => x.id))].sort((a, b) => a - b);
-  const images = uniqueIds.slice(0, limit + 1).map((id) => ({ id }));
-
-  if (images.length > limit) {
-    const nextItem = images.pop();
-    nextCursor = nextItem?.id;
-  } else nextCursor = undefined;
-
-  if (!isProd) {
-    console.log({ nextCursor, images: images.length });
+  if (!jobQueue.length) {
+    console.log('No blocked images in queue');
+    return { processed: 0 };
   }
 
-  if (!images.length || !env.DATABASE_IS_PROD) return;
+  const imageIds = jobQueue.map((j) => j.entityId);
+  console.log(`Found ${imageIds.length} blocked images in queue`);
 
-  await deleteImages(images.map((x) => x.id));
+  // Fetch image data to check retention period and blockedFor status
+  const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
+  const images = await dbRead.$queryRaw<
+    { id: number; blockedFor: string | null; createdAt: Date; updatedAt: Date }[]
+  >`
+    SELECT id, "blockedFor", "createdAt", "updatedAt"
+    FROM "Image"
+    WHERE id = ANY(${imageIds})
+      AND ingestion = 'Blocked'::"ImageIngestionStatus"
+  `;
 
-  // if (nextCursor) {
-  //   await removeBlockedImagesRecursive(cutoff, nextCursor);
-  // }
-}
+  // Filter images ready for deletion based on retention period
+  const imagesToDelete = images.filter((img) => {
+    // Skip AiNotVerified - these are handled differently
+    if (img.blockedFor === 'AiNotVerified') return false;
+
+    // Moderated images use updatedAt for retention
+    if (img.blockedFor === 'moderated') {
+      return img.updatedAt <= cutoff;
+    }
+
+    // All other blocked images use createdAt for retention
+    return img.createdAt <= cutoff;
+  });
+
+  // Find stale queue entries (image deleted, status changed, or AiNotVerified)
+  const imageIdSet = new Set(images.map((img) => img.id));
+  const deleteReadyIds = new Set(imagesToDelete.map((img) => img.id));
+  const staleIds = imageIds.filter((id) => {
+    // Image was deleted or status changed from Blocked
+    if (!imageIdSet.has(id)) return true;
+    // AiNotVerified images should be removed from queue
+    const img = images.find((i) => i.id === id);
+    if (img?.blockedFor === 'AiNotVerified') return true;
+    return false;
+  });
+
+  // Find images still waiting for retention period
+  const waitingIds = imageIds.filter((id) => {
+    if (!imageIdSet.has(id)) return false;
+    if (deleteReadyIds.has(id)) return false;
+    if (staleIds.includes(id)) return false;
+    return true;
+  });
+
+  console.log({
+    imagesToDelete: imagesToDelete.length,
+    waitingForRetention: waitingIds.length,
+    staleIds: staleIds.length,
+  });
+
+  if (!isProd) return { imagesToDelete: imagesToDelete.length };
+
+  if (!env.DATABASE_IS_PROD) return { imagesToDelete: 0 };
+
+  // Delete images that are past retention period
+  if (imagesToDelete.length > 0) {
+    await deleteImages(imagesToDelete.map((x) => x.id));
+  }
+
+  // Remove processed and stale entries from queue
+  const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
+  if (idsToRemove.length > 0) {
+    await dbWrite.jobQueue.deleteMany({
+      where: {
+        type: JobQueueType.BlockedImageDelete,
+        entityType: EntityType.Image,
+        entityId: { in: idsToRemove },
+      },
+    });
+  }
+
+  return {
+    deleted: imagesToDelete.length,
+    staleRemoved: staleIds.length,
+    waitingForRetention: waitingIds.length,
+  };
+});

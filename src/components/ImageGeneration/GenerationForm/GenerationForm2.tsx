@@ -476,7 +476,8 @@ export function GenerationFormContent() {
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
   const isQwenEdit = getIsQwenEditModel(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || (isQwen && !isQwenEdit);
+  const showImg2ImgMultiple =
+    isNanoBanana || isSeedream || isFlux2 || isOpenAI || (isQwen && !isQwenEdit);
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
   const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
@@ -508,9 +509,7 @@ export function GenerationFormContent() {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
               workflow?.startsWith('img') ||
-
               (isImageGen && (sourceImage || !!images?.length)) ||
-
               isFluxKontext ||
               isQwenEdit;
             const isFluxStandard = getIsFluxStandard(model.model.id);
@@ -665,7 +664,8 @@ export function GenerationFormContent() {
               (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
               !isSeedream &&
               !isNanoBananaPro &&
-              !isFlux2 && !isQwen &&
+              !isFlux2 &&
+              !isQwen &&
               !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
@@ -693,9 +693,6 @@ export function GenerationFormContent() {
                                 limited workflows that cover some of the most important use cases.
                                 Community workflows coming soon.
                               </InfoPopover>
-                              <Badge color="yellow" size="xs">
-                                New
-                              </Badge>
                             </div>
                           }
                           className="flex-1"
