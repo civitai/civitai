@@ -118,11 +118,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     staleIds: staleIds.length,
   });
 
-  if (isProd) {
-    await sendImagesForScanBulk(pendingImages);
-    await sendImagesForScanBulk(rescanImages, { lowPriority: true });
-    await sendImagesForScanBulk(errorImages, { lowPriority: true });
-  }
+  if (!isProd) return;
+
+  await sendImagesForScanBulk(pendingImages);
+  await sendImagesForScanBulk(rescanImages, { lowPriority: true });
+  await sendImagesForScanBulk(errorImages, { lowPriority: true });
 
   // Remove processed and stale items from queue
   // Keep items that are waiting for retry delay - they'll be picked up on next run
