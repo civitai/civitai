@@ -103,6 +103,7 @@ import {
   getIsChroma,
   getIsZImageTurbo,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  getAllowOutputFormat,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -462,6 +463,7 @@ export function GenerationFormContent() {
   const isChroma = getIsChroma(baseModel);
   const isZImageTurbo = getIsZImageTurbo(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
+  const allowOutputFormat = getAllowOutputFormat(baseModel);
 
   // HiDream
   const isHiDream = getIsHiDream(baseModel);
@@ -1505,7 +1507,9 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
-                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
+                  {allowOutputFormat && (
+                    <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" />
+                  )}
                   {!disablePriority && (
                     <InputRequestPriority name="priority" label="Request Priority" />
                   )}
