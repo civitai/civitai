@@ -44,6 +44,7 @@ import {
   setDueDate,
   setPriority,
   moveTask,
+  parseDateInput,
 } from './api/tasks.mjs';
 import { getComments, postComment, deleteComment } from './api/comments.mjs';
 import { addChecklistItemToTask, getChecklists } from './api/checklists.mjs';
@@ -62,6 +63,9 @@ let arg3 = null;
 let jsonOutput = false;
 let includeSubtasks = false;
 let filterMe = false;
+let assigneeArg = null;
+let dueArg = null;
+let descriptionArg = null;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -71,6 +75,12 @@ for (let i = 0; i < args.length; i++) {
     includeSubtasks = true;
   } else if (arg === '--me') {
     filterMe = true;
+  } else if (arg === '--assignee' || arg === '-a') {
+    assigneeArg = args[++i];
+  } else if (arg === '--due' || arg === '-d') {
+    dueArg = args[++i];
+  } else if (arg === '--description' || arg === '--desc') {
+    descriptionArg = args[++i];
   } else if (!command) {
     command = arg;
   } else if (!targetInput) {
@@ -311,7 +321,8 @@ async function main() {
       }
 
       case 'create': {
-        // Support: create <list_id> "title" OR create "title" (uses default list)
+        // Support: create <list_id> "title" [options] OR create "title" [options] (uses default list)
+        // Options: --assignee/-a <user>, --due/-d <date>, --description/--desc <text>
         let listId = parseListId(targetInput);
         let title = arg2;
 
@@ -321,24 +332,51 @@ async function main() {
           listId = process.env.CLICKUP_DEFAULT_LIST_ID;
           if (!listId) {
             console.error('Error: No list ID provided and CLICKUP_DEFAULT_LIST_ID not set');
-            console.error('Usage: node query.mjs create <list_id> "Task title"');
+            console.error('Usage: node query.mjs create <list_id> "Task title" [options]');
             console.error('   Or: Set CLICKUP_DEFAULT_LIST_ID in .env to use: node query.mjs create "Task title"');
+            console.error('Options: --assignee/-a <user>, --due/-d <date>, --description/--desc <text>');
             process.exit(1);
           }
         }
 
         if (!title) {
           console.error('Error: Task title required');
-          console.error('Usage: node query.mjs create <list_id> "Task title"');
-          console.error('   Or: node query.mjs create "Task title" (uses default list)');
+          console.error('Usage: node query.mjs create <list_id> "Task title" [options]');
+          console.error('Options: --assignee/-a <user>, --due/-d <date>, --description/--desc <text>');
           process.exit(1);
         }
-        const task = await createTask(listId, title);
+
+        // Build options from flags
+        const options = {};
+        if (descriptionArg) {
+          options.description = descriptionArg;
+        }
+        if (dueArg) {
+          const dueDate = parseDateInput(dueArg);
+          options.due_date = dueDate.getTime();
+        }
+        if (assigneeArg) {
+          const teamId = await getTeamId();
+          const user = await findUser(teamId, assigneeArg);
+          if (!user) {
+            console.error(`Error: User "${assigneeArg}" not found in team`);
+            process.exit(1);
+          }
+          options.assignees = [user.id];
+        }
+
+        const task = await createTask(listId, title, options);
         if (jsonOutput) {
           console.log(JSON.stringify(task, null, 2));
         } else {
           console.log(`Task created: ${task.name}`);
           console.log(`ID: ${task.id}`);
+          if (task.assignees?.length) {
+            console.log(`Assignees: ${task.assignees.map(a => a.username).join(', ')}`);
+          }
+          if (task.due_date) {
+            console.log(`Due: ${new Date(parseInt(task.due_date, 10)).toLocaleDateString()}`);
+          }
           console.log(`URL: ${task.url}`);
         }
         break;

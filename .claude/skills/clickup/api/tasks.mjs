@@ -140,13 +140,11 @@ export async function getMyTasks(teamId, userId) {
 export async function assignTask(taskId, assigneeIds, options = {}) {
   const body = {};
 
-  if (options.add) {
-    body.assignees = { add: assigneeIds };
-  } else if (options.remove) {
+  if (options.remove) {
     body.assignees = { rem: assigneeIds };
   } else {
-    // Replace all assignees
-    body.assignees = assigneeIds;
+    // Default to add format - ClickUp API requires { add: [...] } for updates
+    body.assignees = { add: assigneeIds };
   }
 
   const response = await updateTask(taskId, body);
@@ -167,7 +165,7 @@ export async function setDueDate(taskId, dueDate) {
 }
 
 // Parse natural language date input
-function parseDateInput(input) {
+export function parseDateInput(input) {
   const now = new Date();
   const inputLower = input.toLowerCase().trim();
 
