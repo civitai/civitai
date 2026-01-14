@@ -3344,6 +3344,7 @@ enum JobQueueType {
   UpdateSearchIndex
   CleanIfEmpty
   ModerationRequest
+  BlockedImageDelete
 }
 
 model JobQueue {
