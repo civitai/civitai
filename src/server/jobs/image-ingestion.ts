@@ -120,13 +120,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   if (!isProd) return;
 
-  await sendImagesForScanBulk(pendingImages);
-  await sendImagesForScanBulk(rescanImages, { lowPriority: true });
-  await sendImagesForScanBulk(errorImages, { lowPriority: true });
+  const sentPendingIds = await sendImagesForScanBulk(pendingImages);
+  const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
+  const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
 
-  // Remove processed and stale items from queue
-  // Keep items that are waiting for retry delay - they'll be picked up on next run
-  const idsToRemove = [...processedIds, ...staleIds];
+  // Remove successfully sent and stale items from queue
+  // Keep items that failed to send or are waiting for retry delay - they'll be picked up on next run
+  const idsToRemove = [...sentPendingIds, ...sentRescanIds, ...sentErrorIds, ...staleIds];
   if (idsToRemove.length > 0) {
     await dbWrite.jobQueue.deleteMany({
       where: {
@@ -137,8 +137,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     });
   }
 
+  const totalSent = sentPendingIds.length + sentRescanIds.length + sentErrorIds.length;
   return {
-    processed: processedIds.size,
+    sent: totalSent,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
   };
@@ -147,8 +148,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 async function sendImagesForScanBulk(
   images: IngestImageInput[],
   options?: { lowPriority?: boolean }
-) {
-  if (!images.length) return;
+): Promise<number[]> {
+  if (!images.length) return [];
 
   const failedSends: number[] = [];
   const tasks = chunk(images, 250).map((batch, i) => async () => {
@@ -183,6 +184,9 @@ async function sendImagesForScanBulk(
   if (failedSends.length > 0) {
     console.log('Failed sends:', failedSends.length);
   }
+
+  const failedSet = new Set(failedSends);
+  return images.filter((img) => !failedSet.has(img.id)).map((img) => img.id);
 }
 
 const BLOCKED_IMAGE_RETENTION_DAYS = 7;
