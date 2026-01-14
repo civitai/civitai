@@ -40,6 +40,7 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 import { getModelVersionUsesImageGen } from '~/shared/orchestrator/ImageGen/imageGen.config';
 import { promptSimilarity } from '~/utils/prompt-similarity';
 import { getIsFluxKontext } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
+import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/base-model.constants';
 import { imageAnnotationsSchema } from '~/components/Generation/Input/DrawingEditor/drawing.utils';
@@ -128,6 +129,15 @@ function createFormSchema(domainColor: string) {
           code: 'custom',
           message: 'Image is required',
           path: ['sourceImage'],
+        });
+      }
+
+      // Qwen img2img models require at least one image
+      if (getIsQwenImageEditModel(data.model.id) && (!data.images || data.images.length === 0)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'At least one image is required for Qwen image editing',
+          path: ['images'],
         });
       }
     });
@@ -400,8 +410,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               form.setValue('cfgScale', 1);
               form.setValue('steps', 9);
             }, 0);
+          } else if (baseModel === 'Qwen' && prevBaseModel !== baseModel) {
+            form.setValue('cfgScale', 2.5);
           } else if (
             baseModel !== 'ZImageTurbo' &&
+            baseModel !== 'Qwen' &&
             !fluxBaseModels.includes(baseModel) &&
             (prevBaseModel === 'ZImageTurbo' || fluxBaseModels.includes(prevBaseModel))
           ) {
