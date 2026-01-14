@@ -479,7 +479,7 @@ export function GenerationFormContent() {
   const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2 || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
 
-  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
+  const disablePriority = false;
 
   // Model mode configuration - add new models here
   const modelModeConfig = useMemo(
