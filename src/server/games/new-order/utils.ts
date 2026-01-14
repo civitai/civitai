@@ -187,10 +187,7 @@ function createCounter<TId extends number | string = number | string>({
     return newValue;
   }
 
-  async function reset({
-    id,
-    all,
-  }: { id: TId | TId[]; all?: never } | { all: true; id?: never }) {
+  async function reset({ id, all }: { id: TId | TId[]; all?: never } | { all: true; id?: never }) {
     if (all) return sysRedis.del(key);
 
     const ids = Array.isArray(id) ? id : [id];
@@ -234,7 +231,7 @@ async function fetchJudgmentCountsBatchInternal(
   });
 
   const playerStartDates = new Map(players.map((p) => [p.userId, p.startAt]));
-  const sevenDaysAgo = dayjs().subtract(7, 'days').toDate();
+  const sevenDaysAgo = dayjs().subtract(7, 'days').startOf('day').toDate();
 
   // Initialize all users with zeros
   for (const userId of userIds) {
@@ -255,7 +252,9 @@ async function fetchJudgmentCountsBatchInternal(
     SELECT
       userId,
       countIf(latest_status = '${NewOrderImageRatingStatus.Correct}') as correctJudgments,
-      countIf(latest_status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}', '${NewOrderImageRatingStatus.Inconclusive}')) as allJudgments
+      countIf(latest_status IN ('${NewOrderImageRatingStatus.Correct}', '${
+    NewOrderImageRatingStatus.Failed
+  }', '${NewOrderImageRatingStatus.Inconclusive}')) as allJudgments
     FROM (
       SELECT
         userId,
@@ -279,6 +278,13 @@ async function fetchJudgmentCountsBatchInternal(
 
   return result;
 }
+
+// Helper to create a zero-returning fetchCount for pool counters
+const zeroFetchCount = async (ids: (number | string)[]) => {
+  const result = new Map<number | string, number>();
+  for (const id of ids) result.set(id, 0);
+  return result;
+};
 
 export const correctJudgmentsCounter = createCounter<number | string>({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.CORRECT,
@@ -312,21 +318,13 @@ export const allJudgmentsCounter = createCounter<number | string>({
 
 export const acolyteFailedJudgments = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.ACOLYTE_FAILED,
-  fetchCount: async (ids) => {
-    const result = new Map<number | string, number>();
-    for (const id of ids) result.set(id, 0);
-    return result;
-  },
+  fetchCount: zeroFetchCount,
   ttl: CacheTTL.week,
 });
 
 export const sanityCheckFailuresCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.FAILURES,
-  fetchCount: async (ids) => {
-    const result = new Map<number | string, number>();
-    for (const id of ids) result.set(id, 0);
-    return result;
-  },
+  fetchCount: zeroFetchCount,
   ttl: CacheTTL.day,
 });
 
@@ -390,16 +388,35 @@ export const blessedBuzzCounter = createCounter({
 
     const validUserIds = players.map((p) => p.userId);
 
+    // Build CASE clauses for each player to filter by their startAt
+    const caseClauses = players
+      .map((player) => {
+        const startAtISO = player.startAt.toISOString();
+        return `WHEN userId = ${player.userId} AND createdAt >= parseDateTimeBestEffort('${startAtISO}') THEN grantedExp * multiplier`;
+      })
+      .join('\n');
+
+    const caseExpression = caseClauses
+      ? `
+        CASE
+          ${caseClauses}
+          ELSE 0
+        END
+      `
+      : '0';
+
     // Query ClickHouse for exp from last 3 days that hasn't been granted yet
     const startDate = dayjs().subtract(3, 'days').startOf('day').toDate();
     const endDate = dayjs().endOf('day').toDate();
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`
-      SELECT userId, SUM(grantedExp * multiplier) as totalExp
+      SELECT userId, SUM(${caseExpression}) as totalExp
       FROM knights_new_order_image_rating
       WHERE userId IN (${validUserIds.join(',')})
         AND createdAt BETWEEN ${startDate} AND ${endDate}
-        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
+      NewOrderImageRatingStatus.Failed
+    }')
       GROUP BY userId
     `.catch(handleLogError);
 
@@ -433,6 +450,23 @@ export const pendingBuzzCounter = createCounter({
 
     const validUserIds = players.map((p) => p.userId);
 
+    // Build CASE clauses for each player to filter by their startAt
+    const caseClauses = players
+      .map((player) => {
+        const startAtISO = player.startAt.toISOString();
+        return `WHEN userId = ${player.userId} AND createdAt >= parseDateTimeBestEffort('${startAtISO}') THEN grantedExp * multiplier`;
+      })
+      .join('\n');
+
+    const caseExpression = caseClauses
+      ? `
+        CASE
+          ${caseClauses}
+          ELSE 0
+        END
+      `
+      : '0';
+
     // Calculate what will be granted in the next cycle
     const nextGrantDate = dayjs().add(1, 'day').startOf('day');
     const grantingDate = nextGrantDate.subtract(3, 'days');
@@ -440,11 +474,13 @@ export const pendingBuzzCounter = createCounter({
     const endDate = grantingDate.endOf('day').toDate();
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`
-      SELECT userId, SUM(grantedExp * multiplier) as totalExp
+      SELECT userId, SUM(${caseExpression}) as totalExp
       FROM knights_new_order_image_rating
       WHERE userId IN (${validUserIds.join(',')})
         AND createdAt BETWEEN ${startDate} AND ${endDate}
-        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+        AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
+      NewOrderImageRatingStatus.Failed
+    }')
       GROUP BY userId
     `.catch(handleLogError);
 
@@ -515,13 +551,6 @@ export const poolKeys = {
       `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar3:b`,
     ],
   },
-};
-
-// Helper to create a zero-returning fetchCount for pool counters
-const zeroFetchCount = async (ids: (number | string)[]) => {
-  const result = new Map<number | string, number>();
-  for (const id of ids) result.set(id, 0);
-  return result;
 };
 
 export const poolCounters = {
